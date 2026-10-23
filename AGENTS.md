@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-10-23（新增笔记可选 Mermaid / 离线 Pele 渲染，保留连续图片点击修复、公式分类染色和正文滚动条固定留白布局）。
+> 最后按源码校准：2026-10-23（笔记 Mermaid 源码同屏预览、离线 Worker 与视图稳定性，保留图片点击、公式分类染色和正文固定滚动条留白）。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -62,11 +62,11 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ## 3. 源码地图
 
-笔记 Mermaid 由默认启用的子功能 `notes.mermaid` 独立控制，父项是 `notes`，与图谱和内嵌画布互不依赖。`assets/note-mermaid.js` 和专用 CSS 及 `assets/vendor/pele/` 归此功能独占；关闭后实时预览保留源码，阅读显示普通代码与复制入口，不请求这些资源。共享 `MarkdownMini.renderResult` 的可选 `mermaid:false` 同样传入脚注递归；其他调用默认行为不变。笔记不再归属旧 `mermaid-renderer.js`，其他区域继续原 Mermaid。Pele 固定 1.9.0，浏览器包、MIT 许可证与校验来源均本地保存，不增加 npm 构建或运行时出站。
+笔记 Mermaid 由默认启用的子功能 `notes.mermaid` 独立控制，父项是 `notes`，与图谱和内嵌画布互不依赖。`assets/note-mermaid.js`、`assets/note-mermaid-worker.js`、专用 CSS 及 `assets/vendor/pele/` 归此功能独占；关闭后实时预览保留源码，阅读显示普通代码与复制入口，不请求这些资源。共享 `MarkdownMini.renderResult` 的可选 `mermaid:false` 同样传入脚注递归；其他调用默认行为不变。笔记不再归属旧 `mermaid-renderer.js`，其他区域继续原 Mermaid。Pele 固定 1.9.0 且 vendor 未改写，浏览器包、MIT 许可证与校验来源均本地保存，不增加 npm 构建或运行时出站。
 
-`note-live-editor.js` 在 widget 挂载后才验证身份并按真实可见围栏加载适配器，避免 `toDOM()` 内提前检查 `isConnected` 而永久跳过渲染。引用与 Callout 内围栏保留真实源码和位置，另提供去引用前缀的渲染源。实时预览点击或键盘激活图表展开源码，离开后出图；源码模式不渲染。阅读按容器宽度适配、保留声明方向，缩小时提供内嵌缩放/平移/复位，普通滚轮继续滚正文。CSS 变量跟随主题；图表内 LaTeX 暂显示源码，不额外加载 MathJax。
+`note-live-editor.js` 在 widget 挂载后才验证身份并按真实可见围栏加载适配器，避免 `toDOM()` 内提前检查 `isConnected` 而永久跳过渲染。引用与 Callout 内围栏保留真实源码和位置，另提供去引用前缀的渲染源。实时预览激活图表后展开源码，在闭合且非空的围栏下追加只读图表；首次立即调度，后续编辑合并 120ms，只处理最新内容。无效语法保留当前块上次成功结果和轻提示，首次失败只提示；重新进入同一块可从有界缓存恢复结果。预览点击不移动光标，不进入原子范围或历史；空/未闭合/超限围栏与纯源码模式不生成编辑预览。已投影围栏不再输出代码行底色和语言装饰，避免图上方残留空色条。阅读保留声明方向，内嵌缩放/平移/复位由轻量本地控制器维护；滚出视口、隐藏及原生最小化释放交互但保留同尺寸下的镜头，普通滚轮继续滚正文，高频手势按显示帧合并并在释放时提交最终状态。CSS 变量跟随主题；图表内 LaTeX 暂显示源码，不额外加载 MathJax。
 
-适配器 `attach(root,{mode,isCurrent,onLayout,whenSettled?})` 返回暂停、恢复、销毁控制器。每图复用解析模型，仅宽度或字体变化重新布局，多图按约 4ms 批间让出主线程；单张同步渲染不可抢占。65,536 字符保护沿用编辑器原上限，输出限 4,000,000 字符、流程图/agentflow 边限 5,000；实时预览超限保留源码，阅读显示限制提示。关闭链接和图片，SVG 插入前移除执行内容、事件与外部资源引用，错误纯文本展示；模块或引擎加载失败允许重试。切文档/模式/工作区、隐藏、原生最小化和 pagehide 停任务并释放观察器及缩放交互，保留必要的恢复监听；模块/引擎迟到及候选输入都复核身份，不改正文或历史。原始 Markdown 与持久化格式不变。详细边界与性能口径见 `docs/note-mermaid-2026-10-23.md`。
+适配器沿用 `attach(root,{mode,isCurrent,onLayout,whenSettled?,editing?,historyKey?})`，控制器增加单图 `update(source,language)`，另有只恢复已知高度的 `reserve(root,{mode})`。解析/布局在按需共享的本地 Worker 内完成，按真实字体栈加载已有 Open Sans / Noto Sans SC 字体；主线程不为缩放另加载完整 Pele。Worker 不可用时回退同版同步引擎。主线程与 Worker 的源码/SVG 缓存各限 32 项、8MiB 计量，模型随条目淘汰，超大单项不驻留；实例独立重映射 SVG ID，Gantt 按本地日期失效。宽度变化复用模型，纯滚动、颜色和不相关的 MathJax 字体通知不重排。SVG 在脱离文档的树中按约 4ms 批间让出主线程并支持取消，清理后直接交接节点，避免整树复制；XML 解析和最终挂载仍有同步开销。65,536 字符、4,000,000 输出字符和流程图/agentflow 5,000 边上限不变；继续禁用链接/图片、移除执行内容和外部资源引用，错误纯文本展示，加载失败可重试。切文档/模式/工作区、隐藏、原生最小化和 pagehide 取消任务并释放 Worker、观察器及交互，迟到结果与候选输入均核对当前身份。编辑器用最近实际高度稳定组件交接；阅读在恢复滚动前按内容/布局指纹预留已知图高，隐藏原代码兜底，避免离屏图重新变回源码高度而使正文跳动。数值高度提示独立限 2048 项/256KiB 计量，不保留正文或 SVG；没有新偏好、API 或持久化字段，不锁定 scrollTop。详细边界与性能口径见 `docs/note-mermaid-2026-10-23.md`。
 
 笔记文件系统移动后，通知可能先登记新路径。`NoteIndex.remap()` 在同一写事务中保留原 entry 身份，将重复目标派生行的入链转交后清理，再发布路径变化；不删除文件，不改变真实目标冲突检查。`test_move_preserves_identity_when_watcher_registers_destination_first` 确定性覆盖该时序、FTS、标签和入链；画布浏览器回归保留服务诊断，可通过 `RELATUM_SERVER_EXE` 复验实际发布包。
 
@@ -958,7 +958,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 ## 11. 验证清单
 
-笔记 Mermaid 使用 `node tests/note-mermaid-browser.js` 验证八类图、中文与样式、引用/Callout、编辑与撤销、源码/禁用/错误与重试、迟到及候选交接、隐藏/原生最小化/pagehide、输出清理、中英文、深浅、窄窗、DPR 1/2 和低动态。`node tests/note-mermaid-performance-browser.js` 三轮交替对照现有 Mermaid，记录冷加载、重复打开、100 图连续查看、长任务、GC 后堆与闲置零 RAF，报告和截图仅在临时目录。配置已有 `RELATUM_PLAYWRIGHT / RELATUM_EDGE_PATH`；真实服务资源矩阵沿用 `tests/feature-profile-browser.js`，另设置 `RELATUM_PYTHON` 或 `RELATUM_SERVER_EXE`。矩阵包含独立启用、混合禁用及父项关闭，并支持参数指定组合；直接资源请求也必须拒绝。继续运行 Markdown、编辑器、工作区、正文滚动和图谱回归；原生 Launcher 用已准备的桌面 Python 验证。
+笔记 Mermaid 使用 `node tests/note-mermaid-browser.js` 验证八类图、源码同屏预览与错误恢复、DOM/模型/布局复用、缓存数量和字节淘汰、缺失/受限 Worker 回退、引用/Callout、撤销、资源与候选迟到、隐藏/最小化/pagehide、SVG 清理、键盘/鼠标/触摸缩放，以及中英文、深浅、窄窗、DPR 1/2 和低动态。`note-mermaid-worker-browser.js` 对照两种真实字体栈、两宽度/两字号的 64 组 SVG，验证模型复用、字体失效、错误协议与缓存边界。`note-mermaid-workspace-browser.js` 使用隔离库验证字节保存、原生 Chromium 候选、滚动/光标/鼠标落点、页签和侧栏交接、阅读离屏高度及视角；加 `--webview2` 和 `RELATUM_WEBVIEW_PYTHON` 使用已有桌面环境验真正原生最小化/按原尺寸还原。`note-mermaid-pipeline-performance-browser.js` 三轮交替对照 `459b8a3`（可用 `RELATUM_NOTE_MERMAID_BASELINE_REF` 指定），测普通/重复、100 张重复/不同图及 500 节点近 4000 边，输入探针持续覆盖整个出图过程，记录 P95/最大值、长任务、主线程/Worker GC 后堆与释放。实测及冷启动、总堆增加的取舍见 Mermaid 功能说明；旧 `note-mermaid-performance-browser.js` 继续用于与 Mermaid.js 对照。所有报告、截图和数据只写临时目录。配置已有 `RELATUM_PLAYWRIGHT / RELATUM_EDGE_PATH`，服务另设 `RELATUM_PYTHON` 或 `RELATUM_SERVER_EXE`；`feature-profile-browser.js` 核对完整、仅笔记、独立启用、混合禁用和父项关闭及直接资源拒绝。继续回归公式、Markdown、编辑器、工作区、正文滚动、视图状态和图谱；发布包入口仍为 `note-mermaid-desktop.js <独立发布目录>`，不能把源码桌面验收称为已重新打包。
 
 选区同文高亮使用 `node tests/note-input-browser.js` 验证默认插件缺席、中英文/单字/多字、实时预览与源码模式启停、选区/滚动/正文与撤销保留、主动查找、原生 Chromium 候选交接及销毁后的迟到切换。`node tests/note-ui-browser.js` 验证三个外壳的开关即时生效、刷新记忆、恢复默认及中英文/深浅呈现；另运行 `node tests/note-ui-browser.js notes-no-graph` 验证与图谱独立。沿用 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`，服务、正文、浏览器偏好和截图只使用一次性隔离目录。
 

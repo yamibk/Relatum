@@ -220,7 +220,7 @@ class FeatureProfileTests(unittest.TestCase):
     def test_note_mermaid_resources_and_legacy_defaults(self):
         legacy = features.LaunchProfile.decode('{"version":1,"features":{"notes":true}}')
         self.assertTrue(legacy.enabled('notes.mermaid'))
-        resources = ('note-mermaid.js', 'note-mermaid.css', 'vendor/pele/pele.global.js',
+        resources = ('note-mermaid.js', 'note-mermaid-worker.js', 'note-mermaid.css', 'vendor/pele/pele.global.js',
                      'vendor/pele/LICENSE', 'vendor/pele/README.md')
         for keys in (('notes',), ('notes', 'notes.mermaid'), ('notes.mermaid',),
                      ('canvas', 'canvas.editor'), ('notes', 'canvas', 'canvas.quicknotes')):

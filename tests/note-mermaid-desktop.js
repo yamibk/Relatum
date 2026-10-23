@@ -48,7 +48,7 @@ async function port() { const socket = net.createServer(); await new Promise(res
       if (enabled) {
         await page.locator('.is-mermaid svg').waitFor();
         await page.locator('.is-mermaid').focus(); await page.keyboard.press('Enter');
-        assert.equal(await page.locator('.is-mermaid svg').count(), 0);
+        await page.locator('.note-live-mermaid-preview svg').waitFor();
         await page.waitForFunction(() => {
           const view = N.editor.view;
           return view.state.doc.lineAt(view.state.selection.main.head).text.startsWith('flowchart');
@@ -76,7 +76,7 @@ async function port() { const socket = net.createServer(); await new Promise(res
       } else {
         await page.evaluate(() => N.setViewMode('reading')); await page.locator('.note-reading-content pre.md-code').waitFor();
         await pause(200); assert(!requests.some(url => url.includes('note-mermaid') || url.includes('vendor/pele/')));
-        for (const asset of ['note-mermaid.js', 'note-mermaid.css', 'vendor/pele/pele.global.js']) assert.equal((await fetch(origin + '/' + asset)).status, 403);
+        for (const asset of ['note-mermaid.js', 'note-mermaid-worker.js', 'note-mermaid.css', 'vendor/pele/pele.global.js']) assert.equal((await fetch(origin + '/' + asset)).status, 403);
       }
       assert(!requests.some(url => url.includes('vendor/mermaid/'))); assert.deepEqual(errors, []);
       assert.equal(await page.evaluate(() => N.editor.snapshot().value), source);

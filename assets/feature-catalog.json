@@ -298,7 +298,7 @@
       "parent": "notes",
       "label": "Mermaid 图表",
       "description": "笔记中的 Mermaid 图表，使用离线 Pele 引擎；关闭后保留代码，不加载专属脚本、样式或引擎。",
-      "scripts": ["note-mermaid.js", "note-mermaid.css", "vendor/pele/"],
+      "scripts": ["note-mermaid.js", "note-mermaid-worker.js", "note-mermaid.css", "vendor/pele/"],
       "default": true
     },
     {

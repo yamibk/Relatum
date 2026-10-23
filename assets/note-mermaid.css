@@ -30,8 +30,19 @@
 .note-mermaid-stage { position: relative; width: 100%; min-width: 0; }
 .note-mermaid-stage.has-note-mermaid-zoom { min-height: 110px; display: grid; align-items: center; }
 .note-mermaid-stage > svg { display: block; max-width: 100%; height: auto; margin: auto; }
+.note-mermaid-reserved > .mermaid-fallback { display: none; }
 .note-mermaid-error { color: var(--text-secondary); font-size: 13px; }
 .note-mermaid-error p { margin: 0 0 8px; overflow-wrap: anywhere; }
 .note-mermaid-error pre { margin: 8px 0 0; max-height: 320px; overflow: auto; white-space: pre; font: 12px/1.6 var(--note-font-mono, monospace); }
 .note-mermaid-error button { border: 1px solid var(--border-strong, var(--border)); border-radius: 5px; background: var(--bg); color: var(--text); padding: 3px 10px; font: inherit; cursor: pointer; }
+.note-live-mermaid-preview { cursor: default; }
+.note-mermaid-status { padding: .25em 0; color: var(--text-secondary); font: 13px/1.5 var(--note-font-text, var(--font-ui)); }
+.note-mermaid-status p { margin: 0; }
+.note-mermaid-status button { margin-top: 4px; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; cursor: pointer; }
+.note-mermaid-zoom { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 2px; padding: 2px; border: 1px solid var(--pele-border); border-radius: 5px; background: var(--pele-bg); color: var(--pele-fg); line-height: 0; }
+.note-mermaid-zoom button { appearance: none; display: grid; place-items: center; box-sizing: border-box; width: 24px; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; color: inherit; cursor: pointer; }
+.note-mermaid-zoom button[hidden] { display: none; }
+.note-mermaid-zoom button:disabled { opacity: .35; cursor: default; }
+.note-mermaid-zoom button:hover:not(:disabled) { background: var(--pele-surface); }
+.note-mermaid-zoom button > svg { width: 16px; height: 16px; }
 .note-mermaid :focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 3px; }

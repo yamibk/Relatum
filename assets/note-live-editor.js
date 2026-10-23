@@ -384,7 +384,7 @@
         errorBox = document.createElement('div'); errorBox.className = 'note-mermaid-error';
         const message = document.createElement('p'); message.textContent = (english ? 'Diagram unavailable: ' : '图表暂未显示：') + String(error.message || error);
         const button = document.createElement('button'); button.type = 'button'; button.dataset.noteMermaidControl = 'retry'; button.textContent = english ? 'Retry' : '重试';
-        button.addEventListener('mousedown', event => event.stopPropagation());
+        button.addEventListener('mousedown', event => { event.preventDefault(); event.stopPropagation(); });
         button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); failed = false; errorBox.remove(); start(); });
         errorBox.append(message, button); root.querySelector('.mermaid-diagram')?.prepend(errorBox); options.onLayout?.();
       }).finally(() => { loading = false; });
@@ -399,7 +399,13 @@
       window.addEventListener('pagehide', pagehide); window.addEventListener('pageshow', pageshow); start();
       document.addEventListener('compositionend', inputSettled);
     });
-    return { suspend() { paused = true; adapter?.suspend(); }, resume() { paused = false; if (adapter) adapter.resume(); else start(); },
+    return { update(source, language) {
+      const diagram = root.querySelector('.mermaid-diagram'), carrier = diagram?.querySelector('.mermaid-source');
+      if (carrier?.content && carrier.content.textContent !== source) carrier.content.textContent = source;
+      else if (carrier && !carrier.content && carrier.textContent !== source) carrier.textContent = source;
+      if (diagram && diagram.dataset.mermaidLang !== (language || 'mermaid')) diagram.dataset.mermaidLang = language || 'mermaid';
+      adapter?.update(source, language);
+    }, suspend() { paused = true; adapter?.suspend(); }, resume() { paused = false; if (adapter) adapter.resume(); else start(); },
       destroy() { if (disposed) return; disposed = true; unwatch(); adapter?.destroy(); errorBox?.remove(); } };
   }
   const canvasImage = parsed => !!window.MarkdownMini?.isCanvasImage(parsed);
@@ -1137,6 +1143,82 @@
     }
     destroy(dom) { dom.__relatumMathPreview?.owner.detach(dom); }
     ignoreEvent() { return true; }
+  }
+
+  function measureMermaid(view, dom, coordinator, id) {
+    view.requestMeasure({ key: dom, read() { return dom.isConnected ? dom.getBoundingClientRect().height : 0; },
+      write(height) {
+        if (!height) return;
+        const heights = coordinator.mermaidHeights ||= new Map();
+        heights.delete(id); heights.set(id, height);
+        while (heights.size > 32) heights.delete(heights.keys().next().value);
+      },
+    });
+  }
+
+  class MermaidEditPreviewWidget extends WidgetType {
+    constructor(spec, coordinator) { super(); this.spec = spec; this.coordinator = coordinator; this.epoch = coordinator.epoch; }
+    eq(other) {
+      return other.epoch === this.epoch && other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint
+        && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast;
+    }
+    get estimatedHeight() { return this.coordinator.mermaidHeights?.get(this.spec.id) || 70; }
+    toDOM(view) {
+      const dom = document.createElement('div'); dom.contentEditable = 'false';
+      dom.addEventListener('mousedown', event => { if (!event.button) event.preventDefault(); });
+      this.updateDOM(dom, view); return dom;
+    }
+    updateDOM(dom, view) {
+      const owner = view.plugin(this.coordinator.mermaidPreviewPlugin);
+      if (!owner || dom.__relatumMermaidPreview && dom.__relatumMermaidPreview.epoch !== this.epoch) return false;
+      owner.attach(dom, this.spec); return true;
+    }
+    destroy(dom) { dom.__relatumMermaidPreview?.owner.detach(dom); }
+    ignoreEvent() { return true; }
+  }
+
+  function createMermaidEditPreviewPlugin(coordinator) {
+    const plugin = ViewPlugin.fromClass(class {
+      constructor(view) { this.view = view; this.entries = new Map(); this.disposed = false; }
+      attach(dom, spec) {
+        let entry = this.entries.get(dom);
+        if (!entry) {
+          entry = { owner: this, dom, spec, epoch: coordinator.epoch, control: null };
+          this.entries.set(dom, entry); dom.__relatumMermaidPreview = entry;
+          dom.innerHTML = safeIsolatedResult(spec.renderSource || spec.source).html;
+          entry.control = attachNoteMermaid(dom, { mode: 'live', editing: true, historyKey: entry.epoch + ':' + spec.id,
+            isCurrent: () => {
+              if (this.disposed || entry.epoch !== coordinator.epoch || this.entries.get(dom) !== entry || compositionActive(this.view)) return false;
+              const value = this.view.state.field(coordinator.field, false), current = value?.byId.get(entry.spec.id);
+              return !!current && value.activeIds.has(current.id) && current.source === entry.spec.source;
+            },
+            whenSettled: () => runWhenInputSettled(this.view, () => true),
+            onLayout: () => runWhenInputSettled(this.view, () => {
+              if (!this.disposed && entry.epoch === coordinator.epoch && dom.isConnected) {
+                dom.style.removeProperty('min-height'); measureMermaid(this.view, dom, coordinator, entry.spec.id);
+              }
+            }),
+          });
+        }
+        entry.spec = spec;
+        dom.className = 'note-live-rich-block is-mermaid note-live-mermaid-preview';
+        dom.setAttribute('aria-label', document.documentElement.lang === 'en' ? 'Diagram preview' : '图表预览');
+        if (spec.calloutType) {
+          const descriptor = window.MarkdownMini.noteBlock(spec.calloutType);
+          dom.classList.add('note-block-math'); dom.classList.toggle('note-color-block', !!descriptor.color);
+          dom.classList.toggle('note-live-callout-last', !!spec.calloutLast); dom.style.cssText = descriptor.style;
+        } else dom.removeAttribute('style');
+        const height = coordinator.mermaidHeights?.get(spec.id);
+        if (height && !dom.querySelector('.note-mermaid-stage > svg')) dom.style.minHeight = height + 'px';
+        entry.control.update(fencedCodeBody(spec.renderSource || spec.source), spec.language);
+      }
+      detach(dom) {
+        const entry = this.entries.get(dom); if (!entry) return;
+        this.entries.delete(dom); delete dom.__relatumMermaidPreview; entry.control.destroy();
+      }
+      destroy() { this.disposed = true; Array.from(this.entries.keys()).forEach(dom => this.detach(dom)); }
+    });
+    coordinator.mermaidPreviewPlugin = plugin; return plugin;
   }
 
   function createMathEditPreviewPlugin(coordinator) {
@@ -2300,6 +2382,7 @@
     const current = () => host.dataset.noteReadingEpoch === epoch && content.isConnected;
     host.__relatumReadingCode = prepareReadingCode(content, current);
     if (result.features && result.features.mermaid && mermaidEnabled()) {
+      window.RelatumNoteMermaid?.reserve?.(content, { mode: 'reading' });
       host.__relatumReadingMermaid = attachNoteMermaid(content, { mode: 'reading', isCurrent: current });
     }
     if (result.features && result.features.math) {
@@ -2350,6 +2433,7 @@
         && other.notePath === this.notePath && other.epoch === this.epoch && other.selected === this.selected
         && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast && other.spec.colorFirst === this.spec.colorFirst;
     }
+    get estimatedHeight() { return this.spec.kind === 'mermaid' ? this.coordinator.mermaidHeights?.get(this.spec.id) || 70 : -1; }
     isCurrent(view, wrap, token) {
       if (this.token !== token || !wrap.isConnected || this.coordinator.epoch !== this.epoch) return false;
       const current = this.coordinator.spec(view, this.spec.id);
@@ -2380,6 +2464,9 @@
     toDOM(view) {
       const wrap = document.createElement('div');
       wrap.className = 'note-live-rich-block is-' + this.spec.kind;
+      if (this.spec.kind === 'mermaid' && this.coordinator.mermaidHeights?.has(this.spec.id)) {
+        wrap.style.minHeight = this.coordinator.mermaidHeights.get(this.spec.id) + 'px';
+      }
       const token = {};
       this.token = token;
 
@@ -2445,10 +2532,13 @@
         const hasMath = this.spec.kind === 'derive' || !!(result.features && result.features.math);
         if (hasMermaid && mermaidEnabled()) {
           this.mermaidControl = attachNoteMermaid(wrap, { mode: 'live',
+            historyKey: this.epoch + ':' + this.spec.id,
             isCurrent: () => this.isCurrent(view, wrap, token) && !compositionActive(view),
             whenSettled: () => runWhenInputSettled(view, () => true),
             onLayout: () => runWhenInputSettled(view, () => {
-              if (this.isCurrent(view, wrap, token)) view.requestMeasure();
+              if (this.isCurrent(view, wrap, token)) {
+                wrap.style.removeProperty('min-height'); measureMermaid(view, wrap, this.coordinator, this.spec.id);
+              }
             }),
           });
         }
@@ -2840,6 +2930,10 @@
       && activeIds.has(spec.id) && !projection.hidden.has(spec.id) && editableMathSource(spec)).map(spec => Decoration.widget({
       widget: new MathEditPreviewWidget(spec, coordinator), block: true, side: 1, blockId: spec.id, mathPreview: true,
     }).range(spec.to));
+    const mermaidPreviews = (specs, activeIds, projection) => specs.filter(spec => spec.kind === 'mermaid'
+      && activeIds.has(spec.id) && !projection.hidden.has(spec.id) && fencedCodeBody(spec.renderSource || spec.source).trim()).map(spec => Decoration.widget({
+      widget: new MermaidEditPreviewWidget(spec, coordinator), block: true, side: 1, blockId: spec.id, mermaidPreview: true,
+    }).range(spec.to));
     const calloutProjections = (projection, state, focused) => {
       const ranges = [];
       projection.callouts.forEach(spec => {
@@ -2966,7 +3060,9 @@
               widget: blockWidget(spec, notePath(), options, coordinator,
                 selectedImageIds.has(spec.id)),
               block: true, inclusive: compactBlockProjection(spec, transaction.state, options), blockId: spec.id,
-            }).range(spec.from, spec.to)).concat(hidden, mathPreviews(specs, activeIds, projection).filter(range => refresh.has(range.value.spec.blockId))),
+            }).range(spec.from, spec.to)).concat(hidden,
+              mathPreviews(specs, activeIds, projection).filter(range => refresh.has(range.value.spec.blockId)),
+              mermaidPreviews(specs, activeIds, projection).filter(range => refresh.has(range.value.spec.blockId))),
             sort: true,
           });
           atomic = atomic.update({
@@ -3277,6 +3373,10 @@
       });
       protectedRanges.forEach((range) => {
         if (/^(?:FencedCode|CodeBlock|IndentedCode)$/.test(range.kind)) {
+          // A projected diagram already owns the entire fence. Decorating its
+          // hidden first line leaves an empty code-colored stripe above it.
+          if (blockSpecs.some(spec => spec.kind === 'mermaid' && blockIsProjected(spec, blockValue.activeIds)
+              && spec.from <= range.from && spec.to >= range.to)) return;
           const blockFirst = view.state.doc.lineAt(range.from).number;
           const blockLast = view.state.doc.lineAt(Math.max(range.from, range.to - 1)).number;
           const visibleFirst = Math.max(first.number, blockFirst);
@@ -4635,6 +4735,7 @@
     const notePath = () => currentPath;
     const blockField = createBlockField(notePath, safeOptions, coordinator, inputSession);
     const mathPreviewPlugin = createMathEditPreviewPlugin(coordinator);
+    const mermaidPreviewPlugin = createMermaidEditPreviewPlugin(coordinator);
     const inlinePlugin = createInlinePlugin(blockField, notePath, safeOptions);
     const sourceFoldPlugin = ViewPlugin.fromClass(class {
       constructor(view) {
@@ -4806,7 +4907,7 @@
     });
 
     function livePreviewExtensions() {
-      return sourceMode ? [sourceFoldPlugin] : [blockField, viewportParsePlugin, inlinePlugin, mathPreviewPlugin];
+      return sourceMode ? [sourceFoldPlugin] : [blockField, viewportParsePlugin, inlinePlugin, mathPreviewPlugin, mermaidPreviewPlugin];
     }
 
     function editorLabelExtension() {
@@ -5221,6 +5322,7 @@
       if (tableController) tableController.close();
       coordinator.epoch += 1;
       coordinator.folds.clear(); coordinator.foldPositions.clear(); coordinator.records = [];
+      coordinator.mermaidHeights?.clear();
       imageTextController.setActive(false);
       if (pendingSourceMode !== null) { sourceMode = pendingSourceMode; pendingSourceMode = null; }
       if (pendingShortcutBindings !== null) {
