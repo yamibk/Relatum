@@ -25,12 +25,35 @@
     const title = find('[data-settings-title]'), reset = find('[data-settings-action="reset-category"]');
     const status = find('[data-settings-status]');
     const motion = matchMedia('(prefers-reduced-motion: reduce)');
-    let selected = categories[0].id, trigger = null, closing = 0, statusTimer = 0, resetTarget = '', backdropDown = false, disposed = false;
+    let selected = categories[0].id, trigger = null, closing = false, statusTimer = 0, resetTarget = '', backdropDown = false, disposed = false;
     const positions = new Map(), buttons = new Map(), lifetime = new AbortController();
+    const animations = new Map();
     const listen = (el, event, fn, extra = {}) => el.addEventListener(event, fn, { ...extra, signal: lifetime.signal });
     const english = () => options.language() === 'en';
     const text = (zh, en) => english() ? en : zh;
     const label = category => category.label[english() ? 1 : 0];
+    // One finite animation per surface; cancellation releases its compositor state.
+    function stopMotion(key, finish = false) {
+      const entry = animations.get(key);
+      if (!entry) return;
+      animations.delete(key); entry.animation.onfinish = null; entry.animation.cancel();
+      if (finish) entry.done?.();
+    }
+    function finishMotion() { Array.from(animations.keys()).forEach(key => stopMotion(key, true)); }
+    function animate(key, element, from, to, duration, done) {
+      stopMotion(key);
+      if (motion.matches || !dialog.open || typeof element.animate !== 'function') { done?.(); return; }
+      const animation = element.animate([from, to], { duration, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'both' });
+      const entry = { animation, done }; animations.set(key, entry);
+      animation.onfinish = () => { if (animations.get(key) === entry) stopMotion(key, true); };
+    }
+    function enterContent(element) {
+      animate('page', element, { opacity: .45, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }, 160);
+      animate('title', title, { opacity: .5, transform: 'translateY(3px)' }, { opacity: 1, transform: 'none' }, 140);
+    }
+    function appearance(element) {
+      const style = getComputedStyle(element); return { opacity: style.opacity, transform: style.transform };
+    }
     content.className = 'relatum-settings-pages'; content.removeAttribute('inert'); content.removeAttribute('role');
     scroll.append(content); document.body.append(dialog);
     categories.forEach(category => {
@@ -43,8 +66,10 @@
     });
     // Chrome translates through this controller; existing preference DOM keeps its own translator.
     [find('aside'), find('header'), find('.relatum-settings-footer'), confirm, results].forEach(el => el.dataset.i18nManaged = 'true');
-    function show(id, target) {
+    function show(id, target, transition = true) {
       const category = categories.find(item => item.id === id) || categories[0];
+      const changed = selected !== category.id || !results.hidden;
+      stopMotion('page'); stopMotion('title');
       if (selected && !search.value && !content.hidden) positions.set(selected, scroll.scrollTop);
       selected = category.id; results.hidden = true; content.hidden = false; reset.hidden = false;
       categories.forEach(item => {
@@ -59,11 +84,15 @@
         if (control) control.focus({ preventScroll: true });
         else { target.tabIndex = -1; target.focus({ preventScroll: true }); }
       }
+      if (changed && transition) enterContent(category.panel);
     }
     function searchSettings() {
       if (search.isComposing) return;
       const query = search.value.trim().toLocaleLowerCase();
       if (!query) { show(selected); return; }
+      const entering = results.hidden;
+      if (entering) positions.set(selected, scroll.scrollTop);
+      stopMotion('page'); stopMotion('title');
       options.onCategoryChange?.('');
       content.hidden = true; results.hidden = false; reset.hidden = true; results.replaceChildren();
       title.textContent = text('搜索结果', 'Search results');
@@ -86,32 +115,52 @@
       });
       if (!results.childElementCount) results.textContent = text('没有找到相关设置', 'No matching settings');
       scroll.scrollTop = 0;
+      // Further keystrokes update immediately, without repeatedly fading results.
+      if (entering) enterContent(results);
     }
-    function cancelReset() {
-      confirm.hidden = true; resetTarget = '';
+    function cancelReset({ instant = false } = {}) {
+      const visible = !confirm.hidden, from = visible ? appearance(confirm) : null;
+      const card = confirm.firstElementChild, cardFrom = visible ? appearance(card) : null;
+      resetTarget = ''; confirm.inert = true; confirm.setAttribute('aria-hidden', 'true');
       find('.relatum-settings-sidebar').inert = false; find('.relatum-settings-main').inert = false;
+      stopMotion('confirm'); stopMotion('confirm-card');
+      confirm.classList.add('is-closing');
+      const finish = () => { confirm.hidden = true; confirm.classList.remove('is-closing'); };
+      if (instant || !visible) { finish(); return; }
+      animate('confirm-card', card, cardFrom, { opacity: 0, transform: 'translateY(4px) scale(.985)' }, 120);
+      animate('confirm', confirm, from, { opacity: 0, transform: 'none' }, 120, finish);
     }
     function askReset(all) {
+      const visible = !confirm.hidden, from = visible ? appearance(confirm) : { opacity: 0, transform: 'none' };
+      const card = confirm.firstElementChild, cardFrom = visible ? appearance(card) : { opacity: 0, transform: 'translateY(6px) scale(.985)' };
       resetTarget = all ? 'all' : selected;
       find('#relatum-settings-confirm-title').textContent = all ? text('恢复全部笔记设置？', 'Reset all note settings?') : text('恢复此分类的默认设置？', 'Reset this category?');
       confirm.querySelector('p').textContent = all
         ? text('恢复外观、编辑、文件命名、引导、图谱、画布默认样式和快捷键。笔记内容保持原样。', 'Restore appearance, editing, naming, guide, graph, canvas defaults and shortcuts. Your notes stay unchanged.')
         : text('将“' + label(categories.find(item => item.id === selected)) + '”恢复为默认值。', 'Restore defaults for “' + label(categories.find(item => item.id === selected)) + '”.');
-      confirm.hidden = false; find('.relatum-settings-sidebar').inert = true; find('.relatum-settings-main').inert = true;
+      confirm.hidden = false; confirm.inert = false; confirm.removeAttribute('aria-hidden'); confirm.classList.remove('is-closing');
+      find('.relatum-settings-sidebar').inert = true; find('.relatum-settings-main').inert = true;
+      animate('confirm', confirm, from, { opacity: 1, transform: 'none' }, 160);
+      animate('confirm-card', card, cardFrom, { opacity: 1, transform: 'none' }, 180);
       find('[data-settings-action="cancel-reset"]').focus();
     }
     function close({ restoreFocus = true, instant = false } = {}) {
       if (!dialog.open) return;
-      clearTimeout(closing); cancelReset(); dialog.inert = true; dialog.classList.add('is-closing');
+      if (closing && !instant) return;
+      const from = appearance(dialog), wasClosing = closing;
+      closing = true; cancelReset({ instant: true });
+      Array.from(animations.keys()).forEach(key => stopMotion(key));
+      dialog.inert = true; dialog.classList.add('is-closing');
       clearTimeout(statusTimer); status.textContent = ''; results.replaceChildren(); search.value = '';
-      options.onClose?.();
+      if (!wasClosing) options.onClose?.();
       const finish = () => {
-        closing = 0; dialog.close(); dialog.hidden = true; content.hidden = true; dialog.classList.remove('is-closing');
+        closing = false; dialog.close(); dialog.hidden = true; content.hidden = true; dialog.classList.remove('is-closing');
         if (restoreFocus && trigger?.isConnected && !trigger.closest('[hidden], [inert]')) trigger.focus({ preventScroll: true });
       };
-      if (instant || motion.matches) finish(); else closing = setTimeout(finish, 140);
+      if (instant) finish(); else animate('dialog', dialog, from, { opacity: 0, transform: 'translateY(5px) scale(.99)' }, 140, finish);
     }
     function setLanguage() {
+      finishMotion();
       status.textContent = '';
       find('h2').textContent = text('笔记设置', 'Note settings');
       find('[data-settings-eyebrow]').textContent = text('偏好设置', 'PREFERENCES');
@@ -129,14 +178,21 @@
     listen(search, 'compositionstart', () => { search.isComposing = true; });
     listen(search, 'compositionend', () => { search.isComposing = false; searchSettings(); });
     listen(search, 'input', searchSettings);
-    listen(dialog, 'pointerdown', event => { backdropDown = event.target === dialog && (event.clientX < dialog.getBoundingClientRect().left || event.clientX > dialog.getBoundingClientRect().right || event.clientY < dialog.getBoundingClientRect().top || event.clientY > dialog.getBoundingClientRect().bottom); });
+    listen(dialog, 'pointerdown', event => {
+      // Commit form geometry before opening an anchored color picker or dragging a range.
+      if (event.target.closest('.relatum-settings-page')) {
+        if (!closing) stopMotion('dialog', true);
+        stopMotion('page', true); stopMotion('title', true);
+      }
+      backdropDown = event.target === dialog && (event.clientX < dialog.getBoundingClientRect().left || event.clientX > dialog.getBoundingClientRect().right || event.clientY < dialog.getBoundingClientRect().top || event.clientY > dialog.getBoundingClientRect().bottom);
+    }, { capture: true });
     listen(dialog, 'click', async event => {
       if (event.target === dialog && backdropDown) { backdropDown = false; close(); return; }
       const action = event.target.closest('[data-settings-action]')?.dataset.settingsAction;
       if (action === 'close') close();
       else if (action === 'reset-category' || action === 'reset-all') askReset(action === 'reset-all');
       else if (action === 'cancel-reset') { cancelReset(); reset.focus(); }
-      else if (action === 'accept-reset') {
+      else if (action === 'accept-reset' && resetTarget) {
         const target = resetTarget; cancelReset();
         try { if (target === 'all') await options.resetAll(); else await categories.find(item => item.id === target)?.reset?.(); }
         catch (_) { if (dialog.open && !dialog.inert) { status.textContent = text('恢复失败，请重试', 'Could not restore defaults. Please retry.'); reset.focus(); } return; }
@@ -150,9 +206,9 @@
       event.stopPropagation();
       if (event.isComposing || event.keyCode === 229) return;
       if (options.onKeyDown?.(event)) return;
-      if (event.key === 'Escape') { event.preventDefault(); if (!confirm.hidden) { cancelReset(); reset.focus(); } else if (search.value) { search.value = ''; show(selected); } else close(); }
+      if (event.key === 'Escape') { event.preventDefault(); if (resetTarget) { cancelReset(); reset.focus(); } else if (search.value) { search.value = ''; show(selected); } else close(); }
       if (event.key === 'Tab') {
-        const scope = confirm.hidden ? dialog : confirm;
+        const scope = resetTarget ? confirm : dialog;
         const focusable = Array.from(scope.querySelectorAll('button,input,select,textarea,[tabindex="0"]')).filter(el => !el.disabled && !el.closest('[hidden], [inert]') && el.getClientRects().length);
         const first = focusable[0], last = focusable.at(-1);
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
@@ -160,6 +216,9 @@
       }
     });
     listen(dialog, 'cancel', event => { event.preventDefault(); });
+    listen(window, 'resize', finishMotion);
+    listen(window, 'blur', finishMotion);
+    listen(motion, 'change', () => { if (motion.matches) finishMotion(); });
     listen(nav, 'keydown', event => {
       if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault(); const items = Array.from(buttons.values()), index = items.indexOf(document.activeElement);
@@ -170,12 +229,15 @@
     return { dialog, setLanguage, get isOpen() { return dialog.open && !dialog.inert; },
       open({ category = selected, trigger: source } = {}) {
         if (disposed) return;
-        clearTimeout(closing); closing = 0; clearTimeout(statusTimer); status.textContent = '';
+        const from = dialog.open ? appearance(dialog) : { opacity: 0, transform: 'translateY(8px) scale(.985)' };
+        const alreadyOpen = dialog.open && !closing;
+        stopMotion('dialog'); closing = false; clearTimeout(statusTimer); status.textContent = '';
         trigger = source || trigger || document.activeElement; dialog.hidden = false; dialog.inert = false; dialog.classList.remove('is-closing');
-        cancelReset(); search.value = ''; content.hidden = false;
-        if (!dialog.open) dialog.showModal(); show(category); buttons.get(selected).focus({ preventScroll: true }); options.onOpen?.();
+        cancelReset({ instant: true }); search.value = ''; content.hidden = false;
+        if (!dialog.open) dialog.showModal(); show(category, null, alreadyOpen); buttons.get(selected).focus({ preventScroll: true }); options.onOpen?.();
+        if (!alreadyOpen) animate('dialog', dialog, from, { opacity: 1, transform: 'none' }, 180);
       }, close,
-      destroy() { close({ restoreFocus: false, instant: true }); disposed = true; lifetime.abort(); clearTimeout(statusTimer); dialog.remove(); },
+      destroy() { close({ restoreFocus: false, instant: true }); disposed = true; lifetime.abort(); finishMotion(); clearTimeout(statusTimer); dialog.remove(); },
     };
   }
   window.RelatumSettingsDialog = Object.freeze({ create });

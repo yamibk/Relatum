@@ -11,10 +11,11 @@
   box-shadow: 0 32px 100px #0003, 0 4px 18px #0001;
   font: 13px/1.5 var(--font-ui, system-ui, sans-serif);
 }
-.relatum-settings[open] { display: grid; grid-template-columns: 216px minmax(0, 1fr); animation: relatumSettingsIn 180ms ease both; }
+.relatum-settings[open] { display: grid; grid-template-columns: 216px minmax(0, 1fr); }
 .relatum-settings[hidden] { display: none; }
-.relatum-settings::backdrop { background: rgba(0,0,0,.23); }
-.relatum-settings.is-closing { animation: relatumSettingsOut 140ms ease both; }
+.relatum-settings::backdrop { background: rgba(0,0,0,.23); opacity: 1; transition: opacity 160ms ease; }
+.relatum-settings.is-closing::backdrop { opacity: 0; transition-duration: 140ms; }
+@starting-style { .relatum-settings[open]::backdrop { opacity: 0; } }
 .relatum-settings *, .relatum-settings *::before, .relatum-settings *::after { box-sizing: border-box; }
 .relatum-settings button, .relatum-settings input, .relatum-settings select { font: inherit; }
 .relatum-settings button { cursor: pointer; color: inherit; }
@@ -71,6 +72,7 @@
 .relatum-settings-confirm footer { display: flex; justify-content: flex-end; gap: 10px; }
 .relatum-settings-confirm button { border: 0; border-radius: 9px; background: var(--settings-card); padding: 9px 15px; }
 .relatum-settings-confirm [data-settings-action="accept-reset"] { color: var(--settings-bg); background: var(--settings-text); }
+.relatum-settings-confirm.is-closing { pointer-events: none; }
 .relatum-settings .note-shortcut-row { border: 0; border-radius: 10px; padding: 12px; margin-bottom: 4px; background: var(--settings-card); }
 .relatum-settings .note-shortcut-row strong { font-size: 12px; }
 .relatum-settings .note-canvas-field { border: 0; margin-bottom: 4px; padding: 10px; border-radius: 8px; background: var(--settings-card); }
@@ -98,8 +100,53 @@ body.start-page[data-start-theme="dark"] .relatum-settings {
   --text: var(--settings-text); --text-secondary: var(--settings-muted); --text-tertiary: var(--settings-muted);
   box-shadow: 0 32px 100px #0009;
 }
-@keyframes relatumSettingsIn { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
-@keyframes relatumSettingsOut { to { opacity: 0; transform: translateY(5px) scale(.99); } }
+/* Short, event-driven feedback. No dimensions, blur, or persistent layer hints animate. */
+.relatum-settings-nav button,
+.relatum-settings-result,
+.relatum-settings-close,
+.relatum-settings-confirm button,
+.relatum-settings-page .note-sort-option,
+.relatum-settings-page .note-name-option,
+.relatum-settings .note-canvas-default-tabs button,
+.relatum-settings .note-canvas-shapes button,
+.relatum-settings .note-shortcut-add,
+.relatum-settings .note-shortcut-chip button {
+  transition: background-color 140ms ease, color 140ms ease, transform 120ms ease;
+}
+.relatum-settings-close:active,
+.relatum-settings-confirm button:active:not(:disabled),
+.relatum-settings-result:active,
+.relatum-settings .note-shortcut-add:active,
+.relatum-settings .note-shortcut-chip button:active { transform: scale(.98); }
+.relatum-settings-nav button svg { transition: transform 120ms ease; }
+.relatum-settings-nav button:active svg { transform: scale(.9); }
+.relatum-settings-result:hover,
+.relatum-settings-confirm button:hover,
+.relatum-settings-page .note-sort-option:hover,
+.relatum-settings-page .note-name-option:hover { background-color: var(--settings-selected); }
+.relatum-settings-confirm [data-settings-action="accept-reset"]:hover { background-color: var(--settings-text); opacity: .85; }
+.relatum-settings-page .note-settings-font,
+.relatum-settings-page .note-settings-toggle,
+.relatum-settings-page .note-graph-preload-setting,
+.relatum-settings-guide-option,
+.relatum-settings .note-canvas-field,
+.relatum-settings .note-shortcut-row { transition: background-color 150ms ease; }
+.relatum-settings .note-shortcut-row.is-recording { background: var(--settings-selected); }
+.relatum-settings .note-shortcut-add.is-recording { animation: relatumSettingsFeedback 160ms ease; border-color: var(--settings-muted); background: var(--settings-selected); }
+.relatum-settings-page .note-settings-font:focus-within,
+.relatum-settings-page .note-settings-toggle:focus-within,
+.relatum-settings-page .note-graph-preload-setting:focus-within { background-color: var(--settings-selected); }
+.relatum-settings-search { transition: box-shadow 140ms ease, color 140ms ease; }
+.relatum-settings-search:focus-within { color: var(--settings-text); box-shadow: 0 0 0 2px var(--settings-selected); }
+.relatum-settings .note-library-name-field input,
+.relatum-settings .note-canvas-field input:not([type="range"]),
+.relatum-settings .note-canvas-field select { transition: box-shadow 140ms ease; }
+.relatum-settings-reset-all,
+.relatum-settings-footer button { transition: opacity 120ms ease; }
+.relatum-settings-reset-all:hover,
+.relatum-settings-footer button:hover { opacity: .7; }
+.relatum-settings [data-settings-status]:not(:empty) { animation: relatumSettingsFeedback 160ms ease; }
+@keyframes relatumSettingsFeedback { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 @media (max-width: 720px) {
   .relatum-settings { width: calc(100vw - 24px); height: calc(100dvh - 24px); border-radius: 18px; }
   .relatum-settings[open] { grid-template-columns: minmax(0,1fr); grid-template-rows: auto minmax(0,1fr); }
@@ -114,4 +161,6 @@ body.start-page[data-start-theme="dark"] .relatum-settings {
   .relatum-settings-scroll { padding-inline: 22px; }
   .relatum-settings-footer { padding-inline: 22px; }
 }
-@media (prefers-reduced-motion: reduce) { .relatum-settings[open], .relatum-settings.is-closing { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .relatum-settings::backdrop, .relatum-settings *, .relatum-settings *::before, .relatum-settings *::after { transition: none !important; animation: none !important; }
+}

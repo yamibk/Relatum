@@ -7,6 +7,138 @@ const repo = path.resolve(__dirname, '..'), pause = ms => new Promise(resolve =>
 const artifacts = process.env.RELATUM_ARTIFACT_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-settings-artifacts-'));
 fs.mkdirSync(artifacts, { recursive: true });
 async function port() { const server = net.createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); const value = server.address().port; await new Promise(resolve => server.close(resolve)); return value; }
+async function checkMotion(page, mode) {
+  const report = [];
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  for (const [theme, width] of [['light', 1440], ['dark', 560]]) {
+    await page.setViewportSize({ width, height: 980 });
+    await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
+    await pause(220);
+    const changes = await page.evaluate(() => {
+      const dialog = document.querySelector('[data-role="note-settings-dialog"]');
+      const nav = id => dialog.querySelector('nav [data-settings-category="' + id + '"]');
+      nav('editing').click();
+      const panel = dialog.querySelector('.relatum-settings-page[data-settings-category="editing"]');
+      const entry = panel.getAnimations()[0];
+      const duration = entry?.effect.getTiming().duration;
+      if (entry) entry.currentTime = 60;
+      const intermediate = Number(getComputedStyle(panel).opacity);
+      nav('editing').click(); const sameCategory = panel.getAnimations().length;
+      for (let i = 0; i < 30; i++) nav(i % 2 ? 'appearance' : 'guide').click();
+      const running = dialog.getAnimations({ subtree: true }).filter(animation => animation.constructor.name === 'Animation').length;
+      return { duration, intermediate, sameCategory, running, visible: dialog.querySelectorAll('.relatum-settings-page:not([hidden])').length };
+    });
+    assert.equal(changes.duration, 160); assert(changes.intermediate > .45 && changes.intermediate < 1);
+    assert.equal(changes.sameCategory, 0, 'same category does not replay an animation');
+    assert(changes.running <= 2, 'rapid category changes only retain the current content and title'); assert.equal(changes.visible, 1);
+    const geometry = await page.evaluate(() => {
+      const dialog = document.querySelector('dialog.relatum-settings');
+      dialog.querySelector('nav [data-settings-category="appearance"]').click();
+      const input = dialog.querySelector('[data-role="note-font-scale"]'), panel = input.closest('[data-settings-category]');
+      let transform = '';
+      input.addEventListener('pointerdown', () => { transform = getComputedStyle(panel).transform; }, { once: true });
+      input.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      return transform;
+    });
+    assert.equal(geometry, 'none', 'the target receives pointerdown only after content geometry settles');
+    const search = await page.evaluate(() => {
+      const dialog = document.querySelector('dialog.relatum-settings'), input = dialog.querySelector('[data-settings-search]'), results = dialog.querySelector('.relatum-settings-results');
+      input.focus(); input.value = 'mer'; input.dispatchEvent(new Event('input', { bubbles: true }));
+      const first = results.getAnimations().length;
+      input.value = 'mermaid'; input.dispatchEvent(new Event('input', { bubbles: true }));
+      const continued = results.getAnimations().length;
+      const focused = document.activeElement === input;
+      input.value = ''; input.dispatchEvent(new Event('input', { bubbles: true }));
+      return { first, continued, focused };
+    });
+    assert.equal(search.first, 1); assert.equal(search.continued, 0, 'typing does not repeatedly fade results'); assert(search.focused);
+    const confirmation = await page.evaluate(() => {
+      const dialog = document.querySelector('dialog.relatum-settings'), confirm = dialog.querySelector('.relatum-settings-confirm');
+      const reset = dialog.querySelector('[data-settings-action="reset-category"]'); reset.click();
+      confirm.getAnimations()[0].currentTime = 50;
+      const before = Number(getComputedStyle(confirm).opacity);
+      dialog.querySelector('[data-settings-action="cancel-reset"]').click();
+      const disabled = confirm.inert;
+      reset.click();
+      const after = Number(getComputedStyle(confirm).opacity);
+      return { before, after, disabled, focus: document.activeElement.dataset.settingsAction };
+    });
+    assert(confirmation.disabled, 'closing confirmation is inert immediately');
+    assert(Math.abs(confirmation.before - confirmation.after) < .03, 'reversing a confirmation preserves its current opacity');
+    assert.equal(confirmation.focus, 'cancel-reset');
+    await page.keyboard.press('Escape'); await pause(240);
+    assert(await page.locator('.relatum-settings-confirm').isHidden());
+    await page.evaluate(() => {
+      const nav = document.querySelector('nav [data-settings-category="shortcuts"]'); nav.click();
+      document.querySelector('[data-note-shortcut-action="record"]').click();
+    });
+    await pause(250);
+    assert.equal(await page.locator('.note-shortcut-add.is-recording').evaluate(el => el.getAnimations().length), 0, 'recording has no recurring pulse');
+    await page.keyboard.press('Escape');
+    await page.screenshot({ path: path.join(artifacts, mode + '-motion-' + theme + '-' + width + '.png') });
+    report.push({ theme, width, ...changes, search, confirmation });
+  }
+  await page.evaluate(() => {
+    const dialog = document.querySelector('dialog.relatum-settings');
+    dialog.querySelector('nav [data-settings-category="guide"]').click();
+    dialog.querySelector('[data-settings-action="reset-category"]').click();
+  });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  assert.equal(await page.locator('dialog.relatum-settings').evaluate(el => el.getAnimations({ subtree: true }).length), 0, 'switching to reduced motion finishes all active effects');
+  await page.keyboard.press('Escape'); assert(await page.locator('.relatum-settings-confirm').isHidden());
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const reversed = await page.evaluate(() => {
+    const dialog = document.querySelector('dialog.relatum-settings');
+    T.setNoteSettingsOpen(false); dialog.getAnimations()[0].currentTime = 60;
+    const before = Number(getComputedStyle(dialog).opacity); T.setNoteSettingsOpen(true);
+    return { before, after: Number(getComputedStyle(dialog).opacity) };
+  });
+  assert(Math.abs(reversed.before - reversed.after) < .03, 'dialog reopen continues from the visible closing state');
+  const rootGeometry = await page.evaluate(() => {
+    const dialog = document.querySelector('dialog.relatum-settings');
+    dialog.querySelector('nav [data-settings-category="appearance"]').click();
+    dialog.querySelector('[data-role="note-font-scale"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    const transform = getComputedStyle(dialog).transform;
+    dialog.querySelector('nav [data-settings-category="guide"]').click();
+    return transform;
+  });
+  assert.equal(rootGeometry, 'none', 'form interaction also settles an opening dialog before anchor measurement');
+  await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+  assert.equal(await page.locator('dialog.relatum-settings').evaluate(el => el.getAnimations({ subtree: true }).filter(a => a.constructor.name === 'Animation').length), 0, 'resize settles transient transforms');
+  await page.evaluate(() => {
+    T.setNoteSettingsOpen(false); document.documentElement.dataset.desktopMinimized = '1'; window.dispatchEvent(new Event('canvasdesktop:visibility'));
+  });
+  assert(await page.locator('dialog.relatum-settings').isHidden(), 'minimize completes an in-progress close');
+  await page.evaluate(() => { delete document.documentElement.dataset.desktopMinimized; window.dispatchEvent(new Event('canvasdesktop:visibility')); T.setNoteSettingsOpen(true); });
+  await pause(250);
+  const fallback = await page.evaluate(() => {
+    const original = Element.prototype.animate;
+    try {
+      Element.prototype.animate = undefined;
+      const dialog = document.querySelector('dialog.relatum-settings');
+      dialog.querySelector('nav [data-settings-category="appearance"]').click();
+      dialog.querySelector('[data-settings-action="reset-category"]').click();
+      dialog.querySelector('[data-settings-action="cancel-reset"]').click();
+      T.setNoteSettingsOpen(false);
+      const hidden = dialog.hidden; T.setNoteSettingsOpen(true);
+      return hidden && dialog.matches(':modal') && !dialog.querySelector('.relatum-settings-main').inert;
+    } finally { Element.prototype.animate = original; }
+  });
+  assert(fallback, 'missing animation API keeps the settings usable');
+  // Measure only after pending editor/layout work settles; compositor motion requires no JS RAF loop.
+  await pause(350);
+  const idle = await page.evaluate(async () => {
+    const original = window.requestAnimationFrame; let calls = 0;
+    window.requestAnimationFrame = callback => { calls++; return original.call(window, callback); };
+    try { await new Promise(resolve => setTimeout(resolve, 500)); return { calls, animations: document.querySelector('dialog.relatum-settings').getAnimations({ subtree: true }).length }; }
+    finally { window.requestAnimationFrame = original; }
+  });
+  assert.equal(idle.calls, 0, 'idle settings schedule no animation frames'); assert.equal(idle.animations, 0);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 1440, height: 980 });
+  await page.evaluate(() => { document.body.dataset.startTheme = 'light'; document.querySelector('nav [data-settings-category="appearance"]').click(); });
+  fs.writeFileSync(path.join(artifacts, mode + '-motion.json'), JSON.stringify({ report, reversed, fallback, idle }, null, 2));
+}
 async function run(browser, mode) {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-settings-data-'));
   fs.mkdirSync(path.join(data, 'notes'), { recursive: true }); fs.mkdirSync(path.join(data, 'data'));
@@ -56,6 +188,7 @@ async function run(browser, mode) {
     assert(await dialog.evaluate(node => node.matches(':modal') && !node.closest('.start-workspace-stage')), 'dialog uses the top layer outside workspace transforms');
     assert.equal(await dialog.locator('nav button').count(), enabled.includes('notes.graph') || mode === 'full' ? enabled.includes('notes.canvas') || mode === 'full' ? 7 : 6 : enabled.includes('notes.canvas') ? 6 : 5);
     assert.equal(await button.locator('use').getAttribute('href'), '#note-icon-settings');
+    if (process.argv.includes('--motion')) await checkMotion(page, mode);
     await page.keyboard.press('Control+t'); assert.equal(await page.evaluate(() => T.state.tabs.length), 1, 'modal blocks workspace shortcuts');
     await page.keyboard.press('Shift+Tab'); assert(await page.evaluate(() => !!document.activeElement.closest('dialog')));
     await dialog.locator('[data-role="note-font-scale"]').fill('120'); await dialog.locator('[data-role="note-font-scale"]').dispatchEvent('input');

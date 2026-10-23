@@ -209,7 +209,8 @@ async function chooseSort(page, mode) {
     await page.locator('[data-settings-action="reset-category"]').click();
     await page.keyboard.press('Escape');
     assert(await page.locator('#note-library-settings').isVisible(), 'Escape should dismiss confirmation before settings');
-    assert.equal(await page.locator('.relatum-settings-confirm').isVisible(), false);
+    assert(await page.locator('.relatum-settings-confirm').evaluate(node => node.inert), 'confirmation stops accepting input before its exit transition');
+    await page.locator('.relatum-settings-confirm').waitFor({ state: 'hidden' });
     await page.locator('[data-settings-action="reset-category"]').click();
     await page.locator('[data-settings-action="accept-reset"]').click();
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTreeSort:v1')), null);
