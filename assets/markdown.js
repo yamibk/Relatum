@@ -972,7 +972,7 @@
     }
     return { protected: output.join('\n'), codes: codes };
   }
-  function restoreCode(html, codes) {
+  function restoreCode(html, codes, options) {
     if (!codes.length) return html;
     return html.replace(/\x00CODE(\d+)\x00/g, function (_, idx) {
       const b = codes[+idx];
@@ -980,7 +980,7 @@
       if (b.lang === 'derive') return renderDerive(b.code);   // 推导链围栏
       // Mermaid 围栏只产出安全的源码容器；统一渲染器负责补全简写、排队和错误展示。
       // template 让源码随批注净快照保存但不进入正文字符偏移；pre 是渲染器启动前的可见兜底。
-      if (/^(?:mermaid|flowchart|graph|flow|sequence|sequencediagram|timeline|gantt|class|classdiagram|state|statediagram|er|erdiagram|mindmap)$/.test(b.lang)) {
+      if ((!options || options.mermaid !== false) && /^(?:mermaid|flowchart|graph|flow|sequence|sequencediagram|timeline|gantt|class|classdiagram|state|statediagram|er|erdiagram|mindmap)$/.test(b.lang)) {
         return '<div class="mermaid-diagram" data-mermaid-lang="' + escapeHtml(b.lang) + '">'
           + '<template class="mermaid-source">' + escapeHtml(b.code) + '</template>'
           + '<pre class="mermaid-fallback">' + escapeHtml(b.code) + '</pre></div>';
@@ -1626,6 +1626,7 @@
     const header = opts.noteTags ? frontmatter(headingSource) : null;
     const body = header ? headingSource.slice(header.to) : headingSource;
     const features = scanFeatures(body);
+    if (opts.mermaid === false) features.mermaid = false;
     try {
       const codeGuard = protectCode(body, opts.noteBlocks);
       const inlineCodeGuard = protectInlineCode(codeGuard.protected);
@@ -1650,7 +1651,7 @@
       html = restoreLocalImages(html, imageGuard.images);
       html = restoreEscapes(html, escapeGuard.chars);
       html = restoreInlineCode(html, inlineCodeGuard.codes);
-      html = restoreCode(html, codeGuard.codes);
+      html = restoreCode(html, codeGuard.codes, opts);
       if (noteGuard) {
         html = html.replace(/<p(?: data-ln="\d+")?>(\x00NSYN(\d+)\x00)<\/p>/g,
           (whole, token, index) => noteGuard.values[+index].startsWith('<nav') ? token : whole);
@@ -1663,7 +1664,7 @@
           if (seen.has(use.key)) continue;
           seen.add(use.key);
           const entry = noteContext.footnotes.get(use.key);
-          const body = renderResult(entry.body, { noteSyntax: true, noteBlocks: true, localImages: opts.localImages,
+          const body = renderResult(entry.body, { noteSyntax: true, noteBlocks: true, localImages: opts.localImages, mermaid: opts.mermaid,
             noteContext, noteFootnoteBody: true, noteSourcePosition: opts.noteSourcePosition });
           features.math = features.math || body.features.math;
           features.mermaid = features.mermaid || body.features.mermaid;

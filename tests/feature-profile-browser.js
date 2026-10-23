@@ -21,6 +21,9 @@ function only(ids) { return Object.fromEntries(catalog.features.map(item => [ite
 const cases = [
   ['full', null],
   ['notes', only(['notes'])],
+  ['notes-mermaid', only(['notes', 'notes.mermaid', 'runtime.preload'])],
+  ['notes-mermaid-mixed-off', only(['notes', 'canvas', 'canvas.quicknotes', 'runtime.preload'])],
+  ['notes-mermaid-parent-off', only(['canvas', 'canvas.quicknotes', 'notes.mermaid'])],
   ['research', only(['research'])],
   ['career', only(['career'])],
   ['notes-career', only(['notes', 'career'])],
@@ -31,11 +34,17 @@ const cases = [
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
   try {
-    for (const [name, choices] of cases) {
+    const selected = process.argv.slice(2);
+    for (const [name, choices] of cases.filter(([name]) => !selected.length || selected.includes(name))) {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-features-'));
       fs.mkdirSync(path.join(root, 'canvases'));
       const canvas = path.join(root, 'canvases', 'test.canvas');
       fs.writeFileSync(canvas, JSON.stringify({ nodes: [], edges: [] }));
+      const noteFixture = (!choices || choices.notes) && ['full', 'notes', 'notes-mermaid', 'notes-mermaid-mixed-off'].includes(name);
+      if (noteFixture) {
+        fs.mkdirSync(path.join(root, 'notes'));
+        fs.writeFileSync(path.join(root, 'notes', 'Diagram.md'), '# 图表\n\n```mermaid\nflowchart LR\n A[开始] --> B[完成]\n```\n\n正文', 'utf8');
+      }
       if (name === 'career') {
         fs.mkdirSync(path.join(root, 'notes'));
         fs.writeFileSync(path.join(root, 'notes', 'A.md'), 'A [[B]]', 'utf8');
@@ -49,10 +58,14 @@ const cases = [
       const server = spawn(process.env.RELATUM_SERVER_EXE || process.env.RELATUM_PYTHON || 'python', process.env.RELATUM_SERVER_EXE ? args.slice(1) : args, { cwd: repo, env: { ...process.env, RELATUM_DATA_ROOT: root }, windowsHide: true, stdio: 'ignore' });
       const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
       // Restore a workspace/page that may have been disabled in this session.
-      await context.addInitScript(() => {
+      await context.addInitScript(noteFixture => {
         localStorage.setItem('canvas:startWorkspace:v1', 'notes');
         localStorage.setItem('canvas:hideSpecialPages', '1');
         localStorage.setItem('canvas:noteFocusMode:v1', '0');
+        if (noteFixture) {
+          localStorage.setItem('canvas:noteOpenTabs:v1', '["Diagram.md"]');
+          localStorage.setItem('canvas:noteActiveTab:v1', 'Diagram.md');
+        }
         window.pywebview = { api: { set_dirty() {}, set_note_workspace_active() {}, get_window_state: async () => ({ maximized: false }), close_window() {}, minimize_window() {}, toggle_maximize_window() {} } };
         function firstHeader() {
           const header = document.querySelector('body > .top-bar');
@@ -60,7 +73,7 @@ const cases = [
           window.__firstHeader = { height: header.getBoundingClientRect().height, opacity: getComputedStyle(header).opacity };
         }
         requestAnimationFrame(firstHeader);
-      });
+      }, noteFixture);
       try {
         let ready = false;
         for (let i = 0; i < 100; i++) {
@@ -84,11 +97,20 @@ const cases = [
         }
         const url = name === 'editor' ? base + '/editor.html?file=' + encodeURIComponent(canvas) : base + (enabled('canvas.study') ? '/?desktop=1&view=study' : '/?desktop=1');
         await page.goto(url, { waitUntil: 'load' });
-        if (name === 'full' || name === 'notes' && enabled('notes')) await page.waitForFunction(() => window.CanvasNoteWorkspace);
+        if (name === 'full' || enabled('notes')) await page.waitForFunction(() => window.CanvasNoteWorkspace);
         if (name === 'research') await page.waitForFunction(() => document.querySelector('iframe')?.contentWindow.RelatumResearchWorkspace);
         if (name === 'career') await page.waitForFunction(() => window.RelatumCareerReport);
         if (name === 'editor') await page.waitForFunction(() => document.body.classList.contains('canvas-ready'));
         await sleep(2400); // includes the existing idle prewarm jobs
+        if (noteFixture) {
+          await page.waitForSelector('.note-live-editor-host .cm-editor');
+          if (enabled('notes.mermaid')) await page.waitForSelector('.note-live-rich-block.is-mermaid [data-note-mermaid-rendered] svg');
+          else {
+            assert.equal(await page.locator('.note-live-rich-block.is-mermaid').count(), 0, name + ': disabled blocks remain code');
+            assert(!requests.some(url => url.includes('note-mermaid') || url.includes('vendor/pele/')), name + ': disabled note resources');
+          }
+          assert(!requests.some(url => url.includes('vendor/mermaid/')), name + ': notes never request the legacy engine');
+        }
         assert.deepEqual(errors, [], `${name}: page errors`);
         if (name !== 'editor') {
           const header = page.locator('body > .top-bar');

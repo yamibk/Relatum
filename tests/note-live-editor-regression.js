@@ -593,6 +593,14 @@ assert.strictEqual(syntax.fencedCodeBody('```c\nint final = 7;'), 'int final = 7
 assert.strictEqual(syntax.fencedCodeBody('~~~~text\n```\n~~~~'), '```',
   'only the matching closing delimiter may be stripped');
 assert.strictEqual(syntax.scanBlockSpecsFromString('```mermaid\ngraph TD; A-->B').length, 0, 'unclosed fences must remain source');
+const quotedMermaidSource = '> ```mermaid\n> flowchart TD\n> A[开始] --> B[结束]\n> ```';
+const quotedMermaid = liveProbe.RelatumNoteLiveSyntax.scanBlockSpecsFromString(quotedMermaidSource).find(block => block.kind === 'mermaid');
+assert(quotedMermaid, 'quoted Mermaid fences must project in Live Preview');
+assert.strictEqual(quotedMermaid.source, quotedMermaidSource, 'the original quote prefixes remain in the document identity');
+assert.strictEqual(quotedMermaid.renderSource, '```mermaid\nflowchart TD\nA[开始] --> B[结束]\n```');
+liveProbe.RelatumFeatureRuntime = { enabled: () => false };
+assert.strictEqual(liveProbe.RelatumNoteLiveSyntax.scanBlockSpecsFromString('```mermaid\nflowchart TD\nA-->B\n```').length, 0, 'disabled diagrams must remain normal fenced source');
+delete liveProbe.RelatumFeatureRuntime;
 assert.strictEqual(syntax.scanBlockSpecsFromString('```text\n$$\nx+1\n$$\n```').length, 0, 'custom math must not project inside code fences');
 assert.strictEqual(syntax.scanBlockSpecsFromString('$$\nx+1').length, 0, 'unclosed math must remain source');
 assert.strictEqual(syntax.scanBlockSpecsFromString('$$x^2+1$$')[0].kind, 'math', 'same-line $$ math must become a display block');

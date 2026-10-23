@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-10-23（补充连续图片点击卡死的范围合并与桌面验证，保留公式分类染色和正文滚动条固定留白布局）。
+> 最后按源码校准：2026-10-23（新增笔记可选 Mermaid / 离线 Pele 渲染，保留连续图片点击修复、公式分类染色和正文滚动条固定留白布局）。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -51,7 +51,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 顶层画布工作区的沉浸背景保留静态构图；顶栏使用高不透明度渐隐表面，不采样背景模糊。书脊闲置光晕只播放有限反馈，速记便签的合成提示只在真实拖动期间存在，不给星图标签常驻 `will-change`。
 - 编辑器启用深色语义且背景判定为深色时，右侧完整面板、简洁样式面板与简洁节点入口统一使用高不透明度的墨绿黑表面、细亮边框和暖白选中态；这些常驻面板不使用 `backdrop-filter`，避免背景透亮发白和持续模糊开销。
 - 大画布、图谱、PDF、MathJax、Mermaid 都在热路径附近。改动 `canvas.js`、`graph-engine.js`、`graph-gl.js` 前先定位最小区域。
-- MathJax 与 Mermaid 都是本地按需运行时：前者只由真实公式源触发，后者只由 Mermaid fence 触发。普通文字/普通 Markdown 不应加载它们，也不要恢复全 `document.body` 的 Mermaid MutationObserver；所有生成 Markdown DOM 的入口必须显式调用对应渲染器。
+- MathJax 与 Mermaid 都是本地按需运行时：前者只由真实公式源触发，后者只由 Mermaid fence 触发；笔记使用独立 Pele，其他区域保留原 Mermaid。普通文字/普通 Markdown 不应加载它们，也不要恢复全 `document.body` 的 Mermaid MutationObserver；所有生成 Markdown DOM 的入口必须显式调用对应渲染器。
 - 画布节点、连线和节点相邻连线使用常驻 id 索引。静态连线由 Canvas 绘制；支持 `Path2D/isPointInStroke` 时用 512 单位空间网格筛选候选、逆叠放顺序做几何命中，静态 SVG 路径和命中条不挂入文档。单条连线最多登记 256 个网格单元，超长或大弯曲线另保留一个候选身份；查询单元数超过实际网格预算（最多 4096）时按已有几何边界筛选，不枚举巨量空格。两条路径共用真实边界和叠放顺序，移动、删除及完整替换同步清理超限候选。拖节点和脑图滑行只临时挂载受影响的 SVG 线，其他线继续由 Canvas 绘制，收尾卸载并更新几何缓存；能力不足时保留完整 SVG 命中回退。`edgePathCache` 保留路径、端点/箭头点、真实曲线中点和边界，平滑曲线的边界包含控制点凸包；相机移动不得逐边重算几何。空名称按需创建标签，完整导出按数据补齐 SVG。删除连线同步清理 marker、几何缓存和空间索引。
 - 批量节点先挂载再统一测量；内容边界、视口和小地图尺寸使用缓存，ResizeObserver 只更新真实变化。相机移动只变换已有小地图节点层，停止后校准最小点尺寸；不得恢复每帧扫描节点和改写全部小地图样式。抓手光标使用独立透明命中层，连线光标只作用于背景命中面，不使用 `.canvas-surface *` 或继承到整张画布的临时 cursor 规则。
 - 高频平移、连线悬停、箭头和拐点预览按显示帧合并最新坐标；速度和手写原始采样仍逐事件读取。正常释放先提交最终坐标，再写历史；取消、失焦和隐藏清除待绘制任务。选区只更新旧、新差集，重复同一选区不刷新面板或通知；绑定文本框通过目标 id 索引跟随。墨迹笔画边界缓存与局部 SVG 更新只影响橡皮候选及命中对象。
@@ -61,6 +61,12 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 深色主题的学习目标树与独立树状页路线、附加依赖线、视觉关系线和箭头统一为纯白；附加依赖保留虚线，删除预览保留红色，入退场仍沿用透明度过渡。
 
 ## 3. 源码地图
+
+笔记 Mermaid 由默认启用的子功能 `notes.mermaid` 独立控制，父项是 `notes`，与图谱和内嵌画布互不依赖。`assets/note-mermaid.js` 和专用 CSS 及 `assets/vendor/pele/` 归此功能独占；关闭后实时预览保留源码，阅读显示普通代码与复制入口，不请求这些资源。共享 `MarkdownMini.renderResult` 的可选 `mermaid:false` 同样传入脚注递归；其他调用默认行为不变。笔记不再归属旧 `mermaid-renderer.js`，其他区域继续原 Mermaid。Pele 固定 1.9.0，浏览器包、MIT 许可证与校验来源均本地保存，不增加 npm 构建或运行时出站。
+
+`note-live-editor.js` 在 widget 挂载后才验证身份并按真实可见围栏加载适配器，避免 `toDOM()` 内提前检查 `isConnected` 而永久跳过渲染。引用与 Callout 内围栏保留真实源码和位置，另提供去引用前缀的渲染源。实时预览点击或键盘激活图表展开源码，离开后出图；源码模式不渲染。阅读按容器宽度适配、保留声明方向，缩小时提供内嵌缩放/平移/复位，普通滚轮继续滚正文。CSS 变量跟随主题；图表内 LaTeX 暂显示源码，不额外加载 MathJax。
+
+适配器 `attach(root,{mode,isCurrent,onLayout,whenSettled?})` 返回暂停、恢复、销毁控制器。每图复用解析模型，仅宽度或字体变化重新布局，多图按约 4ms 批间让出主线程；单张同步渲染不可抢占。65,536 字符保护沿用编辑器原上限，输出限 4,000,000 字符、流程图/agentflow 边限 5,000；实时预览超限保留源码，阅读显示限制提示。关闭链接和图片，SVG 插入前移除执行内容、事件与外部资源引用，错误纯文本展示；模块或引擎加载失败允许重试。切文档/模式/工作区、隐藏、原生最小化和 pagehide 停任务并释放观察器及缩放交互，保留必要的恢复监听；模块/引擎迟到及候选输入都复核身份，不改正文或历史。原始 Markdown 与持久化格式不变。详细边界与性能口径见 `docs/note-mermaid-2026-10-23.md`。
 
 笔记文件系统移动后，通知可能先登记新路径。`NoteIndex.remap()` 在同一写事务中保留原 entry 身份，将重复目标派生行的入链转交后清理，再发布路径变化；不删除文件，不改变真实目标冲突检查。`test_move_preserves_identity_when_watcher_registers_destination_first` 确定性覆盖该时序、FTS、标签和入链；画布浏览器回归保留服务诊断，可通过 `RELATUM_SERVER_EXE` 复验实际发布包。
 
@@ -922,6 +928,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 ## 10. 桌面壳和打包
 
+笔记 Mermaid 的真实发布包验收另用 `node tests/note-mermaid-desktop.js <独立发布目录>`，只创建临时库、Launcher 配置与 WebView2 配置；测试仅暴露包内工作区状态供断言，不替换引擎或样式。验证开关、三种模式、阅读缩放、原生最小化恢复、矮长图控件不裁切及原文不变。专属资源与许可证随原资产复制流程打包，不新增依赖安装。
+
 - 启动器读取实际数据根的 `data/launcher-language.json`（`version:1`，`language:en/zh-CN`），缺失、损坏或无效时默认中文。`assets/desktop-preferences.js` 只在主动持久化写入 `canvas:toolbarLanguage` 时，通过 `update_window_preferences(delta, launcher_language=None)` 额外传递语言；初始化快照、旧偏好导入及研究 iframe 的非持久化语言同步不传。`desktop_preferences.py` 校验后沿用原子写入立即保存，最近一次收到的主动切换生效；各模式的窗口偏好仍独立。队列、失败重试和关闭冲刷保留语言身份，其他窗口的旧快照不会覆盖。`launcher.py` 的原生文案表覆盖中英文选项、说明和常见提示，不启动 HTTP/WebView2。首页“？”的本机设置页同步说明此文件及删除后回退中文；验证用桌面偏好 Python/JS、原生启动器测试和 `node tests/start-data-guide-contract.js`，数据均隔离。
 - 启动器提供默认勾选的“后台预加载” `runtime.preload`，沿用版本 1 会话选择，不新增文档字段、本机偏好键或 HTTP 接口；取消后仍保留所有已选功能，只有未打开页面的数据、笔记/生涯运行时、编辑器 AI/图谱、展示字体与编辑器背景的后台准备延至真实使用。本文默认预热行为仅在此选项开启时执行；真实内容需要的字体与公式继续按需加载。该选项不是工作区/首页入口，不影响工作区占用锁和 WebView2 偏好目录组合；直接 `Relatum.exe` 完整模式仍开启预加载。
 - 便携版提供 `RelatumLauncher.exe`：原生 WinForms，默认恢复选择并等待确认；手动确认保持启动独立 `Relatum.exe`。免弹窗且保存组合有效时，在当前进程进入桌面主程序，不创建选择窗口、不再次启动 EXE，任务管理器主进程名为 `RelatumLauncher.exe`。`quick_launch()` 只返回经过入口/文件校验的会话参数，桌面入口仍严格解码为受限会话并持有同一实例锁。选择缺失/损坏或仅编辑器的文件失效时恢复选择窗口。选择窗口自身不启动 HTTP 服务或 WebView2。`desktop.py` 在导入主服务前根据 EXE 名称分派，但动态背景子进程与服务标志必须优先，避免同进程主窗启动的子进程误入选择窗口。两个 EXE 共享归档和 `_internal`。源码可运行 `launcher.py` 或 `desktop.py --launcher`。MSIX 不含启动器，客户端隐藏免弹窗设置。
@@ -949,6 +957,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - 构建先核对 Python/依赖版本、真实模块导入和 `pip check`，再执行 `scripts/check-note-sqlite.py`，在内存数据库验证 SQLite ≥3.43、FTS5 trigram、contentless-delete 和短字符查询，不读写用户索引。检查脚本按自身路径导入 `note_search.py`，不要改回 PowerShell 内嵌 `python -c`。维护 BAT 只调用 Windows PowerShell 5.1，不判断环境或解析源码；新手使用准备、离线修复、检查、打包及打开日志五个双击入口，步骤见 `Relatum-维护工具/打包新手说明.md`。成功输出包含 `Note SQLite/FTS5 preflight` 和 `Build complete`。
 
 ## 11. 验证清单
+
+笔记 Mermaid 使用 `node tests/note-mermaid-browser.js` 验证八类图、中文与样式、引用/Callout、编辑与撤销、源码/禁用/错误与重试、迟到及候选交接、隐藏/原生最小化/pagehide、输出清理、中英文、深浅、窄窗、DPR 1/2 和低动态。`node tests/note-mermaid-performance-browser.js` 三轮交替对照现有 Mermaid，记录冷加载、重复打开、100 图连续查看、长任务、GC 后堆与闲置零 RAF，报告和截图仅在临时目录。配置已有 `RELATUM_PLAYWRIGHT / RELATUM_EDGE_PATH`；真实服务资源矩阵沿用 `tests/feature-profile-browser.js`，另设置 `RELATUM_PYTHON` 或 `RELATUM_SERVER_EXE`。矩阵包含独立启用、混合禁用及父项关闭，并支持参数指定组合；直接资源请求也必须拒绝。继续运行 Markdown、编辑器、工作区、正文滚动和图谱回归；原生 Launcher 用已准备的桌面 Python 验证。
 
 选区同文高亮使用 `node tests/note-input-browser.js` 验证默认插件缺席、中英文/单字/多字、实时预览与源码模式启停、选区/滚动/正文与撤销保留、主动查找、原生 Chromium 候选交接及销毁后的迟到切换。`node tests/note-ui-browser.js` 验证三个外壳的开关即时生效、刷新记忆、恢复默认及中英文/深浅呈现；另运行 `node tests/note-ui-browser.js notes-no-graph` 验证与图谱独立。沿用 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`，服务、正文、浏览器偏好和截图只使用一次性隔离目录。
 

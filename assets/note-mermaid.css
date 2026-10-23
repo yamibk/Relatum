@@ -1,0 +1,37 @@
+/* Only note diagrams use Pele. Existing canvas Mermaid styles stay separate. */
+.mermaid-diagram.note-mermaid {
+  --pele-bg: var(--bg);
+  --pele-fg: var(--text);
+  --pele-muted: var(--text-secondary);
+  --pele-line: var(--text-secondary);
+  --pele-surface: var(--surface, var(--bg));
+  --pele-surface-alt: var(--bg-secondary, var(--bg));
+  --pele-border: var(--border-strong, var(--border));
+  --pele-accent: var(--text);
+  --pele-font: inherit;
+  --pele-radius: 5px;
+  --pele-series-1: #bf745e;
+  --pele-series-2: #bb9a52;
+  --pele-series-3: #6d997d;
+  --pele-series-4: #8c82a4;
+  --pele-series-5: #639a9a;
+  --pele-series-6: #ac7485;
+  box-sizing: border-box;
+  margin: 12px 0;
+  padding: 14px;
+  background: transparent;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+  text-align: left;
+  overflow: hidden;
+}
+.note-mermaid-stage { position: relative; width: 100%; min-width: 0; }
+.note-mermaid-stage.has-note-mermaid-zoom { min-height: 110px; display: grid; align-items: center; }
+.note-mermaid-stage > svg { display: block; max-width: 100%; height: auto; margin: auto; }
+.note-mermaid-error { color: var(--text-secondary); font-size: 13px; }
+.note-mermaid-error p { margin: 0 0 8px; overflow-wrap: anywhere; }
+.note-mermaid-error pre { margin: 8px 0 0; max-height: 320px; overflow: auto; white-space: pre; font: 12px/1.6 var(--note-font-mono, monospace); }
+.note-mermaid-error button { border: 1px solid var(--border-strong, var(--border)); border-radius: 5px; background: var(--bg); color: var(--text); padding: 3px 10px; font: inherit; cursor: pointer; }
+.note-mermaid :focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 3px; }

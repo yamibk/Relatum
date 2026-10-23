@@ -264,6 +264,15 @@ assert(Markdown.render('alpha\\\nbeta').includes('<br>'));
 
 const features = Markdown.renderResult('```mermaid\ngraph TD\nA-->B\n```\n\n$x$').features;
 assert.deepStrictEqual(features, { math: true, mermaid: true });
+for (const language of ['mermaid', 'flowchart', 'sequence']) {
+  const disabled = Markdown.renderResult('```' + language + '\ngraph TD\nA-->B\n```', { mermaid: false, noteBlocks: true });
+  assert.equal(disabled.features.mermaid, false);
+  assert(!disabled.html.includes('mermaid-diagram'));
+  assert(disabled.html.includes('md-code') && disabled.html.includes('data-lang="' + language + '"'));
+}
+const disabledNested = Markdown.renderResult('> [!note] Nested\n> ```mermaid\n> graph TD\n> A-->B\n> ```\n\nRef[^a]\n\n[^a]: ```mermaid\n    graph TD\n    A-->B\n    ```', { mermaid: false, noteSyntax: true, noteBlocks: true });
+assert.equal(disabledNested.features.mermaid, false);
+assert(!disabledNested.html.includes('mermaid-diagram'));
 assert.deepStrictEqual(Markdown.renderResult('`$not_math$`').features, { math: false, mermaid: false });
 assert.deepStrictEqual(Markdown.renderResult('$$').features, { math: false, mermaid: false });
 assert.deepStrictEqual(Markdown.renderResult('\\[').features, { math: false, mermaid: false });

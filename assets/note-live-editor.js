@@ -322,6 +322,86 @@
   }
 
   const canvasEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.canvas');
+  const mermaidEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid');
+  let noteMermaidPromise = null;
+  function loadNoteMermaid() {
+    if (!mermaidEnabled()) return Promise.reject(new Error('Mermaid disabled'));
+    if (window.RelatumNoteMermaid) return Promise.resolve(window.RelatumNoteMermaid);
+    if (!noteMermaidPromise) noteMermaidPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      const own = document.querySelector('script[src*="note-live-editor.js"]')?.src || new URL('note-live-editor.js', document.baseURI).href;
+      let timeout;
+      const finish = error => {
+        clearTimeout(timeout); script.onload = script.onerror = null;
+        if (error) { script.remove(); reject(error); } else resolve(window.RelatumNoteMermaid);
+      };
+      script.src = new URL('note-mermaid.js', own).href;
+      script.onload = () => finish(window.RelatumNoteMermaid ? null : new Error('Diagram module did not initialize'));
+      script.onerror = () => finish(new Error('Offline diagram module could not be loaded'));
+      timeout = setTimeout(() => finish(new Error('Offline diagram module timed out')), 10000);
+      document.head.append(script);
+    }).catch(error => { noteMermaidPromise = null; throw error; });
+    return noteMermaidPromise;
+  }
+
+  // Widgets are still detached during toDOM(). Observe first, then validate after
+  // insertion. No adapter or engine is requested for a hidden/preloaded editor.
+  function attachNoteMermaid(root, options) {
+    let disposed = false, paused = false, pageActive = true, loading = false, failed = false, adapter = null;
+    let observer = null, mutation = null, errorBox = null;
+    const current = () => !disposed && !paused && pageActive && mermaidEnabled() && root.isConnected && !root.closest('[hidden]')
+      && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
+      && (!root.closest('.note-workspace') || document.body.dataset.startWorkspace === 'notes') && options.isCurrent();
+    const visible = () => Array.from(root.querySelectorAll('.mermaid-diagram')).some(el => {
+      const source = el.querySelector('.mermaid-source');
+      const box = el.getBoundingClientRect(); return (source?.content?.textContent || source?.textContent || '').trim()
+        && box.width > 0 && box.height > 0 && box.bottom > 0 && box.top < innerHeight;
+    });
+    const events = [[document, 'visibilitychange'], [window, 'canvasdesktop:visibility'],
+      [document, 'relatum:start-workspacechange']];
+    const pagehide = () => { pageActive = false; };
+    const pageshow = () => { pageActive = true; start(); };
+    const inputSettled = () => Promise.resolve(options.whenSettled?.()).then(start);
+    const unwatch = () => {
+      observer?.disconnect(); mutation?.disconnect(); observer = mutation = null;
+      events.forEach(([target, name]) => target.removeEventListener(name, start));
+      window.removeEventListener('pagehide', pagehide); window.removeEventListener('pageshow', pageshow);
+      document.removeEventListener('compositionend', inputSettled);
+    };
+    function start() {
+      if (loading || failed || adapter || !current() || !visible()) return;
+      loading = true;
+      Promise.resolve().then(() => options.whenSettled?.()).then(() => {
+        if (!current() || !visible()) return;
+        return loadNoteMermaid().then(runtime => {
+          if (!current()) return;
+          errorBox?.remove(); unwatch(); adapter = runtime.attach(root, options);
+        });
+      }).catch(error => {
+        if (!current()) return;
+        failed = true;
+        const english = window.RelatumI18n?.language === 'en';
+        errorBox = document.createElement('div'); errorBox.className = 'note-mermaid-error';
+        const message = document.createElement('p'); message.textContent = (english ? 'Diagram unavailable: ' : '图表暂未显示：') + String(error.message || error);
+        const button = document.createElement('button'); button.type = 'button'; button.dataset.noteMermaidControl = 'retry'; button.textContent = english ? 'Retry' : '重试';
+        button.addEventListener('mousedown', event => event.stopPropagation());
+        button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); failed = false; errorBox.remove(); start(); });
+        errorBox.append(message, button); root.querySelector('.mermaid-diagram')?.prepend(errorBox); options.onLayout?.();
+      }).finally(() => { loading = false; });
+    }
+    Promise.resolve().then(() => {
+      if (disposed) return;
+      observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(start) : null;
+      root.querySelectorAll('.mermaid-diagram').forEach(el => observer?.observe(el));
+      mutation = new MutationObserver(start);
+      for (let parent = root.parentElement; parent; parent = parent.parentElement) mutation.observe(parent, { attributes: true, attributeFilter: ['hidden', 'data-start-workspace'] });
+      events.forEach(([target, name]) => target.addEventListener(name, start));
+      window.addEventListener('pagehide', pagehide); window.addEventListener('pageshow', pageshow); start();
+      document.addEventListener('compositionend', inputSettled);
+    });
+    return { suspend() { paused = true; adapter?.suspend(); }, resume() { paused = false; if (adapter) adapter.resume(); else start(); },
+      destroy() { if (disposed) return; disposed = true; unwatch(); adapter?.destroy(); errorBox?.remove(); } };
+  }
   const canvasImage = parsed => !!window.MarkdownMini?.isCanvasImage(parsed);
   let canvasRuntimePromise = null;
   function loadCanvasRuntime() {
@@ -696,12 +776,19 @@
         }
         if (node.name === 'FencedCode') {
           protectedBlocks.push({ from: node.from, to: node.to });
-          const opener = fenceStart(doc.lineAt(node.from).text);
+          const firstLine = doc.lineAt(node.from), lastLine = doc.lineAt(Math.max(node.from, node.to - 1));
+          const quote = window.MarkdownMini.quoteLine(firstLine.text);
+          const opener = fenceStart(quote.text);
           if (!opener) return false;
-          const kind = opener.language === 'derive' ? 'derive' : MERMAID_LANGS.has(opener.language) ? 'mermaid' : '';
+          const kind = opener.language === 'derive' ? 'derive' : mermaidEnabled() && MERMAID_LANGS.has(opener.language) ? 'mermaid' : '';
           const limit = kind === 'mermaid' ? MERMAID_LIMIT : RICH_BLOCK_LIMIT;
-          if (!kind || node.to - node.from > limit || !isFenceEnd(doc.lineAt(Math.max(node.from, node.to - 1)).text, opener)) return false;
-          if (!rangeHasLongLine(doc, node.from, node.to)) push({ from: node.from, to: node.to, kind, source: doc.sliceString(node.from, node.to), language: opener.language });
+          if (!kind || node.to - firstLine.from > limit || !isFenceEnd(window.MarkdownMini.stripQuote(lastLine.text, quote.depth), opener)) return false;
+          if (!rangeHasLongLine(doc, node.from, node.to)) {
+            const from = quote.depth ? firstLine.from : node.from;
+            const source = doc.sliceString(from, node.to);
+            push({ from, to: node.to, kind, source, language: opener.language,
+              renderSource: quote.depth ? source.split('\n').map(line => window.MarkdownMini.stripQuote(line, quote.depth)).join('\n') : source });
+          }
           return false;
         }
         if (/^(?:CodeBlock|IndentedCode|HTMLBlock|InlineCode)$/.test(node.name)) {
@@ -2079,11 +2166,13 @@
     if (!markdownMini || typeof markdownMini.renderResult !== 'function') {
       return { html: '', features: { math: false, mermaid: false }, error: true };
     }
-    return markdownMini.renderResult(source, Object.assign({ localImages: true, noteTags: true, noteBlocks: true, noteSyntax: true }, options));
+    return markdownMini.renderResult(source, Object.assign({ localImages: true, noteTags: true, noteBlocks: true, noteSyntax: true, mermaid: mermaidEnabled() }, options));
   }
 
   function releaseReadingDocument(host) {
     if (!host) return;
+    host.__relatumReadingMermaid?.destroy();
+    delete host.__relatumReadingMermaid;
     if (host.__relatumReadingCode) host.__relatumReadingCode.destroy();
     delete host.__relatumReadingCode;
     host.querySelectorAll('[data-canvas-source]').forEach(frame => frame.__noteCanvas?.destroy());
@@ -2210,10 +2299,8 @@
     host.classList.toggle('is-failed', !!result.error);
     const current = () => host.dataset.noteReadingEpoch === epoch && content.isConnected;
     host.__relatumReadingCode = prepareReadingCode(content, current);
-    if (result.features && result.features.mermaid && window.MermaidRenderer) {
-      window.MermaidRenderer.renderAll(content).catch(() => {
-        if (current()) host.classList.add('is-failed');
-      });
+    if (result.features && result.features.mermaid && mermaidEnabled()) {
+      host.__relatumReadingMermaid = attachNoteMermaid(content, { mode: 'reading', isCurrent: current });
     }
     if (result.features && result.features.math) {
       ensureMathJax().then((math) => {
@@ -2244,7 +2331,7 @@
     }
     if (spec && (spec.kind === 'mermaid' || spec.kind === 'derive')) {
       const newline = source.indexOf('\n');
-      if (newline >= 0) return from + newline + 1;
+      if (newline >= 0) return from + newline + 1 + window.MarkdownMini.quoteLine(source.slice(newline + 1).split('\n', 1)[0]).prefix.length;
     }
     if (spec && spec.kind === 'table') {
       const content = /^(\s*\|?\s*)/.exec(source);
@@ -2269,6 +2356,7 @@
       return !!current && current.fingerprint === this.spec.fingerprint && current.source === this.spec.source;
     }
     reveal(view, event) {
+      if (event?.target.closest?.('[data-note-mermaid-control]')) return;
       if (event) { event.preventDefault(); event.stopPropagation(); }
       if (compositionActive(view)) {
         runWhenInputSettled(view, () => this.reveal(view));
@@ -2344,7 +2432,7 @@
         wrap.addEventListener('mousedown', (event) => this.reveal(view, event));
         wrap.addEventListener('click', (event) => this.reveal(view, event));
         wrap.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') this.reveal(view, event); });
-        const result = safeIsolatedResult(this.spec.source);
+        const result = safeIsolatedResult(this.spec.renderSource || this.spec.source);
         wrap.innerHTML = result.html;
         wrap.querySelectorAll('[data-note-image]').forEach((image) => {
           image.src = this.options.imageUrl(this.notePath, image.dataset.noteImage || '', image.dataset.noteImageSyntax);
@@ -2355,15 +2443,14 @@
         }
         const hasMermaid = this.spec.kind === 'mermaid' || !!(result.features && result.features.mermaid);
         const hasMath = this.spec.kind === 'derive' || !!(result.features && result.features.math);
-        if (hasMermaid && window.MermaidRenderer) {
-          runWhenInputSettled(view, () => (
-            this.isCurrent(view, wrap, token) ? window.MermaidRenderer.renderAll(wrap) : undefined
-          )).then(() => {
-            if (!this.isCurrent(view, wrap, token)) return;
-            return runWhenInputSettled(view, () => {
+        if (hasMermaid && mermaidEnabled()) {
+          this.mermaidControl = attachNoteMermaid(wrap, { mode: 'live',
+            isCurrent: () => this.isCurrent(view, wrap, token) && !compositionActive(view),
+            whenSettled: () => runWhenInputSettled(view, () => true),
+            onLayout: () => runWhenInputSettled(view, () => {
               if (this.isCurrent(view, wrap, token)) view.requestMeasure();
-            });
-          }).catch(() => wrap.classList.add('is-failed'));
+            }),
+          });
         }
         if (hasMath) {
           wrap.dataset.noteMath = '1';
@@ -2382,7 +2469,7 @@
       }
       return wrap;
     }
-    destroy(dom) { this.token = null; if (this.imageCleanup) this.imageCleanup(); this.imageCleanup = null; if (dom && (this.spec.kind === 'math' || dom.dataset.noteMath) && typeof window.MathJax?.typesetClear === 'function') window.MathJax.typesetClear([dom]); }
+    destroy(dom) { this.token = null; this.mermaidControl?.destroy(); this.mermaidControl = null; if (this.imageCleanup) this.imageCleanup(); this.imageCleanup = null; if (dom && (this.spec.kind === 'math' || dom.dataset.noteMath) && typeof window.MathJax?.typesetClear === 'function') window.MathJax.typesetClear([dom]); }
     ignoreEvent() { return false; }
   }
 

@@ -1567,7 +1567,7 @@
       window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', { calloutSession: liveEditor?.calloutSession });
     } else {
       const result = window.MarkdownMini && window.MarkdownMini.renderResult
-        ? window.MarkdownMini.renderResult(documentState.value || '', { localImages: true, noteBlocks: true, noteSyntax: true })
+        ? window.MarkdownMini.renderResult(documentState.value || '', { localImages: true, noteBlocks: true, noteSyntax: true, mermaid: !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid') })
         : { html: '' };
       readingHost.innerHTML = '<article class="note-reading-content node-text">' + (result.html || '') + '</article>';
     }

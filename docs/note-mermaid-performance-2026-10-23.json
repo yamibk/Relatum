@@ -1,0 +1,340 @@
+{
+  "method": "3 alternating rounds, identical Chinese flowchart, 100 sequential viewport visits, adapter + SVG insertion + layout; diagram surface only, not full desktop startup",
+  "records": [
+    {
+      "round": 0,
+      "engine": "pele",
+      "scenario": "cold-single",
+      "firstViewportMs": 60.899999998509884,
+      "completedMs": 61.79999999701977,
+      "navigationToDiagramMs": 140.39470000000006,
+      "scriptMs": 31.391000000000002,
+      "taskMs": 57.968999999999994,
+      "layoutMs": 10.725999999999999,
+      "heapBytesAfterGC": 2468148,
+      "longTasks": [],
+      "nodes": 49
+    },
+    {
+      "round": 0,
+      "engine": "pele",
+      "scenario": "warm-reopen",
+      "firstViewportMs": 4,
+      "completedMs": 4.5,
+      "scriptMs": 1.4590000000000019,
+      "taskMs": 3.9809999999999985,
+      "layoutMs": 0.2149999999999999,
+      "heapBytesAfterGC": 2696272,
+      "longTasks": [],
+      "nodes": 49
+    },
+    {
+      "round": 0,
+      "engine": "pele",
+      "scenario": "long-100",
+      "firstViewportMs": 35.399999998509884,
+      "completedMs": 1170.6000000014901,
+      "scriptMs": 97.307,
+      "taskMs": 598.36,
+      "layoutMs": 52.138,
+      "heapBytesAfterGC": 4475936,
+      "longTasks": [],
+      "nodes": 3615,
+      "releasedHeapBytesAfterGC": 4308024
+    },
+    {
+      "round": 0,
+      "engine": "mermaid",
+      "scenario": "cold-single",
+      "firstViewportMs": 267.8999999985099,
+      "completedMs": 268.6000000014901,
+      "navigationToDiagramMs": 328.7044999999998,
+      "scriptMs": 147.01500000000001,
+      "taskMs": 241.80499999999998,
+      "layoutMs": 39.782,
+      "heapBytesAfterGC": 4991920,
+      "longTasks": [
+        {
+          "start": 110.10000000149012,
+          "duration": 194
+        }
+      ],
+      "nodes": 105
+    },
+    {
+      "round": 0,
+      "engine": "mermaid",
+      "scenario": "warm-reopen",
+      "firstViewportMs": 25.30000000447035,
+      "completedMs": 26.200000002980232,
+      "scriptMs": 0.04199999999998649,
+      "taskMs": 25.05299999999999,
+      "layoutMs": 1.455000000000005,
+      "heapBytesAfterGC": 5280164,
+      "longTasks": [],
+      "nodes": 105
+    },
+    {
+      "round": 0,
+      "engine": "mermaid",
+      "scenario": "long-100",
+      "firstViewportMs": 1805.3999999985099,
+      "completedMs": 2864.5999999940395,
+      "scriptMs": 3.612000000000004,
+      "taskMs": 2311.465,
+      "layoutMs": 84.755,
+      "heapBytesAfterGC": 7132988,
+      "longTasks": [],
+      "nodes": 9314,
+      "releasedHeapBytesAfterGC": 6947864
+    },
+    {
+      "round": 1,
+      "engine": "mermaid",
+      "scenario": "cold-single",
+      "firstViewportMs": 255.59999999403954,
+      "completedMs": 256.29999999701977,
+      "navigationToDiagramMs": 313.21489999999994,
+      "scriptMs": 140.92000000000002,
+      "taskMs": 228.222,
+      "layoutMs": 37.292,
+      "heapBytesAfterGC": 4991968,
+      "longTasks": [
+        {
+          "start": 111.79999999701977,
+          "duration": 182
+        }
+      ],
+      "nodes": 105
+    },
+    {
+      "round": 1,
+      "engine": "mermaid",
+      "scenario": "warm-reopen",
+      "firstViewportMs": 22,
+      "completedMs": 22.600000001490116,
+      "scriptMs": 0.03799999999998249,
+      "taskMs": 21.845999999999975,
+      "layoutMs": 0.796999999999999,
+      "heapBytesAfterGC": 5280252,
+      "longTasks": [],
+      "nodes": 105
+    },
+    {
+      "round": 1,
+      "engine": "mermaid",
+      "scenario": "long-100",
+      "firstViewportMs": 1825.8999999985099,
+      "completedMs": 2900.60000000149,
+      "scriptMs": 3.583000000000003,
+      "taskMs": 2349.1059999999998,
+      "layoutMs": 86.232,
+      "heapBytesAfterGC": 7127484,
+      "longTasks": [],
+      "nodes": 9314,
+      "releasedHeapBytesAfterGC": 6945912
+    },
+    {
+      "round": 1,
+      "engine": "pele",
+      "scenario": "cold-single",
+      "firstViewportMs": 55.30000000447035,
+      "completedMs": 56,
+      "navigationToDiagramMs": 112.63230000000112,
+      "scriptMs": 32.209,
+      "taskMs": 57.486,
+      "layoutMs": 10.536999999999999,
+      "heapBytesAfterGC": 2468368,
+      "longTasks": [],
+      "nodes": 49
+    },
+    {
+      "round": 1,
+      "engine": "pele",
+      "scenario": "warm-reopen",
+      "firstViewportMs": 3.7000000029802322,
+      "completedMs": 4.100000001490116,
+      "scriptMs": 1.5279999999999947,
+      "taskMs": 3.8900000000000046,
+      "layoutMs": 0.2249999999999995,
+      "heapBytesAfterGC": 2696452,
+      "longTasks": [],
+      "nodes": 49
+    },
+    {
+      "round": 1,
+      "engine": "pele",
+      "scenario": "long-100",
+      "firstViewportMs": 26.700000002980232,
+      "completedMs": 872.4000000059605,
+      "scriptMs": 79.346,
+      "taskMs": 484.0640000000001,
+      "layoutMs": 45.151,
+      "heapBytesAfterGC": 4473708,
+      "longTasks": [],
+      "nodes": 3615,
+      "releasedHeapBytesAfterGC": 4305796
+    },
+    {
+      "round": 2,
+      "engine": "pele",
+      "scenario": "cold-single",
+      "firstViewportMs": 52,
+      "completedMs": 52.80000000447035,
+      "navigationToDiagramMs": 108.10750000000007,
+      "scriptMs": 29.828,
+      "taskMs": 53.318000000000005,
+      "layoutMs": 10.21,
+      "heapBytesAfterGC": 2468368,
+      "longTasks": [],
+      "nodes": 49
+    },
+    {
+      "round": 2,
+      "engine": "pele",
+      "scenario": "warm-reopen",
+      "firstViewportMs": 3.5,
+      "completedMs": 4.100000001490116,
+      "scriptMs": 1.3909999999999965,
+      "taskMs": 3.812999999999997,
+      "layoutMs": 0.2249999999999995,
+      "heapBytesAfterGC": 2696672,
+      "longTasks": [],
+      "nodes": 49
+    },
+    {
+      "round": 2,
+      "engine": "pele",
+      "scenario": "long-100",
+      "firstViewportMs": 35.20000000298023,
+      "completedMs": 914.3999999985099,
+      "scriptMs": 80.375,
+      "taskMs": 491.9410000000001,
+      "layoutMs": 46.464999999999996,
+      "heapBytesAfterGC": 4475892,
+      "longTasks": [],
+      "nodes": 3615,
+      "releasedHeapBytesAfterGC": 4307980
+    },
+    {
+      "round": 2,
+      "engine": "mermaid",
+      "scenario": "cold-single",
+      "firstViewportMs": 249.90000000596046,
+      "completedMs": 250.5,
+      "navigationToDiagramMs": 306.7489999999998,
+      "scriptMs": 138.453,
+      "taskMs": 223.48499999999999,
+      "layoutMs": 36.568,
+      "heapBytesAfterGC": 4992804,
+      "longTasks": [
+        {
+          "start": 108.10000000149012,
+          "duration": 180
+        }
+      ],
+      "nodes": 105
+    },
+    {
+      "round": 2,
+      "engine": "mermaid",
+      "scenario": "warm-reopen",
+      "firstViewportMs": 21.399999998509884,
+      "completedMs": 21.899999998509884,
+      "scriptMs": 0.058000000000002494,
+      "taskMs": 21.251999999999992,
+      "layoutMs": 0.8290000000000033,
+      "heapBytesAfterGC": 5281076,
+      "longTasks": [],
+      "nodes": 105
+    },
+    {
+      "round": 2,
+      "engine": "mermaid",
+      "scenario": "long-100",
+      "firstViewportMs": 1826.5,
+      "completedMs": 2937.60000000149,
+      "scriptMs": 3.6700000000000066,
+      "taskMs": 2379.416,
+      "layoutMs": 89.089,
+      "heapBytesAfterGC": 7122632,
+      "longTasks": [],
+      "nodes": 9314,
+      "releasedHeapBytesAfterGC": 6949924
+    }
+  ],
+  "summary": [
+    {
+      "engine": "pele",
+      "scenario": "cold-single",
+      "firstViewportMs": 55.30000000447035,
+      "completedMs": 56,
+      "scriptMs": 31.391000000000002,
+      "taskMs": 57.486,
+      "layoutMs": 10.536999999999999,
+      "heapBytesAfterGC": 2468368,
+      "longTaskCount": 0,
+      "longTaskMaxMs": 0
+    },
+    {
+      "engine": "pele",
+      "scenario": "warm-reopen",
+      "firstViewportMs": 3.7000000029802322,
+      "completedMs": 4.100000001490116,
+      "scriptMs": 1.4590000000000019,
+      "taskMs": 3.8900000000000046,
+      "layoutMs": 0.2249999999999995,
+      "heapBytesAfterGC": 2696452,
+      "longTaskCount": 0,
+      "longTaskMaxMs": 0
+    },
+    {
+      "engine": "pele",
+      "scenario": "long-100",
+      "firstViewportMs": 35.20000000298023,
+      "completedMs": 914.3999999985099,
+      "scriptMs": 80.375,
+      "taskMs": 491.9410000000001,
+      "layoutMs": 46.464999999999996,
+      "heapBytesAfterGC": 4475892,
+      "longTaskCount": 0,
+      "longTaskMaxMs": 0
+    },
+    {
+      "engine": "mermaid",
+      "scenario": "cold-single",
+      "firstViewportMs": 255.59999999403954,
+      "completedMs": 256.29999999701977,
+      "scriptMs": 140.92000000000002,
+      "taskMs": 228.222,
+      "layoutMs": 37.292,
+      "heapBytesAfterGC": 4991968,
+      "longTaskCount": 1,
+      "longTaskMaxMs": 194
+    },
+    {
+      "engine": "mermaid",
+      "scenario": "warm-reopen",
+      "firstViewportMs": 22,
+      "completedMs": 22.600000001490116,
+      "scriptMs": 0.04199999999998649,
+      "taskMs": 21.845999999999975,
+      "layoutMs": 0.8290000000000033,
+      "heapBytesAfterGC": 5280252,
+      "longTaskCount": 0,
+      "longTaskMaxMs": 0
+    },
+    {
+      "engine": "mermaid",
+      "scenario": "long-100",
+      "firstViewportMs": 1825.8999999985099,
+      "completedMs": 2900.60000000149,
+      "scriptMs": 3.612000000000004,
+      "taskMs": 2349.1059999999998,
+      "layoutMs": 86.232,
+      "heapBytesAfterGC": 7127484,
+      "longTaskCount": 0,
+      "longTaskMaxMs": 0
+    }
+  ]
+}

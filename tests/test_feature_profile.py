@@ -217,6 +217,22 @@ class FeatureProfileTests(unittest.TestCase):
         profile.choices['notes'] = False
         self.assertFalse(profile.enabled('notes.graph'))
 
+    def test_note_mermaid_resources_and_legacy_defaults(self):
+        legacy = features.LaunchProfile.decode('{"version":1,"features":{"notes":true}}')
+        self.assertTrue(legacy.enabled('notes.mermaid'))
+        resources = ('note-mermaid.js', 'note-mermaid.css', 'vendor/pele/pele.global.js',
+                     'vendor/pele/LICENSE', 'vendor/pele/README.md')
+        for keys in (('notes',), ('notes', 'notes.mermaid'), ('notes.mermaid',),
+                     ('canvas', 'canvas.editor'), ('notes', 'canvas', 'canvas.quicknotes')):
+            profile = self.only(*keys)
+            for resource in resources:
+                self.assertEqual(profile.resource_allowed(resource), 'notes' in keys and 'notes.mermaid' in keys)
+            self.assertEqual(profile.resource_allowed('mermaid-renderer.js'),
+                             'canvas.editor' in keys or 'canvas.quicknotes' in keys)
+        profile = self.only('notes', 'notes.mermaid')
+        self.assertEqual(profile.session_key, self.only('notes').session_key)
+        self.assertEqual(profile.payload()['version'], 1)
+
     def test_tree_and_study_share_goal_tree_model(self):
         source = (features.RESOURCE_ROOT / "assets" / "index.html").read_text(encoding="utf8")
         for name, keys in (("tree", ("canvas", "canvas.tree")), ("study", ("canvas", "canvas.study")), ("neither", ("notes",))):
