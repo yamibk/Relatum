@@ -5,6 +5,7 @@ locked in-memory database, separate from the note index and canvas AI protocol.
 """
 from __future__ import annotations
 
+import base64
 import codecs
 import http.client
 import io
@@ -23,6 +24,8 @@ import urllib.request
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+
+from notes_library import _image_dimensions, _sniff_image_media_type
 
 
 DEFAULTS = {"baseUrl": "https://api.deepseek.com", "model": "", "apiKey": "",
@@ -52,6 +55,13 @@ BUILTINS = [
 ]
 MAX_TEXT = 262144
 MAX_RESPONSE = 8 * 1024 * 1024
+MAX_IMAGE_BYTES = 4 * 1024 * 1024
+MAX_IMAGE_COUNT = 4
+MAX_IMAGE_DIMENSION = 8192
+MAX_IMAGE_PIXELS = 16_000_000
+MAX_IMAGE_CONTEXT = 24 * 1024 * 1024
+MAX_SESSION_IMAGES = 32 * 1024 * 1024
+MAX_STORE_IMAGES = 64 * 1024 * 1024
 IDENTITY = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
 
 
@@ -65,6 +75,51 @@ def identity(value):
     if not isinstance(value, str) or not IDENTITY.fullmatch(value):
         raise NoteAIError("操作身份无效")
     return value
+
+
+def chat_images(value):
+    if not isinstance(value, list) or len(value) > MAX_IMAGE_COUNT:
+        raise NoteAIError("每条消息最多 4 张图片", "image-limit", 413)
+    result, total = [], 0
+    for item in value:
+        if not isinstance(item, dict):
+            raise NoteAIError("图片数据无效", "invalid-image")
+        name, url = item.get("name"), item.get("dataUrl")
+        if not isinstance(name, str) or not name.strip() or len(name) > 255 or any(ord(c) < 32 or 0xd800 <= ord(c) <= 0xdfff or c in "/\\" for c in name):
+            raise NoteAIError("图片名称无效", "invalid-image")
+        if not isinstance(url, str) or len(url) > 4 * ((MAX_IMAGE_BYTES + 2) // 3) + 64:
+            raise NoteAIError("每条消息图片合计不能超过 4 MiB", "image-limit", 413)
+        header, separator, encoded = url.partition(",")
+        if not separator or header.lower() not in ("data:image/png;base64", "data:image/jpeg;base64", "data:image/gif;base64", "data:image/webp;base64"):
+            raise NoteAIError("只接受内联 PNG、JPEG、GIF 或 WebP 图片", "image-type")
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except ValueError:
+            raise NoteAIError("图片编码无效", "invalid-image") from None
+        total += len(data)
+        if not data or total > MAX_IMAGE_BYTES:
+            raise NoteAIError("每条消息图片合计不能超过 4 MiB", "image-limit", 413)
+        media = _sniff_image_media_type(data)
+        if media != header[5:-7].lower():
+            raise NoteAIError("图片内容与类型不一致", "image-type")
+        dimensions = _image_dimensions(data)
+        if not dimensions:
+            raise NoteAIError("无法安全识别图片尺寸", "invalid-image")
+        width, height = dimensions
+        if min(width, height) <= 0 or max(width, height) > MAX_IMAGE_DIMENSION or width * height > MAX_IMAGE_PIXELS:
+            raise NoteAIError("图片单边最多 8192 像素，总像素最多 1600 万", "image-dimensions", 413)
+        result.append({"name": name.strip(), "media_type": media, "width": width, "height": height, "data": data})
+    return result
+
+
+def image_content(text, images):
+    if not images:
+        return text
+    parts = [{"type": "text", "text": text}] if text else []
+    for image in images:
+        encoded = base64.b64encode(image["data"]).decode("ascii")
+        parts.append({"type": "image_url", "image_url": {"url": "data:" + image["media_type"] + ";base64," + encoded}})
+    return parts
 
 
 def validate_field(key, value):
@@ -280,6 +335,11 @@ class NoteAIStore:
                             usage TEXT, model TEXT NOT NULL DEFAULT '', elapsed REAL NOT NULL DEFAULT 0,
                             context_count INTEGER NOT NULL DEFAULT 0, finish_reason TEXT NOT NULL DEFAULT '', UNIQUE(request_id,role));
                         CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id,id);
+                        CREATE TABLE IF NOT EXISTS attachments(
+                            message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                            position INTEGER NOT NULL, name TEXT NOT NULL, media_type TEXT NOT NULL,
+                            width INTEGER NOT NULL, height INTEGER NOT NULL, data BLOB NOT NULL,
+                            PRIMARY KEY(message_id,position));
                         CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY, session_id TEXT NOT NULL);
                         CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value TEXT);
                     """)
@@ -324,6 +384,9 @@ class NoteAIStore:
             messages = [dict(item) for item in reversed(rows[:40])]
             for item in messages:
                 item["usage"] = json.loads(item["usage"]) if item["usage"] else None
+                images = conn.execute("SELECT name,media_type,width,height,length(data) size FROM attachments WHERE message_id=? ORDER BY position", (item["id"],)).fetchall()
+                if images:
+                    item["images"] = [dict(image) for image in images]
             return {"session": dict(row), "messages": messages, "more": len(rows) > 40}
 
     def session_action(self, body):
@@ -374,7 +437,11 @@ class NoteAIStore:
     def _prepare(self, body, config):
         session, request_id = identity(body.get("sessionId")), identity(body.get("requestId"))
         text = body.get("text")
-        if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT:
+        retry = identity(body["retryOf"]) if body.get("retryOf") is not None else None
+        images = chat_images(body.get("images", []))
+        if retry and images:
+            raise NoteAIError("重试必须复用原消息图片", "retry-invalid", 409)
+        if not isinstance(text, str) or len(text) > MAX_TEXT or (not text.strip() and not images and not retry):
             raise NoteAIError("消息不能为空或超过 262144 字符", "message-limit")
         if not config["apiKey"] or not config["model"]:
             raise NoteAIError("请先填写模型名称和 API Key", "config-required")
@@ -400,26 +467,50 @@ class NoteAIStore:
                     if not preset:
                         raise NoteAIError("预设不存在", "preset-missing")
                     now = time.time()
-                    conn.execute("INSERT INTO sessions VALUES(?,?,?,?,?,?,?)", (session, text.strip().splitlines()[0][:60], preset["id"], preset["name"], preset["prompt"], now, now))
+                    title = text.strip().splitlines()[0][:60] if text.strip() else images[0]["name"][:60] if images else "Image"
+                    conn.execute("INSERT INTO sessions VALUES(?,?,?,?,?,?,?)", (session, title, preset["id"], preset["name"], preset["prompt"], now, now))
                     row = conn.execute("SELECT * FROM sessions WHERE id=?", (session,)).fetchone()
-                retry = body.get("retryOf")
                 if retry:
                     last = conn.execute("SELECT request_id,status FROM messages WHERE session_id=? ORDER BY id DESC LIMIT 1", (session,)).fetchone()
-                    original = conn.execute("SELECT content FROM messages WHERE session_id=? AND request_id=? AND role='user'", (session, retry)).fetchone()
-                    if not last or last[0] != retry or last[1] not in ("failed", "interrupted") or not original or original[0] != text:
+                    original = conn.execute("SELECT id,content FROM messages WHERE session_id=? AND request_id=? AND role='user'", (session, retry)).fetchone()
+                    if not last or last[0] != retry or last[1] not in ("failed", "interrupted") or not original or original["content"] != text:
                         raise NoteAIError("只能重试最后一个未完成请求", "retry-invalid", 409)
+                    images = [dict(image) for image in conn.execute("SELECT name,media_type,width,height,data FROM attachments WHERE message_id=? ORDER BY position", (original["id"],))]
                     conn.execute("DELETE FROM messages WHERE session_id=? AND request_id=?", (session, retry))
+                if not text.strip() and not images:
+                    raise NoteAIError("消息不能为空", "message-limit")
+                image_bytes = sum(len(image["data"]) for image in images)
+                session_bytes = conn.execute("SELECT COALESCE(SUM(length(a.data)),0) FROM attachments a JOIN messages m ON m.id=a.message_id WHERE m.session_id=?", (session,)).fetchone()[0]
+                store_bytes = conn.execute("SELECT COALESCE(SUM(length(data)),0) FROM attachments").fetchone()[0]
+                if session_bytes + image_bytes > MAX_SESSION_IMAGES:
+                    raise NoteAIError("本次对话图片累计超过 32 MiB，请新建对话", "image-session-limit", 413)
+                if store_bytes + image_bytes > MAX_STORE_IMAGES:
+                    raise NoteAIError("临时图片达到 64 MiB 上限，请释放旧对话后重试", "image-store-limit", 413)
                 # Only complete historical turns enter the new context. Keep pairs
                 # intact and reserve one user message within the existing 40 limit.
-                prior = conn.execute("SELECT u.content user,a.content assistant FROM messages u JOIN messages a ON u.request_id=a.request_id AND a.role='assistant' WHERE u.session_id=? AND u.role='user' AND a.status='complete' ORDER BY u.id DESC LIMIT 19", (session,)).fetchall()
+                prior = conn.execute("SELECT u.id user_id,u.content user,a.content assistant FROM messages u JOIN messages a ON u.request_id=a.request_id AND a.role='assistant' WHERE u.session_id=? AND u.role='user' AND a.status='complete' ORDER BY u.id DESC LIMIT 19", (session,)).fetchall()
                 messages = [{"role": "system", "content": row["prompt"]}] if row["prompt"] else []
+                image_turns = []
                 for turn in reversed(prior):
+                    stored = [dict(image) for image in conn.execute("SELECT name,media_type,width,height,data FROM attachments WHERE message_id=? ORDER BY position", (turn["user_id"],))]
+                    image_turns.append((len(messages), stored))
                     messages.extend([{"role": "user", "content": turn["user"]}, {"role": "assistant", "content": turn["assistant"]}])
+                image_turns.append((len(messages), images))
                 messages.append({"role": "user", "content": text})
-                if len(json.dumps(messages, ensure_ascii=False).encode("utf-8")) > MAX_RESPONSE:
+                text_bytes = len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
+                if text_bytes > MAX_RESPONSE:
                     raise NoteAIError("本轮上下文超过 8 MiB，请新建对话", "context-limit")
+                estimated = text_bytes + sum(4 * ((len(image["data"]) + 2) // 3) + 256 for _, items in image_turns for image in items)
+                if estimated > MAX_IMAGE_CONTEXT:
+                    raise NoteAIError("带图上下文超过 24 MiB，请新建对话", "context-limit")
+                for index, items in image_turns:
+                    messages[index]["content"] = image_content(messages[index]["content"], items)
+                if len(json.dumps(chat_body(config, messages), ensure_ascii=False).encode("utf-8")) > MAX_IMAGE_CONTEXT:
+                    raise NoteAIError("带图上下文超过 24 MiB，请新建对话", "context-limit")
                 conn.execute("INSERT INTO requests VALUES(?,?)", (request_id, session))
-                conn.execute("INSERT INTO messages(session_id,request_id,role,content,status) VALUES(?,?,'user',?,'complete')", (session, request_id, text))
+                user_id = conn.execute("INSERT INTO messages(session_id,request_id,role,content,status) VALUES(?,?,'user',?,'complete')", (session, request_id, text)).lastrowid
+                for position, image in enumerate(images):
+                    conn.execute("INSERT INTO attachments VALUES(?,?,?,?,?,?,?)", (user_id, position, image["name"], image["media_type"], image["width"], image["height"], image["data"]))
                 conn.execute("INSERT INTO messages(session_id,request_id,role,status,model,context_count) VALUES(?,?,'assistant','pending',?,?)", (session, request_id, config["model"], len(prior)))
                 conn.execute("UPDATE sessions SET updated=? WHERE id=?", (time.time(), session))
                 conn.execute("INSERT OR REPLACE INTO state VALUES('active',?)", (session,))
@@ -433,7 +524,7 @@ class NoteAIStore:
     def _upstream(config, messages, active):
         base = config["baseUrl"].rstrip("/")
         url = base if base.endswith("/chat/completions") else base + "/chat/completions"
-        request = urllib.request.Request(url, data=json.dumps(chat_body(config, messages)).encode("utf-8"), headers={"Authorization": "Bearer " + config["apiKey"], "Content-Type": "application/json", "Accept": "text/event-stream" if config["stream"] else "application/json"}, method="POST")
+        request = urllib.request.Request(url, data=json.dumps(chat_body(config, messages), ensure_ascii=False).encode("utf-8"), headers={"Authorization": "Bearer " + config["apiKey"], "Content-Type": "application/json", "Accept": "text/event-stream" if config["stream"] else "application/json"}, method="POST")
 
         class CancellableReader(io.RawIOBase):
             def __init__(self, raw, sock):
@@ -532,6 +623,7 @@ class NoteAIStore:
     def events(self, body):
         config = self.config()
         active, session, messages, count = self._prepare(body, config)
+        has_images = any(isinstance(item["content"], list) for item in messages)
         request_id = body["requestId"]
         started, saved = time.monotonic(), 0
         content, reasoning, usage, finish, error = "", "", None, "", ""
@@ -548,7 +640,7 @@ class NoteAIStore:
                     conn.execute("UPDATE messages SET content=?,reasoning=?,status=?,error=?,usage=?,elapsed=?,finish_reason=? WHERE session_id=? AND request_id=? AND role='assistant'", (content, reasoning, status, error, json.dumps(usage) if usage else None, time.monotonic() - started, finish, session["id"], request_id))
 
         try:
-            yield {"type": "meta", "session": session, "requestId": request_id, "contextCount": count, "model": config["model"]}
+            yield {"type": "meta", "session": session, "requestId": request_id, "contextCount": count, "model": config["model"], "hasImages": has_images}
             if active.cancelled.is_set():
                 raise NoteAIError("请求已停止", active.reason)
             response = self._upstream(config, messages, active)
@@ -608,7 +700,7 @@ class NoteAIStore:
             if active.cancelled.is_set():
                 code = active.reason
             elif isinstance(exc, urllib.error.HTTPError):
-                code = "http-" + str(exc.code)
+                code = "image-parameters" if has_images and exc.code in (400, 422) else "http-" + str(exc.code)
                 exc.close()
             elif isinstance(exc, (TimeoutError, socket.timeout)):
                 code = "timeout"

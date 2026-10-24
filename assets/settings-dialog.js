@@ -25,7 +25,7 @@
     const title = find('[data-settings-title]'), reset = find('[data-settings-action="reset-category"]');
     const status = find('[data-settings-status]');
     const motion = matchMedia('(prefers-reduced-motion: reduce)');
-    let selected = categories[0].id, trigger = null, closing = false, statusTimer = 0, resetTarget = '', backdropDown = false, disposed = false;
+    let selected = categories[0].id, trigger = null, closing = false, statusTimer = 0, resetTarget = '', backdropDown = false, disposed = false, surfaceRevision = 0;
     const positions = new Map(), buttons = new Map(), lifetime = new AbortController();
     const animations = new Map();
     const listen = (el, event, fn, extra = {}) => el.addEventListener(event, fn, { ...extra, signal: lifetime.signal });
@@ -71,7 +71,8 @@
       const changed = selected !== category.id || !results.hidden;
       stopMotion('page'); stopMotion('title');
       if (selected && !search.value && !content.hidden) positions.set(selected, scroll.scrollTop);
-      selected = category.id; results.hidden = true; content.hidden = false; reset.hidden = false;
+      selected = category.id; results.hidden = true; content.hidden = false; reset.hidden = typeof category.reset !== 'function';
+      dialog.dataset.contentLayout = category.layout || 'scroll';
       categories.forEach(item => {
         const active = item.id === selected; item.panel.hidden = !active; item.panel.inert = !active;
         buttons.get(item.id).setAttribute('aria-current', active ? 'page' : 'false');
@@ -97,23 +98,26 @@
       if (entering) positions.set(selected, scroll.scrollTop);
       stopMotion('page'); stopMotion('title');
       options.onCategoryChange?.('');
+      dialog.dataset.contentLayout = 'scroll';
       content.hidden = true; results.hidden = false; reset.hidden = true; results.replaceChildren();
       title.textContent = text('搜索结果', 'Search results');
       categories.forEach(category => {
-        const targets = category.panel.querySelectorAll('label, [data-settings-keywords], .note-canvas-default-tabs button, .note-shortcut-row');
+        const categoryOnly = category.searchMode === 'category';
+        const targets = categoryOnly ? [] : category.panel.querySelectorAll('label, [data-settings-keywords], .note-canvas-default-tabs button, .note-shortcut-row');
         const matches = Array.from(targets).filter(element => {
           const described = element.querySelector('[aria-describedby]')?.getAttribute('aria-describedby')?.split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ') || '';
           const hint = element.nextElementSibling?.matches('p') ? element.nextElementSibling.textContent : '';
           const value = [label(category), element.textContent, described, hint, element.getAttribute('aria-label'), element.dataset.settingsKeywords].join(' ').toLocaleLowerCase();
           return query.split(/\s+/).every(part => value.includes(part));
         });
-        if (!matches.length && [label(category), category.keywords || '', category.panel.textContent].join(' ').toLocaleLowerCase().includes(query)) matches.push(category.panel);
+        const categoryText = [label(category), category.keywords || '', categoryOnly ? '' : category.panel.textContent].join(' ').toLocaleLowerCase();
+        if (!matches.length && (categoryOnly ? query.split(/\s+/).every(part => categoryText.includes(part)) : categoryText.includes(query))) matches.push(category.panel);
         matches.forEach(element => {
           const button = document.createElement('button'); button.type = 'button'; button.className = 'relatum-settings-result';
           const name = document.createElement('strong'), path = document.createElement('span');
-          name.textContent = (element.querySelector('strong, :scope > span, h3')?.textContent || element.getAttribute('aria-label') || label(category)).trim();
+          name.textContent = categoryOnly ? label(category) : (element.querySelector('strong, :scope > span, h3')?.textContent || element.getAttribute('aria-label') || label(category)).trim();
           path.textContent = label(category); button.append(name, path); results.append(button);
-          button.addEventListener('click', () => { search.value = ''; show(category.id, element); });
+          button.addEventListener('click', () => { search.value = ''; show(category.id, categoryOnly ? null : element); });
         });
       });
       if (!results.childElementCount) results.textContent = text('没有找到相关设置', 'No matching settings');
@@ -134,6 +138,7 @@
       animate('confirm', confirm, from, { opacity: 0, transform: 'none' }, 120, finish);
     }
     function askReset(all) {
+      if (!all && typeof categories.find(item => item.id === selected)?.reset !== 'function') return;
       const visible = !confirm.hidden, from = visible ? appearance(confirm) : { opacity: 0, transform: 'none' };
       const card = confirm.firstElementChild, cardFrom = visible ? appearance(card) : { opacity: 0, transform: 'translateY(6px) scale(.985)' };
       resetTarget = all ? 'all' : selected;
@@ -147,18 +152,21 @@
       animate('confirm-card', card, cardFrom, { opacity: 1, transform: 'none' }, 180);
       find('[data-settings-action="cancel-reset"]').focus();
     }
-    function close({ restoreFocus = true, instant = false } = {}) {
+    function close({ restoreFocus = true, instant = false, reason = 'user' } = {}) {
       if (!dialog.open) return;
       if (closing && !instant) return;
       const from = appearance(dialog), wasClosing = closing;
+      const revision = ++surfaceRevision;
       closing = true; cancelReset({ instant: true });
       Array.from(animations.keys()).forEach(key => stopMotion(key));
       dialog.inert = true; dialog.classList.add('is-closing');
       clearTimeout(statusTimer); status.textContent = ''; results.replaceChildren(); search.value = '';
-      if (!wasClosing) options.onClose?.();
+      if (!wasClosing) options.onClose?.({ reason });
       const finish = () => {
+        if (revision !== surfaceRevision || !closing) return;
         closing = false; dialog.close(); dialog.hidden = true; content.hidden = true; dialog.classList.remove('is-closing');
         if (restoreFocus && trigger?.isConnected && !trigger.closest('[hidden], [inert]')) trigger.focus({ preventScroll: true });
+        if (revision === surfaceRevision && !dialog.open) options.onClosed?.({ reason });
       };
       if (instant) finish(); else animate('dialog', dialog, from, { opacity: 0, transform: 'translateY(5px) scale(.99)' }, 140, finish);
     }
@@ -194,14 +202,14 @@
       const action = event.target.closest('[data-settings-action]')?.dataset.settingsAction;
       if (action === 'close') close();
       else if (action === 'reset-category' || action === 'reset-all') askReset(action === 'reset-all');
-      else if (action === 'cancel-reset') { cancelReset(); reset.focus(); }
+      else if (action === 'cancel-reset') { cancelReset(); (reset.hidden ? find('[data-settings-action="reset-all"]') : reset).focus(); }
       else if (action === 'accept-reset' && resetTarget) {
         const target = resetTarget; cancelReset();
         try { if (target === 'all') await options.resetAll(); else await categories.find(item => item.id === target)?.reset?.(); }
-        catch (_) { if (dialog.open && !dialog.inert) { status.textContent = text('恢复失败，请重试', 'Could not restore defaults. Please retry.'); reset.focus(); } return; }
+        catch (_) { if (dialog.open && !dialog.inert) { status.textContent = text('恢复失败，请重试', 'Could not restore defaults. Please retry.'); (reset.hidden ? find('[data-settings-action="reset-all"]') : reset).focus(); } return; }
         if (!dialog.open || dialog.inert) return;
         status.textContent = text('已恢复默认', 'Defaults restored'); clearTimeout(statusTimer); statusTimer = setTimeout(() => { status.textContent = ''; }, 1800);
-        reset.focus();
+        (reset.hidden ? find('[data-settings-action="reset-all"]') : reset).focus();
       }
     });
     listen(dialog, 'keydown', event => {
@@ -209,7 +217,7 @@
       event.stopPropagation();
       if (event.isComposing || event.keyCode === 229) return;
       if (options.onKeyDown?.(event)) return;
-      if (event.key === 'Escape') { event.preventDefault(); if (resetTarget) { cancelReset(); reset.focus(); } else if (search.value) { search.value = ''; show(selected); } else close(); }
+      if (event.key === 'Escape') { event.preventDefault(); if (resetTarget) { cancelReset(); (reset.hidden ? find('[data-settings-action="reset-all"]') : reset).focus(); } else if (search.value) { search.value = ''; show(selected); } else close(); }
       if (event.key === 'Tab') {
         const scope = resetTarget ? confirm : dialog;
         const focusable = Array.from(scope.querySelectorAll('button,input,select,textarea,[tabindex="0"]')).filter(el => !el.disabled && !el.closest('[hidden], [inert]') && el.getClientRects().length);
@@ -230,8 +238,11 @@
     });
     setLanguage(); content.hidden = true;
     return { dialog, setLanguage, get isOpen() { return dialog.open && !dialog.inert; },
+      finishContentMotion() { if (!closing) { stopMotion('dialog', true); stopMotion('page', true); stopMotion('title', true); } },
+      whenContentSettled() { return Promise.all(['dialog', 'page', 'title'].map(key => animations.get(key)?.animation.finished.catch(() => {}))); },
       open({ category = selected, trigger: source } = {}) {
         if (disposed) return;
+        surfaceRevision++;
         const from = dialog.open ? appearance(dialog) : { opacity: 0, transform: 'translateY(8px) scale(.985)' };
         const alreadyOpen = dialog.open && !closing;
         stopMotion('dialog'); closing = false; clearTimeout(statusTimer); status.textContent = '';
@@ -240,7 +251,7 @@
         if (!dialog.open) dialog.showModal(); show(category, null, alreadyOpen); buttons.get(selected).focus({ preventScroll: true }); options.onOpen?.();
         if (!alreadyOpen) animate('dialog', dialog, from, { opacity: 1, transform: 'none' }, 180);
       }, close,
-      destroy() { close({ restoreFocus: false, instant: true }); disposed = true; lifetime.abort(); finishMotion(); clearTimeout(statusTimer); dialog.remove(); },
+      destroy() { close({ restoreFocus: false, instant: true, reason: 'destroy' }); disposed = true; lifetime.abort(); finishMotion(); clearTimeout(statusTimer); dialog.remove(); },
     };
   }
   window.RelatumSettingsDialog = Object.freeze({ create });

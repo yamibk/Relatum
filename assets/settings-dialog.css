@@ -5,7 +5,7 @@
   --text: var(--settings-text); --text-secondary: var(--settings-muted); --text-tertiary: var(--settings-muted);
   --surface: var(--settings-bg); --accent: var(--settings-text);
   --note-settings-card: var(--settings-card); --note-settings-line: transparent;
-  box-sizing: border-box; width: min(960px, calc(100vw - 48px)); height: min(680px, calc(100dvh - 48px));
+  box-sizing: border-box; width: min(1200px, calc(100vw - 48px)); height: min(820px, calc(100dvh - 48px));
   max-width: none; max-height: none; margin: auto; padding: 0; border: 0; border-radius: 22px;
   color: var(--settings-text); background: var(--settings-bg); overflow: hidden;
   box-shadow: 0 32px 100px #0003, 0 4px 18px #0001;
@@ -41,6 +41,10 @@
 .relatum-settings-pages { display: block; color: inherit; }
 .relatum-settings-pages[hidden], .relatum-settings [hidden] { display: none !important; }
 .relatum-settings-page { padding: 0 !important; border: 0 !important; margin: 0 !important; background: transparent !important; box-shadow: none !important; width: auto !important; max-height: none !important; position: static !important; overflow: visible !important; animation: none !important; }
+.relatum-settings[data-content-layout="fill"] .relatum-settings-scroll { display: flex; overflow: hidden; }
+.relatum-settings[data-content-layout="fill"] .relatum-settings-pages { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.relatum-settings[data-content-layout="fill"] .relatum-settings-page:not([hidden]) { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden !important; }
+.relatum-settings[data-content-layout="fill"] .relatum-settings-footer:has([data-settings-status]:empty) { display: none; }
 .relatum-settings-page > h3, .relatum-settings-page > .note-settings-section-head { margin: 4px 0 14px; font-size: 14px; }
 .relatum-settings-page.note-settings-section > h3 { display: none; }
 .relatum-settings-page .note-settings-font { margin: 0 0 12px; padding: 18px 20px; border-radius: 14px; background: var(--settings-card); gap: 9px; }

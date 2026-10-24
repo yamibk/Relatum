@@ -61,7 +61,8 @@
   const guideContent = $('[data-role="note-guide"]');
   const outlineContent = $('[data-role="note-outline"]');
   const aiContent = $('[data-role="note-ai"]');
-  let aiController = null, aiLoader = null, aiSequence = 0, aiSettingsHost = null, sidePreferences = null;
+  let aiController = null, aiLoader = null, aiSequence = 0, aiSettingsHost = null, aiChatHost = null, sidePreferences = null;
+  let aiSettingsCategory = '', aiDialogReturning = false, aiPageHiding = false;
   let noteOutline = null, outlineLoader = null, outlineLoadSequence = 0;
   const settingsTrigger = $('[data-note-action="toggle-settings"]');
   const settingsPop = $('[data-role="note-settings-pop"]');
@@ -860,7 +861,7 @@
 
   function setNoteSettingsOpen(open, options) {
     if (!settingsDialog) return;
-    if (!open) { settingsMotionSequence++; settingsDialog.close(options); return; }
+    if (!open) { settingsMotionSequence++; settingsDialog.close({ reason: 'programmatic', ...options }); return; }
     const sequence = ++settingsMotionSequence, epoch = noteVisibilityEpoch;
     const current = state.current, tab = state.activeTab, openSequence = state.openSeq;
     const commit = () => {
@@ -900,6 +901,7 @@
     } });
     sidePreferences.initPanel(sidebarRows);
     aiSettingsHost = document.createElement('section'); aiSettingsHost.dataset.i18nManaged = 'true'; aiSettingsHost.className = 'note-ai-settings';
+    aiChatHost = document.createElement('section'); aiChatHost.dataset.i18nManaged = 'true'; aiChatHost.className = 'note-ai-dialog-host';
     const translateSidebar = () => { sidebarHint.textContent = language() === 'en' ? 'Choose the sidebar pages you use. Drag the handles or use the arrows to reorder them.' : '勾选你需要的侧栏页，拖动手柄或使用箭头调整顺序。'; sidePreferences.refresh(); };
     translateSidebar();
     const resetAI = async () => { if (aiEnabled()) { const ai = await ensureAI(); await ai.resetSettings(); } };
@@ -931,7 +933,10 @@
       { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings, keywords: '排序 命名 sort name timestamp', reset: resetLibraryPreferences },
       { id: 'sidebar', label: ['侧栏', 'Sidebar'], icon: 'note-icon-panel-right-frame', panel: sidebar, keywords: '页签 显示 隐藏 顺序 拖拽 tabs visibility reorder sidebar', reset: () => sidePreferences.reset() },
       { id: 'guide', label: ['引导', 'Guide'], icon: 'note-icon-file-text', panel: guide, keywords: 'callout markdown mermaid 教程 语法 syntax tutorial', reset: resetGuide },
-      ...(aiEnabled() ? [{ id: 'ai', label: ['AI', 'AI'], icon: 'note-icon-sparkles', panel: aiSettingsHost, keywords: 'deepseek api key model preset prompt token temperature stream timeout effort base url 思考 强度 模型 预设 提示词 温度 连接 接口 地址 流式 输出 超时', reset: resetAI }] : []),
+      ...(aiEnabled() ? [
+        { id: 'ai', label: ['AI设置', 'AI settings'], icon: 'note-icon-sparkles', panel: aiSettingsHost, keywords: 'deepseek api key model preset prompt token temperature stream timeout effort base url 思考 强度 模型 预设 提示词 温度 连接 接口 地址 流式 输出 超时', reset: resetAI },
+        { id: 'ai-chat', label: ['AI对话', 'AI chat'], icon: 'note-icon-ai-chat', panel: aiChatHost, layout: 'fill', searchMode: 'category', keywords: 'AI 对话 聊天 消息 图片 chat conversation message image' },
+      ] : []),
       ...(graphEnabled() && graph ? [{ id: 'graph', label: ['图谱', 'Graph'], icon: 'note-icon-graph', panel: graph, keywords: 'spacing preload 间距 预加载 启动', reset: () => { pref?.resetGraphSpacing?.(); pref?.resetGraphPreload?.(); syncNoteSettingsFontScale(); } }] : []),
       ...(canvasEnabled() ? [{ id: 'canvas', label: ['内嵌画布', 'Embedded canvas'], icon: 'note-icon-panel-right-frame', panel: defaultsHost, keywords: '默认 样式 节点 连线 default node edge styles', reset: resetCanvas }] : []),
       { id: 'shortcuts', label: ['快捷键', 'Shortcuts'], icon: 'note-icon-code-xml', panel: shortcuts, keywords: '键盘 keyboard bindings', reset: () => { stopShortcutRecording(true); if (NOTE_SHORTCUTS) state.shortcutBindings = NOTE_SHORTCUTS.reset(); applyShortcutBindings(); renderNoteShortcutSettings(); } },
@@ -939,9 +944,31 @@
     settingsDialog = window.RelatumSettingsDialog.create({ content: settingsPop, categories, language,
       onSearch(query) { if (aiEnabled() && !aiSettingsHost.querySelector('[data-ai-field]') && /deepseek|api|模型|预设|提示词|思考|强度|温度|连接|接口|地址|流式|输出|超时|token|top.?p|model|preset|prompt|temperature|stream|timeout|effort|base.?url|\bkey\b|\bai\b/.test(query)) return ensureAI().then(ai => ai.prepareSettings()); },
       async resetAll() { resetNoteSettings(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); if (canvasEnabled()) resetCanvas(); await resetAI(); },
-      onOpen() { state.settingsOpen = true; settingsTrigger.setAttribute('aria-expanded', 'true'); libraryTrigger.setAttribute('aria-expanded', 'true'); },
-      onClose() { state.settingsOpen = false; settingsTrigger.setAttribute('aria-expanded', 'false'); libraryTrigger.setAttribute('aria-expanded', 'false'); stopShortcutRecording(true); canvasStylePanel?.suspend(); sidePreferences.suspend(); aiController?.closeSettings(); },
-      onCategoryChange(category) { stopShortcutRecording(true); canvasStylePanel?.suspend(); sidePreferences.suspend(); if (category === 'ai') ensureAI().then(ai => { if (state.settingsOpen && !aiSettingsHost.hidden) ai.settings(); }).catch(error => showToast(error.message, 'error')); else aiController?.closeSettings(); },
+      onOpen() {
+        state.settingsOpen = true; aiDialogReturning = false;
+        settingsTrigger.setAttribute('aria-expanded', 'true'); libraryTrigger.setAttribute('aria-expanded', 'true'); renderAI();
+      },
+      onClose({ reason }) {
+        aiSequence++;
+        aiDialogReturning = reason === 'user' && aiSettingsCategory === 'ai-chat' && !aiPageHiding && noteWorkspaceVisible()
+          && !graphPresentation && aiEnabled() && sidePages().includes('ai');
+        state.settingsOpen = false; settingsTrigger.setAttribute('aria-expanded', 'false'); libraryTrigger.setAttribute('aria-expanded', 'false');
+        stopShortcutRecording(true); canvasStylePanel?.suspend(); sidePreferences.suspend(); aiController?.closeSettings();
+        if (aiDialogReturning) aiController?.holdPresentation(); else aiController?.suspend();
+      },
+      onClosed({ reason }) {
+        const returning = aiDialogReturning; aiDialogReturning = false;
+        if (returning && reason === 'user' && !aiPageHiding && noteWorkspaceVisible() && !graphPresentation && aiEnabled() && sidePages().includes('ai')) {
+          state.sideMode = 'ai'; setSideOpen(true);
+        } else { aiController?.suspend(); renderAI(); }
+      },
+      onCategoryChange(category) {
+        aiSettingsCategory = category; aiDialogReturning = false;
+        stopShortcutRecording(true); canvasStylePanel?.suspend(); sidePreferences.suspend();
+        if (category === 'ai') ensureAI().then(ai => { if (settingsDialog?.isOpen && aiSettingsCategory === 'ai' && noteWorkspaceVisible()) ai.settings(); }).catch(error => showToast(error.message, 'error'));
+        else aiController?.closeSettings();
+        renderAI();
+      },
       onKeyDown(event) {
         if (!state.recordingShortcutCommand) return false;
         event.preventDefault();
@@ -2124,12 +2151,14 @@
     document.documentElement.classList.remove('note-boot-pending');
   }
   function closeWorkspacePopovers() {
+    aiController?.closePopovers();
     closeContextMenu({ instant: true });
     setNoteSettingsOpen(false, { restoreFocus: false, instant: true });
     setLibraryPanel('', { restoreFocus: false, instant: true });
   }
   function prepareWorkspacePopover(kind) {
     noteBrowser?.closePopovers({ instant: true });
+    if (kind !== 'ai') aiController?.closePopovers();
     if (kind !== 'context') closeContextMenu({ instant: true });
     if (kind !== 'settings') setNoteSettingsOpen(false, { restoreFocus: false, instant: true });
     if (kind !== 'library') setLibraryPanel('', { restoreFocus: false, instant: true });
@@ -4249,7 +4278,11 @@
       const create = () => {
         if (!window.RelatumNoteAI) { reject(new Error(tr('readFailed'))); return; }
         aiController = window.RelatumNoteAI.create({ host: aiContent, settingsHost: aiSettingsHost, language,
-          isVisible: () => noteWorkspaceVisible() && !aiContent.hidden && root.classList.contains('links-overlay-open'),
+          isVisible: aiPresentationVisible,
+          onPopoverOpen: () => {
+            if (aiDialogChatVisible()) { settingsDialog.finishContentMotion(); prepareWorkspacePopover('settings'); }
+            else prepareWorkspacePopover('ai');
+          },
           openSettings: trigger => setNoteSettingsOpen(true, { category: 'ai', trigger }), notify: showToast });
         resolve(aiController);
       };
@@ -4268,10 +4301,24 @@
     }).catch(error => { aiLoader = null; throw error; });
     return aiLoader;
   }
+  function aiDialogChatVisible() {
+    return !!(settingsDialog?.isOpen && aiSettingsCategory === 'ai-chat' && aiChatHost && !aiChatHost.hidden);
+  }
+  function aiPresentationVisible() {
+    return !aiPageHiding && aiEnabled() && noteWorkspaceVisible() && (aiDialogChatVisible()
+      || !settingsDialog?.dialog.open && aiContent && !aiContent.hidden && root.classList.contains('links-overlay-open'));
+  }
   function renderAI() {
     const sequence = ++aiSequence;
-    if (!aiEnabled() || !aiContent || aiContent.hidden || !root.classList.contains('links-overlay-open') || !noteWorkspaceVisible()) { aiController?.suspend(); return; }
-    ensureAI().then(ai => { if (sequence === aiSequence && noteWorkspaceVisible() && !aiContent.hidden && root.classList.contains('links-overlay-open')) ai.show(); })
+    if (aiDialogReturning && settingsDialog?.dialog.open && !aiPageHiding && noteWorkspaceVisible()) return;
+    if (!aiPresentationVisible()) { aiController?.suspend(); return; }
+    const inDialog = aiDialogChatVisible();
+    const isCurrent = () => sequence === aiSequence && aiPresentationVisible() && aiDialogChatVisible() === inDialog;
+    ensureAI().then(ai => {
+      if (isCurrent()) return ai.present({ container: inDialog ? aiChatHost : aiContent,
+        portal: inDialog ? settingsDialog.dialog : document.body, isCurrent,
+        whenSettled: () => inDialog ? settingsDialog.whenContentSettled() : Promise.resolve() });
+    })
       .catch(error => { if (sequence === aiSequence && noteWorkspaceVisible()) showToast(error.message, 'error'); });
   }
   function updateSidePanel() {
@@ -5020,10 +5067,10 @@
     }
   }
   document.addEventListener('visibilitychange', syncNotePageVisibility);
-  window.addEventListener('pagehide', () => { closeNoteModal(); guideSequence++; guideController?.suspend(); aiSequence++; aiController?.suspend(true); indexActivity(false, true); });
+  window.addEventListener('pagehide', () => { aiPageHiding = true; closeNoteModal(); guideSequence++; guideController?.suspend(); aiSequence++; aiController?.suspend(true); indexActivity(false, true); });
   window.addEventListener('canvasdesktop:visibility', syncNotePageVisibility);
   window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeWorkspacePopovers(); cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0; stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
-  window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; syncNotePageVisibility(); });
+  window.addEventListener('pageshow', () => { aiPageHiding = false; state.linksRefreshSuspended = false; syncNotePageVisibility(); });
   window.addEventListener('beforeunload', () => { cancelTabCloseMotion(); cancelTabScroll(); cancelLinksRefresh(); stopExternalSync(); flushWorkspaceState(true); });
   document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); noteGraph?.setLanguage(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);

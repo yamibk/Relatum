@@ -10396,6 +10396,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.close_connection = True
             return self._send_json(403, {"error": "本次启动未启用此功能", "code": "feature-disabled"})
         raw_length = str(self.headers.get("Content-Length") or "").strip()
+        if path == "/api/note-ai/chat" and raw_length.isdigit() and int(raw_length) > 8 * 1024 * 1024:
+            self.close_connection = True
+            return self._send_json(413, {"error": "聊天请求超过 8 MiB，请减少图片或文字", "code": "body-limit"})
         if path in ("/api/review-import-preview", "/api/review-import") and raw_length.isdigit() and int(raw_length) > REVIEW_IMPORT_BODY_MAX:
             self.close_connection = True
             return self._send_json(413, {"error": "转换后的数据超过 32 MiB，请分批导入", "code": "body-limit"})

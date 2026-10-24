@@ -1,6 +1,13 @@
 /* Opaque, quiet surfaces share the note theme. No blur or idle animation. */
-.note-ai { --ai-surface: #fdfdfc; --ai-text: #222322; --ai-muted: #777976; --ai-line: color-mix(in srgb,var(--ai-muted) 22%,transparent); position: relative; display: flex; flex-direction: column; min-height: 0; flex: 1; padding: 12px; gap: 12px; color: var(--ai-text); }
-body[data-start-theme="dark"] .note-ai { --ai-surface: #242624; --ai-text: #ededeb; --ai-muted: #a0a39e; color-scheme: dark; }
+.note-ai, .note-ai-popovers { --ai-surface: #fdfdfc; --ai-text: #222322; --ai-muted: #777976; --ai-line: color-mix(in srgb,var(--ai-muted) 22%,transparent); --ai-line-hover: color-mix(in srgb,var(--ai-muted) 48%,transparent); }
+.note-ai { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1; padding: 12px; gap: 12px; color: var(--ai-text); }
+.note-ai-dock { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.note-ai-dock[hidden] { display: none !important; }
+.note-ai-dialog-host > .note-ai { padding: 0 2px 2px; }
+.note-ai-dialog-host .note-ai-footer { min-height: 0; max-height: 70%; overflow-y: auto; overscroll-behavior: contain; }
+.relatum-settings[data-role="note-settings-dialog"] :is(.note-ai, .note-ai-popovers) { --ai-surface: var(--settings-bg); --ai-text: var(--settings-text); --ai-muted: var(--settings-muted); }
+.note-ai-popovers.in-settings { position: absolute; }
+body[data-start-theme="dark"] :is(.note-ai, .note-ai-popovers) { --ai-surface: #242624; --ai-text: #ededeb; --ai-muted: #a0a39e; color-scheme: dark; }
 body[data-start-theme="dark"] .note-ai-settings { color-scheme: dark; }
 .note-ai[hidden], .note-ai [hidden], .note-ai-settings [hidden] { display: none !important; }
 .note-ai *, .note-ai-settings * { box-sizing: border-box; }
@@ -61,14 +68,36 @@ body[data-start-theme="dark"] .note-ai-settings { color-scheme: dark; }
 .note-ai .note-ai-bottom { position: absolute; z-index: 2; right: 24px; bottom: calc(var(--ai-composer-height,120px) + 24px); display: grid; place-items: center; width: 31px; height: 31px; min-height: 31px; padding: 0; border: 1px solid var(--ai-line); border-radius: 50%; background: var(--ai-surface); box-shadow: 0 2px 6px #0001; }
 .note-ai-notice { flex: none; margin: 0; font-size: 11px; line-height: 1.6; color: var(--ai-muted); }
 .note-ai-notice:empty { display: none; }
-.note-ai-composer { flex: none; display: grid; grid-template-columns: minmax(0,1fr) 30px 30px; align-items: center; gap: 8px; padding: 13px; border: 1px solid var(--ai-line); border-radius: 17px; background: var(--ai-surface); }
+.note-ai-footer { display: flex; flex: none; flex-direction: column; min-width: 0; gap: 8px; }
+.note-ai-controls { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; min-width: 0; }
+.note-ai-controls > .review-choice { width: 100%; }
+.note-ai-controls .review-choice-trigger { min-height: 32px; gap: 6px; padding: 6px 8px; border: 1px solid var(--ai-line); border-radius: 9px; background: var(--ai-surface); color: var(--ai-text); font-size: 11px; transition: background-color 140ms ease, border-color 140ms ease; }
+.note-ai-controls .review-choice-trigger:hover:not(:disabled), .note-ai-controls .review-choice-trigger[aria-expanded="true"] { filter: none; border-color: var(--ai-line-hover); background: color-mix(in srgb,var(--ai-muted) 6%,var(--ai-surface)); }
+.note-ai-controls .review-choice-trigger:active { transform: none; }
+.note-ai-controls .review-choice-value { flex: 1; }
+.note-ai-control-caption { flex: none; color: var(--ai-muted); }
+.note-ai-popovers { position: fixed; inset: 0; z-index: 1100; pointer-events: none; }
+.note-ai-popovers .review-choice-popup { pointer-events: auto; color: var(--ai-text); background: var(--ai-surface); border-color: var(--ai-line-hover); box-shadow: 0 10px 30px #0002; }
+.note-ai-popovers .review-choice-popup, .note-ai-popovers .review-choice-popup[data-start-theme="dark"] { --text: var(--ai-text); --text-secondary: var(--ai-muted); --text-tertiary: var(--ai-muted); --border: var(--ai-line); --border-strong: var(--ai-line-hover); }
+.note-ai-popovers .review-choice-option.is-selected { font-weight: 600; }
+.note-ai-composer { flex: none; display: flex; flex-direction: column; min-width: 0; gap: 8px; padding: 13px; border: 1px solid var(--ai-line); border-radius: 17px; background: var(--ai-surface); }
 .note-ai-composer:focus-within { box-shadow: 0 0 0 1px var(--ai-muted); }
+.note-ai-composer.is-dragging { border-color: var(--ai-muted); box-shadow: 0 0 0 1px var(--ai-muted); }
 .note-ai .note-ai-composer textarea:focus-visible { outline: none; }
-.note-ai-composer textarea { grid-column: 1 / -1; resize: none; width: 100%; min-height: 52px; max-height: min(240px,28vh); border: 0; padding: 0; outline: none; background: transparent; font-size: 14px; line-height: 1.75; }
-.note-ai-composer button { display: grid; place-items: center; grid-column: 3; grid-row: 2; padding: 0; width: 30px; height: 30px; min-height: 30px; line-height: 1; background: var(--ai-text); color: var(--ai-surface); }
-.note-ai-composer button svg { width: 19px; height: 19px; }
-.note-ai-composer [data-ai-new] { grid-column: 2; background: transparent; color: var(--ai-muted); }
-.note-ai-composer [data-ai-new]:hover { background: color-mix(in srgb,var(--ai-muted) 10%,transparent); }
+.note-ai-composer textarea { resize: none; width: 100%; min-height: 52px; max-height: min(240px,28vh); border: 0; padding: 0; outline: none; background: transparent; font-size: 14px; line-height: 1.75; }
+.note-ai-composer-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.note-ai-composer-actions > button { display: grid; place-items: center; flex: none; padding: 0; width: 30px; height: 30px; min-height: 30px; line-height: 1; background: var(--ai-text); color: var(--ai-surface); }
+.note-ai-composer-actions > button svg { width: 19px; height: 19px; }
+.note-ai-composer :is([data-ai-new], [data-ai-attach]) { background: transparent; color: var(--ai-muted); }
+.note-ai-composer :is([data-ai-new], [data-ai-attach]):hover:not(:disabled) { background: color-mix(in srgb,var(--ai-muted) 10%,transparent); }
+.note-ai-images { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.note-ai-draft-images { padding-top: 3px; }
+.note-ai-message-images { justify-content: flex-end; max-width: 100%; margin-bottom: 8px; }
+.note-ai-image-card { position: relative; flex: 0 0 62px; max-width: 100%; min-width: 0; margin: 0; padding: 3px; border: 1px solid var(--ai-line); border-radius: 9px; background: var(--ai-surface); }
+.note-ai-image-card img { display: block; width: 100%; height: 56px; object-fit: contain; border-radius: 5px; }
+.note-ai-image-card figcaption { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; padding: 3px 1px 1px; font: 10px/1.4 var(--font-ui); color: var(--ai-muted); }
+.note-ai .note-ai-image-remove { position: absolute; top: -5px; right: -5px; display: grid; place-items: center; width: 18px; height: 18px; min-height: 18px; padding: 0; border: 1px solid var(--ai-line-hover); border-radius: 50%; background: var(--ai-surface); color: var(--ai-text); }
+.note-ai-image-remove svg { width: 11px; height: 11px; }
 .note-ai.is-suspended *, .note-ai.is-suspended *::before { transition: none !important; }
 .note-ai-settings, .note-ai-settings-popovers { --ai-line: color-mix(in srgb,var(--settings-text) 12%,transparent); --ai-line-hover: color-mix(in srgb,var(--settings-text) 28%,transparent); }
 .note-ai-settings-popovers { position: absolute; inset: 0; pointer-events: none; }
@@ -110,4 +139,4 @@ body[data-start-theme="dark"] .note-ai-settings { color-scheme: dark; }
   .note-ai-settings .note-ai-field { grid-template-columns: minmax(0,1fr); gap: 7px; }
   .note-ai-generation { grid-template-columns: minmax(0,1fr); }
 }
-@media (prefers-reduced-motion: reduce) { .note-ai button, .note-ai-chevron, .note-ai-detail, .note-ai-settings-actions button, .note-ai-settings input, .note-ai-settings textarea { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .note-ai button, .note-ai-controls .review-choice-trigger, .note-ai-chevron, .note-ai-detail, .note-ai-settings-actions button, .note-ai-settings input, .note-ai-settings textarea { transition: none; } }

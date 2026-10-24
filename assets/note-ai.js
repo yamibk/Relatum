@@ -2,17 +2,62 @@
 (function () {
   'use strict';
   const ROOT = '/api/note-ai/';
+  const IMAGE_BYTES = 4 * 1024 * 1024, SESSION_IMAGE_BYTES = 32 * 1024 * 1024;
   const uid = () => crypto.randomUUID();
+  // Match the bounded header reader in notes_library; never decode pixels to
+  // discover dimensions, and never trust a file extension or clipboard MIME.
+  function imageHeader(buffer) {
+    const bytes = new Uint8Array(buffer), view = new DataView(buffer), length = bytes.length;
+    const tag = (offset, text) => offset + text.length <= length && Array.from(text).every((c, index) => bytes[offset + index] === c.charCodeAt(0));
+    const result = (media, width, height) => ({ media, width, height });
+    if (length >= 24 && tag(0, '\x89PNG\r\n\x1a\n') && tag(12, 'IHDR')) return result('image/png', view.getUint32(16), view.getUint32(20));
+    if (length >= 10 && (tag(0, 'GIF87a') || tag(0, 'GIF89a'))) return result('image/gif', view.getUint16(6, true), view.getUint16(8, true));
+    if (tag(0, 'RIFF') && tag(8, 'WEBP')) {
+      for (let offset = 12; offset + 8 <= length;) {
+        const size = view.getUint32(offset + 4, true), start = offset + 8;
+        if (tag(offset, 'VP8X') && size >= 10 && start + 10 <= length) {
+          const uint24 = at => bytes[at] + bytes[at + 1] * 256 + bytes[at + 2] * 65536;
+          return result('image/webp', 1 + uint24(start + 4), 1 + uint24(start + 7));
+        }
+        if (tag(offset, 'VP8L') && size >= 5 && start + 5 <= length && bytes[start] === 0x2f) {
+          const bits = view.getUint32(start + 1, true);
+          return result('image/webp', 1 + (bits & 0x3fff), 1 + ((bits >>> 14) & 0x3fff));
+        }
+        if (tag(offset, 'VP8 ') && size >= 10 && start + 10 <= length && tag(start + 3, '\x9d\x01\x2a')) return result('image/webp', view.getUint16(start + 6, true) & 0x3fff, view.getUint16(start + 8, true) & 0x3fff);
+        offset = start + size + (size & 1);
+      }
+    }
+    if (tag(0, '\xff\xd8\xff')) {
+      let offset = 2;
+      while (offset < length && bytes[offset] === 0xff) {
+        while (offset < length && bytes[offset] === 0xff) offset++;
+        if (offset >= length) break;
+        const marker = bytes[offset++];
+        if ([0, 0xd9, 0xda].includes(marker)) break;
+        if (marker === 1 || marker >= 0xd0 && marker <= 0xd8) continue;
+        if (offset + 2 > length) break;
+        const size = view.getUint16(offset);
+        if (size < 2 || offset + size > length) break;
+        if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker) && size >= 8) return result('image/jpeg', view.getUint16(offset + 5), view.getUint16(offset + 3));
+        offset += size;
+      }
+    }
+    return null;
+  }
   function create(options) {
-    const { host, settingsHost } = options;
+    const { host: sidebarHost, settingsHost } = options;
+    const host = document.createElement('section'); host.className = 'note-ai'; host.setAttribute('aria-label', 'AI'); sidebarHost.append(host);
     host.dataset.i18nManaged = 'true';
     let config = null, configLoader = null, initialized = false, visible = false, sequence = 0;
     let session = null, presetId = 'none', messages = [], presets = null, choices = null, choicePortal = null;
     let pageHiding = false;
+    let draftImages = [], draftRevision = 0, imageEpoch = 0, imageTask = null, preparingSend = null, pickerIntent = null;
     let running = null, paint = 0, paintTimer = 0, lastPaint = 0, paintInterval = 120, renderEpoch = 0;
     let layoutFrame = 0, followBottom = true, readingAnchor = null;
+    let viewMoving = false, presentRevision = 0, presentFrame = 0, presentResolve = null, compositionFrame = 0, handoffAnchor = null;
+    const compositionWaiters = new Set();
     let settingsActive = false, settingsBuilt = false, settingsSequence = 0;
-    let pending = {}, saveTimer = 0, saveChain = Promise.resolve(), testRequest = null, configRevision = 0, keyRevealSequence = 0;
+    let pending = {}, saveTimer = 0, saveChain = Promise.resolve(), saveError = '', testRequest = null, configRevision = 0, keyRevealSequence = 0;
     let keyDraft = null, keyOriginal = null, keyDirty = false;
     let presetEditing = 'none', presetTimer = 0, clearKeyArmed = false;
     const rows = new Map(); let languageRevision = 0;
@@ -36,6 +81,14 @@
       'context-limit': tr('上下文过长，请新建对话。', 'The context is too large. Start a new conversation.'),
       'response-limit': tr('回复达到本机接收上限，已停止。', 'The reply reached the local response limit.'),
       'preset-missing': tr('预设已不存在，请重新选择。', 'This preset no longer exists. Choose another one.'),
+      'image-limit': tr('每条消息最多 4 张图片，原始文件合计最多 4 MiB。', 'Attach up to 4 images, totaling at most 4 MiB per message.'),
+      'image-dimensions': tr('图片单边最多 8192 像素，总像素最多 1600 万。请缩小后重新选择。', 'Images must fit within 8192 pixels per side and 16 million pixels in total. Resize the image and try again.'),
+      'image-type': tr('只支持 PNG、JPEG、GIF、WebP 图片，不支持 SVG 或其他文件。', 'Only PNG, JPEG, GIF and WebP images are supported.'),
+      'invalid-image': tr('无法安全识别这张图片，请重新导出为 PNG 或 JPEG。', 'This image could not be safely read. Export it as PNG or JPEG and try again.'),
+      'image-session-limit': tr('本次对话图片累计最多 32 MiB，请新建对话。', 'Images in this conversation have reached the 32 MiB limit. Start a new conversation.'),
+      'image-store-limit': tr('临时图片达到 64 MiB 上限，请释放旧对话或稍后重试。', 'Temporary images have reached the 64 MiB limit. Release old conversations or retry shortly.'),
+      'image-parameters': tr('当前模型或接口未接受带图请求，请确认支持图片并检查生成参数。', 'The model or endpoint rejected the image request. Check image support and generation settings.'),
+      'body-limit': tr('聊天请求超过 8 MiB，请减少图片或文字。', 'The chat request exceeds 8 MiB. Remove some images or text.'),
     })[code] || (/^http-5/.test(code || '') ? tr('AI 服务暂时繁忙，请稍后重试。', 'The AI service is busy. Please retry later.') : tr('请求失败，请检查设置后重试。', 'Request failed. Check settings and retry.'));
     async function api(path, body, extra = {}) {
       const serialized = body === undefined ? null : JSON.stringify(body);
@@ -55,6 +108,8 @@
       check: '<path d="m5 12 4 4L19 6"/>', chevron: '<path d="m9 5 7 7-7 7"/>',
       down: '<path d="m6 10 6 6 6-6M12 4v12"/>', retry: '<path d="M4 10a8 8 0 1 1 1 8M4 4v6h6"/>',
       info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/>',
+      attach: '<path d="M19 8v8a7 7 0 0 1-14 0V7a5 5 0 0 1 10 0v9a3 3 0 0 1-6 0V8"/>',
+      close: '<path d="m7 7 10 10M17 7 7 17"/>',
     };
     function icon(element, name) {
       if (element.dataset.icon === name) return;
@@ -70,6 +125,7 @@
       if (old.length !== next.length || old.some((item, index) => item !== next[index])) element.replaceChildren(...next);
       element.value = value;
       choices?.refresh(element);
+      quickChoices.refresh(element);
     }
     const plus = button('', () => {
       newConversation(presetId);
@@ -79,22 +135,77 @@
     const body = document.createElement('div'); body.className = 'note-ai-messages';
     timeline.append(body);
     const notice = document.createElement('p'); notice.className = 'note-ai-notice'; notice.setAttribute('role', 'status');
+    const footer = document.createElement('div'); footer.className = 'note-ai-footer';
+    const quickControls = document.createElement('div'); quickControls.className = 'note-ai-controls';
+    const quickPreset = select(''); quickPreset.dataset.aiQuickPreset = '';
+    const quickThinking = select(''); quickThinking.dataset.aiQuickThinking = '';
+    quickPreset.disabled = quickThinking.disabled = true;
+    quickControls.append(quickPreset, quickThinking);
+    const quickPortal = document.createElement('div'); quickPortal.className = 'note-ai-popovers'; quickPortal.dataset.i18nManaged = 'true';
+    document.body.append(quickPortal);
+    const quickChoices = window.RelatumReviewControls.createManager(quickControls, quickPortal);
+    quickChoices.enhance(quickPreset);
+    const thinkingControl = quickChoices.enhance(quickThinking);
+    const thinkingCaption = document.createElement('span'); thinkingCaption.className = 'note-ai-control-caption'; thinkingCaption.setAttribute('aria-hidden', 'true');
+    thinkingControl.anchor.prepend(thinkingCaption);
     const composer = document.createElement('form'); composer.className = 'note-ai-composer';
+    const draftGallery = document.createElement('div'); draftGallery.className = 'note-ai-images note-ai-draft-images'; draftGallery.hidden = true;
+    const fileInput = document.createElement('input'); fileInput.type = 'file'; fileInput.multiple = true; fileInput.accept = 'image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp'; fileInput.hidden = true;
+    const attach = button('', () => {
+      if (!initialized || imageTask || preparingSend || !visible) return;
+      closePopovers(); pickerIntent = { sequence, epoch: imageEpoch }; fileInput.value = ''; fileInput.click();
+    }, ''); attach.dataset.aiAttach = ''; icon(attach, 'attach');
     const input = document.createElement('textarea'); input.rows = 3; input.maxLength = 262144; input.dataset.aiInput = '';
     const send = document.createElement('button'); send.type = 'submit'; send.dataset.aiSend = '';
     const bottom = button('', () => { followBottom = true; restoreReadingPosition(); }, '');
     bottom.className = 'note-ai-bottom'; bottom.dataset.aiBottom = ''; bottom.hidden = true; icon(bottom, 'down');
-    composer.append(input, plus, send); host.append(timeline, bottom, notice, composer);
-    input.disabled = send.disabled = plus.disabled = true;
+    const composerActions = document.createElement('div'); composerActions.className = 'note-ai-composer-actions'; composerActions.append(attach, plus, send);
+    composer.append(draftGallery, input, fileInput, composerActions); footer.append(notice, quickControls, composer); host.append(timeline, bottom, footer);
+    input.disabled = send.disabled = plus.disabled = attach.disabled = true;
+    fileInput.addEventListener('change', () => {
+      const intent = pickerIntent, files = Array.from(fileInput.files || []); pickerIntent = null; fileInput.value = '';
+      if (intent && intent.sequence === sequence && intent.epoch === imageEpoch && visible) acceptImages(files);
+    });
+    fileInput.addEventListener('cancel', () => { pickerIntent = null; });
+    quickPreset.addEventListener('change', () => changePreset(quickPreset.value));
+    quickThinking.addEventListener('change', () => {
+      if (!config) return;
+      const value = quickThinking.value;
+      const patch = ['auto', 'disabled'].includes(value) ? { thinking: value } : { thinking: 'enabled', effort: value };
+      if (Object.entries(patch).every(([key, next]) => config[key] === next)) return;
+      queuePatch(patch); settingsStatus(tr('正在保存…', 'Saving…'));
+    });
+    const prepareQuickPopover = event => {
+      const trigger = event.target.closest('.review-choice-trigger');
+      if (trigger && !trigger.disabled && trigger.getAttribute('aria-expanded') !== 'true') options.onPopoverOpen?.();
+    };
+    quickControls.addEventListener('click', prepareQuickPopover, true);
+    quickControls.addEventListener('keydown', event => {
+      if (!event.isComposing && event.keyCode !== 229 && ['ArrowDown', 'ArrowUp'].includes(event.key)) prepareQuickPopover(event);
+    }, true);
     host.addEventListener('click', event => {
       event.stopPropagation();
       const link = event.target.closest('a');
       if (link) { const url = link.getAttribute('href') || ''; if (!/^(https?:|mailto:)/i.test(url)) event.preventDefault(); else { link.target = '_blank'; link.rel = 'noopener noreferrer'; } }
     });
-    host.addEventListener('keydown', event => event.stopPropagation());
+    host.addEventListener('keydown', event => { if (!host.closest('dialog')) event.stopPropagation(); });
     let composing = false;
-    input.addEventListener('input', resizeInput);
-    input.addEventListener('compositionstart', () => { composing = true; }); input.addEventListener('compositionend', () => { composing = false; resizeInput(); });
+    input.addEventListener('input', () => { draftRevision++; resizeInput(); });
+    input.addEventListener('paste', event => {
+      const files = Array.from(event.clipboardData?.items || []).filter(item => item.kind === 'file' && /^image\//i.test(item.type)).map(item => item.getAsFile()).filter(Boolean);
+      if (files.length) { if (!event.clipboardData.getData('text/plain')) event.preventDefault(); acceptImages(files); }
+    });
+    const hasFiles = event => Array.from(event.dataTransfer?.types || []).includes('Files');
+    composer.addEventListener('dragover', event => { if (hasFiles(event)) { event.preventDefault(); event.stopPropagation(); composer.classList.add('is-dragging'); } });
+    composer.addEventListener('dragleave', event => { if (!composer.contains(event.relatedTarget)) composer.classList.remove('is-dragging'); });
+    composer.addEventListener('drop', event => {
+      composer.classList.remove('is-dragging');
+      if (!hasFiles(event)) return;
+      event.preventDefault(); event.stopPropagation(); acceptImages(Array.from(event.dataTransfer.files || []));
+    });
+    input.addEventListener('compositionstart', () => { composing = true; });
+    input.addEventListener('compositionend', () => { composing = false; resizeInput(); settleComposition(); });
+    input.addEventListener('blur', () => { if (compositionWaiters.size) settleComposition(); });
     input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !composing) { event.preventDefault(); if (!running) submit(); } });
     composer.addEventListener('submit', event => { event.preventDefault(); if (running) stop(); else if (!composing) submit(); });
 
@@ -108,13 +219,13 @@
         if (!node.getClientRects().length || node.closest('[inert]')) continue;
         if (node.getBoundingClientRect().bottom > top + 1) {
           const row = node.closest('.note-ai-message');
-          return { node, top: node.getBoundingClientRect().top, row, rowTop: row.getBoundingClientRect().top };
+          return { node, top: node.getBoundingClientRect().top, row, rowTop: row.getBoundingClientRect().top, timelineTop: top };
         }
       }
       return null;
     }
     function restoreReadingPosition(anchor = readingAnchor, previous = null, next = null) {
-      if (!visible) return;
+      if (!visible || viewMoving) return;
       if (followBottom) timeline.scrollTop = timeline.scrollHeight;
       else if (anchor) {
         const node = anchor.node === previous ? next : anchor.node;
@@ -125,23 +236,163 @@
       readingAnchor = captureReadingPosition();
     }
     function queueLayout() {
-      if (!visible || layoutFrame) return;
-      layoutFrame = requestAnimationFrame(() => { layoutFrame = 0; restoreReadingPosition(); });
+      if (!visible || viewMoving || layoutFrame) return;
+      layoutFrame = requestAnimationFrame(() => { layoutFrame = 0; measureFooter(); restoreReadingPosition(); });
     }
     timeline.addEventListener('scroll', () => {
-      if (!visible) return;
+      if (!visible || viewMoving) return;
       followBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 70;
       bottom.hidden = followBottom; readingAnchor = captureReadingPosition();
     }, { passive: true });
     function resizeInput() {
-      if (!visible) return;
+      if (!visible || viewMoving) return;
       const anchor = captureReadingPosition();
       input.style.height = '0px';
       const max = Math.min(240, innerHeight * .28);
       input.style.height = Math.max(52, Math.min(input.scrollHeight, max)) + 'px';
       input.style.overflowY = input.scrollHeight > max ? 'auto' : 'hidden';
-      host.style.setProperty('--ai-composer-height', composer.offsetHeight + 'px');
+      measureFooter();
       restoreReadingPosition(anchor);
+    }
+    function measureFooter() {
+      const height = footer.offsetHeight + 'px';
+      if (host.style.getPropertyValue('--ai-composer-height') !== height) host.style.setProperty('--ai-composer-height', height);
+    }
+    function syncComposer() {
+      input.disabled = plus.disabled = !initialized;
+      attach.disabled = !initialized || !!imageTask || !!preparingSend;
+      send.disabled = !initialized || !running && (!!imageTask || !!preparingSend);
+      rows.forEach(row => { row._parts.retry.disabled = !!running || !!imageTask || !!preparingSend; });
+    }
+    function imageError(code) { const error = new Error(textError(code)); error.code = code; return error; }
+    function readImageBlob(blob, method, signal) {
+      return new Promise((resolve, reject) => {
+        if (signal.aborted) { reject(new DOMException('Cancelled', 'AbortError')); return; }
+        const reader = new FileReader();
+        const abort = () => reader.abort();
+        const finish = (error, value) => {
+          signal.removeEventListener('abort', abort); reader.onload = reader.onerror = reader.onabort = null;
+          if (error) reject(error); else resolve(value);
+        };
+        reader.onload = () => finish(null, reader.result);
+        reader.onerror = () => finish(reader.error || imageError('invalid-image'));
+        reader.onabort = () => finish(new DOMException('Cancelled', 'AbortError'));
+        signal.addEventListener('abort', abort, { once: true });
+        try { reader[method](blob); } catch (error) { finish(error); }
+      });
+    }
+    async function imageThumbnail(blob, dimensions, signal, check) {
+      const ratio = Math.min(1, 160 / Math.max(dimensions.width, dimensions.height));
+      const width = Math.max(1, Math.round(dimensions.width * ratio)), height = Math.max(1, Math.round(dimensions.height * ratio));
+      let source = null, url = null, canvas = null;
+      try {
+        if (typeof createImageBitmap === 'function') source = await createImageBitmap(blob, { resizeWidth: width, resizeHeight: height });
+        else {
+          source = new Image(); url = URL.createObjectURL(blob);
+          await new Promise((resolve, reject) => {
+            const abort = () => finish(new DOMException('Cancelled', 'AbortError'));
+            const finish = error => { signal.removeEventListener('abort', abort); source.onload = source.onerror = null; if (error) reject(error); else resolve(); };
+            source.onload = () => finish(); source.onerror = () => finish(imageError('invalid-image'));
+            signal.addEventListener('abort', abort, { once: true });
+            if (signal.aborted) abort(); else source.src = url;
+          });
+        }
+        check();
+        canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+        const context = canvas.getContext('2d'); if (!context) throw imageError('invalid-image');
+        context.drawImage(source, 0, 0, width, height);
+        const thumbnail = await new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(imageError('invalid-image')), 'image/png'));
+        check(); return thumbnail;
+      } finally {
+        if (source?.close) source.close(); else if (source) source.removeAttribute('src');
+        if (url) URL.revokeObjectURL(url);
+        if (canvas) canvas.width = canvas.height = 0;
+      }
+    }
+    function releaseImageCard(card) {
+      card.querySelector('img')?.removeAttribute('src');
+      if (card._url) URL.revokeObjectURL(card._url);
+      card._url = null;
+    }
+    function releaseImageList(gallery, clear = false) {
+      gallery._imageState = null;
+      gallery._cards?.forEach(releaseImageCard);
+      if (clear) { gallery._cards?.clear(); gallery.replaceChildren(); }
+    }
+    function renderImages(gallery, images, editable = false) {
+      const drawing = visible && !viewMoving && options.isVisible(), blocked = editable && !!preparingSend, previous = gallery._imageState;
+      if (previous && previous.language === languageRevision && previous.drawing === drawing && previous.blocked === blocked && previous.images.length === images.length && previous.images.every((image, index) => image === images[index])) return;
+      const cards = gallery._cards || (gallery._cards = new Map()), keys = new Set();
+      images.forEach((image, index) => {
+        keys.add(image.id); let card = cards.get(image.id);
+        if (!card) {
+          card = document.createElement('figure'); card.className = 'note-ai-image-card';
+          const preview = document.createElement('img'); preview.decoding = 'async'; preview.width = 64; preview.height = 56;
+          const name = document.createElement('figcaption'); card.append(preview, name);
+          if (editable) {
+            const remove = button('', () => {
+              if (preparingSend) return;
+              draftImages = draftImages.filter(item => item.id !== image.id); draftRevision++;
+              renderImages(draftGallery, draftImages, true); input.focus({ preventScroll: true }); queueLayout();
+            }, ''); remove.className = 'note-ai-image-remove'; icon(remove, 'close'); card.append(remove);
+          }
+          card._image = image; cards.set(image.id, card);
+        }
+        const preview = card.querySelector('img'); preview.alt = image.name;
+        const caption = card.querySelector('figcaption'); caption.textContent = image.name; caption.title = image.name;
+        const remove = card.querySelector('button');
+        if (remove) { remove.setAttribute('aria-label', tr('移除图片：', 'Remove image: ') + image.name); remove.title = tr('移除图片', 'Remove image'); remove.disabled = !!preparingSend; }
+        if (drawing && !card._url) { card._url = URL.createObjectURL(image.thumbnail); preview.src = card._url; }
+        else if (!drawing && card._url) releaseImageCard(card);
+        if (gallery.children[index] !== card) gallery.insertBefore(card, gallery.children[index] || null);
+      });
+      cards.forEach((card, key) => { if (!keys.has(key)) { releaseImageCard(card); card.remove(); cards.delete(key); } });
+      gallery.hidden = !images.length;
+      gallery._imageState = { language: languageRevision, drawing, blocked, images: images.slice() };
+    }
+    async function acceptImages(files) {
+      if (!files.length || !initialized || !visible || !options.isVisible()) return;
+      if (preparingSend) { notice.textContent = tr('正在准备发送，请稍后再添加图片。', 'Preparing to send. Please add images afterward.'); queueLayout(); return; }
+      if (imageTask) { notice.textContent = tr('图片正在准备，请稍后再添加。', 'Images are being prepared. Please wait before adding more.'); return; }
+      if (files.length + draftImages.length > 4 || files.some(file => !file.size) || [...files, ...draftImages].reduce((sum, file) => sum + file.size, 0) > IMAGE_BYTES) { notice.textContent = textError('image-limit'); queueLayout(); return; }
+      const retained = messages.filter(message => message.role === 'user').flatMap(message => message.images || []);
+      if ([...retained, ...draftImages, ...files].reduce((sum, file) => sum + file.size, 0) > SESSION_IMAGE_BYTES) { notice.textContent = textError('image-session-limit'); queueLayout(); return; }
+      const task = { controller: new AbortController(), epoch: imageEpoch, sequence };
+      imageTask = task; syncComposer();
+      const busyText = task.busyText = tr('正在准备图片…', 'Preparing images…'); notice.textContent = busyText;
+      const current = () => imageTask === task && task.epoch === imageEpoch && task.sequence === sequence && visible && options.isVisible() && !task.controller.signal.aborted;
+      const check = () => { if (!current()) throw new DOMException('Cancelled', 'AbortError'); };
+      const prepared = [];
+      try {
+        for (const file of files) {
+          const header = await readImageBlob(file.slice(0, 1024 * 1024), 'readAsArrayBuffer', task.controller.signal); check();
+          const dimensions = imageHeader(header);
+          if (!dimensions) throw imageError(file.type && !/^image\/(?:png|jpeg|gif|webp)$/i.test(file.type) ? 'image-type' : 'invalid-image');
+          if (Math.min(dimensions.width, dimensions.height) <= 0 || Math.max(dimensions.width, dimensions.height) > 8192 || dimensions.width * dimensions.height > 16000000) throw imageError('image-dimensions');
+          const blob = file.slice(0, file.size, dimensions.media);
+          const thumbnail = await imageThumbnail(blob, dimensions, task.controller.signal, check); check();
+          const name = Array.from((file.name || 'image.png').replace(/[\x00-\x1f/\\]/g, '_')).slice(0, 255).join('').trim() || 'image.png';
+          prepared.push({ id: uid(), name, blob, thumbnail, size: file.size, width: dimensions.width, height: dimensions.height });
+        }
+        check(); draftImages.push(...prepared); draftRevision++;
+        renderImages(draftGallery, draftImages, true);
+        if (notice.textContent === busyText) notice.textContent = saveError;
+      } catch (error) {
+        if (current() && error.name !== 'AbortError') notice.textContent = typeof error.code === 'string' ? textError(error.code) : textError('invalid-image');
+      } finally {
+        if (imageTask === task) { imageTask = null; syncComposer(); queueLayout(); }
+      }
+    }
+    function cancelImageWork() {
+      imageEpoch++; pickerIntent = null; fileInput.value = ''; composer.classList.remove('is-dragging');
+      if (imageTask && notice.textContent === imageTask.busyText) notice.textContent = saveError;
+      imageTask?.controller.abort(); imageTask = null;
+      preparingSend?.controller.abort(); preparingSend = null;
+      syncComposer();
+    }
+    function releaseImageViews() {
+      releaseImageList(draftGallery);
+      rows.forEach(row => releaseImageList(row._parts.images));
     }
     function clearMath(node) { try { window.MathJax?.typesetClear?.([node]); } catch (_) {} }
     function releaseBlock(block) {
@@ -214,13 +465,13 @@
         while (surface.childNodes.length > blocks.length) surface.lastChild.remove();
         surface._blocks = blocks;
       }
-      if (visible && !surface.closest('[inert]')) surface._blocks?.forEach(block => typesetBlock(block, surface, row));
+      if (visible && !viewMoving && !surface.closest('[inert]')) surface._blocks?.forEach(block => typesetBlock(block, surface, row));
     }
     function typesetBlock(block, surface, row) {
       if (!block.math || ['done', 'queued', 'failed'].includes(block.state) || !window.RelatumNoteLiveEditor?.typesetMath) return;
       block.state = 'queued'; block.epoch = renderEpoch;
       const epoch = renderEpoch, job = {}; block.job = job;
-      const current = () => visible && renderEpoch === epoch && block.job === job && !block.released && row.isConnected
+      const current = () => visible && !viewMoving && renderEpoch === epoch && block.job === job && !block.released && row.isConnected
         && surface._blocks?.includes(block) && !surface.closest('[inert]');
       const stage = document.createElement('div'); stage.className = 'note-ai-rich node-text note-ai-math-stage';
       stage.setAttribute('aria-hidden', 'true'); stage.inert = true;
@@ -273,13 +524,32 @@
       return configLoader;
     }
     function updateSelectors() {
-      if (!config || !presets?.isConnected) return;
-      const items = config.presets.map(item => ({ value: item.id, name: presetName(item) }));
+      quickPreset.setAttribute('aria-label', tr('当前对话预设', 'Conversation preset'));
+      quickThinking.setAttribute('aria-label', tr('思考强度', 'Thinking effort'));
+      thinkingCaption.textContent = tr('思考', 'Thinking');
+      quickPreset.disabled = quickThinking.disabled = !config;
+      const items = config ? config.presets.map(item => ({ value: item.id, name: presetName(item) })) : [{ value: 'none', name: tr('无预设', 'No preset') }];
       // The current conversation keeps its prompt if its preset was removed.
       if (session?.saved && !items.some(item => item.value === presetId)) items.push({ value: presetId, name: session.preset_name });
       if (!items.some(item => item.value === presetId)) presetId = 'none';
-      setOptions(presets, items, presetId);
+      setOptions(quickPreset, items, presetId);
+      if (presets?.isConnected) setOptions(presets, items, presetId);
+      setOptions(quickThinking, [
+        { value: 'auto', name: tr('跟随模型默认', 'Model default') },
+        { value: 'disabled', name: tr('关', 'Off') },
+        { value: 'low', name: tr('低', 'Low') },
+        { value: 'high', name: tr('高', 'High') },
+        { value: 'max', name: tr('最高', 'Maximum') },
+      ], config?.thinking === 'enabled' ? config.effort : config?.thinking || 'auto');
+      if (!config || !settingsBuilt) return;
+      const thinking = settingsHost.querySelector('[data-ai-field="thinking"]'), effort = settingsHost.querySelector('[data-ai-field="effort"]');
+      if (thinking) thinking.value = config.thinking;
+      if (effort) effort.value = config.effort;
+      choices?.sync([thinking, effort].filter(Boolean));
+      updateThinkingHint();
     }
+    function changePreset(id) { if (config && id !== presetId) newConversation(id); }
+    function closePopovers() { quickChoices.close(); }
     function discard(previous, operation, keepalive = false) {
       if (!previous?.started) return;
       const remove = () => api('session', { action: 'delete', id: previous.id }, { keepalive }).catch(() => {});
@@ -288,10 +558,13 @@
     }
     function newConversation(id = 'none') {
       const previous = session, operation = running;
+      cancelImageWork();
+      handoffAnchor = null;
       stop(); sequence++;
       session = { id: uid(), saved: false }; presetId = config?.presets.some(item => item.id === id) ? id : 'none';
       renderEpoch++; cancelPaint();
-      messages = []; notice.textContent = ''; input.value = ''; followBottom = true; readingAnchor = null;
+      messages = []; notice.textContent = saveError; input.value = ''; followBottom = true; readingAnchor = null;
+      draftImages = []; draftRevision++; renderImages(draftGallery, draftImages, true);
       resizeInput();
       updateSelectors(); renderMessages();
       discard(previous, operation);
@@ -309,6 +582,7 @@
       reason.className = 'note-ai-reason note-ai-rich node-text'; fold.append(reason);
       thinking.className = 'note-ai-thinking'; thinking.append(toggle, fold);
       const content = document.createElement('div'); content.className = 'note-ai-answer note-ai-rich node-text';
+      const images = document.createElement('div'); images.className = 'note-ai-images note-ai-message-images'; images.hidden = true;
       const foot = document.createElement('div'); foot.className = 'note-ai-message-foot';
       const copy = button('', () => {
         const epoch = renderEpoch;
@@ -326,9 +600,9 @@
       const info = button('', () => {}, ''); info.dataset.aiInfo = ''; icon(info, 'info');
       const detail = document.createElement('span'); detail.className = 'note-ai-detail'; detail.id = 'ai-detail-' + uid(); detail.setAttribute('role', 'tooltip');
       info.setAttribute('aria-describedby', detail.id); metadata.append(info, detail);
-      foot.append(status, copy, metadata, retry); row.append(thinking, content, foot);
+      foot.append(status, copy, metadata, retry); row.append(thinking, images, content, foot);
       row._open = false;
-      row._parts = { thinking, toggle, fold, summary, reason, content, status, copy, metadata, info, detail, retry }; return row;
+      row._parts = { thinking, toggle, fold, summary, reason, images, content, status, copy, metadata, info, detail, retry }; return row;
     }
     function resetCopy(row) {
       const copy = row._parts.copy; delete copy.dataset.copied; icon(copy, 'copy');
@@ -336,9 +610,11 @@
     }
     function releaseRow(row) {
       finishFold(row); clearTimeout(row._copyTimer); resetCopy(row);
+      releaseImageList(row._parts.images, true);
       releaseRich(row._parts.content); releaseRich(row._parts.reason); row.remove();
     }
     function renderMessages() {
+      if (viewMoving) return;
       cancelPaint();
       const started = performance.now(), anchor = captureReadingPosition();
       const keys = new Set();
@@ -348,6 +624,7 @@
         if (!row) { row = messageRow(message); rows.set(key, row); }
         if (body.children[index] !== row) body.insertBefore(row, body.children[index] || null);
         row._message = message; const part = row._parts;
+        renderImages(part.images, message.role === 'user' ? message.images || [] : []);
         const reasoning = !!message.reasoning, thinking = message.status === 'pending' && !message.content;
         part.thinking.hidden = !reasoning;
         part.summary.textContent = thinking ? tr('正在思考…', 'Thinking…') : tr('已思考', 'Thought')
@@ -378,12 +655,13 @@
       });
       rows.forEach((row, key) => { if (!keys.has(key)) { releaseRow(row); rows.delete(key); } });
       icon(send, running ? 'stop' : 'send'); send.setAttribute('aria-label', running ? tr('停止', 'Stop') : tr('发送', 'Send'));
+      syncComposer();
       restoreReadingPosition(anchor);
       lastPaint = performance.now(); paintInterval = Math.max(120, Math.min(600, (lastPaint - started) * 4));
     }
     function cancelPaint() { clearTimeout(paintTimer); cancelAnimationFrame(paint); paintTimer = paint = 0; }
     function schedulePaint() {
-      if (!visible || paint || paintTimer) return;
+      if (!visible || viewMoving || paint || paintTimer) return;
       paintTimer = setTimeout(() => { paintTimer = 0; paint = requestAnimationFrame(() => { paint = 0; if (visible) renderMessages(); }); }, Math.max(0, paintInterval - (performance.now() - lastPaint)));
     }
     function stop(keepalive = false) {
@@ -396,27 +674,53 @@
       running = null; if (visible) renderMessages();
     }
     async function submit(retry = null) {
-      if (running || !visible || !options.isVisible()) return;
-      const text = retry ? messages.find(item => item.request_id === retry.request_id && item.role === 'user')?.content : input.value.trim();
-      if (!text) return;
-      const intent = sequence;
-      try { await flushSettings(); await loadConfig(); } catch (error) { if (intent === sequence && visible) notice.textContent = error.message; return; }
-      if (running || intent !== sequence || !visible || !options.isVisible()) return;
-      if (!config.hasKey || !config.model) { notice.textContent = textError('config-required'); return; }
+      if (running || preparingSend || imageTask || !initialized || !visible || !options.isVisible()) return;
+      const source = retry ? messages.find(item => item.request_id === retry.request_id && item.role === 'user') : null;
+      if (retry && !source) return;
+      const text = retry ? source.content : input.value.trim(), images = (retry ? source.images || [] : draftImages).slice();
+      if (!text && !images.length) return;
       if (!session) newConversation(presetId);
+      const intent = sequence, revision = draftRevision, registeredRetry = !!retry && retry.registered !== false;
+      const preparation = { controller: new AbortController() }; preparingSend = preparation; syncComposer(); renderImages(draftGallery, draftImages, true);
+      const currentPreparation = () => preparingSend === preparation && intent === sequence && visible && options.isVisible() && !preparation.controller.signal.aborted;
+      let wireImages = [];
+      try {
+        await flushSettings(); await loadConfig();
+        if (!currentPreparation()) return;
+        if (!config.hasKey || !config.model) { notice.textContent = textError('config-required'); return; }
+        if (!registeredRetry) for (const image of images) {
+          const dataUrl = await readImageBlob(image.blob, 'readAsDataURL', preparation.controller.signal);
+          if (!currentPreparation()) return;
+          wireImages.push({ name: image.name, dataUrl });
+        }
+        if (!retry && revision !== draftRevision) { notice.textContent = tr('草稿已更改，请重新发送。', 'The draft changed. Please send it again.'); return; }
+      } catch (error) {
+        if (currentPreparation() && error.name !== 'AbortError') notice.textContent = error.message || textError('invalid-image');
+        return;
+      } finally {
+        if (preparingSend === preparation) { preparingSend = null; syncComposer(); renderImages(draftGallery, draftImages, true); queueLayout(); }
+      }
+      if (intent !== sequence || !visible || !options.isVisible()) return;
       const original = messages.slice();
       if (retry) messages = messages.filter(item => item.request_id !== retry.request_id);
       const id = uid(), current = sequence, sessionId = session.id;
-      const answer = { request_id: id, role: 'assistant', content: '', reasoning: '', status: 'pending', context_count: null };
-      messages.push({ request_id: id, role: 'user', content: text, status: 'complete' }, answer);
+      const answer = { request_id: id, role: 'assistant', content: '', reasoning: '', status: 'pending', context_count: null, registered: false };
+      messages.push({ request_id: id, role: 'user', content: text, images, status: 'complete' }, answer);
       let finished;
       const operation = { id, answer, controller: new AbortController(), stopped: false, meta: false, finished: new Promise(resolve => { finished = resolve; }) };
       session.started = true;
-      running = operation; notice.textContent = ''; input.value = ''; followBottom = true; resizeInput(); renderMessages();
-      const isCurrent = () => sequence === current && session?.id === sessionId && running === operation && visible && options.isVisible();
+      running = operation; notice.textContent = '';
+      if (!retry) { input.value = ''; draftImages = []; draftRevision++; renderImages(draftGallery, draftImages, true); }
+      const clearedRevision = draftRevision;
+      followBottom = true; resizeInput(); renderMessages();
+      // Presentation can move or fade while the same request continues. Real
+      // suspension still changes sequence and aborts the operation immediately.
+      const isCurrent = () => sequence === current && session?.id === sessionId && running === operation;
       try {
-        const response = await fetch(ROOT + 'chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: operation.controller.signal,
-          body: JSON.stringify({ sessionId, requestId: id, text, presetId, newSession: !session.saved, ...(retry ? { retryOf: retry.request_id } : {}) }) });
+        const request = fetch(ROOT + 'chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: operation.controller.signal,
+          body: JSON.stringify({ sessionId, requestId: id, text, presetId, newSession: !session.saved, ...(registeredRetry ? { retryOf: retry.request_id } : {}), ...(wireImages.length ? { images: wireImages } : {}) }) });
+        wireImages = [];
+        const response = await request;
         if (!response.ok) { const result = await response.json(); const error = new Error(textError(result.code)); error.code = result.code; throw error; }
         const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = '', doneEvent = false;
         while (true) {
@@ -428,7 +732,7 @@
             const data = block.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
             if (!data) continue;
             const event = JSON.parse(data);
-            if (event.type === 'meta') { operation.meta = true; session = { ...event.session, saved: true, started: true }; answer.context_count = event.contextCount; answer.model = event.model; updateSelectors(); }
+            if (event.type === 'meta') { operation.meta = answer.registered = true; session = { ...event.session, saved: true, started: true }; answer.context_count = event.contextCount; answer.model = event.model; updateSelectors(); }
             else if (event.type === 'delta') {
               if (event.text && operation.reasoningStarted != null && answer.thinkingElapsed == null) answer.thinkingElapsed = performance.now() - operation.reasoningStarted;
               answer.content += event.text;
@@ -444,7 +748,14 @@
         if (isCurrent() && !doneEvent) { answer.status = 'failed'; answer.error = 'incomplete'; }
       } catch (error) {
         if (isCurrent()) {
-          if (!operation.meta && error.name !== 'AbortError') { messages = original; input.value = text; resizeInput(); notice.textContent = error.message; }
+          if (!operation.meta && error.name !== 'AbortError') {
+            notice.textContent = error.message;
+            if (retry) messages = original;
+            else if (draftRevision === clearedRevision && !input.value && !draftImages.length && !imageTask) {
+              messages = original; input.value = text; draftImages = images; draftRevision++;
+              renderImages(draftGallery, draftImages, true); resizeInput();
+            } else { answer.status = 'failed'; answer.error = error.code || 'network'; }
+          }
           else { answer.status = error.name === 'AbortError' ? 'interrupted' : 'failed'; answer.error = error.code || (error.name === 'AbortError' ? 'interrupted' : 'network'); }
         }
       } finally {
@@ -455,7 +766,12 @@
     }
 
     function settingsStatus(text) { const element = settingsHost.querySelector('[data-ai-settings-status]'); if (element) element.textContent = text; }
-    function queuePatch(patch) { Object.assign(pending, patch); configRevision++; if (config) Object.entries(patch).forEach(([key, value]) => { if (key === 'presets') config.presets = [...config.presets.filter(item => item.builtin), ...value]; else if (key !== 'apiKey') config[key] = value; }); clearTimeout(saveTimer); saveTimer = setTimeout(() => flushSettings().catch(() => {}), 350); }
+    function queuePatch(patch) {
+      Object.assign(pending, patch); configRevision++;
+      if (config) Object.entries(patch).forEach(([key, value]) => { if (key === 'presets') config.presets = [...config.presets.filter(item => item.builtin), ...value]; else if (key !== 'apiKey') config[key] = value; });
+      if (['thinking', 'effort', 'presets'].some(field => Object.hasOwn(patch, field))) updateSelectors();
+      clearTimeout(saveTimer); saveTimer = setTimeout(() => flushSettings().catch(() => {}), 350);
+    }
     function flushSettings() {
       clearTimeout(saveTimer); const patch = pending, revision = configRevision; pending = {};
       if (!Object.keys(patch).length) return saveChain;
@@ -468,8 +784,13 @@
             keyDraft = null;
             if (key) key.value = document.activeElement === key ? patch.apiKey : '';
           }
+          if (saveError && notice.textContent === saveError) notice.textContent = '';
+          saveError = ''; queueLayout();
           settingsStatus(tr('已保存到本机', 'Saved locally')); updateKeyHint();
-        } catch (error) { pending = { ...patch, ...pending }; settingsStatus(error.message); throw error; }
+        } catch (error) {
+          pending = { ...patch, ...pending }; saveError = error.message;
+          notice.textContent = saveError; settingsStatus(saveError); queueLayout(); throw error;
+        }
       });
       return saveChain;
     }
@@ -585,7 +906,7 @@
       const presetLabel = document.createElement('label'); presetLabel.className = 'note-ai-field'; presetLabel.dataset.settingsKeywords = '当前对话预设 conversation preset';
       const presetTitle = document.createElement('span'); presetTitle.textContent = tr('使用预设', 'Use preset');
       presets = select(tr('当前对话预设', 'Conversation preset')); presets.dataset.aiPreset = '';
-      presets.addEventListener('change', () => newConversation(presets.value)); presetLabel.append(presetTitle, presets); conversation.append(presetLabel);
+      presets.addEventListener('change', () => changePreset(presets.value)); presetLabel.append(presetTitle, presets); conversation.append(presetLabel);
       const conversationHint = document.createElement('p'); conversationHint.textContent = tr('切换预设会开启新对话。对话仅在本次运行中保留，退出后不恢复；连接信息与自定义预设仍会保存。', 'Switching presets starts a new conversation. Chats last only for this run; connection settings and custom presets are saved.'); conversation.append(conversationHint);
       updateSelectors();
       const connection = group('连接', 'Connection');
@@ -643,9 +964,10 @@
       const status = document.createElement('p'); status.setAttribute('role', 'status'); status.dataset.aiSettingsStatus = ''; settingsHost.append(status);
       presetEditor();
       if (presetDraftName !== undefined && !name.readOnly) { name.value = presetDraftName; prompt.value = presetDraftPrompt; }
-      choices.enhanceAll(); updateKeyHint(); updateThinkingHint();
+      choices.enhanceAll(); updateKeyHint(); updateSelectors();
     }
     async function settings() {
+      closePopovers();
       settingsActive = true;
       try { await loadConfig(); if (settingsActive && !settingsBuilt) buildSettings(); }
       catch (error) { settingsHost.textContent = error.message; }
@@ -660,25 +982,22 @@
       const key = settingsHost.querySelector('[data-ai-field="apiKey"]'); if (key) { acceptField(key); key.type = 'password'; if (!keyDirty) key.value = ''; }
       savePreset(); flushSettings().catch(() => {});
     }
-    async function show() {
-      if (visible) return;
-      visible = true; const current = ++sequence;
-      host.classList.remove('is-suspended');
-      observer?.observe(body); observer?.observe(timeline);
-      window.addEventListener('resize', resizeInput); reducedMotion.addEventListener('change', settleMotion);
-      try {
-        await loadConfig();
-        if (!visible || current !== sequence) return;
-        if (!session) newConversation(presetId);
-        initialized = true; resizeInput(); renderMessages();
-      } catch (error) { if (visible && current === sequence) { notice.textContent = error.message; suspend(); } }
-      finally { if (initialized) input.disabled = send.disabled = plus.disabled = false; }
+    function settleComposition() {
+      if (!compositionWaiters.size || compositionFrame) return;
+      compositionFrame = requestAnimationFrame(() => {
+        compositionFrame = 0;
+        if (composing && document.activeElement === input) return;
+        composing = false;
+        const waiters = Array.from(compositionWaiters); compositionWaiters.clear(); waiters.forEach(resolve => resolve());
+      });
     }
-    function suspend(keepalive = false) {
-      visible = false; sequence++; renderEpoch++; stop(keepalive); cancelPaint();
+    function cancelPresentFrame() {
+      cancelAnimationFrame(presentFrame); presentFrame = 0;
+      const resolve = presentResolve; presentResolve = null; resolve?.(false);
+    }
+    function releasePresentationWork() {
+      renderEpoch++; cancelPaint();
       cancelAnimationFrame(layoutFrame); layoutFrame = 0; observer?.disconnect();
-      window.removeEventListener('resize', resizeInput); reducedMotion.removeEventListener('change', settleMotion);
-      host.classList.add('is-suspended');
       rows.forEach(row => {
         finishFold(row); clearTimeout(row._copyTimer); row._copyTimer = 0; resetCopy(row);
         [row._parts.reason, row._parts.content].forEach(surface => surface._blocks?.forEach(block => {
@@ -687,17 +1006,78 @@
         }));
       });
     }
+    function holdPresentation() {
+      presentRevision++; cancelPresentFrame();
+      if (!viewMoving && !handoffAnchor) {
+        const anchor = captureReadingPosition() || readingAnchor;
+        if (anchor) handoffAnchor = { ...anchor, top: anchor.top - anchor.timelineTop, rowTop: anchor.rowTop - anchor.timelineTop };
+      }
+      viewMoving = true; readingAnchor = null;
+      closePopovers(); cancelImageWork(); releasePresentationWork();
+    }
+    async function present({ container = sidebarHost, portal = document.body, isCurrent = () => true, whenSettled = () => Promise.resolve() } = {}) {
+      if (pageHiding || !isCurrent() || !container?.isConnected) return false;
+      if (visible && !viewMoving && !handoffAnchor && host.parentElement === container && quickPortal.parentElement === portal) {
+        await show(); if (isCurrent()) queueLayout(); return isCurrent();
+      }
+      holdPresentation();
+      const revision = presentRevision;
+      if (composing) await new Promise(resolve => { compositionWaiters.add(resolve); input.blur(); settleComposition(); });
+      if (revision !== presentRevision || pageHiding || !isCurrent()) return false;
+      container.append(host); portal.append(quickPortal); quickPortal.classList.toggle('in-settings', portal.tagName === 'DIALOG');
+      await show();
+      await whenSettled();
+      if (revision !== presentRevision || !visible || !isCurrent()) return false;
+      return new Promise(resolve => {
+        presentResolve = resolve;
+        presentFrame = requestAnimationFrame(() => {
+          presentFrame = 0; presentResolve = null;
+          if (revision !== presentRevision || !visible || !isCurrent()) { resolve(false); return; }
+          const anchor = handoffAnchor; handoffAnchor = null; viewMoving = false;
+          observer?.observe(body); observer?.observe(timeline); observer?.observe(footer);
+          renderImages(draftGallery, draftImages, true); resizeInput(); renderMessages();
+          const top = timeline.getBoundingClientRect().top;
+          restoreReadingPosition(anchor ? { ...anchor, top: top + anchor.top, rowTop: top + anchor.rowTop } : null);
+          resolve(true);
+        });
+      });
+    }
+    async function show() {
+      if (visible) return;
+      visible = true; const current = ++sequence;
+      host.classList.remove('is-suspended');
+      observer?.observe(body); observer?.observe(timeline); observer?.observe(footer);
+      window.addEventListener('resize', resizeInput); reducedMotion.addEventListener('change', settleMotion);
+      try {
+        await loadConfig();
+        if (!visible || current !== sequence) return;
+        if (!session) newConversation(presetId);
+        initialized = true; updateSelectors(); renderImages(draftGallery, draftImages, true); resizeInput(); renderMessages();
+      } catch (error) { if (visible && current === sequence) { notice.textContent = error.message; suspend(); } }
+      finally { syncComposer(); }
+    }
+    function suspend(keepalive = false) {
+      holdPresentation(); viewMoving = false;
+      cancelAnimationFrame(compositionFrame); compositionFrame = 0;
+      const waiters = Array.from(compositionWaiters); compositionWaiters.clear(); waiters.forEach(resolve => resolve());
+      visible = false; sequence++; stop(keepalive);
+      releaseImageViews();
+      window.removeEventListener('resize', resizeInput); reducedMotion.removeEventListener('change', settleMotion);
+      host.classList.add('is-suspended');
+    }
     function setLanguage() {
+      closePopovers();
       languageRevision++;
       plus.setAttribute('aria-label', tr('新建对话', 'New conversation')); plus.title = tr('新建对话', 'New conversation');
+      attach.setAttribute('aria-label', tr('添加图片', 'Attach images')); attach.title = tr('添加图片', 'Attach images');
       bottom.setAttribute('aria-label', tr('回到底部', 'Jump to latest')); bottom.title = tr('回到底部', 'Jump to latest');
       input.placeholder = tr('输入消息…', 'Message…'); input.setAttribute('aria-label', tr('AI 消息', 'AI message'));
-      updateSelectors(); renderMessages(); if (settingsBuilt) buildSettings();
+      updateSelectors(); renderImages(draftGallery, draftImages, true); renderMessages(); if (settingsBuilt) buildSettings();
     }
-    window.addEventListener('pagehide', () => { pageHiding = true; const previous = session, operation = running; suspend(true); closeSettings(); discard(previous, operation, true); session = null; messages = []; presetId = 'none'; rows.forEach(releaseRow); rows.clear(); body.replaceChildren(); });
+    window.addEventListener('pagehide', () => { pageHiding = true; const previous = session, operation = running; suspend(true); closeSettings(); discard(previous, operation, true); session = null; messages = []; draftImages = []; draftRevision++; renderImages(draftGallery, draftImages, true); presetId = 'none'; rows.forEach(releaseRow); rows.clear(); body.replaceChildren(); });
     window.addEventListener('pageshow', () => { pageHiding = false; });
     setLanguage();
-    return { show, suspend, settings, closeSettings, setLanguage,
+    return { show, present, holdPresentation, suspend, settings, closeSettings, closePopovers, setLanguage,
       async prepareSettings() { await loadConfig(); if (!settingsBuilt) buildSettings(); },
       async resetSettings() { await loadConfig(); savePreset(); await flushSettings(); config = await api('config', { reset: true }); settingsBuilt = false; settingsHost.replaceChildren(); buildSettings(); updateSelectors(); },
     };
