@@ -15,6 +15,7 @@ class NotebookTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.store = NotesStore(self.root / "notes")
+        self.addCleanup(self.store.close)
         self.settings_path = self.root / "data" / "note-notebooks.json"
 
     def notebook(self, name="Physics"):
@@ -63,6 +64,74 @@ class NotebookTests(unittest.TestCase):
         relative, targets = self.store.trash_targets("CustomNotebook/Physics")
         self.assertEqual(relative, "CustomNotebook/Physics")
         self.assertEqual(targets, [self.store.root / relative])
+
+    def test_folder_moves_across_notebooks_preserve_assets_links_and_index_identity(self):
+        source = self.notebook("源本")
+        target = self.notebook("目标本")
+        folder = self.store.create(source, "戴维宁定理", "folder")["path"]
+        note = self.store.create(folder + "/小节", "正文", "note", create_parents=True)["path"]
+        image = b"\x89PNG\r\n\x1a\n" + b"x" * 20
+        uploaded = self.store.upload_image(note, "diagram.png", image, "image/png")
+        loaded = self.store.load(note)
+        self.store.save(note, "# 定理\n#迁移\n![diagram](" + uploaded["path"] + ")", loaded["revision"])
+        self.store.create("", "Index", "note", content="[[" + note[:-3] + "]]")
+        self.store.sync.complete()
+        with self.store.index.read() as conn:
+            identity = conn.execute("SELECT id FROM entries WHERE path=?", (note,)).fetchone()[0]
+        for root in (target, "", source):
+            destination = (root + "/" if root else "") + "戴维宁定理"
+            with self.subTest(target=root):
+                self.store.move(folder, destination)
+                self.store.sync.complete()
+                moved_note = destination + "/小节/正文.md"
+                self.assertFalse((self.store.root / folder).exists())
+                self.assertIn("[[" + moved_note[:-3] + "]]", self.store.load("Index.md")["content"])
+                resolved, media_type = self.store.resolve_image(moved_note, uploaded["path"])
+                self.assertEqual(media_type, "image/png")
+                self.assertEqual(resolved.read_bytes(), image)
+                with self.store.index.read() as conn:
+                    row = conn.execute("SELECT e.id,b.root FROM entries e JOIN books b ON b.id=e.book WHERE e.path=?", (moved_note,)).fetchone()
+                    self.assertEqual(tuple(row), (identity, root))
+                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM tags WHERE entry=?", (identity,)).fetchone()[0], 1)
+                folder = destination
+
+    def test_cross_notebook_empty_folder_and_case_conflict(self):
+        source = self.notebook("Source")
+        target = self.notebook("Target")
+        self.store.create(source, "Folder", "folder")
+        self.store.create(target, "folder", "folder")
+        self.store.create(source + "/Folder", "Keep", "note", content="source content")
+        self.store.create(target + "/folder", "Keep", "note", content="target content")
+        with self.assertRaises(NotesError) as caught:
+            self.store.move(source + "/Folder", target + "/Folder")
+        self.assertEqual(caught.exception.status, 409)
+        self.assertEqual(caught.exception.code, "exists")
+        self.assertEqual(self.store.load(source + "/Folder/Keep.md")["content"], "source content")
+        self.assertEqual(self.store.load(target + "/folder/Keep.md")["content"], "target content")
+        empty = self.store.create(source, "Empty", "folder")["path"]
+        self.store.move(empty, target + "/Empty")
+        self.assertTrue((self.store.root / target / "Empty").is_dir())
+        self.assertFalse((self.store.root / empty).exists())
+        self.assertEqual(list((self.store.root / target / "Empty").iterdir()), [])
+
+    def test_cross_notebook_missing_target_and_failed_rewrite_preserve_source(self):
+        source = self.notebook("Source")
+        target = self.notebook("Target")
+        folder = self.store.create(source, "Folder", "folder")["path"]
+        note = self.store.create(folder, "Keep", "note", content="source content")["path"]
+        self.store.create("", "Index", "note", content="[[" + note[:-3] + "]]")
+        self.store.sync.complete()
+        with mock.patch.object(self.store, "atomic_text", side_effect=OSError("simulated write failure")):
+            with self.assertRaises(OSError):
+                self.store.move(folder, target + "/Folder")
+        self.assertEqual(self.store.load(note)["content"], "source content")
+        self.assertIn("[[" + note[:-3] + "]]", self.store.load("Index.md")["content"])
+        self.assertFalse((self.store.root / target / "Folder").exists())
+        (self.store.root / target).rmdir()
+        with self.assertRaises(NotesError) as caught:
+            self.store.move(folder, target + "/Folder")
+        self.assertEqual(caught.exception.code, "parent_missing")
+        self.assertTrue((self.store.root / note).is_file())
 
     def test_merge_roundtrip_and_no_unchanged_write(self):
         relative = self.notebook()

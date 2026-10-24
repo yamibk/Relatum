@@ -110,6 +110,7 @@
   let graphPresentation = false, graphSidebar = null;
   let sideCloseTask = null, sideMotionSequence = 0;
   let noteMovePromise = null, noteMovePaths = null;
+  let noteTreeDragRow = null, notebookDropRunning = false;
   let noteOpenAttempt = null;
   const canvasEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.canvas');
   const aiEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.ai');
@@ -2047,7 +2048,7 @@
   function treeView() {
     let saved = ''; try { saved = localStorage.getItem(ACTIVE_PATH_KEY) || ''; } catch (error) {}
     return { expanded: Array.from(new Set([state.notebookRoot || '', ...state.expanded, ...state.notebookExpanded])).slice(0, 4096),
-      pins: Array.from(new Set([...state.tabs, saved, state.current?.path || ''].filter(path => path && !isSpecialTab(path)))).slice(0, 256), sort: state.treeSort };
+      pins: Array.from(new Set([state.selectedFolder, ...state.tabs, saved, state.current?.path || ''].filter(path => path && !isSpecialTab(path)))).slice(0, 256), sort: state.treeSort };
   }
   function post(url, payload, options) {
     if (['/api/note-create', '/api/note-move', '/api/note-trash', '/api/note-import-commit'].includes(url)) payload = Object.assign({}, payload, { _tree: treeView() });
@@ -3036,11 +3037,33 @@
       });
       row.addEventListener('pointerleave', () => { clearTimeout(hoverPrefetchTimer); hoverPrefetchPath = ''; });
       row.addEventListener('contextmenu', (event) => { event.preventDefault(); event.stopPropagation(); const liveEntry = getEntry(rowPath); if (!liveEntry) return; if (notebookEntry) { openNotebookContext(liveEntry, event.clientX, event.clientY); return; } if (notebookTree) selectNotebook(notebookRootForPath(rowPath)); state.rootTargeted = false; state.selectedPath = rowPath; state.selectedFolder = liveEntry.kind === 'folder' ? rowPath : parentPath(rowPath); updateTreeSelection(); openContextMenu(liveEntry, event.clientX, event.clientY); });
-      row.addEventListener('dragstart', (event) => { state.draggedPath = rowPath; row.classList.add('dragging'); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('application/x-relatum-note-path', rowPath); });
-      row.addEventListener('dragend', () => { state.draggedPath = ''; row.classList.remove('dragging'); root.querySelectorAll('.note-drop-target').forEach((item) => item.classList.remove('note-drop-target')); });
-      row.addEventListener('dragover', (event) => { if (notebookTree) return; const external = !state.draggedPath && Array.from(event.dataTransfer && event.dataTransfer.items || []).some((item) => item.kind === 'file'); if (!state.draggedPath && !external) return; event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = external ? 'copy' : 'move'; row.classList.add('note-drop-target'); });
-      row.addEventListener('dragleave', () => row.classList.remove('note-drop-target'));
-      row.addEventListener('drop', (event) => { if (notebookTree) return; event.preventDefault(); event.stopPropagation(); row.classList.remove('note-drop-target'); const liveEntry = getEntry(rowPath); if (!liveEntry) return; const destination = liveEntry.kind === 'folder' ? rowPath : parentPath(rowPath); if (state.draggedPath) moveEntry(state.draggedPath, destination); else importDataTransfer(event.dataTransfer, destination); });
+      row.addEventListener('dragstart', (event) => {
+        if (notebookTree || !row.draggable || !noteWorkspaceVisible() || noteMovePromise || notebookDropRunning) { event.preventDefault(); return; }
+        clearNoteTreeDrag(); state.draggedPath = rowPath; noteTreeDragRow = row; row.classList.add('dragging');
+        event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('application/x-relatum-note-path', rowPath);
+      });
+      row.addEventListener('dragend', clearNoteTreeDrag);
+      row.addEventListener('dragover', (event) => {
+        if (notebookTree) {
+          if (!notebookEntry || !notebookDropSource(rowPath)) return;
+          event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; row.classList.add('note-drop-target'); return;
+        }
+        const external = !state.draggedPath && Array.from(event.dataTransfer && event.dataTransfer.items || []).some((item) => item.kind === 'file');
+        if (!state.draggedPath && !external) return;
+        event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = external ? 'copy' : 'move'; row.classList.add('note-drop-target');
+      });
+      row.addEventListener('dragleave', (event) => { if (!row.contains(event.relatedTarget)) row.classList.remove('note-drop-target'); });
+      row.addEventListener('drop', (event) => {
+        if (notebookTree) {
+          const source = notebookEntry ? notebookDropSource(rowPath) : '';
+          if (!source) return;
+          event.preventDefault(); event.stopPropagation(); clearNoteTreeDrag(); moveFolderToNotebook(source, rowPath); return;
+        }
+        event.preventDefault(); event.stopPropagation(); row.classList.remove('note-drop-target');
+        const liveEntry = getEntry(rowPath); if (!liveEntry) return;
+        const destination = liveEntry.kind === 'folder' ? rowPath : parentPath(rowPath);
+        if (state.draggedPath) moveEntry(state.draggedPath, destination); else importDataTransfer(event.dataTransfer, destination);
+      });
       wrapper.appendChild(row);
       if (entry.path && state.renamePath === entry.path && state.renameError) { const error = document.createElement('small'); error.className = 'note-tree-inline-error'; error.textContent = state.renameError; wrapper.appendChild(error); }
       syncChildren(entry, depth, wrapper, flat, false);
@@ -3577,10 +3600,10 @@
       return null;
     }
   }
-  async function movePath(source, destination, quiet) {
-    return withNoteBusy(() => movePathNow(source, destination, quiet));
+  async function movePath(source, destination, quiet, options) {
+    return withNoteBusy(() => movePathNow(source, destination, quiet, options));
   }
-  async function movePathNow(source, destination, quiet) {
+  async function movePathNow(source, destination, quiet, options) {
     if (!source || !destination || source === destination) return true;
     while (noteMovePromise) {
       const paths = noteMovePaths;
@@ -3589,10 +3612,14 @@
         destination = mapPath(destination, paths.source, paths.destination);
       }
     }
-    const operation = performMove(source, destination, quiet);
+    const operation = performMove(source, destination, quiet, options);
     noteMovePromise = operation;
     noteMovePaths = { source, destination };
-    try { return await operation; }
+    try {
+      const ok = await operation;
+      options?.onResult?.(ok, state.lastMoveCode, state.lastMoveError);
+      return ok;
+    }
     finally {
       if (noteMovePromise === operation) {
         noteMovePromise = null; noteMovePaths = null;
@@ -3635,8 +3662,9 @@
     scheduleStatistics(current); clearSaveError(); desktopDirty(false); renderLinks();
     if (root.classList.contains('links-overlay-open') && state.sideMode === 'links') ensureLinks();
   }
-  async function performMove(source, destination, quiet) {
+  async function performMove(source, destination, quiet, options) {
     state.lastMoveError = ''; state.lastMoveCode = '';
+    if (options?.guard && !options.guard()) return false;
     if (state.imageTextBusy && !(await imageTextOperationPromise)) return false;
     if (editorInputPending()) await whenEditorInputSettled();
     stopExternalSync(); stopDocumentPrefetch(); state.externalSeq += 1; state.refreshSeq += 1;
@@ -3647,6 +3675,8 @@
         state.lastMoveError = tr('saveFailed'); state.lastMoveCode = 'save_failed'; return false;
       }
     }
+    if (options?.prepare && !(await options.prepare())) return false;
+    if (options?.guard && !options.guard()) return false;
     const entriesSnapshot = JSON.parse(JSON.stringify(state.entries)); const oldTabs = state.tabs.slice(); const oldActiveTab = state.activeTab; const oldSelectedPath = state.selectedPath; const oldSelectedFolder = state.selectedFolder;
     const oldNotebookRoot = state.notebookRoot; const oldNotebookExpanded = state.notebookExpanded; const oldExpanded = state.expanded;
     if (!optimisticMove(source, destination)) { state.lastMoveError = language() === 'en' ? 'A folder cannot be moved into itself' : '文件夹不能移入自己'; return false; }
@@ -3660,8 +3690,14 @@
     if (state.current) { renderCurrentPath(state.current.path); renderInlineTitle(state.current.path, true); }
     renderTree();
     const rollback = () => {
+      // A failed cross-tree drop must not undo a later notebook/tree selection.
+      const selection = options && (state.notebookRoot !== mapPath(oldNotebookRoot, source, destination)
+        || state.selectedPath !== mapPath(oldSelectedPath, source, destination)
+        || state.selectedFolder !== mapPath(oldSelectedFolder, source, destination))
+        ? { root: state.notebookRoot, path: mapPath(state.selectedPath, destination, source), folder: mapPath(state.selectedFolder, destination, source) } : null;
       state.entries = entriesSnapshot; state.tabs = oldTabs; state.activeTab = oldActiveTab; state.selectedPath = oldSelectedPath; state.selectedFolder = oldSelectedFolder;
       state.notebookRoot = oldNotebookRoot; state.notebookExpanded = oldNotebookExpanded; state.expanded = oldExpanded;
+      if (selection) { state.notebookRoot = selection.root; state.selectedPath = selection.path; state.selectedFolder = selection.folder; }
       remapCachedPaths(destination, source); state.openingPath = mapPath(state.openingPath, destination, source);
       persistTabs(); if (state.current) { renderCurrentPath(state.current.path); renderInlineTitle(state.current.path, true); }
       renderTabs(); renderTree();
@@ -3691,6 +3727,65 @@
     remapViewStates(source, destination); if (state.current) try { localStorage.setItem(ACTIVE_PATH_KEY, state.current.path); } catch (error) {} if (result.warnings && result.warnings.length) showToast(tr('linkWarnings', { count: result.warnings.length }), 'warning'); return true;
   }
   function moveEntry(source, folder) { if (state.notebookRoot === null || folder === null || notebookRootForPath(source) !== notebookRootForPath(folder)) return; const destination = joinPath(folder || '', baseName(source)); if (destination !== source) movePath(source, destination); }
+  function clearNoteTreeDrag() {
+    state.draggedPath = '';
+    noteTreeDragRow?.classList.remove('dragging'); noteTreeDragRow = null;
+    for (const host of [treeEl, notebookTreeEl]) host?.querySelectorAll('.note-drop-target').forEach(row => row.classList.remove('note-drop-target'));
+    treeEl.classList.remove('note-drop-root');
+  }
+  function notebookDropSource(target) {
+    if (!noteWorkspaceVisible() || effectiveSideMode() !== 'notebooks' || !root.classList.contains('links-overlay-open')
+        || noteMovePromise || notebookDropRunning || !noteTreeDragRow || !treeEl.contains(noteTreeDragRow)) return '';
+    const source = state.draggedPath;
+    if (!source || noteTreeDragRow.dataset.notePath !== source || findEntry(source)?.kind !== 'folder'
+        || isNotebookRoot(source) || isNotebookContainer(source)) return '';
+    return target === '' || isNotebookRoot(target) && findEntry(target)?.kind === 'folder' ? source : '';
+  }
+  async function moveFolderToNotebook(source, target) {
+    if (notebookDropRunning) return;
+    const destination = joinPath(target, baseName(source));
+    if (source === destination) return;
+    const selection = notebookSelectionSequence, visibility = noteVisibilityEpoch, sequence = state.openSeq;
+    const documentState = state.current, tab = state.activeTab, selectedPath = state.selectedPath;
+    const current = moved => noteWorkspaceVisible() && visibility === noteVisibilityEpoch
+      && selection === notebookSelectionSequence && sequence === state.openSeq && state.current === documentState
+      && state.activeTab === (moved ? mapPath(tab, source, destination) : tab)
+      && state.selectedPath === (moved ? mapPath(selectedPath, source, destination) : selectedPath);
+    const validPaths = () => findEntry(source)?.kind === 'folder' && !isNotebookRoot(source) && !isNotebookContainer(source)
+      && (target === '' || isNotebookRoot(target) && findEntry(target)?.kind === 'folder');
+    notebookDropRunning = true;
+    try {
+      if (!(await finishNotebookInteraction()) || !current(false) || !validPaths()) return;
+      await movePath(source, destination, true, {
+        guard: () => current(false) && validPaths(),
+        // A just-saved note is indexed after the existing 250ms quiet period.
+        // Poll only for this drop; a partial/slow index keeps the API's error.
+        async prepare() {
+          for (let attempt = 0; attempt < 250; attempt++) {
+            if (!current(false) || !validPaths()) return false;
+            const index = await request('/api/note-index-state');
+            if (index.phase === 'ready' || index.phase === 'partial') return true;
+            await new Promise(resolve => setTimeout(resolve, 120));
+          }
+          return current(false) && validPaths();
+        },
+        onResult(ok, code, message) {
+          if (!current(ok)) return;
+          if (!ok) {
+            if (message) showToast(code === 'exists'
+              ? (language() === 'en' ? 'The target notebook already has a folder with this name' : '目标笔记本有重名文件夹') : message, 'error');
+            return;
+          }
+          selectNotebook(target, { noRender: true });
+          state.rootTargeted = false; state.selectedPath = destination; state.selectedFolder = destination;
+          expandTreePath(destination, false); renderTree();
+          const row = treeEl.__noteWindow?.scrollToKey(destination) || treeRowIndexes.get(treeEl).rows.get(destination);
+          row?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        },
+      });
+    } catch (error) { if (current(false)) showToast(error.message || tr('moveFailed'), 'error'); }
+    finally { notebookDropRunning = false; }
+  }
   async function recycleEntry(entry) {
     if (noteMovePromise) await waitForNoteMove();
     if (!entry || state.recycleRunning) return;
@@ -4712,6 +4807,7 @@
     return true;
   }
   async function deactivate() {
+    clearNoteTreeDrag();
     cancelTabCloseMotion(); cancelTabScroll();
     state.linksRefreshSuspended = true; cancelLinksRefresh(); stopExternalSync();
     if (!(await flushSave())) { state.linksRefreshSuspended = false; resumeLinksRefresh(); scheduleExternalSync(); return false; }
@@ -5031,7 +5127,7 @@
     const settings = flushNotebookSettings(keepalive);
     return Promise.all([save, settings]).then(([saved]) => saved);
   }
-  window.addEventListener('blur', () => { closeContextMenu({ instant: true }); setLibraryPanel('', { restoreFocus: false, instant: true }); stopShortcutRecording(true); noteBrowser?.closePopovers({ instant: true }); flushWorkspaceState(); });
+  window.addEventListener('blur', () => { clearNoteTreeDrag(); closeContextMenu({ instant: true }); setLibraryPanel('', { restoreFocus: false, instant: true }); stopShortcutRecording(true); noteBrowser?.closePopovers({ instant: true }); flushWorkspaceState(); });
   window.addEventListener('relatum:note-canvas-dirty', () => desktopDirty(hasPendingEdits()));
   window.addEventListener('relatum:note-canvas-error', event => { showSaveError(event.detail); desktopDirty(true); });
   window.addEventListener('resize', closeContextMenu);
@@ -5047,6 +5143,7 @@
     if (!visible) { aiSequence++; aiController?.suspend(); sidePreferences?.suspend(); } else renderAI();
     indexActivity(visible && state.active);
     if (!visible) {
+      clearNoteTreeDrag();
       // Native WebView2 minimization need not change document.hidden or focus.
       // Invalidate reads, but let the existing save/IME handoff finish normally.
       noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++;
@@ -5067,7 +5164,7 @@
     }
   }
   document.addEventListener('visibilitychange', syncNotePageVisibility);
-  window.addEventListener('pagehide', () => { aiPageHiding = true; closeNoteModal(); guideSequence++; guideController?.suspend(); aiSequence++; aiController?.suspend(true); indexActivity(false, true); });
+  window.addEventListener('pagehide', () => { clearNoteTreeDrag(); aiPageHiding = true; closeNoteModal(); guideSequence++; guideController?.suspend(); aiSequence++; aiController?.suspend(true); indexActivity(false, true); });
   window.addEventListener('canvasdesktop:visibility', syncNotePageVisibility);
   window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeWorkspacePopovers(); cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0; stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
   window.addEventListener('pageshow', () => { aiPageHiding = false; state.linksRefreshSuspended = false; syncNotePageVisibility(); });
