@@ -801,6 +801,9 @@
     if (focusViewport && viewport) viewport.focus({ preventScroll: true });
   }
   function progressPanelShortcutBlocked(event) {
+    // The canvas workspace keeps this page mounted while another workspace is in front.
+    if (document.body.dataset.startWorkspace !== 'canvas' || document.hidden
+      || overlay.closest('[hidden], [inert]')) return true;
     if (!open || event.key !== 'Tab' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey
       || event.isComposing || event.keyCode === 229) return true;
     if (editingFreeItemId || armedFreeItemKind || visualLinkDrag
