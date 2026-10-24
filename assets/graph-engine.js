@@ -234,7 +234,7 @@
     function syncSize() {
       const cssW = canvas.clientWidth || 1;
       const cssH = canvas.clientHeight || 1;
-      const dpr = global.devicePixelRatio || 1;
+      const dpr = (global.devicePixelRatio || 1) * (spec.getRenderScale?.() || 1);
       const needW = Math.max(1, Math.round(cssW * dpr));
       const needH = Math.max(1, Math.round(cssH * dpr));
       if (canvas.width !== needW) canvas.width = needW;
@@ -336,7 +336,7 @@
     function syncSize() {
       const cssW = canvas.clientWidth || 1;
       const cssH = canvas.clientHeight || 1;
-      const dpr = global.devicePixelRatio || 1;
+      const dpr = (global.devicePixelRatio || 1) * (spec.getRenderScale?.() || 1);
       return { cssW: cssW, cssH: cssH, dpr: dpr };
     }
 
@@ -467,6 +467,8 @@
     let particleCfg = opts.particles || null; // { speed, perEdge, size, getColor(edge,s,d)->[r,g,b,a]|null }；连线流光，可被 setParticles 切换
     const drawOverlay = opts.drawOverlay || null;  // 顶层 2D 叠加层绘制回调（标签/光晕/扇形）
     let reduceMotion = !!opts.reduceMotion;
+    const normalizeRenderScale = value => Number.isFinite(value) ? clamp(value, .5, 1) : 1;
+    let renderScale = normalizeRenderScale(opts.renderScale);
 
     // 渲染后端：默认 Canvas 2D；opts.backend 可传工厂函数，或字符串 'webgl' / 'canvas2d'。
     // 选 WebGL 但 GL 不可用 / 着色器编译失败时 backend 为 null → 自动回落 Canvas2D（兜底，不崩）。
@@ -476,6 +478,7 @@
       canvas: canvas, drawNode: drawNode, drawEdge: drawEdge,
       nodeStyle: opts.nodeStyle, edgeStyle: opts.edgeStyle,
       cacheInstances: opts.cacheInstances === true,
+      getRenderScale: () => renderScale,
     };
     const makeBackend = (typeof opts.backend === 'function') ? opts.backend
       : (opts.backend === 'webgl') ? createWebGLBackend
@@ -1619,6 +1622,11 @@
       resetView: function () { resetView(); requestFrame(); },
       restoreView: restoreView,
       setLayoutSpacing: setLayoutSpacing,
+      setRenderScale(value) {
+        const next = normalizeRenderScale(value);
+        if (next === renderScale) return;
+        renderScale = next; requestRender();
+      },
       requestRender: requestRender,
       setActive: setActive,
       setVisible: setVisible,

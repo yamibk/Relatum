@@ -25,6 +25,26 @@
   const heightHints = new Map(), lastGood = new Map();
   let heightBytes = 0, cacheBytes = 0, fontRevision = 0, nextId = 0, running = false;
   let stylePromise = null, fallbackPromise = null, workerState = null, workerDisabled = false;
+  let cacheEpoch = 0;
+  const cacheBudget = () => window.RelatumNoteSystem?.budget('mermaid') || { items: MAX_ITEMS, bytes: MAX_BYTES };
+  function trimCache(clear = false) {
+    const budget = cacheBudget(), protectedKeys = new Set();
+    owners.forEach(owner => owner.cacheKeys().forEach(key => protectedKeys.add(key)));
+    for (const [key, entry] of cache) {
+      if (!clear && cache.size <= budget.items && cacheBytes <= budget.bytes) break;
+      if (protectedKeys.has(key)) continue;
+      cacheBytes -= entry.bytes; cache.delete(key);
+      for (const [identity, prior] of lastGood) if (prior === key) lastGood.delete(identity);
+    }
+  }
+  function configureWorker(clear = false) {
+    if (workerState && !workerState.stopped) workerState.worker.postMessage({ kind: 'cache', ...cacheBudget(), epoch: cacheEpoch, clear });
+  }
+  window.addEventListener('relatum:note-system', event => {
+    if (!event.detail.clear && event.detail.previous.cache === event.detail.value.cache) return;
+    if (event.detail.clear) cacheEpoch++;
+    trimCache(event.detail.clear); configureWorker(event.detail.clear);
+  });
 
   function loadAsset(name, style) {
     return new Promise((resolve, reject) => {
@@ -75,7 +95,7 @@
     };
     state.worker.onmessage = event => {
       const data = event.data;
-      if (data.ready) { clearTimeout(state.timeout); state.resolveReady(state); return; }
+      if (data.ready) { clearTimeout(state.timeout); configureWorker(); state.resolveReady(state); return; }
       if (data.unavailable) { fail(new Error(data.unavailable)); return; }
       const pending = state.pending;
       if (!pending || pending.id !== data.id || pending.documentId !== data.documentId
@@ -154,6 +174,7 @@
   }
   function unwatch(owner) {
     owners.delete(owner);
+    trimCache();
     if (!owners.size) { document.fonts?.removeEventListener('loadingdone', fontsChanged); stopWorker(); }
   }
   function prepareFonts(family) {
@@ -184,21 +205,18 @@
   function remember(key, result) {
     const size = 2 * (key.length + result.svg.length);
     if (cache.has(key)) { cacheBytes -= cache.get(key).bytes; cache.delete(key); }
-    if (size > MAX_BYTES) {
+    if (size > cacheBudget().bytes) {
       for (const [identity, prior] of lastGood) if (prior === key) lastGood.delete(identity);
       return;
     }
     cache.set(key, { ...result, bytes: size }); cacheBytes += size;
-    while (cache.size > MAX_ITEMS || cacheBytes > MAX_BYTES) {
-      const first = cache.keys().next().value; cacheBytes -= cache.get(first).bytes; cache.delete(first);
-      for (const [identity, prior] of lastGood) if (prior === first) lastGood.delete(identity);
-    }
+    trimCache();
   }
   function rememberGood(identity, key) {
     if (!identity) return;
     lastGood.delete(identity); if (!cache.has(key)) return;
     lastGood.set(identity, key);
-    while (lastGood.size > MAX_ITEMS) lastGood.delete(lastGood.keys().next().value);
+    while (lastGood.size > cacheBudget().items) lastGood.delete(lastGood.keys().next().value);
   }
   function cached(key) {
     const result = cache.get(key);
@@ -415,7 +433,10 @@
         prefix: 'relatum-note-pele-' + (++nextId), zoom: null, camera: null };
       byElement.set(el, entry); return entry;
     });
-    const owner = { sync, fontsChanged(changed) {
+    const owner = { sync, cacheKeys() {
+      if (!foreground()) return [];
+      return entries.filter(current).flatMap(entry => [entry.key, lastGood.get(options.historyKey)]).filter(Boolean);
+    }, fontsChanged(changed) {
       if (!changed || entries.some(entry => entry.fontNames?.some(name => changed.includes(name)))) sync();
     } };
     function foreground() {
@@ -461,6 +482,7 @@
     }
     async function draw(entry) {
       if (!current(entry)) return;
+      const requestedCacheEpoch = cacheEpoch;
       const version = entry.version, ticket = { controller: new AbortController() }; entry.ticket = ticket;
       const valid = () => entry.ticket === ticket && entry.version === version && current(entry);
       let requestedRevision = null, requestedFamily = '', requestedMono = '';
@@ -497,7 +519,7 @@
             mount(entry, restored.svg, previousKey);
           }
         }
-        const result = hit || await render(entry, { id: ++nextId, documentId, blockId: entry.prefix, version,
+        const result = hit || await render(entry, { id: ++nextId, documentId, blockId: entry.prefix, version, cacheEpoch: requestedCacheEpoch,
           source: entry.source, options: renderOptions, layoutKey, fontRevision: requestedRevision }, valid);
         if (!valid() || requestedRevision !== currentFontStamp()) return;
         const sanitized = await safeSvg(result.svg, entry.prefix, valid, !!hit, ticket.controller.signal);
@@ -505,7 +527,7 @@
         const latest = getComputedStyle(entry.el), latestWidth = entry.el.clientWidth - parseFloat(latest.paddingLeft) - parseFloat(latest.paddingRight);
         if (Math.abs(latestWidth - width) > .01 || latest.fontFamily !== fontFamily || (parseFloat(latest.fontSize) || 16) !== renderOptions.fontSize
             || (latest.getPropertyValue('--note-font-mono').trim() || 'monospace') !== fontFamilyMono) { entry.again = true; return; }
-        if (!hit) remember(key, { svg: sanitized.clean, width: result.width, height: result.height, source: entry.source, model: result.model, layoutKey });
+        if (!hit && requestedCacheEpoch === cacheEpoch) remember(key, { svg: sanitized.clean, width: result.width, height: result.height, source: entry.source, model: result.model, layoutKey });
         rememberGood(options.historyKey, key); mount(entry, sanitized.svg, key);
         const svgHeight = result.height * Math.min(1, width / result.width);
         const reservedHeight = Math.max(svgHeight, options.mode === 'reading' && result.width > width ? 110 : 0)

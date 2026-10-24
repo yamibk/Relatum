@@ -148,7 +148,8 @@
         document.head.appendChild(script);
       });
     };
-    noteWorkspaceLoader = loadScript('vendor/codemirror/relatum-codemirror.min.js', () => !!window.RelatumCodeMirror)
+    noteWorkspaceLoader = loadScript('note-system.js', () => !!window.RelatumNoteSystem)
+      .then(() => loadScript('vendor/codemirror/relatum-codemirror.min.js', () => !!window.RelatumCodeMirror))
       .then(() => loadScript('markdown-table.js', () => !!window.MarkdownTable))
       .then(() => loadScript('markdown.js', () => !!window.MarkdownMini?.quoteLine))
       .then(() => loadScript('note-table-editor.js', () => !!window.RelatumNoteTableEditor))

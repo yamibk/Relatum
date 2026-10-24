@@ -186,8 +186,9 @@ async function run(browser, mode) {
     await page.evaluate(() => { window.savedView = T.editor.view; window.savedDoc = T.editor.view.state.doc; window.savedGeneration = T.state.editGeneration; });
     await button.click(); await dialog.waitFor();
     assert(await dialog.evaluate(node => node.matches(':modal') && !node.closest('.start-workspace-stage')), 'dialog uses the top layer outside workspace transforms');
-    const oldCategories = enabled.includes('notes.graph') || mode === 'full' ? enabled.includes('notes.canvas') || mode === 'full' ? 7 : 6 : enabled.includes('notes.canvas') ? 6 : 5;
-    assert.equal(await dialog.locator('nav button').count(), oldCategories + 1 + (mode === 'full' ? 1 : 0));
+    const categoryCount = 7 + Number(enabled.includes('notes.graph') || mode === 'full')
+      + Number(enabled.includes('notes.canvas') || mode === 'full') + (mode === 'full' ? 2 : 0);
+    assert.equal(await dialog.locator('nav button').count(), categoryCount);
     assert.equal(await button.locator('use').getAttribute('href'), '#note-icon-settings');
     if (process.argv.includes('--motion')) await checkMotion(page, mode);
     await page.keyboard.press('Control+t'); assert.equal(await page.evaluate(() => T.state.tabs.length), 1, 'modal blocks workspace shortcuts');
@@ -231,7 +232,7 @@ async function run(browser, mode) {
     for (const theme of ['light', 'dark']) {
       await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
       await page.screenshot({ path: path.join(artifacts, mode + '-settings-' + theme + '.png') });
-      const bounds = await dialog.boundingBox(); assert.equal(Math.round(bounds.width), 960); assert.equal(Math.round(bounds.height), 680);
+      const bounds = await dialog.boundingBox(); assert.equal(Math.round(bounds.width), 1200); assert.equal(Math.round(bounds.height), 820);
       assert(Math.abs(bounds.x + bounds.width / 2 - 720) < 2, 'dialog is horizontally centered');
     }
     await page.evaluate(() => RelatumI18n.setLanguage('en')); await category('guide').click();

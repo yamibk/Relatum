@@ -2671,6 +2671,14 @@ body.start-page[data-start-theme="dark"][data-start-background="scenic"] .note-s
   .note-shortcut-row { grid-template-columns: minmax(96px, .62fr) minmax(0, 1.38fr); }
 }
 
+html[data-note-reduced-motion="1"] :is(.note-workspace, .note-document-head, .note-document-status, .note-empty-state,
+  .note-links-pane, .note-side-controls, .note-tab-bar, .note-tree-pane, .note-tree-row, .note-tree-toggle,
+  .note-tree-children-shell, .note-tree-entry, .note-browser-disclosure, .note-tab, .note-tab-close, .note-tab-new,
+  .note-tab-close-all, .note-settings-trigger, .note-settings-pop, .note-document-body, .note-toast, .note-modal-overlay,
+  .note-modal-card, .note-library-popover, .note-context-menu, .note-context-submenu, .note-search-popover,
+  .note-search-filter-disclosure, .note-callout-fold, .note-workspace .note-icon-button, .note-workspace .note-side-button),
+html[data-note-reduced-motion="1"] .note-tree-toggle::before,
+html[data-note-reduced-motion="1"] body[data-start-workspace="notes"] > .top-bar { transition: none !important; animation: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .note-workspace,
   .note-document-head,

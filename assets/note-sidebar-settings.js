@@ -6,7 +6,7 @@
   const NAMES = { notebooks: ['笔记本', 'Notebooks'], outline: ['大纲', 'Outline'], canvas: ['画布', 'Canvas'], guide: ['引导', 'Guide'], links: ['链接', 'Links'], ai: ['AI', 'AI'] };
   function create(options) {
     let order = IDS.slice(), hidden = new Set(), host = null, drag = null;
-    const animations = new Map(), motion = matchMedia('(prefers-reduced-motion: reduce)');
+    const animations = new Map(), motion = window.RelatumNoteSystem?.motion || matchMedia('(prefers-reduced-motion: reduce)');
     const text = (zh, en) => options.language() === 'en' ? en : zh;
     function read() {
       try {

@@ -432,4 +432,17 @@ for (const reduced of [false, true]) {
   assert(f.overlays.length > 0 && f.overlays.at(-1).labelAlpha === 1, 'DOM labels also render on Canvas2D');
   f.pan(); f.engine.destroy(); assert.equal(f.engine.canvas.listeners.size, 0);
 }
-console.log('graph: split instance caches, camera reuse, AA/size semantics, dynamic effects, invalidation and shader fallback passed');
+for (const shaderFailure of [false, true]) {
+  const f = fixture({ shaderFailure });
+  f.drain(); const camera = f.engine.view, positions = f.nodes.map(n => [n.x, n.y]);
+  assert.equal(f.engine.canvas.width, 1200, 'default resolution remains native');
+  f.engine.setRenderScale(.5); f.drain();
+  assert.equal(f.engine.canvas.width, 600); assert.equal(f.engine.canvas.height, 360);
+  assert.deepEqual(f.engine.view, camera); assert.deepEqual(f.nodes.map(n => [n.x, n.y]), positions);
+  assert.equal(f.engine.nodeAtClient(100, 120), 0, 'reduced drawing resolution preserves CSS hit coordinates');
+  f.engine.setRenderScale(1); f.drain(); assert.equal(f.engine.canvas.width, 1200);
+  f.sandbox.devicePixelRatio = 2; f.engine.setRenderScale(.75); f.drain();
+  assert.equal(f.engine.canvas.width, 1800, 'render scale multiplies the current monitor DPR');
+  f.engine.destroy();
+}
+console.log('graph: instance caches, camera/AA, dynamic effects, fallback and runtime resolution passed');

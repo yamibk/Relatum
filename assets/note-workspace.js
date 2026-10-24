@@ -26,7 +26,8 @@
   const tabActions = $('.note-tab-actions');
   const newTabButton = $('[data-note-action="new-tab"]');
   const closeAllTabsButton = $('[data-note-action="close-all-tabs"]');
-  const tabMotionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const noteSystem = window.RelatumNoteSystem;
+  const tabMotionPreference = noteSystem?.motion || window.matchMedia('(prefers-reduced-motion: reduce)');
   const tabCloseAnimations = new Map();
   let tabCloseMotionPending = false, tabCloseClipActive = false, tabScrollFrame = 0, tabCloseMotionScrollLeft = 0;
   let tabCloseMotionUntil = 0, tabCloseScrollPending = null;
@@ -338,7 +339,7 @@
     browserToggle.setAttribute('aria-pressed', String(browserIntent)); browserToggle.setAttribute('aria-expanded', String(browserIntent));
   }
   let browserCloseTimer = 0;
-  const browserMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const browserMotion = tabMotionPreference;
   function finishBrowserCollapse() {
     if (!browserIntent) browserDisclosure.hidden = true;
   }
@@ -926,6 +927,9 @@
     }
     translateGuideOptions(); guide.addEventListener('change', event => { if (event.target.name === 'note-guide-topic') applyGuideTopic(event.target.value, true); });
     const pref = window.RelatumNotePreferences;
+    const preloadPanel = graphEnabled() && graph ? document.createElement('div') : null;
+    if (preloadPanel) graph.querySelectorAll('.note-graph-preload-setting, .note-graph-preload-hint').forEach(el => preloadPanel.append(el));
+    const systemSettings = noteSystem.createPanel({ language, graph: graphEnabled(), mermaid: !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid'), preload: preloadPanel });
     const resetGuide = () => { try { localStorage.removeItem(GUIDE_TOPIC_KEY); } catch (_) {} applyGuideTopic('callout', false); };
     const resetCanvas = () => { try { localStorage.removeItem('canvas:noteCanvasDefaults:v1'); } catch (_) {} pref?.resetCanvasNodeScale?.(); canvasStylePanel?.refresh(); };
     const categories = [
@@ -938,13 +942,14 @@
         { id: 'ai', label: ['AI设置', 'AI settings'], icon: 'note-icon-sparkles', panel: aiSettingsHost, keywords: 'deepseek api key model preset prompt token temperature stream timeout effort base url 思考 强度 模型 预设 提示词 温度 连接 接口 地址 流式 输出 超时', reset: resetAI },
         { id: 'ai-chat', label: ['AI对话', 'AI chat'], icon: 'note-icon-ai-chat', panel: aiChatHost, layout: 'fill', searchMode: 'category', keywords: 'AI 对话 聊天 消息 图片 chat conversation message image' },
       ] : []),
-      ...(graphEnabled() && graph ? [{ id: 'graph', label: ['图谱', 'Graph'], icon: 'note-icon-graph', panel: graph, keywords: 'spacing preload 间距 预加载 启动', reset: () => { pref?.resetGraphSpacing?.(); pref?.resetGraphPreload?.(); syncNoteSettingsFontScale(); } }] : []),
+      ...(graphEnabled() && graph ? [{ id: 'graph', label: ['图谱', 'Graph'], icon: 'note-icon-graph', panel: graph, keywords: 'spacing 间距', reset: () => { pref?.resetGraphSpacing?.(); syncNoteSettingsFontScale(); } }] : []),
       ...(canvasEnabled() ? [{ id: 'canvas', label: ['内嵌画布', 'Embedded canvas'], icon: 'note-icon-panel-right-frame', panel: defaultsHost, keywords: '默认 样式 节点 连线 default node edge styles', reset: resetCanvas }] : []),
       { id: 'shortcuts', label: ['快捷键', 'Shortcuts'], icon: 'note-icon-code-xml', panel: shortcuts, keywords: '键盘 keyboard bindings', reset: () => { stopShortcutRecording(true); if (NOTE_SHORTCUTS) state.shortcutBindings = NOTE_SHORTCUTS.reset(); applyShortcutBindings(); renderNoteShortcutSettings(); } },
+      { id: 'system', label: ['系统', 'System'], icon: 'note-icon-settings', panel: systemSettings.panel, keywords: '性能 内存 动画 预读 预加载 缓存 清理 清晰度 启动 performance memory animation prefetch preload cache clear resolution startup', reset: () => { noteSystem.reset(); pref?.resetGraphPreload?.(); } },
     ];
     settingsDialog = window.RelatumSettingsDialog.create({ content: settingsPop, categories, language,
       onSearch(query) { if (aiEnabled() && !aiSettingsHost.querySelector('[data-ai-field]') && /deepseek|api|模型|预设|提示词|思考|强度|温度|连接|接口|地址|流式|输出|超时|token|top.?p|model|preset|prompt|temperature|stream|timeout|effort|base.?url|\bkey\b|\bai\b/.test(query)) return ensureAI().then(ai => ai.prepareSettings()); },
-      async resetAll() { resetNoteSettings(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); if (canvasEnabled()) resetCanvas(); await resetAI(); },
+      async resetAll() { resetNoteSettings(); noteSystem.reset(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); if (canvasEnabled()) resetCanvas(); await resetAI(); },
       onOpen() {
         state.settingsOpen = true; aiDialogReturning = false;
         settingsTrigger.setAttribute('aria-expanded', 'true'); libraryTrigger.setAttribute('aria-expanded', 'true'); renderAI();
@@ -982,7 +987,7 @@
     settingsTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     libraryTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     if (canvasEnabled()) canvasStylePanel = window.RelatumNoteCanvasStyle?.initPanel(canvasSettingsContent, () => pref?.resetCanvasNodeScale?.(), { defaultsHost });
-    document.addEventListener('relatum:languagechange', () => { translateGuideOptions(); translateSidebar(); aiController?.setLanguage(); settingsDialog.setLanguage(); });
+    document.addEventListener('relatum:languagechange', () => { translateGuideOptions(); translateSidebar(); systemSettings.refresh(); aiController?.setLanguage(); settingsDialog.setLanguage(); });
   }
 
   function resetNoteSettings() {
@@ -1897,7 +1902,7 @@
         panel.hidden = false; panel.inert = false; panel.classList.remove('is-closing');
       } else if (!panel.hidden) {
         panel.inert = true;
-        if (options?.instant || !noteWorkspaceVisible() || window.matchMedia('(prefers-reduced-motion: reduce)').matches) { panel.hidden = true; panel.classList.remove('is-closing'); }
+        if (options?.instant || !noteWorkspaceVisible() || tabMotionPreference.matches) { panel.hidden = true; panel.classList.remove('is-closing'); }
         else {
           panel.classList.add('is-closing');
           state.libraryPanelTimers[name] = window.setTimeout(() => {
@@ -2184,7 +2189,7 @@
     if (!contextMenu) return;
     contextMenu.inert = true; contextMenu.removeAttribute('aria-busy'); contextMenu.classList.remove('is-open');
     currentMenuButton?.setAttribute('aria-expanded', 'false');
-    if (contextMenu.hidden || options.instant || options instanceof Event || !noteWorkspaceVisible() || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (contextMenu.hidden || options.instant || options instanceof Event || !noteWorkspaceVisible() || tabMotionPreference.matches) {
       finishContextClose(); return;
     }
     contextMenu.classList.add('is-closing');
@@ -2290,10 +2295,14 @@
     if (!documentState || !documentState.path) return;
     state.documentCache.delete(documentState.path);
     state.documentCache.set(documentState.path, documentState);
+    trimDocumentCache();
+  }
+  function trimDocumentCache(clear = false) {
+    const budget = noteSystem?.budget('documents') || { items: DOCUMENT_CACHE_LIMIT, bytes: DOCUMENT_CACHE_BYTES };
     let bytes = Array.from(state.documentCache.values()).reduce((sum, item) => sum + item.content.length * 2, 0);
-    if (state.documentCache.size <= DOCUMENT_CACHE_LIMIT && bytes <= DOCUMENT_CACHE_BYTES) return;
+    if (!clear && state.documentCache.size <= budget.items && bytes <= budget.bytes) return;
     for (const [path, candidate] of state.documentCache) {
-      if (state.documentCache.size <= DOCUMENT_CACHE_LIMIT && bytes <= DOCUMENT_CACHE_BYTES) break;
+      if (!clear && state.documentCache.size <= budget.items && bytes <= budget.bytes) break;
       if (candidate === state.current || hasPendingEdits(candidate)) continue;
       state.documentCache.delete(path);
       bytes -= candidate.content.length * 2;
@@ -2712,7 +2721,7 @@
   }
   function scheduleDocumentPrefetch() {
     clearTimeout(state.prefetchTimer);
-    if (!noteWorkspaceVisible() || noteMovePromise) return;
+    if (noteSystem?.read().prefetch === false || !noteWorkspaceVisible() || noteMovePromise) return;
     state.prefetchTimer = setTimeout(runDocumentPrefetch, 350);
   }
   function stopDocumentPrefetch() {
@@ -2721,7 +2730,7 @@
   }
   async function runDocumentPrefetch() {
     state.prefetchTimer = 0;
-    if (prefetchRunning || !noteWorkspaceVisible() || editorInputPending() || noteMovePromise) return;
+    if (noteSystem?.read().prefetch === false || prefetchRunning || !noteWorkspaceVisible() || editorInputPending() || noteMovePromise) return;
     const epoch = prefetchEpoch;
     const viewport = sidebarScroll.getBoundingClientRect();
     const paths = Array.from(treeEl.querySelectorAll('.note-tree-row')).filter((row) => {
@@ -2814,7 +2823,7 @@
     const motions = new Map(), moreRows = new Map();
     let orderedLevels = new Map(), visibleCount = 0;
     const getEntry = (path) => notebookTree && (path === '' || isNotebookRoot(path)) ? notebookRoots().find((entry) => entry.path === path) : findEntry(path);
-    const reducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    const reducedMotion = () => tabMotionPreference.matches;
     const folderLabel = (entry, expanded) => entry.path + ' · ' + tr(expanded ? 'collapseFolder' : 'expandFolder');
     const directChild = (wrapper, className) => Array.from(wrapper.children).find((child) => child.classList && child.classList.contains(className)) || null;
     const liveWrapper = (path) => rowIndex.rows.get(path)?.parentElement || null;
@@ -3030,6 +3039,7 @@
         event.preventDefault(); event.stopPropagation(); activateRow(event.key === 'ArrowRight');
       });
       row.addEventListener('pointerenter', () => {
+        if (noteSystem?.read().prefetch === false) return;
         const liveEntry = getEntry(rowPath);
         if (liveEntry?.kind !== 'note' || Number(liveEntry.size || 0) > 512 * 1024 || state.documentCache.has(rowPath)) return;
         clearTimeout(hoverPrefetchTimer);
@@ -3914,7 +3924,7 @@
     currentMenuButton?.setAttribute('aria-expanded', String(source === 'current-menu'));
     fitBodyMenu(contextMenu, x, y);
     const sequence = contextSequence;
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) contextMenu.classList.add('is-open');
+    if (tabMotionPreference.matches) contextMenu.classList.add('is-open');
     else contextFrame = requestAnimationFrame(() => { contextFrame = 0; if (sequence === contextSequence && contextOpen) contextMenu.classList.add('is-open'); });
   }
   const BODY_COMMAND_LABELS = {
@@ -4058,7 +4068,7 @@
     bodyMenuSubmenu = null; bodyMenuParent = null;
     if (!submenu) return;
     submenu.inert = true; submenu.classList.remove('is-open');
-    if (options.instant || !noteWorkspaceVisible() || window.matchMedia('(prefers-reduced-motion: reduce)').matches) submenu.remove();
+    if (options.instant || !noteWorkspaceVisible() || tabMotionPreference.matches) submenu.remove();
     else {
       closingSubmenu = submenu; submenu.classList.add('is-closing');
       submenuTimer = setTimeout(() => { submenu.remove(); if (closingSubmenu === submenu) closingSubmenu = null; submenuTimer = 0; }, 170);
@@ -4208,7 +4218,7 @@
     const rect = parent.getBoundingClientRect(), rootRect = contextMenu.getBoundingClientRect();
     const x = rootRect.right + submenu.offsetWidth <= window.innerWidth - 8 ? rootRect.right - 2 : rootRect.left - submenu.offsetWidth + 2;
     fitBodyMenu(submenu, x, rect.top - 6);
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) submenu.classList.add('is-open');
+    if (tabMotionPreference.matches) submenu.classList.add('is-open');
     else submenuFrame = requestAnimationFrame(() => { submenuFrame = 0; if (bodyMenuSubmenu === submenu && contextOpen) submenu.classList.add('is-open'); });
     if (focusFirst) menuButtons(submenu)[0]?.focus();
   }
@@ -4518,7 +4528,7 @@
       // A queued end event from a reversed transition cannot clear visible content.
       if (!sidePane || getComputedStyle(sidePane).visibility === 'hidden') finish();
     } };
-    if (!sidePane || root.hidden || document.hidden || window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!sidePane || root.hidden || document.hidden || tabMotionPreference.matches
         || getComputedStyle(sidePane).visibility === 'hidden') { finish(); return; }
     root.addEventListener('transitionend', task.onEnd);
     sidePane.addEventListener('transitionend', task.onEnd);
@@ -5133,7 +5143,23 @@
   window.addEventListener('resize', closeContextMenu);
   window.addEventListener('resize', cancelTabCloseMotion);
   document.addEventListener('relatum:note-focuschange', cancelTabCloseMotion);
-  tabMotionPreference.addEventListener?.('change', () => { if (tabMotionPreference.matches) cancelTabCloseMotion(); });
+  tabMotionPreference.addEventListener?.('change', () => {
+    if (!tabMotionPreference.matches) return;
+    cancelTabCloseMotion();
+    treeEl.__noteFinishMotion?.(); notebookTreeEl?.__noteFinishMotion?.();
+    cancelSideClose(); clearClosedNotebookTree();
+    sideMotionUntil = 0;
+    clearTimeout(state.focusMotionTimer); state.focusMotionTimer = 0;
+    document.body.classList.remove('note-focus-transitioning', 'note-focus-restoring');
+    noteBrowser?.closePopovers({ instant: true });
+    closeContextMenu({ instant: true });
+  });
+  window.addEventListener('relatum:note-system', event => {
+    const { previous, value, clear } = event.detail;
+    if (clear || !value.prefetch) stopDocumentPrefetch();
+    else if (!previous.prefetch) scheduleDocumentPrefetch();
+    if (clear || previous.cache !== value.cache) trimDocumentCache(clear);
+  });
   document.addEventListener('relatum:languagechange', closeContextMenu);
   window.addEventListener('focus', () => { if (noteWorkspaceVisible()) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); } });
   function syncNotePageVisibility() {

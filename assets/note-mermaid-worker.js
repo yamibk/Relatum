@@ -1,7 +1,7 @@
 // Notes-only worker. Models and Pele's private WeakMap stay in this realm.
 'use strict';
 (function () {
-  const MAX_ITEMS = 32, MAX_BYTES = 8 * 1024 * 1024;
+  let maxItems = 32, maxBytes = 8 * 1024 * 1024, cacheEpoch = 0;
   const cache = new Map(), fontLoads = new Map();
   let bytes = 0, canvasSupported;
   const faces = [
@@ -15,9 +15,12 @@
     const previous = cache.get(source);
     if (previous) { bytes -= previous.bytes; cache.delete(source); }
     entry.bytes = 2 * (source.length + (entry.result?.svg.length || 0));
-    if (entry.bytes > MAX_BYTES) return;
+    if (entry.bytes > maxBytes) return;
     cache.set(source, entry); bytes += entry.bytes;
-    while (cache.size > MAX_ITEMS || bytes > MAX_BYTES) {
+    trimCache();
+  }
+  function trimCache() {
+    while (cache.size > maxItems || bytes > maxBytes) {
       const first = cache.keys().next().value; bytes -= cache.get(first).bytes; cache.delete(first);
     }
   }
@@ -41,12 +44,21 @@
   try {
     importScripts('vendor/pele/pele.global.js');
     self.onmessage = async event => {
+      if (event.data.kind === 'cache') {
+        const config = event.data;
+        if (Number.isInteger(config.items) && config.items > 0 && config.items <= 64) maxItems = config.items;
+        if (Number.isInteger(config.bytes) && config.bytes > 0 && config.bytes <= 16 * 1024 * 1024) maxBytes = config.bytes;
+        if (Number.isInteger(config.epoch) && config.epoch >= 0) cacheEpoch = config.epoch;
+        if (config.clear) { cache.clear(); bytes = 0; }
+        trimCache(); return;
+      }
       const { id, source, options, layoutKey, fontRevision, documentId, blockId, version } = event.data;
       if (event.data.kind === 'fonts') {
         try { await prepareFonts(options); } catch (error) { self.postMessage({ unavailable: String(error.message || error) }); }
         return;
       }
       const identity = { id, documentId, blockId, version };
+      const requestedCacheEpoch = event.data.cacheEpoch ?? cacheEpoch;
       try {
         await prepareFonts(options);
         let entry = cache.get(source);
@@ -59,7 +71,7 @@
             autoDirection: false, responsive: true, links: false, images: false, idPrefix: 'relatum-note-pele-template' });
           entry.layoutKey = layoutKey;
         }
-        remember(source, entry);
+        if (requestedCacheEpoch === cacheEpoch) remember(source, entry);
         self.postMessage({ ...identity, result: { svg: entry.result.svg, width: entry.result.width,
           height: entry.result.height, type: entry.result.type } });
       } catch (error) {

@@ -24,7 +24,7 @@
     const results = find('.relatum-settings-results'), confirm = find('.relatum-settings-confirm');
     const title = find('[data-settings-title]'), reset = find('[data-settings-action="reset-category"]');
     const status = find('[data-settings-status]');
-    const motion = matchMedia('(prefers-reduced-motion: reduce)');
+    const motion = window.RelatumNoteSystem?.motion || matchMedia('(prefers-reduced-motion: reduce)');
     let selected = categories[0].id, trigger = null, closing = false, statusTimer = 0, resetTarget = '', backdropDown = false, disposed = false, surfaceRevision = 0;
     const positions = new Map(), buttons = new Map(), lifetime = new AbortController();
     const animations = new Map();
@@ -80,6 +80,9 @@
       title.textContent = label(category); scroll.scrollTop = positions.get(selected) || 0;
       options.onCategoryChange?.(selected);
       if (target) {
+        for (let parent = target.parentElement; parent && parent !== category.panel; parent = parent.parentElement) {
+          if (parent.tagName === 'DETAILS') parent.open = true;
+        }
         target.scrollIntoView({ block: 'center' });
         const control = [target, ...target.querySelectorAll('input,button,select,textarea')].find(element =>
           element.matches('input,button,select,textarea') && !element.disabled && !element.closest('[hidden],[inert]') && element.getClientRects().length);

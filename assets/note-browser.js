@@ -35,7 +35,8 @@
     return ctx.query({ mode: 'search', limit: 50, offset, cursor, q, scope, tags, modified, sort }, { signal });
   } });
 
-  const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const motion = window.RelatumNoteSystem?.motion || window.matchMedia('(prefers-reduced-motion: reduce)');
+  const reducedMotion = () => motion.matches;
   let popupId = 0;
   function parseDate(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -156,7 +157,9 @@
       });
       popups.add(popup); return popup;
     }
-    return { register, close(options = {}) { popups.forEach(popup => popup.close(options)); }, dispose() { Array.from(popups).forEach(popup => popup.dispose()); } };
+    const motionChanged = () => { if (motion.matches) popups.forEach(popup => popup.close({ instant: true })); };
+    motion.addEventListener('change', motionChanged);
+    return { register, close(options = {}) { popups.forEach(popup => popup.close(options)); }, dispose() { motion.removeEventListener('change', motionChanged); Array.from(popups).forEach(popup => popup.dispose()); } };
   }
   function createSelectPicker(input, manager) {
     input.type = 'button'; input.className = 'note-search-select'; input.setAttribute('role', 'combobox'); input.setAttribute('aria-haspopup', 'listbox');
@@ -494,7 +497,7 @@
     }
     function updateBackLabel() { back.replaceChildren(...(ctx.icon ? [ctx.icon('arrow-left')] : []), document.createTextNode(copy('return'))); }
     function renderNavigation(animateId) {
-      const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const reduced = motion.matches;
       nav.setAttribute('aria-label', copy('untitled'));
       providers.forEach((provider) => {
         if (provider.enabled && !provider.enabled(ctx)) return;

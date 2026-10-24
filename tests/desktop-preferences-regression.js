@@ -25,8 +25,13 @@ function context(seed, values = {}, api = null, parent = null) {
   assert.equal(first.localStorage.getItem('unrelated'), 'keep');
   first.localStorage.setItem('canvas:startTheme', 'light');
   first.localStorage.setItem('research:panSpeed:v1', '180');
+  const system = JSON.stringify({ animations: false, prefetch: false, cache: 'small', renderScale: .75 });
+  first.localStorage.setItem('canvas:noteSystem:v1', system);
   assert(await first.window.RelatumDesktopPreferences.flush());
   assert.equal(persisted['canvas:startTheme'], 'light');
+  assert.equal(persisted['canvas:noteSystem:v1'], system);
+  const systemRestored = context({ ...seed, launchId: 'system-restored', values: { 'canvas:noteSystem:v1': system } }, {}, api);
+  assert.equal(systemRestored.localStorage.getItem('canvas:noteSystem:v1'), system, 'system policy survives a new desktop origin');
   const child = context(seed, {}, null, first.window);
   child.localStorage.setItem('research:coordinatesVisible:v1', '1');
   assert(await child.window.RelatumDesktopPreferences.flush());

@@ -223,7 +223,8 @@
         ignoreHiddenNodes: true, coalesceHover: true,
         onCanvasReplace: replacement => { canvas = replacement; },
         config: { ...LAYOUT_CONFIG, layoutSpacing: spacing },
-        reduceMotion: global.matchMedia('(prefers-reduced-motion: reduce)').matches,
+        reduceMotion: (global.RelatumNoteSystem?.motion || global.matchMedia('(prefers-reduced-motion: reduce)')).matches,
+        renderScale: global.RelatumNoteSystem?.read().renderScale || 1,
         nodeStyle, edgeStyle, domOverlay: labelLayer,
         getGravity: node => node.degree >= 6 ? .022 : node.degree >= 3 ? .009 : node.degree ? .005 : .0035,
         getEdgeRest: edge => edge.rest,
@@ -293,11 +294,27 @@
       delete scene.bytes;
       // Serialized UTF-8 × 2 bounds strings/records conservatively; this is not a heap measurement.
       scene.bytes = (new TextEncoder().encode(JSON.stringify(scene)).length + 128) * 2;
-      if (scene.bytes > CACHE_BYTES) return false;
+      const budget = global.RelatumNoteSystem?.budget('graph') || { items: CACHE_LIMIT, bytes: CACHE_BYTES };
+      if (scene.bytes > budget.bytes) return false;
       scenes.set(path, scene); sceneBytes += scene.bytes;
-      while (scenes.size > CACHE_LIMIT || sceneBytes > CACHE_BYTES) forgetScene(scenes.keys().next().value);
+      trimScenes();
       return true;
     }
+    function trimScenes(clear = false) {
+      const budget = global.RelatumNoteSystem?.budget('graph') || { items: CACHE_LIMIT, bytes: CACHE_BYTES };
+      for (const path of scenes.keys()) {
+        if (!clear && scenes.size <= budget.items && sceneBytes <= budget.bytes) break;
+        if (wanted && path === scope) continue;
+        forgetScene(path);
+      }
+    }
+    function systemChanged(event) {
+      if (event.detail.clear) { cancelPreload(); trimScenes(true); }
+      else if (event.detail.previous.cache !== event.detail.value.cache) trimScenes();
+      engine?.setRenderScale(event.detail.value.renderScale);
+    }
+    const motion = global.RelatumNoteSystem?.motion || global.matchMedia('(prefers-reduced-motion: reduce)');
+    const motionChanged = () => engine?.setReduceMotion(motion.matches);
     function cancelPreload() {
       preloadOperation++;
       preloadJob?.controller.abort();
@@ -628,6 +645,8 @@
     find('[data-action="graph-reset-view"]').addEventListener('click', () => { growthView = null; engine?.fitView(true); });
     const themeObserver = new MutationObserver(() => { if (wanted) syncTheme(); });
     global.addEventListener('relatum:note-graph-spacing', spacingChanged);
+    global.addEventListener('relatum:note-system', systemChanged);
+    motion.addEventListener('change', motionChanged);
     document.fonts?.addEventListener('loadingdone', fontsChanged);
     updateLanguage(); updateCounts();
     return { activate, deactivate, preload, invalidatePreload, isOpen: () => wanted, checkExternalChanges,
@@ -636,6 +655,8 @@
       destroy() {
         if (destroyed) return;
         global.removeEventListener('relatum:note-graph-spacing', spacingChanged);
+        global.removeEventListener('relatum:note-system', systemChanged);
+        motion.removeEventListener('change', motionChanged);
         document.fonts?.removeEventListener('loadingdone', fontsChanged);
         deactivate({ clearCache: true }); destroyed = true; host.replaceChildren();
       },

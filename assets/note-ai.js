@@ -209,7 +209,7 @@
     input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !composing) { event.preventDefault(); if (!running) submit(); } });
     composer.addEventListener('submit', event => { event.preventDefault(); if (running) stop(); else if (!composing) submit(); });
 
-    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+    const reducedMotion = window.RelatumNoteSystem?.motion || matchMedia('(prefers-reduced-motion: reduce)');
     const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => queueLayout()) : null;
     function captureReadingPosition() {
       if (followBottom) return null;
