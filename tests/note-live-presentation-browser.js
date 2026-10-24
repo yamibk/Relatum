@@ -55,8 +55,11 @@ body { margin: 0; }
     if (!file.startsWith(path.join(repo, 'assets') + path.sep) || !fs.existsSync(file)) { res.writeHead(404).end(); return; }
     res.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'application/octet-stream');
     if (file.endsWith('note-live-editor.js')) {
-      res.end(fs.readFileSync(file, 'utf8').replace('window.RelatumNoteLiveEditor = { create, renderMarkdown };',
-        'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__probe = {createInlineDecorations, createBlockField};'));
+      const source = fs.readFileSync(file, 'utf8');
+      const instrumented = source.replace('window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath };',
+        'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath }; window.__probe = {createInlineDecorations, createBlockField};');
+      assert.notEqual(instrumented, source, 'the presentation probe must attach to the current editor export');
+      res.end(instrumented);
     } else res.end(fs.readFileSync(file));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -95,6 +98,134 @@ body { margin: 0; }
     await settle();
     await page.screenshot({path:path.join(output, 'dark.png')});
     if (process.env.RELATUM_NOTE_BASELINE) { console.log(JSON.stringify({output,metrics})); return; }
+
+    const quoteSource = '> 123\n>\n> > 嵌套\n> 第二行\n\n后方普通段落';
+    const quoteChecks = [];
+    const quoteCdp = await page.context().newCDPSession(page);
+    const quoteRows = () => page.evaluate(() => Array.from(editor.view.contentDOM.querySelectorAll('.note-live-quote-line'), line => {
+      const style = getComputedStyle(line), marker = line.querySelector('.note-live-source-mark.is-quote');
+      return {text:line.textContent, source:line.classList.contains('note-live-quote-source'), image:style.backgroundImage,
+        padding:parseFloat(style.paddingLeft), depth:Number(style.getPropertyValue('--note-quote-depth')),
+        font:style.fontSize, lineHeight:style.lineHeight,
+        markerFont:marker && getComputedStyle(marker).fontSize, markerHeight:marker && getComputedStyle(marker).lineHeight};
+    }));
+    const setQuote = async (head, focus = true) => {
+      await page.evaluate(({value, head, focus}) => {
+        editor.setDocument({value, notePath:'quote.md', anchor:head, head, scrollTop:0});
+        if (focus) editor.focus(); else editor.view.contentDOM.blur();
+      }, {value:quoteSource, head, focus});
+      await settle();
+    };
+    for (const theme of ['light', 'dark']) for (const width of [1280, 620]) {
+      await page.setViewportSize({width,height:960});
+      await page.evaluate(({theme,width}) => {
+        document.body.dataset.startTheme = theme;
+        document.documentElement.style.setProperty('--note-font-scale', width === 620 ? '1.35' : '1');
+      }, {theme,width});
+      await setQuote(5, false);
+      let rows = await quoteRows();
+      assert.equal(rows.length, 4);
+      assert(rows.every(row => !row.source && row.image !== 'none' && row.padding === row.depth * 22),
+        'blurred quotes retain their depth rules even on the CodeMirror active line: ' + JSON.stringify(rows));
+      const point = await page.evaluate(() => {
+        const line = editor.view.contentDOM.querySelector('.note-live-quote-line');
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          const node = walker.currentNode, offset = node.textContent.indexOf('123');
+          if (offset < 0) continue;
+          const range = document.createRange(); range.setStart(node, offset + 1); range.setEnd(node, offset + 2);
+          const rect = range.getBoundingClientRect();
+          return {x:(rect.left + rect.right)/2, y:(rect.top + rect.bottom)/2};
+        }
+      });
+      assert(point, 'the projected quote body has a native text rectangle');
+      await page.mouse.click(point.x, point.y); await settle();
+      rows = await quoteRows();
+      assert(rows[0].source && rows[0].text === '> 123' && rows[0].padding === 0 && rows[0].image === 'none', JSON.stringify(rows));
+      assert.equal(rows[0].markerFont, rows[0].font);
+      assert.equal(rows[0].markerHeight, rows[0].lineHeight);
+      assert(rows.slice(1).every(row => !row.source && row.image !== 'none'));
+      assert.equal(await page.evaluate(() => editor.view.state.doc.lineAt(editor.snapshot().head).number), 1,
+        'clicking projected quote prose keeps the caret on that native line');
+      await page.keyboard.press('End'); await settle();
+      assert.equal(await page.evaluate(() => editor.snapshot().head), 5);
+      assert((await quoteRows())[0].source, 'the marker stays visible at the end of the body');
+      const caret = await page.evaluate(() => {
+        const view = editor.view, at = view.state.selection.main.head;
+        const range = document.createRange(), dom = view.domAtPos(at);
+        range.setStart(dom.node, dom.offset); range.collapse(true);
+        const native = range.getBoundingClientRect(), drawn = view.coordsAtPos(at);
+        const row = view.contentDOM.querySelector('.note-live-quote-line').getBoundingClientRect();
+        const prose = Array.from(view.contentDOM.querySelectorAll('.cm-line')).find(el => el.textContent === '后方普通段落').getBoundingClientRect();
+        return {native:{left:native.left,top:native.top,bottom:native.bottom}, drawn, left:row.left, proseLeft:prose.left};
+      });
+      assert(Math.abs(caret.left - caret.proseLeft) < 1, 'source quotes start at the ordinary prose origin');
+      assert(Math.abs(caret.native.left - caret.drawn.left) < 2, 'native text and drawn caret agree horizontally');
+      assert(Math.abs((caret.native.top + caret.native.bottom - caret.drawn.top - caret.drawn.bottom)/2) < 3,
+        'native text and drawn caret agree vertically: ' + JSON.stringify(caret));
+      await page.keyboard.press('Home'); await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight'); await settle();
+      assert.equal(await page.evaluate(() => editor.snapshot().head), 2);
+      await page.keyboard.press('ArrowLeft'); await settle();
+      assert.equal(await page.evaluate(() => editor.snapshot().head), 1);
+      assert((await quoteRows())[0].source);
+      await page.keyboard.press('End'); await page.keyboard.type('4'); await page.keyboard.press('Backspace'); await settle();
+      assert.equal(await page.evaluate(() => editor.snapshot().value), quoteSource);
+      await page.keyboard.press('Enter'); await settle();
+      assert((await page.evaluate(() => editor.snapshot().value)).startsWith('> 123\n> \n'), 'Enter continues the native quote prefix');
+      await page.keyboard.press('Control+z'); await settle();
+      assert.equal(await page.evaluate(() => editor.snapshot().value), quoteSource);
+      await page.keyboard.press('Home'); await page.keyboard.press('Delete'); await settle();
+      assert((await page.evaluate(() => editor.snapshot().value)).startsWith(' 123\n'), 'the visible marker is editable source');
+      await page.keyboard.press('Control+z'); await settle();
+      assert.equal(await page.evaluate(() => editor.snapshot().value), quoteSource);
+      for (const head of [6, 7, quoteSource.indexOf('嵌套') + 1]) {
+        await page.evaluate(head => editor.view.dispatch({selection:{anchor:head}}), head); await settle();
+        const current = await page.evaluate(() => editor.view.state.doc.lineAt(editor.snapshot().head).number - 1);
+        rows = await quoteRows();
+        assert(rows[current].source && rows[current].padding === 0 && rows[current].image === 'none');
+        if (current === 2) assert.equal(rows[current].text, '> > 嵌套', 'nested prefixes retain their source spaces');
+      }
+      for (const reverse of [false, true]) {
+        await page.evaluate(({from,to,reverse}) => editor.view.dispatch({selection:{anchor:reverse ? to : from,head:reverse ? from : to}}),
+          {from:3,to:quoteSource.indexOf('第二行') + 2,reverse}); await settle();
+        assert((await quoteRows()).every(row => row.source && row.image === 'none' && row.padding === 0));
+      }
+      await setQuote(5);
+      for (const text of ['z','zhong']) {
+        await quoteCdp.send('Input.imeSetComposition', {text,selectionStart:text.length,selectionEnd:text.length});
+        assert.equal(await page.evaluate(() => editor.snapshot().value), quoteSource, 'preedit never changes the saved Markdown');
+        assert((await page.locator('.note-live-quote-source').first().innerText()).startsWith('> 123'));
+      }
+      await quoteCdp.send('Input.insertText', {text:'中'}); await settle();
+      assert.equal(await page.evaluate(() => editor.snapshot().value), quoteSource.replace('123','123中'));
+      await page.keyboard.press('Control+z'); await settle();
+      assert.equal(await page.evaluate(() => editor.snapshot().value), quoteSource, 'one undo removes one committed candidate');
+      await quoteCdp.send('Input.imeSetComposition', {text:'qu',selectionStart:2,selectionEnd:2});
+      await quoteCdp.send('Input.imeSetComposition', {text:'',selectionStart:0,selectionEnd:0}); await settle();
+      assert.equal(await page.evaluate(() => editor.snapshot().value), quoteSource, 'cancelled preedit keeps the quote intact');
+      await page.evaluate(() => editor.view.contentDOM.blur()); await settle();
+      assert((await quoteRows()).every(row => !row.source && row.image !== 'none'), 'blur restores all rules');
+      await page.evaluate(head => { editor.view.dispatch({selection:{anchor:head}}); editor.focus(); }, quoteSource.length); await settle();
+      assert((await quoteRows()).every(row => !row.source && row.image !== 'none'), 'moving to ordinary prose restores all rules');
+      await page.evaluate(() => editor.setSourceMode(true)); await settle();
+      assert.equal(await page.locator('.note-live-quote-line').count(), 0);
+      assert((await page.locator('.cm-content').innerText()).includes('> > 嵌套'));
+      await page.evaluate(() => editor.setSourceMode(false)); await settle();
+      assert.equal(await page.evaluate(() => editor.snapshot().value), quoteSource);
+      const reading = await page.evaluate(value => {
+        const root = document.createElement('div'); root.className = 'note-reading-content node-text';
+        document.body.appendChild(root); RelatumNoteLiveEditor.renderMarkdown(root,value,'quote.md');
+        const quote = root.querySelector('blockquote'), style = getComputedStyle(quote);
+        const result = {count:root.querySelectorAll('blockquote').length, rule:style.borderLeftWidth, text:root.textContent};
+        RelatumNoteLiveEditor.releaseReadingDocument(root); root.remove(); return result;
+      }, quoteSource);
+      assert.equal(reading.count, 2); assert.equal(reading.rule, '4px'); assert(!reading.text.includes('>'));
+      await setQuote(5);
+      await page.screenshot({path:path.join(output, 'quote-' + theme + '-' + width + '.png')});
+      quoteChecks.push({theme,width,source:(await quoteRows())[0].text,caret,ime:true,undo:true,reading:true});
+    }
+    await quoteCdp.detach();
+    await page.evaluate(() => document.documentElement.style.removeProperty('--note-font-scale'));
 
     // Use actual browser text rectangles to click code after repeated variable
     // height blocks, rather than deriving both sides from CodeMirror geometry.
@@ -878,7 +1009,7 @@ q^{\mathrm{acc}}_{i,t}+q^{\mathrm{rej}}_{i,t}
     await page.waitForFunction(() => document.documentElement.dataset.noteLivePerformance);
     const typingProbe = await page.evaluate(() => JSON.parse(document.documentElement.dataset.noteLivePerformance));
     assert.deepEqual(errors, []);
-    const report = {output,metrics,clickChecks,calloutChecks,compactChecks,mathSelectionChecks,ruleChecks,readingRuleChecks,boundaryIme:true,ime:true,copy:true,undo:true,mixedProbe,longProbe,typingProbe};
+    const report = {output,metrics,quoteChecks,clickChecks,calloutChecks,compactChecks,mathSelectionChecks,ruleChecks,readingRuleChecks,boundaryIme:true,ime:true,copy:true,undo:true,mixedProbe,longProbe,typingProbe};
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report,null,2));
     console.log(JSON.stringify(report));
   } finally {

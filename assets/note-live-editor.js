@@ -3568,11 +3568,13 @@
             if (quotedCodeLines.has(line.from)) return false;
             const spec = blockSpecs.find((item) => item.kind === 'callout' && item.from <= nodeRef.from && item.to >= nodeRef.to);
             if (!spec) {
-              const depth = window.MarkdownMini.quoteLine(line.text).depth;
-              lineClass(line.from, 'note-live-quote-line' + (!window.MarkdownMini.quoteLine(line.text).text.trim() ? ' note-live-quote-gap' : ''), '--note-quote-depth:' + depth);
+              const quote = window.MarkdownMini.quoteLine(line.text);
+              lineClass(line.from, 'note-live-quote-line'
+                + (constructActive(view, line.from, line.to) ? ' note-live-quote-source' : '')
+                + (!quote.text.trim() ? ' note-live-quote-gap' : ''), '--note-quote-depth:' + quote.depth);
             }
             if (spec) sourceMark(nodeRef.from, nodeRef.to + (/^[ \t]/.test(view.state.doc.sliceString(nodeRef.to, line.to)) ? 1 : 0), line.from, line.to, 'callout');
-            else sourceMark(nodeRef.from, nodeRef.to, nodeRef.from, nodeRef.to, 'quote');
+            else sourceMark(nodeRef.from, nodeRef.to, line.from, line.to, 'quote');
           } else if (nodeRef.name === 'TableDelimiter') {
             const unit = ancestorOf(node, /^Table$/) || node;
             sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, 'table');

@@ -103,8 +103,8 @@ function loadLiveDecorationProbe() {
   context.document = {};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'assets', 'markdown.js'), 'utf8'), context);
   const instrumented = editorSource.replace(
-    'window.RelatumNoteLiveEditor = { create, renderMarkdown };',
-    'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, toggleInlineFormat, inlineFormatEdit, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension };',
+    'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath };',
+    'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, toggleInlineFormat, inlineFormatEdit, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension };',
   );
   assert.notStrictEqual(instrumented, editorSource, 'the test-only decoration probe must attach to the Live Preview export');
   vm.runInNewContext(instrumented, context);
@@ -424,6 +424,51 @@ assert(codeLanguageDecoration, 'an inactive fenced block must expose its exact l
 assert.strictEqual(codeLanguageDecoration.spec.widget.label, 'c');
 assert.strictEqual(codeLanguageDecoration.spec.widget.code, 'int a = 5, b = 5;\nint c, d;',
   'copying the language badge must copy only code, without either fence');
+
+const quoteSource = '> 123\n>\n> > 嵌套\n> 第二行\n\n后方普通段落';
+function quoteDecorationProbe(source, anchor, head = anchor, focused = true, composing = false) {
+  const state = liveProbe.RelatumCodeMirror.EditorState.create({
+    doc: source,
+    selection: liveProbe.RelatumCodeMirror.EditorSelection.range(anchor, head),
+    extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage }), blockField],
+  });
+  return { state, records: decorationRecords(liveProbe.__relatumLiveTest.createInlineDecorations({
+    state, visibleRanges: [{ from: 0, to: state.doc.length }], hasFocus: focused, composing,
+  }, blockField, () => 'quote.md', probeOptions), state.doc.length) };
+}
+for (let number = 1; number <= 4; number++) {
+  const line = new TextDoc(quoteSource).line(number);
+  for (const cursor of new Set([line.from, Math.min(line.to, line.from + 3), line.to])) {
+    const probe = quoteDecorationProbe(quoteSource, cursor);
+    const row = probe.records.find(item => item.from === line.from && item.to === line.from);
+    assert(/(?:^|\s)note-live-quote-source(?:\s|$)/.test(row?.spec.class || ''),
+      'every caret position on an ordinary quote line must expose that line: ' + cursor);
+    const exposed = probe.records.filter(item => item.spec.class === 'note-live-source-mark is-quote');
+    assert.strictEqual(exposed.length, number === 3 ? 2 : 1, 'all nested markers on the current line must be visible');
+    assert(exposed.every(item => item.from >= line.from && item.to <= line.to), 'other quote lines must remain projected');
+    assert.strictEqual(probe.state.doc.toString(), quoteSource, 'quote display must preserve exact Markdown');
+  }
+}
+for (const focused of [true, false]) {
+  const cursor = focused ? quoteSource.length : 4;
+  const probe = quoteDecorationProbe(quoteSource, cursor, cursor, focused);
+  assert(!probe.records.some(item => /note-live-quote-source/.test(item.spec.class || '')),
+    'moving to another paragraph or blurring must restore every quote rule');
+  assert(!probe.records.some(item => item.spec.class === 'note-live-source-mark is-quote'));
+}
+for (const reverse of [false, true]) {
+  const from = 3, to = quoteSource.indexOf('第二行') + 2;
+  const probe = quoteDecorationProbe(quoteSource, reverse ? to : from, reverse ? from : to);
+  assert.strictEqual(probe.records.filter(item => /note-live-quote-source/.test(item.spec.class || '')).length, 4,
+    'forward and backward multiline selections must reveal each touched quote line');
+}
+const composingQuote = quoteDecorationProbe(quoteSource, 4, 4, false, true);
+assert(composingQuote.records.some(item => item.spec.class === 'note-live-source-mark is-quote'),
+  'native composition must keep the current quote prefix visible');
+const quotedCodeSource = '> ```js\n> const value = 1;\n> ```\n\nend';
+const quotedCodeProbe = quoteDecorationProbe(quotedCodeSource, quotedCodeSource.indexOf('value'));
+assert(!quotedCodeProbe.records.some(item => /note-live-quote-source/.test(item.spec.class || '')),
+  'quoted code must retain its dedicated presentation');
 
 const calloutSource = '> [!hint] **写作提示**\n> 第一行正文\n>\n> 第二行正文\n\n后方普通段落';
 function calloutDecorationProbe(cursor, focused = true) {

@@ -586,7 +586,7 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-live-task { width: 14px; height: 14px; margin: 0 .46em 0 .08em; vertical-align: -.12em; accent-color: #4183c4; cursor: pointer; }
 .note-live-task-widget { white-space: nowrap; }
 .note-live-task-anchor { opacity: 0; pointer-events: none; user-select: none; }
-.note-live-quote-line {
+.note-live-editor-host .cm-line.note-live-quote-line {
   --note-quote-step: 22px;
   padding-left: calc(var(--note-quote-depth, 1) * var(--note-quote-step)) !important;
   background-image: repeating-linear-gradient(to right, var(--note-quote-rule) 0 4px, transparent 4px var(--note-quote-step));
@@ -594,6 +594,12 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
   background-repeat: no-repeat;
   color: var(--text-secondary);
 }
+.note-live-editor-host .cm-line.note-live-quote-line.note-live-quote-source {
+  padding-left: 0 !important;
+  background-image: none;
+  color: var(--text);
+}
+.note-live-quote-source .note-live-source-mark.is-quote { font: inherit !important; }
 .note-live-html-u, .note-live-html-ins { text-decoration: underline; }
 .note-live-html-del, .note-live-html-s { text-decoration: line-through; }
 .note-live-html-strong, .note-live-html-b { font-weight: 700; }
