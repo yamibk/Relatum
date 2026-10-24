@@ -530,6 +530,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 - JSON 请求体硬上限是 160MiB；超过 8MiB 的 JSON 同一时刻只接纳一个，保存时走流式原子 JSON 编码；图片/附件仍各自执行 40MiB / 100MiB 的解码后限制。Base64 协议会产生高于请求体大小的瞬时内存峰值，不要把 160MiB 误解成进程内存上限。
 - 画布资源读取由 `_send_local_file` 分块发送并支持单段 `Range`，不要重新改成 `read_bytes()` 整文件进内存。
+- 笔记图片在现有 `NOTES_MUTATION_LOCK` 内完成路径校验和打开，随后释放锁并交给 `_send_local_file` 分块发送。Windows 只登记仍持有原素材的在途读取；`/api/note-move` 在移动前将相关 `.assets` 或父目录中的在途读取按 256KiB 分块交接到自动清理的系统临时文件，保留读取位置和原响应元数据，并关闭原句柄，使目录移动与未完成图片响应兼容。仅实际重叠的移动触发复制，普通加载不复制；网络发送不持有笔记锁或读取锁。成功、取消、304/416 与异常均关闭流并注销，非 Windows 保留普通只读打开；真实外部占用仍走原失败回滚，不增加重试、整图内存副本、持久化数据或新 API。
 - 小型 `data/*.json` 读改写与画布/附件文件操作使用两把进程内锁；跨两类数据的路由固定先拿画布锁、再拿数据锁。不要倒置锁顺序，也不要让原生选择器打开期间持锁。
 - 笔记写操作使用独立 `NOTES_MUTATION_LOCK`，同时进入现有跨进程写锁；资源管理器打开接口不在持锁期间等待 Explorer。笔记正文和图片沿用同目录唯一临时文件 + `os.replace`，不要改成固定 `.tmp`。
 - 视口状态 `data/viewport.json` 最多保留 500 张画布记录，写入时按 `updatedAt` 淘汰旧项，避免长期使用后无界增长。
@@ -997,6 +998,8 @@ AI 设置使用独立星芒 SVG，按当前对话预设、连接、生成参数�
 - 构建先核对 Python/依赖版本、真实模块导入和 `pip check`，再执行 `scripts/check-note-sqlite.py`，在内存数据库验证 SQLite ≥3.43、FTS5 trigram、contentless-delete 和短字符查询，不读写用户索引。检查脚本按自身路径导入 `note_search.py`，不要改回 PowerShell 内嵌 `python -c`。维护 BAT 只调用 Windows PowerShell 5.1，不判断环境或解析源码；新手使用准备、离线修复、检查、打包及打开日志五个双击入口，步骤见 `Relatum-维护工具/打包新手说明.md`。成功输出包含 `Note SQLite/FTS5 preflight` 和 `Build complete`。
 
 ## 11. 验证清单
+
+笔记图片读取与改名并发使用 `py -B -m unittest tests.test_note_asset_streaming`（其他平台用可用的 Python 命令），在一次性笔记库与真实 HTTP 服务中暂停图片响应或首块读取，再验证笔记改名、文件夹移动、正文图片路径更新、新旧图片请求完整性、单段 Range、304/416、取消释放、临时交接失败和真实外部占用回滚，以及普通加载/无关读取不复制。Windows 下旧实现确定性返回 `WinError 5`，测试不访问真实笔记或发布包。
 
 笔记设置新增 `node tests/note-settings-browser.js`，验证完整/仅笔记/禁用图谱/禁用画布/禁用 Mermaid/最小六种组合、分类与搜索、旧偏好保存/重置、正文与编辑器身份、三类教程及八张 Mermaid 图、复制、语言/主题/窄窗与最小化。沿用三项浏览器宿主变量及一次性数据根，截图写临时目录或 `RELATUM_ARTIFACT_DIR`；`--smoke` 仅跑完整首页。继续运行原 UI、画布样式、图谱、Mermaid、正文滚动与可见生命周期回归。浏览器候选事件不替代真实微软拼音及 WebView2 人工验收。
 

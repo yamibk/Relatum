@@ -24,6 +24,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import urllib.error
 import urllib.parse
@@ -183,6 +184,7 @@ CANVAS_ASSET_TYPES = {**BACKGROUND_IMAGE_TYPES, **CANVAS_ATTACHMENT_TYPES}
 DATA_MUTATION_LOCK = threading.RLock()
 CANVAS_FILE_MUTATION_LOCK = threading.RLock()
 NOTES_MUTATION_LOCK = threading.RLock()
+_NOTE_ASSET_STREAMS: set = set()  # Windows readers still holding a real note asset.
 LARGE_JSON_BODY_LOCK = threading.Lock()
 CANVAS_STATS_CACHE_LOCK = threading.Lock()
 _CANVAS_STATS_CACHE: dict[str, tuple[tuple[int, int, int, int], int | None]] = {}
@@ -9865,6 +9867,74 @@ NOTES_POST_ROUTES = {
     "/api/note-import-abort",
 }
 
+
+class _NoteAssetStream:
+    """Detach a Windows image reader only when a move needs its directory."""
+    def __init__(self, target: Path):
+        self.path = target
+        self.lock = threading.Lock()
+        self.file = target.open("rb")
+        try:
+            self.stat = os.fstat(self.file.fileno())
+        except BaseException:
+            self.file.close()
+            raise
+        # Construction and registry changes run under NOTES_MUTATION_LOCK.
+        _NOTE_ASSET_STREAMS.add(self)
+
+    def read(self, size):
+        with self.lock:
+            return self.file.read(size)
+
+    def seek(self, position):
+        with self.lock:
+            return self.file.seek(position)
+
+    def detach(self):
+        # A socket write never holds this lock. Copying is bounded by one stream
+        # chunk and happens only when an overlapping move actually needs it.
+        with self.lock:
+            if self.file.closed:
+                return
+            position = self.file.tell()
+            snapshot = tempfile.TemporaryFile()
+            try:
+                self.file.seek(0)
+                shutil.copyfileobj(self.file, snapshot, FILE_STREAM_CHUNK_BYTES)
+                snapshot.seek(position)
+            except BaseException:
+                snapshot.close()
+                self.file.seek(position)
+                raise
+            self.file.close()
+            self.file = snapshot
+
+    def close(self):
+        with self.lock:
+            self.file.close()
+        # Keep this outside the reader lock: moves take the note lock first.
+        with NOTES_MUTATION_LOCK:
+            _NOTE_ASSET_STREAMS.discard(self)
+
+
+def _open_note_asset(target: Path):
+    if sys.platform == "win32":
+        return _NoteAssetStream(target)
+    return target.open("rb")
+
+
+def _detach_note_assets_for_move(source):
+    if sys.platform != "win32" or not _NOTE_ASSET_STREAMS:
+        return
+    target = NOTES_STORE._absolute(NOTES_STORE.normalize_path(source))
+    directory = target if target.is_dir() else target.with_name(target.stem + ".assets")
+    # The caller holds NOTES_MUTATION_LOCK, so no new reader can enter here.
+    for stream in tuple(_NOTE_ASSET_STREAMS):
+        if stream.path.is_relative_to(directory):
+            stream.detach()
+            _NOTE_ASSET_STREAMS.discard(stream)
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     """静态资源 + 几个 JSON API。"""
 
@@ -10033,12 +10103,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         error_prefix: str,
         *,
         cache_control: str = "no-store",
+        opened_file=None,
     ) -> None:
-        """Stream a local asset with single-range support and bounded memory."""
-        fh = None
+        """Stream a local asset, taking ownership of any already-open file."""
+        fh = opened_file
         try:
-            fh = target.open("rb")
-            stat = os.fstat(fh.fileno())
+            if fh is None:
+                fh = target.open("rb")
+            stat = fh.stat if isinstance(fh, _NoteAssetStream) else os.fstat(fh.fileno())
             size = stat.st_size
         except OSError as err:
             if fh is not None:
@@ -10251,11 +10323,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         q.get("note", [""])[0], q.get("src", [""])[0],
                         syntax=q.get("syntax", ["markdown"])[0],
                     )
+                    # Register before releasing the path lock. A later move can
+                    # detach this reader without waiting for its socket writes.
+                    image = _open_note_asset(target)
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
-            return self._send_local_file(
-                target, media_type, "读取笔记图片失败", cache_control="private, no-cache",
-            )
+            except OSError as err:
+                return self._send_json(500, {"error": f"读取笔记图片失败：{err}"})
+            try:
+                return self._send_local_file(
+                    target, media_type, "读取笔记图片失败", cache_control="private, no-cache",
+                    opened_file=image,
+                )
+            finally:
+                image.close()
         if parsed.path == "/api/recent":
             return self._api_recent()
         if parsed.path == "/api/career/report":
@@ -10852,6 +10933,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _api_note_move(self, body: dict):
         try:
+            _detach_note_assets_for_move(body.get("path", ""))
             result = NOTES_STORE.move(body.get("path", ""), body.get("destination", ""))
             result["tree"] = NOTES_STORE.tree(body.get('_tree', {}))
             _usage_remap("move", "notes", body.get("path", ""), result["path"], Path(result["path"]).name, prefix=True)
