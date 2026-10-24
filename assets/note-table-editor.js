@@ -1115,6 +1115,7 @@
       this.controller.detach(this); delete this.wrap.__noteTableSurface;
     }
     clearMath(content) {
+      this.controller.options.releaseTableCell?.(content);
       const math = window.MathJax;
       if (math && typeof math.typesetClear === 'function') math.typesetClear([content]);
     }

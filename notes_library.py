@@ -151,7 +151,6 @@ _WINDOWS_RESERVED = {
 }
 _INVALID_NAME_CHARS = re.compile(r'[<>:"\\|?*\x00-\x1f]')
 _WIKI_RE = re.compile(r"(?<!!)\[\[([^\]\n]+)\]\]")
-_IMAGE_RE = re.compile(r"!\[([^\]\n]*)\]\(([^)\n]+)\)")
 _FENCE_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})([^\n]*)$")
 _INLINE_CODE_RE = re.compile(r"(`+)(.*?)\1")
 _IMAGE_TEXT_COMMENT_RE = re.compile(
@@ -201,26 +200,81 @@ def _is_cjk_code_point(code_point: int) -> bool:
     )
 
 
-def _standalone_local_image_target(value: str) -> str | None:
-    """Return the relative target for a complete standalone image token."""
+def _markdown_image_references(value: str):
+    """Yield image targets and their original source spans in linear passes.
+
+    Keep Windows separators intact; only parentheses have the new Markdown
+    escape compatibility. Never apply this unescape again in resolve_image().
+    """
+    offset = 0
+    for original in value.splitlines(keepends=True):
+        line = original.rstrip('\r\n')
+        if '![' not in line:
+            offset += len(original)
+            continue
+        pairs, stacks, escaped = {}, {'[': [], '(': []}, set()
+        position = 0
+        while position < len(line):
+            char = line[position]
+            if char == '\\' and position + 1 < len(line):
+                escaped.add(position + 1)
+                position += 2
+                continue
+            if char in stacks:
+                stacks[char].append(position)
+            elif char in '])':
+                stack = stacks['[' if char == ']' else '(']
+                if stack:
+                    pairs[stack.pop()] = position
+            position += 1
+        position = 0
+        while True:
+            start = line.find('![', position)
+            if start < 0:
+                break
+            position = start + 2
+            if start in escaped or line[start + 2:start + 3] == '[':
+                continue
+            label_end = pairs.get(start + 1, -1)
+            if label_end < 0 or line[label_end + 1:label_end + 2] != '(':
+                continue
+            end = pairs.get(label_end + 1, -1)
+            if end < 0:
+                continue
+            destination = line[label_end + 2:end]
+            source = destination.strip()
+            angle = re.fullmatch(r'<([^>\n]+)>(?:[ \t]+(?:"([^"]*)"|\x27([^\x27]*)\x27))?', source)
+            titled = re.fullmatch(r'(\S+)[ \t]+(?:"([^"]*)"|\x27([^\x27]*)\x27)', source)
+            raw_target = angle[1].strip() if angle else titled[1] if titled else source
+            if not raw_target:
+                continue
+            target_from = label_end + 2 + destination.index(raw_target)
+            yield {'from': offset + start, 'to': offset + end + 1,
+                   'targetFrom': offset + target_from, 'targetTo': offset + target_from + len(raw_target),
+                   'rawTarget': raw_target, 'target': re.sub(r'\\([()])', r'\1', raw_target)}
+            position = end + 1
+        offset += len(original)
+
+
+def _standalone_local_image_reference(value: str) -> dict | None:
     token = value.strip(" \t")
     if token.startswith("![[") and token.endswith("]]"):
-        target = token[3:-2].split("|", 1)[0].strip()
-    elif token.startswith("![") and token.endswith(")"):
-        label_end = token.find("](")
-        if label_end < 2:
-            return None
-        destination = token[label_end + 2:-1].strip()
-        if destination.startswith("<"):
-            close = destination.find(">")
-            if close < 1:
-                return None
-            target = destination[1:close].strip()
-        else:
-            target = destination.split(None, 1)[0] if destination else ""
+        target = token[3:-2].split('|', 1)[0].strip()
+        start = len(value) - len(value.lstrip(' \t')) + 3
+        start += len(token[3:-2]) - len(token[3:-2].lstrip())
+        reference = {'target': target, 'targetFrom': start, 'targetTo': start + len(target)}
     else:
-        return None
-    return target if target and not _REMOTE_IMAGE_TARGET_RE.match(target) else None
+        reference = next(_markdown_image_references(value), None)
+        if not reference or value[:reference['from']].strip(' \t') or value[reference['to']:].strip(' \t'):
+            return None
+        target = reference['target']
+    return reference if target and not _REMOTE_IMAGE_TARGET_RE.match(target) else None
+
+
+def _standalone_local_image_target(value: str) -> str | None:
+    """Return the relative target for a complete standalone image token."""
+    reference = _standalone_local_image_reference(value)
+    return reference['target'] if reference else None
 
 
 def _attachment_references(content: str) -> set[str]:
@@ -257,7 +311,7 @@ def _attachment_references(content: str) -> set[str]:
         if source[start:start + 1] == '<':
             end = source.find('>', start + 1)
             if end >= 0:
-                targets.add(source[start + 1:end])
+                targets.add(re.sub(r'\\([()])', r'\1', source[start + 1:end]))
             continue
         end, depth = start, 0
         while end < len(source):
@@ -1446,13 +1500,13 @@ class NotesStore:
                 if old_stem != new_stem:
                     if text is None:
                         text = self._indexed_text(old_source, document)
-                    for match in _IMAGE_RE.finditer(text):
-                        target = match.group(2).strip()
+                    for reference in _markdown_image_references(text):
+                        target, separator, fragment = reference['target'].partition('#')
+                        target = PurePosixPath(urllib.parse.unquote(target).replace('\\', '/')).as_posix()
                         old_prefix = old_stem + ".assets/"
                         if target.startswith(old_prefix):
-                            start = match.start(2) + len(target) - len(target.lstrip())
-                            end = start + len(target)
-                            replacements.append((start, end, new_stem + ".assets/" + target[len(old_prefix):]))
+                            replacement = urllib.parse.quote(new_stem + '.assets/' + target[len(old_prefix):], safe='/.-_~')
+                            replacements.append((reference['targetFrom'], reference['targetTo'], replacement + separator + fragment))
 
             if replacements:
                 for start, end, replacement in sorted(replacements, reverse=True):
@@ -1702,11 +1756,8 @@ class NotesStore:
                     end = source.index("]]", start)
                 replacement = source[:start] + uploaded["path"] + source[end:]
             else:
-                start = source.index("](") + 2
-                start += len(source[start:]) - len(source[start:].lstrip())
-                if source[start:start + 1] == "<":
-                    start += 1
-                replacement = source[:start] + uploaded["path"] + source[start + len(image_target):]
+                reference = _standalone_local_image_reference(source)
+                replacement = source[:reference['targetFrom']] + uploaded['path'] + source[reference['targetTo']:]
 
         for number, line in enumerate(lines):
             if number == index:

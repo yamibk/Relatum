@@ -87,10 +87,11 @@ def references(text: str) -> list[dict]:
                         if not match:
                             match = re.fullmatch(r'(\S+?)(?:\s+(?:"[^"]*"|\x27[^\x27]*\x27))?', destination)
                         if match and urllib.parse.unquote(match[1]).lower().endswith(".canvas"):
-                            target = match[1]
-                            target_at = end_label + 2 + line[end_label + 2:end].index(target)
+                            raw_target = match[1]
+                            target = re.sub(r'\\([()])', r'\1', raw_target)
+                            target_at = end_label + 2 + line[end_label + 2:end].index(raw_target)
                             result.append({"from": offset + start, "to": offset + end + 1,
-                                "targetFrom": offset + target_at, "targetTo": offset + target_at + len(target),
+                                "targetFrom": offset + target_at, "targetTo": offset + target_at + len(raw_target),
                                 "labelFrom": offset + start + 2, "labelTo": offset + end_label,
                                 "label": line[start + 2:end_label], "target": target})
         offset += len(original)

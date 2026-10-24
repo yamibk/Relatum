@@ -175,6 +175,17 @@ assert.strictEqual(markdownSized.title, 'Overview');
 assert.strictEqual(markdownSized.width, 360);
 assert.strictEqual(Markdown.serializeImage(markdownSized, { width: 480 }),
   '![Diagram|480](<page assets/diagram.png> "Overview")');
+for (const rawTarget of ['images/电路\\(1\\).png', 'images/电路(1).png', 'images/电路%281%29.png', 'images\\diagram.png']) {
+  const source = '  ![电路|320](<' + rawTarget + '> "标题")  ';
+  const parsed = Markdown.parseImage(source);
+  assert.strictEqual(parsed.target, rawTarget.replace(/\\([()])/g, '$1'));
+  assert.strictEqual(source.slice(parsed.targetFrom, parsed.targetTo), rawTarget);
+  assert.strictEqual(Markdown.serializeImage(parsed, { width: 480 }), source.replace('|320]', '|480]'));
+}
+assert.strictEqual(Markdown.parseImage('![图]\\(images/a.png)'), null);
+assert(!Markdown.render('`![图](images/a\\(1\\).png)`', { localImages: true }).includes('<img'));
+assert(!Markdown.render('\\![图](images/a.png)', { localImages: true }).includes('<img'));
+assert.strictEqual(Markdown.parseImage('![[images\\电路(1).png]]').target, 'images\\电路(1).png');
 const numericAltSize = Markdown.parseImage('![250](photo.webp)');
 assert.strictEqual(numericAltSize.alt, '');
 assert.strictEqual(numericAltSize.width, 250);

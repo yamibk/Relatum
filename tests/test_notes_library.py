@@ -759,6 +759,73 @@ class NotesLibraryTests(unittest.TestCase):
         with self.assertRaises(NotesError):
             self.store.resolve_image("folder/Picture.md", "../../outside.png")
 
+    def test_image_parenthesis_compatibility_does_not_expand_lookup(self):
+        self.store.create('', 'Picture', 'note')
+        folder = self.root / 'images'
+        folder.mkdir()
+        image = b'\x89PNG\r\n\x1a\n' + b'x' * 20
+        target = folder / '电路 (1).png'
+        target.write_bytes(image)
+        sources = [
+            r'![图](<images/电路 \(1\).png> "标题")',
+            '![图](<images/电路 (1).png>)',
+            '![图](images/%E7%94%B5%E8%B7%AF%20%281%29.png)',
+            '![[images\\电路 (1).png|320]]',
+        ]
+        with mock.patch('notes_library.os.walk', side_effect=AssertionError('explicit paths must not scan directories')):
+            for source in sources:
+                with self.subTest(source=source):
+                    parsed = notes_library._standalone_local_image_target(source)
+                    resolved, _ = self.store.resolve_image('Picture.md', parsed,
+                        syntax='wiki' if source.startswith('![[') else 'markdown')
+                    self.assertEqual(resolved, target)
+        self.assertIsNone(notes_library._standalone_local_image_target(r'![图]\(images/a.png)'))
+        self.assertIsNone(notes_library._standalone_local_image_target('`![图](images/a.png)`'))
+        self.assertIsNone(notes_library._standalone_local_image_target('![图](images/a.png) extra'))
+        for source in ['C:/outside.png', 'file:///C:/outside.png', '../outside.png']:
+            with self.subTest(source=source), self.assertRaises(NotesError) as error:
+                self.store.resolve_image('Picture.md', source)
+            self.assertEqual(error.exception.code, 'unsafe_path')
+        with mock.patch('notes_library._is_reparse', side_effect=lambda path: Path(path) == target):
+            with self.assertRaises(NotesError) as error:
+                self.store.resolve_image('Picture.md', 'images/电路 (1).png')
+            self.assertEqual(error.exception.code, 'unsafe_path')
+
+    def test_escaped_image_paths_survive_cleanup_merge_rename_and_move(self):
+        self.store.create('', 'Old(1)', 'note')
+        folder = self.root / 'Old(1).assets' / 'images'
+        folder.mkdir(parents=True)
+        png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
+        (folder / '电路 (1).png').write_bytes(png)
+        (folder / 'unused.png').write_bytes(png)
+        source = r'  ![原图|320](<Old\(1\).assets/images/电路 \(1\).png> "标题")  '
+        overlay = notes_library._image_text_comment([{
+            'id': 'caption', 'text': '测试', 'x': .5, 'y': .5, 'size': 'md', 'color': 'white',
+        }])
+        selected = source.rstrip(' ') + overlay + '  '
+        content = '# 示例\r\n' + selected + '\r\n' + source + '\r\n'
+        saved = self.store.save('Old(1).md', content, self.store.load('Old(1).md')['revision'])
+        cleaned = self.store.cleanup_unused_images('Old(1).md', saved['revision'])
+        self.assertEqual(cleaned['deletedCount'], 1)
+        self.assertTrue((folder / '电路 (1).png').exists())
+        merged = self.store.image_text_operation('Old(1).md', content, saved['revision'], {'line': 2, 'source': selected}, png)
+        line = merged['content'].splitlines()[1]
+        reference = notes_library._standalone_local_image_reference(line)
+        self.assertEqual(line[:reference['targetFrom']], '  ![原图|320](<')
+        self.assertEqual(line[reference['targetTo']:], '> "标题")  ')
+        self.assertIn(source + '\r\n', merged['content'])
+        self.assertEqual(self.store.resolve_image('Old(1).md', reference['target'])[0].read_bytes(), png)
+        self.store.move('Old(1).md', 'New(2).md')
+        self.store.create('', 'moved', 'folder')
+        self.store.move('New(2).md', 'moved/New(2).md')
+        loaded = self.store.load('moved/New(2).md')['content']
+        self.assertEqual(loaded.count('\r\n'), 3)
+        for line in loaded.splitlines()[1:]:
+            reference = notes_library._standalone_local_image_reference(line)
+            self.assertIn('New%282%29.assets/', reference['target'])
+            self.assertTrue(line.endswith('> "标题")  '))
+            self.assertEqual(self.store.resolve_image('moved/New(2).md', reference['target'])[0].read_bytes(), png)
+
     def test_note_link_target_resolves_files_inside_vault_only(self):
         self.store.create("folder", "Index", "note", create_parents=True)
         attachment = self.root / "shared.pdf"

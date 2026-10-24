@@ -295,6 +295,16 @@
     return /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(String(target || '').trim());
   }
 
+  function absoluteImageTarget(target) {
+    let value = String(target || '').trim();
+    try { value = decodeURIComponent(value); } catch (_) {}
+    return /^(?:[a-z]:|file:|[\\/])/i.test(value);
+  }
+
+  function previewableImage(target) {
+    return !isRemoteTarget(target) || absoluteImageTarget(target);
+  }
+
   function isDangerousTarget(target) {
     return /^\s*(?:javascript|data|vbscript):/i.test(String(target || ''));
   }
@@ -812,7 +822,7 @@
           const line = doc.lineAt(node.from);
           if (node.to <= line.to && !doc.sliceString(line.from, node.from).trim() && !doc.sliceString(node.to, line.to).trim()) {
             const image = parseStandaloneImage(line.text);
-            if (image && image.target && !isRemoteTarget(image.target) && line.length <= MAX_RICH_LINE && (!canvasImage(image) || canvasEnabled())) {
+            if (image && image.target && previewableImage(image.target) && line.length <= MAX_RICH_LINE && (!canvasImage(image) || canvasEnabled())) {
               push({
                 from: line.from, to: line.to, kind: canvasImage(image) ? 'canvas' : 'image', source: line.text,
                 target: image.target, alt: image.alt, width: image.width, height: image.height,
@@ -868,7 +878,7 @@
         }
       }
       const standaloneImage = parseStandaloneImage(line.text);
-      if (standaloneImage && standaloneImage.target && !isRemoteTarget(standaloneImage.target) && line.to >= start && line.from <= end) {
+      if (standaloneImage && standaloneImage.target && previewableImage(standaloneImage.target) && line.to >= start && line.from <= end) {
         if (canvasImage(standaloneImage) && !canvasEnabled()) { number += 1; continue; }
         push({
           from: line.from, to: line.to, kind: canvasImage(standaloneImage) ? 'canvas' : 'image', source: line.text,
@@ -1659,16 +1669,70 @@
     return 'image-text-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
   }
 
-  function showImageFailure(image, frame) {
-    const url = image.src;
-    frame.classList.add('is-failed');
-    fetch(url).then((response) => response.json()).then((error) => {
-      if (!frame.isConnected || (image.hasAttribute('src') && image.src !== url) || error.code !== 'ambiguous_image') return;
-      const label = document.documentElement.lang === 'en' ? 'Image name is ambiguous; use a full vault path' : '图片文件名不唯一，请使用库内完整路径';
-      frame.dataset.errorLabel = label;
+  function imageFailureLabel(code) {
+    const labels = {
+      unsafe_path: ['仅支持笔记库内相对路径，请将图片放入笔记库后使用相对路径', 'Only relative paths inside the note library are supported'],
+      not_found: ['图片不存在，请检查相对路径或图片是否已移动', 'Image not found; check its relative path or whether it was moved'],
+      unsupported_type: ['不支持这种图片格式，请使用 PNG、JPEG、WebP、GIF 或 BMP', 'Unsupported image format; use PNG, JPEG, WebP, GIF or BMP'],
+      too_large: ['图片超过文件大小或像素尺寸限制', 'Image exceeds the file size or pixel dimension limit'],
+      ambiguous_image: ['图片文件名不唯一，请使用库内完整路径', 'Image name is ambiguous; use a full vault path'],
+    };
+    return (labels[code] || ['图片无法加载', 'Image could not be loaded'])[document.documentElement.lang === 'en' ? 1 : 0];
+  }
+
+  function prepareLocalImage(image, frame, url, target, isCurrent) {
+    image.__noteImageCleanup?.();
+    let disposed = false, requested = false, cancelProbe = null;
+    const current = () => !disposed && image.__noteImageCleanup === cleanup && image.isConnected && frame.isConnected && (!isCurrent || isCurrent());
+    const foreground = () => !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
+      && !frame.closest('[hidden]') && (!frame.closest('.note-workspace') || document.body.dataset.startWorkspace === 'notes');
+    const show = code => {
+      const label = imageFailureLabel(code);
+      frame.classList.add('is-failed'); frame.dataset.errorLabel = label;
       const fallback = frame.querySelector('.md-local-image-fallback');
       if (fallback) fallback.textContent = label;
-    }).catch(() => {});
+    };
+    const failed = () => {
+      if (!current()) return;
+      const failedUrl = image.src;
+      show(''); image.removeAttribute('src');
+      if (requested || !foreground()) return;
+      requested = true;
+      const endpoint = new URL(failedUrl, document.baseURI);
+      if (endpoint.origin !== location.origin || endpoint.pathname !== '/api/note-asset') return;
+      const controller = new AbortController();
+      const events = [[document, 'visibilitychange'], [window, 'canvasdesktop:visibility'],
+        [document, 'relatum:start-workspacechange'], [window, 'pagehide']];
+      const cancel = () => { controller.abort(); finish(); };
+      const lifecycle = event => { if (event.type === 'pagehide' || !current() || !foreground()) cancel(); };
+      const timer = setTimeout(cancel, 5000);
+      const finish = () => {
+        clearTimeout(timer);
+        events.forEach(([host, name]) => host.removeEventListener(name, lifecycle));
+        if (cancelProbe === cancel) cancelProbe = null;
+      };
+      cancelProbe = cancel;
+      events.forEach(([host, name]) => host.addEventListener(name, lifecycle));
+      fetch(failedUrl, { signal: controller.signal }).then(response => {
+        if (response.ok || !response.headers.get('content-type')?.includes('application/json')) return null;
+        return response.json();
+      }).then(error => {
+        if (!controller.signal.aborted && current() && foreground() && !image.hasAttribute('src') && error?.code) show(error.code);
+      }).catch(() => {}).finally(finish);
+    };
+    function cleanup() {
+      disposed = true; cancelProbe?.(); image.removeEventListener('error', failed);
+      if (image.__noteImageCleanup === cleanup) delete image.__noteImageCleanup;
+    }
+    image.__noteImageCleanup = cleanup;
+    image.addEventListener('error', failed, { once: true });
+    if (absoluteImageTarget(target)) { show('unsafe_path'); image.removeAttribute('src'); }
+    else image.src = url;
+    return cleanup;
+  }
+
+  function releaseImageFailures(root) {
+    root?.querySelectorAll('img').forEach(image => image.__noteImageCleanup?.());
   }
 
   function createInteractiveImage(owner, view, parsed, notePath, options, resolveRange, block) {
@@ -1684,22 +1748,17 @@
     const image = document.createElement('img');
     image.alt = parsed.alt || parsed.target.split('/').pop() || '';
     image.loading = 'lazy'; image.decoding = 'async';
-    image.src = options.imageUrl(notePath, parsed.target, parsed.syntax);
       image.addEventListener('load', () => {
         if (!frame.isConnected) return;
         if (options.imageTextSizer) options.imageTextSizer.update(frame);
         runWhenInputSettled(view, () => { if (frame.isConnected) view.requestMeasure(); });
       }, { once: true });
-    image.addEventListener('error', () => {
-      if (!frame.isConnected) return;
-      frame.classList.add('is-failed');
-      frame.dataset.errorLabel = '图片无法加载 · ' + image.alt;
-      if (parsed.syntax === 'wiki') showImageFailure(image, frame);
-    }, { once: true });
     frame.appendChild(image);
+    const cleanupImage = prepareLocalImage(image, frame, options.imageUrl(notePath, parsed.target, parsed.syntax), parsed.target,
+      () => { const range = resolveRange(); return absoluteImageTarget(parsed.target) || !!range && range.parsed.target === parsed.target; });
 
-    const imageTextItems = block && Array.isArray(parsed.imageTextItems) ? parsed.imageTextItems : [];
-    const imageTextController = block && parsed.imageTextEditable !== false ? options.imageTextController : null;
+    const imageTextItems = block && !absoluteImageTarget(parsed.target) && Array.isArray(parsed.imageTextItems) ? parsed.imageTextItems : [];
+    const imageTextController = block && !absoluteImageTarget(parsed.target) && parsed.imageTextEditable !== false ? options.imageTextController : null;
     let imageTextLayer = null;
     let imageTextDraftCleanup = null;
     let imageTextDraftCommit = false;
@@ -2208,13 +2267,13 @@
       if (event.button !== 0 || event.target.closest('.note-live-image-resize-handle')) return;
       if (event.ctrlKey || event.metaKey) {
         event.preventDefault(); event.stopPropagation();
-        options.onOpenLocalFile(parsed.target, parsed.syntax);
+        if (!absoluteImageTarget(parsed.target)) options.onOpenLocalFile(parsed.target, parsed.syntax);
         return;
       }
       select(event);
     });
 
-    const cleanupResize = window.RelatumNoteMediaFrame ? window.RelatumNoteMediaFrame.resize(frame, {
+    const cleanupResize = !absoluteImageTarget(parsed.target) && window.RelatumNoteMediaFrame ? window.RelatumNoteMediaFrame.resize(frame, {
       selected: frame.classList.contains('is-selected'), label: '等比例调整图片大小', resolve: resolveRange,
       blocked: () => !!(imageTextController && (imageTextController.draftActive || imageTextController.switchFrame)),
       maxWidth: () => (frame.closest('.cm-line') || view.contentDOM).getBoundingClientRect().right - frame.getBoundingClientRect().left,
@@ -2234,6 +2293,7 @@
       },
     }) : null;
     owner.imageCleanup = () => {
+      cleanupImage();
       if (cleanupResize) cleanupResize();
       cancelDraft();
       if (unregisterImageText) unregisterImageText();
@@ -2269,6 +2329,7 @@
 
   function releaseReadingDocument(host) {
     if (!host) return;
+    releaseImageFailures(host);
     host.__relatumReadingMermaid?.destroy();
     delete host.__relatumReadingMermaid;
     if (host.__relatumReadingCode) host.__relatumReadingCode.destroy();
@@ -2384,13 +2445,13 @@
         }); observer.observe(frame); frame.__canvasObserver = observer;
         return;
       }
-      image.src = safeOptions.imageUrl(String(notePath || ''), image.dataset.noteImage || '', image.dataset.noteImageSyntax);
       const frame = image.closest('.md-local-image');
+      prepareLocalImage(image, frame, safeOptions.imageUrl(String(notePath || ''), image.dataset.noteImage || '', image.dataset.noteImageSyntax),
+        image.dataset.noteImage, () => host.dataset.noteReadingEpoch === epoch && content.isConnected);
       if (frame && frame.classList.contains('has-image-text')) {
         imageTextSizer.observe(frame);
         image.addEventListener('load', () => imageTextSizer.update(frame), { once: true });
       }
-      image.addEventListener('error', () => { if (image.dataset.noteImageSyntax === 'wiki' && frame) showImageFailure(image, frame); image.removeAttribute('src'); }, { once: true });
     });
     content.querySelectorAll('input.md-task-box').forEach((box) => { box.disabled = true; });
     host.replaceChildren(content);
@@ -2538,7 +2599,8 @@
         const result = safeIsolatedResult(this.spec.renderSource || this.spec.source);
         wrap.innerHTML = result.html;
         wrap.querySelectorAll('[data-note-image]').forEach((image) => {
-          image.src = this.options.imageUrl(this.notePath, image.dataset.noteImage || '', image.dataset.noteImageSyntax);
+          prepareLocalImage(image, image.closest('.md-local-image'), this.options.imageUrl(this.notePath, image.dataset.noteImage || '', image.dataset.noteImageSyntax),
+            image.dataset.noteImage, () => this.isCurrent(view, wrap, token));
         });
         if (this.spec.kind === 'callout' && this.spec.collapsed) {
           wrap.classList.add('is-collapsed');
@@ -2575,7 +2637,7 @@
       }
       return wrap;
     }
-    destroy(dom) { this.token = null; this.mermaidControl?.destroy(); this.mermaidControl = null; if (this.imageCleanup) this.imageCleanup(); this.imageCleanup = null; if (dom && (this.spec.kind === 'math' || dom.dataset.noteMath) && typeof window.MathJax?.typesetClear === 'function') window.MathJax.typesetClear([dom]); }
+    destroy(dom) { this.token = null; releaseImageFailures(dom); this.mermaidControl?.destroy(); this.mermaidControl = null; if (this.imageCleanup) this.imageCleanup(); this.imageCleanup = null; if (dom && (this.spec.kind === 'math' || dom.dataset.noteMath) && typeof window.MathJax?.typesetClear === 'function') window.MathJax.typesetClear([dom]); }
     ignoreEvent() { return false; }
   }
 
@@ -3502,7 +3564,7 @@
             const raw = view.state.doc.sliceString(nodeRef.from, nodeRef.to);
             const parsed = parseMarkdownImage(raw);
             if (canvasImage(parsed)) return false;
-            if (parsed && parsed.target && !isRemoteTarget(parsed.target) && raw.length <= RICH_BLOCK_LIMIT) {
+            if (parsed && parsed.target && previewableImage(parsed.target) && raw.length <= RICH_BLOCK_LIMIT) {
               add(nodeRef.from, nodeRef.to, Decoration.replace({
                 widget: new InlineImageWidget(parsed, nodeRef.from, nodeRef.to,
                   imageSelectionMatches(view, nodeRef.from, nodeRef.to), notePath(), options),
@@ -3671,7 +3733,7 @@
         matches(/!\[\[[^\]\n]+?\]\]/g, (match, from, to) => {
           const parsed = parseStandaloneImage(match[0]);
           protect(from, to);
-          if (parsed && parsed.target && !isRemoteTarget(parsed.target) && !canvasImage(parsed)) {
+          if (parsed && parsed.target && previewableImage(parsed.target) && !canvasImage(parsed)) {
             add(from, to, Decoration.replace({
               widget: new InlineImageWidget(parsed, from, to, imageSelectionMatches(view, from, to), notePath(), options),
               relatumAtomic: true,
@@ -4697,6 +4759,7 @@
     safeOptions.coordinator = coordinator;
     safeOptions.renderTableCell = (value) => safeIsolatedResult(window.MarkdownTable.serialize({ header: [value], rows: [], align: [''] }),
       { noteContext: documentNoteSyntax, noteFootnoteBody: true });
+    safeOptions.releaseTableCell = releaseImageFailures;
     safeOptions.prepareTableCell = (surface, content, result, source) => {
       const jump = event => {
         const link = event.target.closest('[data-note-jump]'); if (!link) return;
@@ -4709,7 +4772,8 @@
       };
       content.addEventListener('pointerdown', jump); content.addEventListener('mousedown', jump); content.addEventListener('click', jump); content.addEventListener('keydown', jump);
       content.querySelectorAll('[data-note-image]').forEach((image) => {
-        image.src = safeOptions.imageUrl(currentPath, image.dataset.noteImage || '', image.dataset.noteImageSyntax);
+        prepareLocalImage(image, image.closest('.md-local-image'), safeOptions.imageUrl(currentPath, image.dataset.noteImage || '', image.dataset.noteImageSyntax),
+          image.dataset.noteImage, () => surface.current() && content.isConnected && content.dataset.source === source);
       });
       if (!result.features || !result.features.math) return;
       const current = () => surface.current() && content.isConnected && content.dataset.source === source;

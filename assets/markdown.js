@@ -274,10 +274,11 @@
   function parseImageDestination(rawDestination) {
     const source = String(rawDestination || '').trim();
     const angle = /^<([^>\n]+)>(?:[ \t]+(?:"([^"]*)"|'([^']*)'))?$/.exec(source);
-    if (angle) return { target: angle[1].trim(), title: angle[2] != null ? angle[2] : (angle[3] || '') };
+    const destination = (rawTarget, title) => ({ rawTarget, target: rawTarget.replace(/\\([()])/g, '$1'), title });
+    if (angle) return destination(angle[1].trim(), angle[2] != null ? angle[2] : (angle[3] || ''));
     const titled = /^(\S+)[ \t]+(?:"([^"]*)"|'([^']*)')$/.exec(source);
-    if (titled) return { target: titled[1], title: titled[2] != null ? titled[2] : (titled[3] || '') };
-    return { target: source, title: '' };
+    if (titled) return destination(titled[1], titled[2] != null ? titled[2] : (titled[3] || ''));
+    return destination(source, '');
   }
 
   // Parse one complete image token (optional surrounding horizontal whitespace included).
@@ -313,9 +314,12 @@
     const label = splitImageLabel(token.slice(2, labelEnd));
     const destination = parseImageDestination(token.slice(labelEnd + 2, targetEnd));
     if (!destination.target) return null;
+    const targetFrom = leading.length + labelEnd + 2
+      + token.slice(labelEnd + 2, targetEnd).indexOf(destination.rawTarget);
     return {
       source: value, syntax: 'markdown', leading: leading, trailing: trailing,
       target: destination.target, rawAlt: label.rawAlt,
+      rawTarget: destination.rawTarget, targetFrom, targetTo: targetFrom + destination.rawTarget.length,
       alt: label.rawAlt.replace(/\\([\\\[\]])/g, '$1').trim(),
       title: destination.title, rawDestination: token.slice(labelEnd + 2, targetEnd),
       width: label.dimensions ? label.dimensions.width : null,
@@ -378,8 +382,7 @@
       const oldName = old.split('/').pop(), newName = target.split('/').pop();
       let value = parsed.source;
       const labelEnd = closingBracket(value, parsed.leading.length + 1, '[', ']');
-      const targetAt = value.indexOf(parsed.target, labelEnd + 2);
-      value = value.slice(0, targetAt) + relative + value.slice(targetAt + parsed.target.length);
+      value = value.slice(0, parsed.targetFrom) + relative + value.slice(parsed.targetTo);
       let replacement = null;
       if (key && parsed.alt.toLowerCase() === oldName.toLowerCase()) replacement = newName;
       else if (key && parsed.alt.toLowerCase() === oldName.slice(0, -7).toLowerCase()) replacement = newName.slice(0, -7);
