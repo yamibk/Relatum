@@ -81,7 +81,6 @@ body[data-start-theme="dark"] .note-ai-settings { color-scheme: dark; }
 .note-ai-popovers .review-choice-popup, .note-ai-popovers .review-choice-popup[data-start-theme="dark"] { --text: var(--ai-text); --text-secondary: var(--ai-muted); --text-tertiary: var(--ai-muted); --border: var(--ai-line); --border-strong: var(--ai-line-hover); }
 .note-ai-popovers .review-choice-option.is-selected { font-weight: 600; }
 .note-ai-composer { flex: none; display: flex; flex-direction: column; min-width: 0; gap: 8px; padding: 13px; border: 1px solid var(--ai-line); border-radius: 17px; background: var(--ai-surface); }
-.note-ai-composer:focus-within { box-shadow: 0 0 0 1px var(--ai-muted); }
 .note-ai-composer.is-dragging { border-color: var(--ai-muted); box-shadow: 0 0 0 1px var(--ai-muted); }
 .note-ai .note-ai-composer textarea:focus-visible { outline: none; }
 .note-ai-composer textarea { resize: none; width: 100%; min-height: 52px; max-height: min(240px,28vh); border: 0; padding: 0; outline: none; background: transparent; font-size: 14px; line-height: 1.75; }
