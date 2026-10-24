@@ -470,13 +470,17 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-live-editor-host .cm-selectionBackground,
 .note-live-editor-host.cm-focused .cm-selectionBackground,
 .note-live-editor-host .cm-focused .cm-selectionBackground { background: rgba(65, 131, 196, .22) !important; }
-/* Only opaque code and Callout backgrounds cover the drawn selection layer.
+/* Opaque code and Callout backgrounds cover the drawn selection layer.
    Transparent formula source and ordinary text use CodeMirror's selection;
    painting native selection there as well would darken the same text twice. */
 .note-live-editor-host .cm-line.note-live-code-line::selection,
 .note-live-editor-host .cm-line.note-live-code-line ::selection,
 .note-live-editor-host .cm-line.note-live-callout-line::selection,
 .note-live-editor-host .cm-line.note-live-callout-line ::selection { background-color: rgba(65, 131, 196, .22) !important; }
+/* Light inline code is opaque too. Dark inline code stays translucent and
+   already reveals the drawn selection, so it must not add a second painter. */
+body.start-page:not([data-start-theme="dark"]) .note-live-editor-host .note-live-inline-code::selection,
+body.start-page:not([data-start-theme="dark"]) .note-live-editor-host .note-live-inline-code ::selection { background-color: rgba(65, 131, 196, .22) !important; }
 .note-live-editor-host.has-image-selection .cm-selectionLayer,
 .note-live-editor-host.has-image-selection .cm-cursorLayer { visibility: hidden; }
 .note-live-editor-host .cm-activeLine { background: transparent; }

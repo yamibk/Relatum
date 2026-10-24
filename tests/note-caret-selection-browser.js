@@ -28,7 +28,7 @@ ${['markdown-table.js','markdown.js','vendor/codemirror/relatum-codemirror.min.j
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser;
-  const report = { baseline, baselineRef, carets: [], ime: [], selections: [], delimiters: [], failures: [] };
+  const report = { baseline, baselineRef, carets: [], ime: [], selections: [], inlineSelections: [], modes: [], delimiters: [], failures: [] };
   const check = (condition, message) => { if (!condition) report.failures.push(message); };
   try {
     browser = await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
@@ -131,7 +131,7 @@ ${['markdown-table.js','markdown.js','vendor/codemirror/relatum-codemirror.min.j
         const lines = [...view.contentDOM.querySelectorAll('.cm-line')];
         const style = node => ({ text: node.textContent, className: node.className,
           native: getComputedStyle(node, '::selection').backgroundColor, background: getComputedStyle(node).backgroundColor });
-        const rect = r => ({ left: r.left, top: r.top, bottom: r.bottom, height: r.height ?? r.bottom - r.top });
+        const rect = r => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height ?? r.bottom - r.top });
         const data = new DataTransfer(); view.contentDOM.dispatchEvent(new ClipboardEvent('copy', { bubbles: true, clipboardData: data }));
         return { lines: lines.map(style), spans: lines.flatMap(line => [...line.querySelectorAll('span')].map(style)),
           rectangles: [...view.dom.querySelectorAll('.cm-selectionBackground')].map(node => rect(node.getBoundingClientRect())),
@@ -141,12 +141,20 @@ ${['markdown-table.js','markdown.js','vendor/codemirror/relatum-codemirror.min.j
       check(metrics.lines.concat(metrics.spans).every(node => node.native === (native ? 'rgba(65, 131, 196, 0.22)' : 'rgba(0, 0, 0, 0)')), name + '/' + theme + ' uses a single selection painter');
       // Compare actual pixels with the redundant painter disabled. This catches
       // dark overlap, including partial ranges and wrapped / multiline source.
+      // Limit comparison to the selection, excluding unrelated fractional-DPR
+      // background edges that Chromium can rasterize one channel apart.
+      const clip = {
+        x: Math.min(...metrics.rectangles.map(rect => rect.left)),
+        y: Math.min(...metrics.rectangles.map(rect => rect.top)),
+      };
+      clip.width = Math.max(...metrics.rectangles.map(rect => rect.right)) - clip.x;
+      clip.height = Math.max(...metrics.rectangles.map(rect => rect.bottom)) - clip.y;
       const cursorStyle = await page.addStyleTag({ content: '.note-live-editor-host .cm-cursorLayer{visibility:hidden!important}' });
-      const actual = await page.screenshot({ path: path.join(output, name + '-' + theme + '.png') });
+      const actual = await page.screenshot({ clip, path: path.join(output, name + '-' + theme + '.png') });
       const referenceStyle = await page.addStyleTag({ content: native
         ? '.note-live-editor-host .cm-selectionLayer{visibility:hidden!important}'
         : '#editor .cm-line::selection,#editor .cm-line ::selection{background-color:transparent!important}' });
-      const reference = await page.screenshot();
+      const reference = await page.screenshot({ clip });
       const first = PNG.sync.read(actual), second = PNG.sync.read(reference);
       const identical = first.data.equals(second.data);
       check(identical, name + '/' + theme + ' has no doubled selection pixels');
@@ -154,6 +162,110 @@ ${['markdown-table.js','markdown.js','vendor/codemirror/relatum-codemirror.min.j
       await referenceStyle.evaluate(node => node.remove());
       await cursorStyle.evaluate(node => node.remove());
       report.selections.push({ name, theme, identical, ...metrics });
+    }
+    const inlineSource = '前文 `123456789` 后文';
+    const inlineStart = inlineSource.indexOf('123456789');
+    const multipleSource = '`123456789` 中间 `987654321`';
+    const calloutSource = '> [!note] 提示\n> `123456789`';
+    const inlineCases = [
+      ['partial', inlineSource, inlineStart + 2, inlineStart + 8],
+      ['full', inlineSource, inlineStart, inlineStart + 9],
+      ['markers', inlineSource, inlineStart - 1, inlineStart + 10],
+      ['mixed', inlineSource, 1, inlineSource.length - 1],
+      ['multiple', multipleSource, 3, multipleSource.length - 3],
+      ['callout', calloutSource, calloutSource.indexOf('123456789') + 2, calloutSource.length - 2],
+    ];
+    const sourcePoint = position => page.evaluate(position => {
+      const rect = editor.view.coordsAtPos(position);
+      return { x: rect.left, y: (rect.top + rect.bottom) / 2 };
+    }, position);
+    const changedPixels = (first, second) => {
+      const a = PNG.sync.read(first), b = PNG.sync.read(second);
+      let changed = 0, blue = 0;
+      for (let offset = 0; offset < a.data.length; offset += 4) {
+        if (a.data[offset] !== b.data[offset] || a.data[offset + 1] !== b.data[offset + 1] || a.data[offset + 2] !== b.data[offset + 2]) changed++;
+        if (a.data[offset + 2] - a.data[offset] > b.data[offset + 2] - b.data[offset] + 3) blue++;
+      }
+      return { changed, blue };
+    };
+    for (const theme of ['light', 'dark']) for (const [name, value, from, to] of inlineCases) for (const reverse of [false, true]) {
+      const label = name + '-' + theme + (reverse ? '-reverse' : '-forward');
+      await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
+      const anchor = reverse ? to : from, head = reverse ? from : to;
+      await reset(value, anchor);
+      const start = await sourcePoint(anchor);
+      await page.mouse.move(start.x, start.y); await page.mouse.down();
+      // Revealing another code span can move its endpoint. Finish the native
+      // drag at the latest measured position without assigning a selection.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const end = await sourcePoint(head);
+        await page.mouse.move(end.x, end.y, { steps: 8 }); await settle();
+      }
+      await page.mouse.up(); await settle();
+      const metrics = await page.evaluate(() => {
+        const view = editor.view, main = view.state.selection.main;
+        const data = new DataTransfer(); view.contentDOM.dispatchEvent(new ClipboardEvent('copy', { bubbles: true, clipboardData: data }));
+        return { anchor: main.anchor, head: main.head, copied: data.getData('text/plain'), native: String(getSelection()), value: editor.snapshot().value };
+      });
+      check(metrics.anchor === anchor && metrics.head === head, label + ' keeps the exact pointer selection: ' + JSON.stringify(metrics));
+      check(metrics.copied === value.slice(from, to) && metrics.native === metrics.copied, label + ' copies the exact selected source');
+      check(metrics.value === value, label + ' does not edit Markdown');
+      const cursorStyle = await page.addStyleTag({ content: '.note-live-editor-host .cm-cursorLayer{visibility:hidden!important}' });
+      const codes = page.locator('.note-live-inline-code');
+      const paints = [];
+      for (let index = 0; index < await codes.count(); index++) {
+        const code = codes.nth(index);
+        const native = theme === 'light' || name === 'callout';
+        const colors = await code.evaluate(node => [node, ...node.querySelectorAll('*')].map(part => getComputedStyle(part, '::selection').backgroundColor));
+        check(colors.every(color => color === (native ? 'rgba(65, 131, 196, 0.22)' : 'rgba(0, 0, 0, 0)')), label + ' uses the expected inline selection painter');
+        const bounds = await code.boundingBox();
+        const clip = { x: bounds.x + 2, y: bounds.y + 2, width: bounds.width - 4, height: bounds.height - 4 };
+        const actual = await page.screenshot({ clip, path: path.join(output, 'inline-' + label + '-' + index + '.png') });
+        const nativeOff = '#editor .note-live-inline-code::selection,#editor .note-live-inline-code ::selection{background-color:transparent!important}';
+        const drawnOff = '.note-live-editor-host .cm-selectionLayer{visibility:hidden!important}';
+        const referenceStyle = await page.addStyleTag({ content: native ? drawnOff : nativeOff });
+        const single = changedPixels(actual, await page.screenshot({ clip }));
+        check(single.changed === 0, label + ' has no doubled inline selection pixels: ' + JSON.stringify(single));
+        await referenceStyle.evaluate(node => node.remove());
+        const neutralStyle = await page.addStyleTag({ content: nativeOff + drawnOff });
+        const visible = changedPixels(actual, await page.screenshot({ clip }));
+        check(visible.blue > 8, label + ' visibly highlights selected inline code: ' + JSON.stringify(visible));
+        await neutralStyle.evaluate(node => node.remove());
+        paints.push({ colors, single, visible });
+      }
+      check(paints.length === (name === 'multiple' ? 2 : 1), label + ' renders every inline code span');
+      await cursorStyle.evaluate(node => node.remove());
+      report.inlineSelections.push({ name, theme, reverse, ...metrics, paints });
+    }
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
+      await reset(inlineSource, inlineStart + 8, inlineStart + 2);
+      const source = await page.evaluate(() => {
+        const view = editor.view, doc = view.state.doc, before = editor.snapshot();
+        editor.setSourceMode(true);
+        const data = new DataTransfer(); view.contentDOM.dispatchEvent(new ClipboardEvent('copy', { bubbles: true, clipboardData: data }));
+        const result = { sameView: editor.view === view, sameDoc: view.state.doc === doc, before, after: editor.snapshot(), copied: data.getData('text/plain'), inlineCount: view.dom.querySelectorAll('.note-live-inline-code').length };
+        editor.setSourceMode(false);
+        result.restoredDoc = view.state.doc === doc;
+        return result;
+      });
+      check(source.sameView && source.sameDoc && source.restoredDoc && source.inlineCount === 0, theme + ' source mode retains the editor and document');
+      check(source.before.value === source.after.value && source.before.anchor === source.after.anchor && source.before.head === source.after.head && source.copied === '345678', theme + ' source mode retains selection and copying');
+      const reading = await page.evaluate(value => {
+        const host = document.createElement('div'); editor.view.dom.parentElement.hidden = true;
+        document.querySelector('.note-document-body').append(host);
+        RelatumNoteLiveEditor.renderMarkdown(host, value, 'geometry.md');
+        const code = host.querySelector('code'), range = document.createRange();
+        range.setStart(code.firstChild, 2); range.setEnd(code.firstChild, 8);
+        const result = { code: code.textContent, selected: range.toString(), value: editor.snapshot().value,
+          nativeColor: getComputedStyle(code, '::selection').backgroundColor,
+          proseColor: getComputedStyle(code.parentElement, '::selection').backgroundColor };
+        RelatumNoteLiveEditor.releaseReadingDocument(host); host.remove();
+        editor.view.dom.parentElement.hidden = false; editor.focus();
+        return result;
+      }, inlineSource);
+      check(reading.code === '123456789' && reading.selected === '345678' && reading.value === inlineSource && reading.nativeColor === reading.proseColor, theme + ' reading mode retains inline text and selection styling');
+      report.modes.push({ theme, source, reading });
     }
     for (const theme of ['light', 'dark']) {
       await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
@@ -170,7 +282,7 @@ ${['markdown-table.js','markdown.js','vendor/codemirror/relatum-codemirror.min.j
     if (browser) await browser.close();
     await new Promise(resolve => server.close(resolve));
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
-    console.log(JSON.stringify({ output, baseline, baselineRef, failures: report.failures.length, carets: report.carets.length, ime: report.ime.length, selections: report.selections.length }));
+    console.log(JSON.stringify({ output, baseline, baselineRef, failures: report.failures.length, carets: report.carets.length, ime: report.ime.length, selections: report.selections.length, inlineSelections: report.inlineSelections.length, modes: report.modes.length }));
   }
   if (!baseline) assert.equal(report.failures.length, 0, report.failures.join('\n'));
 })().catch(error => { console.error(error); process.exitCode = 1; });
