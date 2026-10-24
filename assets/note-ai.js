@@ -926,7 +926,9 @@
         try { await flushSettings(); if (current !== settingsSequence || !settingsActive) return; testRequest = { id: uid(), controller: new AbortController() }; settingsStatus(tr('正在测试连接…', 'Testing connection…')); await api('test', { requestId: testRequest.id }, { signal: testRequest.controller.signal }); if (current === settingsSequence && settingsActive) settingsStatus(tr('连接成功', 'Connection successful')); }
         catch (error) { if (current === settingsSequence && settingsActive && error.name !== 'AbortError') settingsStatus(error.message); }
         finally { if (current === settingsSequence) { testRequest = null; test.disabled = false; } }
-      }); test.dataset.aiTest = ''; test.className = 'is-primary'; keyTools.append(test, clear); connection.append(keyTools);
+      }); test.dataset.aiTest = ''; test.className = 'is-primary';
+      const status = document.createElement('p'); status.setAttribute('role', 'status'); status.dataset.aiSettingsStatus = '';
+      keyTools.append(test, clear, status); connection.append(keyTools);
       const generation = group('生成参数', 'Generation');
       generation.classList.add('note-ai-generation');
       addField(generation, 'stream', '流式输出', 'Stream replies', 'checkbox');
@@ -961,7 +963,6 @@
         queuePatch({ presets: config.presets.filter(item => !item.builtin).map(item => ({ ...item })) }); presetEditor(); updateSelectors();
       }); del.dataset.aiPresetDelete = ''; tools.append(add, duplicate, del); presetsGroup.append(tools);
       const detail = document.createElement('p'); detail.dataset.aiPresetHint = ''; presetsGroup.append(detail);
-      const status = document.createElement('p'); status.setAttribute('role', 'status'); status.dataset.aiSettingsStatus = ''; settingsHost.append(status);
       presetEditor();
       if (presetDraftName !== undefined && !name.readOnly) { name.value = presetDraftName; prompt.value = presetDraftPrompt; }
       choices.enhanceAll(); updateKeyHint(); updateSelectors();

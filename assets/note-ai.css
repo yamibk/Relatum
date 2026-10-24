@@ -113,6 +113,7 @@ body[data-start-theme="dark"] .note-ai-settings { color-scheme: dark; }
 .note-ai-settings input[readonly], .note-ai-settings textarea[readonly] { color: var(--settings-muted); }
 .note-ai-settings p { color: var(--settings-muted); font-size: 11px; line-height: 1.8; margin: 12px 0 0; }
 .note-ai-settings-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; }
+.note-ai-settings-actions [data-ai-settings-status] { align-self: center; min-width: 0; max-width: 100%; margin: 0; overflow-wrap: anywhere; }
 .note-ai-settings-actions button { min-height: 34px; border: 1px solid var(--ai-line); padding: 7px 11px; border-radius: 8px; background: var(--settings-bg); color: var(--settings-text); font: 500 11px/1.5 var(--font-ui); transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease; }
 .note-ai-settings-actions button:hover:not(:disabled) { border-color: var(--ai-line-hover); background: var(--settings-card); }
 .note-ai-settings-actions button:active:not(:disabled) { transform: scale(.97); }
