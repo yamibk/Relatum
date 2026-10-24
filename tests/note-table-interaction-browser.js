@@ -57,19 +57,15 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     async function dragPoints(a, b) {
       await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 10 }); await page.mouse.up(); await settle();
     }
-    // Read browser-laid-out glyphs, not the hit-testing helper under test. The
-    // existing sizing measurer exposes the native textarea's wrapped text.
+    // Read browser-laid-out glyphs, independently of the hit-testing helper.
     async function textDragPoints(row, col, side) {
       return cell(row, col).evaluate((td, side) => {
         const edit = td.closest('.note-table').__noteTableSurface.edit;
-        const active = edit?.cell === td, root = active ? edit.measurer : td.querySelector('.note-table-cell-content');
+        const active = edit?.cell === td, root = active ? edit.input.dom : td.querySelector('.note-table-cell-content');
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         while (walker.nextNode() && !/\S/.test(walker.currentNode.textContent)) {}
         const node = walker.currentNode, range = document.createRange();
-        const inputBox = active ? edit.input.getBoundingClientRect() : null, measureBox = root.getBoundingClientRect();
-        const dx = active ? inputBox.left - measureBox.left - edit.input.scrollLeft : 0;
-        const dy = active ? inputBox.top - measureBox.top - edit.input.scrollTop : 0;
-        const length = active ? edit.input.value.length : node.length, lines = [];
+        const dx = 0, dy = 0, length = node.length, lines = [];
         for (let from = 0; from < length;) {
           const to = from + (node.textContent.codePointAt(from) > 0xffff ? 2 : 1);
           range.setStart(node, from); range.setEnd(node, to);
@@ -82,14 +78,19 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
           }
           from = to;
         }
-        const line = lines[Math.min(1, lines.length - 1)], first = line[0], last = line[line.length - 1];
+        const lineIndex = Math.min(1, lines.length - 1), line = lines[lineIndex], first = line[0], last = line[line.length - 1];
         const middle = line[Math.min(2, line.length - 2)], later = line[Math.min(6, line.length - 1)];
         const at = glyph => ({ x: glyph.left + (glyph.right - glyph.left) / 4, y: (glyph.top + glyph.bottom) / 2 });
         let start, end, anchor;
         if (side === 'left') { start = { x: first.left - 3, y: at(first).y }; end = at(later); anchor = first.from; }
         else if (side === 'right') { start = { x: last.right + 3, y: at(last).y }; end = at(first); anchor = last.to; }
         else {
-          start = { x: at(middle).x, y: side === 'above' ? middle.top - 3 : middle.bottom + 3 };
+          // Keep the halo nearer this line even at large font metrics, where
+          // a fixed 3px offset can be closer to the adjacent line instead.
+          const previous = lines[lineIndex - 1]?.[0], next = lines[lineIndex + 1]?.[0];
+          const above = previous ? Math.min(3, Math.max(.25, (middle.top - previous.bottom) / 3)) : 3;
+          const below = next ? Math.min(3, Math.max(.25, (next.top - middle.bottom) / 3)) : 3;
+          start = { x: at(middle).x, y: side === 'above' ? middle.top - above : middle.bottom + below };
           end = at(side === 'above' ? later : first); anchor = middle.from;
         }
         const bounds = td.getBoundingClientRect();
@@ -194,7 +195,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     const area = await input.boundingBox();
     await dragPoints({ x: area.x + 11, y: area.y + 16 }, { x: area.x + 48, y: area.y + 16 });
     assert.equal(await table.locator('td.is-table-selected').count(), 0);
-    assert(await input.evaluate(node => node.selectionEnd > node.selectionStart), 'same-cell character dragging selects text');
+    assert(await input.evaluate(node => node.__noteCellInput.selectionEnd > node.__noteCellInput.selectionStart), 'same-cell character dragging selects text');
     const area2 = await input.boundingBox(), other = await cellPoint(0, 1);
     await dragPoints({ x: area2.x + 15, y: area2.y + 16 }, other);
     assert.equal(await input.count(), 0, JSON.stringify(await table.evaluate(node => ({ edit: node.__noteTableSurface.edit && [node.__noteTableSurface.edit.row, node.__noteTableSurface.edit.col], selection: node.__noteTableSurface.selection, gesture: node.__noteTableSurface.gesture && node.__noteTableSurface.gesture.mode, active: document.activeElement.className })))); assert.equal(await table.locator('td.is-table-selected').count(), 2);
@@ -224,10 +225,10 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
         await page.mouse.move(points.start.x, points.start.y); await page.mouse.down();
         assert.equal(await input.count(), 1, 'nearby press must open the text editor: ' + label);
         assert.equal(await table.evaluate(node => node.__noteTableSurface.gesture.mode), 'text', 'halo uses assisted text selection: ' + label);
-        assert.equal(await input.evaluate(node => node.selectionStart), points.anchor, 'nearest character on the nearest line: ' + label);
+        assert.equal(await input.evaluate(node => node.__noteCellInput.selectionStart), points.anchor, 'nearest character on the nearest line: ' + label);
         await page.mouse.move(points.end.x, points.end.y, { steps: 10 }); await page.mouse.up(); await settle();
-        const selection = await input.evaluate(node => ({ from: node.selectionStart, to: node.selectionEnd,
-          text: node.value.slice(node.selectionStart, node.selectionEnd) }));
+        const selection = await input.evaluate(node => { const input = node.__noteCellInput; return { from: input.selectionStart, to: input.selectionEnd,
+          text: input.value.slice(input.selectionStart, input.selectionEnd) }; });
         assert(selection.to > selection.from, 'halo drag must select characters: ' + label);
         assert.equal(await table.locator('td.is-table-selected').count(), 0, 'same-cell halo drag cannot select the grid: ' + label);
         if (host) { assert(await host.evaluate(node => node.isConnected), 'selection retains the original IME host'); await host.dispose(); }
@@ -275,7 +276,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     const whitespacePoint = await input.evaluate(node => {
       const width = document.createElement('canvas').getContext('2d'), style = getComputedStyle(node), rect = node.getBoundingClientRect();
       width.font = style.font;
-      return { x: rect.left + parseFloat(style.paddingLeft) + width.measureText(node.value).width + 3, y: rect.top + rect.height / 2 };
+      return { x: rect.left + parseFloat(style.paddingLeft) + width.measureText(node.__noteCellInput.value).width + 3, y: rect.top + rect.height / 2 };
     });
     const whitespaceSource = await value();
     await dragPoints(whitespacePoint, { x: whitespacePoint.x + 20, y: whitespacePoint.y });
@@ -287,7 +288,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     await reset(haloGrid); await cell(0, 0).click(); await settle();
     const imeHost = await input.elementHandle(), assisted = await textDragPoints(0, 0, 'below');
     await dragPoints(assisted.start, assisted.end);
-    const replaced = await input.evaluate(node => node.value.slice(0, node.selectionStart) + '汉' + node.value.slice(node.selectionEnd));
+    const replaced = await input.evaluate(node => { const input = node.__noteCellInput; return input.value.slice(0, input.selectionStart) + '汉' + input.value.slice(input.selectionEnd); });
     await cdp.send('Input.imeSetComposition', { text: 'han', selectionStart: 3, selectionEnd: 3 });
     assert(await imeHost.evaluate(node => node.isConnected), 'assisted selection retains the native host during composition');
     assert.equal(await value(), haloGrid, 'provisional input cannot rewrite Markdown');
@@ -295,8 +296,8 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     assert.equal((await rows())[0][0], replaced); assert.equal((await rows())[0][1], 'second cell');
     await page.keyboard.press('Control+z'); await settle(); assert.equal(await value(), haloGrid); await imeHost.dispose();
 
-    // Text sizing must never collapse the native input host. Width and font
-    // changes resize it using a mirror, keeping wrapped caret geometry valid.
+    // Text sizing must never collapse the input host. Width/font changes use
+    // its real projected layout, keeping wrapped caret geometry valid.
     await reset(source + '\n\n后文'); await cell(0, 0).click();
     await input.evaluate(area => {
       window.__zeroInputHeight = false;
@@ -522,23 +523,23 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     await reset(source + '\n\n后文'); await cell(2, 1).click(); await input.press('End');
     await cdp.send('Input.imeSetComposition', { text: 'han', selectionStart: 3, selectionEnd: 3 });
     const settledTarget = await page.locator('.cm-line').filter({ hasText: /^后文$/ }).boundingBox();
+    await cdp.send('Input.insertText', { text: '汉' });
     await page.evaluate(({x, y}) => {
-      const area = document.querySelector('.note-table-cell-editor');
-      area.value = 'F汉'; area.dispatchEvent(new CompositionEvent('compositionend', { data: '汉', bubbles: true }));
       const target = document.elementFromPoint(x, y);
-      target.dispatchEvent(new MouseEvent('mousedown', { clientX: x, clientY: y, button: 0, bubbles: true, cancelable: true }));
+      target.dispatchEvent(new MouseEvent('mousedown', { clientX: x, clientY: y, button: 0, detail: 1, bubbles: true, cancelable: true }));
     }, { x: settledTarget.x + 1, y: settledTarget.y + settledTarget.height / 2 });
     await settle();
     assert.equal((await rows())[2][1], 'F汉');
     assert.equal(await page.evaluate(() => editor.view.state.doc.lineAt(editor.view.state.selection.main.head).text), '后文');
-    await page.keyboard.type('body'); await settle(); assert((await value()).endsWith('body后文'));
+    await page.keyboard.type('body'); await settle(); assert((await value()).endsWith('body后文'), JSON.stringify(await page.evaluate(() => ({ value: editor.snapshot().value,
+      focus: document.activeElement.className, head: editor.view.state.selection.main.head, pending: editor.inputPending }))));
 
     // Real pointer entry, Unicode and native clipboard at several layouts.
     for (const width of [720, 1400]) {
       await page.setViewportSize({ width, height: 700 });
       await reset(source + '\n\n');
       await page.evaluate(() => { document.getElementById('editor').style.fontSize = '135%'; editor.view.requestMeasure(); }); await settle();
-      const r = await table.boundingBox(), c = await page.locator('.cm-content').boundingBox();
+      const r = await table.boundingBox(), c = await page.locator('.cm-content').first().boundingBox();
       await page.mouse.click(c.x + 2, r.y + r.height + 20); await cdp.send('Input.insertText', { text: '正文中文' });
       await page.evaluate(() => navigator.clipboard.writeText('粘贴正文'));
       await page.keyboard.press('Control+v'); await settle();

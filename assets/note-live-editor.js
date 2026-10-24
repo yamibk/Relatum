@@ -3342,6 +3342,66 @@
     }
   }
 
+  // Text-only projection shared by the document and the active table cell.
+  // Callers own visibility/guards; sourceMark owns the caret-dependent reveal.
+  const inlineTextClasses = { StrongEmphasis: 'note-live-strong', Emphasis: 'note-live-emphasis',
+    Strikethrough: 'note-live-strike', InlineCode: 'note-live-inline-code' };
+  function decorateInlineText(node, mark, sourceMark) {
+    if (!node) return false;
+    if (inlineTextClasses[node.name]) mark(node.from, node.to, inlineTextClasses[node.name]);
+    else if (node.name === 'Escape') mark(node.from, Math.min(node.to, node.from + 1), 'note-live-source-mark is-escape');
+    else {
+      const pattern = node.name === 'EmphasisMark' ? /^(?:StrongEmphasis|Emphasis)$/
+        : node.name === 'StrikethroughMark' ? /^Strikethrough$/ : node.name === 'CodeMark' ? /^InlineCode$/ : null;
+      const unit = pattern && ancestorOf(node, pattern);
+      if (!unit) return false;
+      sourceMark(node.from, node.to, unit.from, unit.to, node.name === 'CodeMark' ? 'code' : 'emphasis');
+    }
+    return true;
+  }
+
+  function decorateInlineHighlight(from, to, mark, sourceMark) {
+    mark(from + 2, to - 2, 'note-live-highlight');
+    sourceMark(from, from + 2, from, to);
+    sourceMark(to - 2, to, from, to);
+  }
+
+  const tableInlineTrees = new WeakMap();
+  function tableInlineDecorations(view) {
+    const ranges = [], guards = [], source = view.state.doc.toString();
+    if (!/[\\`*_~=]/.test(source)) return Decoration.none;
+    const mark = (from, to, name) => { if (to > from) ranges.push(Decoration.mark({ class: name }).range(from, to)); };
+    const sourceMark = (from, to, unitFrom, unitTo, role) => {
+      if (constructActive(view, unitFrom, unitTo)) mark(from, to, 'note-live-source-mark' + (role ? ' is-' + role : ''));
+      else if (to > from) ranges.push(Decoration.replace({ inclusive: false }).range(from, to));
+    };
+    // Parse just inline syntax, so '#', '---', fences and list prefixes remain
+    // ordinary cell text. No block widgets or additional runtimes are enabled.
+    let nodes = tableInlineTrees.get(view.state.doc);
+    if (!nodes) { nodes = markdownLanguage.parser.parseInline(source, 0); tableInlineTrees.set(view.state.doc, nodes); }
+    const math = /\$|\\\(/.test(source) ? window.MarkdownMini.mathRanges(source) : [];
+    for (const element of nodes) {
+      const offset = element.from;
+      const visit = node => {
+        if (math.some(range => range.from <= offset + node.from && range.to >= offset + node.to)) return;
+        if (/^(?:InlineCode|Link|Image|Autolink|HTMLTag)$/.test(node.name)) guards.push({ from: offset + node.from, to: offset + node.to });
+        decorateInlineText(node, (from, to, name) => mark(offset + from, offset + to, name),
+          (from, to, unitFrom, unitTo, role) => sourceMark(offset + from, offset + to, offset + unitFrom, offset + unitTo, role));
+        if (/^(?:Link|Image|Autolink|HTMLTag)$/.test(node.name)) return;
+        for (let child = node.firstChild; child; child = child.nextSibling) visit(child);
+      };
+      visit(element.toTree(markdownLanguage.parser.nodeSet).topNode);
+    }
+    const protectedAt = (from, to) => guards.some(range => range.from < to && range.to > from)
+      || math.some(range => range.from < to && range.to > from);
+    const regex = /==([^=\n]+)==/g; let match;
+    while ((match = regex.exec(source))) {
+      const from = match.index, to = from + match[0].length;
+      if (!escapedAt(source, from) && !protectedAt(from, to)) decorateInlineHighlight(from, to, mark, sourceMark);
+    }
+    return Decoration.set(ranges, true);
+  }
+
   function createInlineDecorations(view, blockField, notePath, options, mathCache = createMathHighlightCache()) {
     const ranges = [];
     const seen = new Set();
@@ -3538,18 +3598,8 @@
               const markerLine = view.state.doc.lineAt(Math.max(nodeRef.from, nodeRef.to - 1));
               lineClass(markerLine.from, constructActive(view, nodeRef.from, nodeRef.to) ? 'note-live-setext-marker-line' : 'note-live-setext-marker-line is-hidden');
             }
-          } else if (nodeRef.name === 'StrongEmphasis') {
-            mark(nodeRef.from, nodeRef.to, 'note-live-strong');
-          } else if (nodeRef.name === 'Emphasis') {
-            mark(nodeRef.from, nodeRef.to, 'note-live-emphasis');
-          } else if (nodeRef.name === 'Strikethrough') {
-            mark(nodeRef.from, nodeRef.to, 'note-live-strike');
-          } else if (nodeRef.name === 'InlineCode') {
-            mark(nodeRef.from, nodeRef.to, 'note-live-inline-code');
-          } else if (nodeRef.name === 'Escape') {
-            // Lezer only emits Escape for punctuation that Markdown can actually
-            // escape. Mark just the backslash; invalid escapes and code stay raw.
-            mark(nodeRef.from, Math.min(nodeRef.to, nodeRef.from + 1), 'note-live-source-mark is-escape');
+          } else if (decorateInlineText(node, mark, sourceMark)) {
+            // Shared with the cell editor; its source positions are local.
           } else if (nodeRef.name === 'Link') {
             const url = node && node.getChild('URL');
             if (url && isDangerousTarget(view.state.doc.sliceString(url.from, url.to))) {
@@ -3584,12 +3634,6 @@
                 replace(nodeRef.from, headingMarkerProjectionEnd(view.state.doc, nodeRef.from, nodeRef.to));
               }
             }
-          } else if (nodeRef.name === 'EmphasisMark') {
-            const unit = ancestorOf(node, /^(?:StrongEmphasis|Emphasis)$/);
-            if (unit) sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, 'emphasis');
-          } else if (nodeRef.name === 'StrikethroughMark') {
-            const unit = ancestorOf(node, /^Strikethrough$/);
-            if (unit) sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, 'emphasis');
           } else if (nodeRef.name === 'CodeMark') {
             const unit = ancestorOf(node, /^(?:InlineCode|FencedCode)$/);
             if (unit) sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, 'code');
@@ -3780,9 +3824,7 @@
         });
 
         matches(/==([^=\n]+)==/g, (match, from, to) => {
-          mark(from + 2, to - 2, 'note-live-highlight');
-          if (!constructActive(view, from, to)) { replace(from, from + 2); replace(to - 2, to); }
-          else { mark(from, from + 2, 'note-live-source-mark'); mark(to - 2, to, 'note-live-source-mark'); }
+          decorateInlineHighlight(from, to, mark, sourceMark);
         });
 
         const callout = parseCalloutSource(text);
@@ -5058,6 +5100,7 @@
       });
       return true;
     };
+    safeOptions.tableInlineDecorations = tableInlineDecorations;
 
     function notifyDocChanged(view, includeValue) {
       const main = view.state.selection.main;

@@ -9,6 +9,7 @@ const http = require('node:http');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
+const { tableInput } = require('./note-table-test-helpers');
 const repo = path.resolve(__dirname, '..');
 const output = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-table-'));
 const sample = '前文\n\n| Alpha | Beta |\n| --- | --- |\n| one | two |\n| three | four |\n\n## 表后代码\n\n```js\nconst stable = 1;\n```\n\n后文';
@@ -55,7 +56,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     });
     const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
     const table = page.locator('.note-live-rich-block.is-table').first();
-    const input = page.locator('textarea.note-table-cell-editor');
+    const input = tableInput(page);
     const cell = (row, col) => table.locator(`td[data-table-row="${row}"][data-table-col="${col}"]`);
     const snapshot = () => page.evaluate(() => editor.snapshot().value);
     const rows = () => page.evaluate(() => { const model = MarkdownTable.findTables(editor.snapshot().value)[0]?.model; return model ? [model.header, ...model.rows] : []; });
@@ -136,7 +137,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
     // Native Chromium IME preedit must remain private and commit one undo unit.
     await edit(1, 0, '甲乙');
-    await input.evaluate(area => area.setSelectionRange(1, 1));
+    await input.evaluate(area => area.__noteCellInput.setSelectionRange(1, 1));
     const beforeIme = await snapshot();
     const changesBeforeIme = await page.evaluate(() => changes);
     const cdp = await context.newCDPSession(page);
@@ -168,7 +169,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(await input.inputValue(), 'one');
     await input.press('Home');
     await input.press('ArrowRight');
-    assert.equal(await input.evaluate(area => area.selectionStart), 1);
+    assert.equal(await input.evaluate(area => area.__noteCellInput.selectionStart), 1);
     await exitCell();
 
     // Add/delete operations and selection all use data-row indices, including row 0.
@@ -307,7 +308,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     // Fast composition handoffs and pending mode changes keep the native host alive.
     await reset();
     await cell(1, 0).click();
-    await input.evaluate(area => area.setSelectionRange(area.value.length, area.value.length));
+    await input.evaluate(area => { const input = area.__noteCellInput; input.setSelectionRange(input.value.length, input.value.length); });
     await cdp.send('Input.imeSetComposition', { text: 'han', selectionStart: 3, selectionEnd: 3 });
     await page.evaluate(() => editor.setSourceMode(true));
     assert.equal(await input.count(), 1, 'mode switches cannot remove the native composition host');
@@ -343,11 +344,11 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(multiRows[1][1][1], '', 'the second table cannot receive the first table candidate');
     assert.equal(await page.evaluate(() => editor.inputPending), false);
     await page.waitForFunction(() => {
-      const area = document.querySelector('textarea.note-table-cell-editor');
-      return area?.parentElement.dataset.tableRow === '1' && area.parentElement.dataset.tableCol === '1'
+      const area = document.querySelector('.note-table-cell-editor');
+      return area?.closest('td').dataset.tableRow === '1' && area.closest('td').dataset.tableCol === '1'
         && area.closest('.note-live-rich-block.is-table') === document.querySelectorAll('.note-live-rich-block.is-table')[1];
     }, null, { timeout: 2000 });
-    assert.equal(await input.evaluate(area => area.parentElement.dataset.tableRow + ':' + area.parentElement.dataset.tableCol), '1:1');
+    assert.equal(await input.evaluate(area => area.closest('td').dataset.tableRow + ':' + area.closest('td').dataset.tableCol), '1:1');
 
     // Virtualization must retain the only browser-owned IME host off screen.
     await reset(empty + '\n\n' + Array.from({ length: 900 }, (_, index) => '远处段落 ' + index + '\n').join('\n'));
@@ -356,7 +357,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     const scrollingNativeHost = await input.elementHandle();
     await page.evaluate(() => { editor.view.scrollDOM.scrollTop = editor.view.scrollDOM.scrollHeight; });
     await settle();
-    const scrollingHostState = await scrollingNativeHost.evaluate(area => ({ connected: area.isConnected, value: area.value }));
+    const scrollingHostState = await scrollingNativeHost.evaluate(area => ({ connected: area.isConnected, value: area.__noteCellInput.value }));
     const scrollingEditorState = await page.evaluate(() => ({ pending: editor.inputPending, value: MarkdownTable.findTables(editor.snapshot().value)[0]?.model.header[0] }));
     assert(scrollingHostState.connected, 'scrolling cannot virtualize away an active composition textarea: ' + JSON.stringify({ scrollingHostState, scrollingEditorState }));
     assert.equal(await page.evaluate(() => editor.inputPending), true);
@@ -407,7 +408,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await workspace.waitForFunction(() => window.__noteTableTest?.state.initialized && __noteTableTest.state.active && !__noteTableTest.state.openingPath);
     await workspace.evaluate(() => __noteTableTest.openNote('Table.md'));
     const workspaceCell = workspace.locator('td[data-table-row="0"][data-table-col="0"]');
-    const workspaceInput = workspace.locator('textarea.note-table-cell-editor');
+    const workspaceInput = tableInput(workspace);
     // Alignment is stored in the Markdown separator and survives real backend
     // saving, reading mode and reopening. This fixture has its own data root.
     const beforeAlignment = await workspace.evaluate(() => __noteTableTest.editor.snapshot().value);
@@ -432,7 +433,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     for (let attempt = 0; attempt < 50 && !fs.readFileSync(path.join(dataRoot, 'notes', 'Table.md'), 'utf8').includes('自动保存'); attempt++) await pause(100);
     assert(fs.readFileSync(path.join(dataRoot, 'notes', 'Table.md'), 'utf8').includes('自动保存'), 'ordinary cell edits auto-save while the textarea stays focused');
     const workspaceCdp = await context.newCDPSession(workspace);
-    await workspaceInput.evaluate(area => area.setSelectionRange(area.value.length, area.value.length));
+    await workspaceInput.evaluate(area => { const input = area.__noteCellInput; input.setSelectionRange(input.value.length, input.value.length); });
     await workspaceCdp.send('Input.imeSetComposition', { text: 'zhong', selectionStart: 5, selectionEnd: 5 });
     await workspace.evaluate(() => { window.__pendingTableSave = __noteTableTest.flushSave(); });
     await pause(450);
@@ -516,8 +517,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     const formattedCell = workspace.locator('td[data-table-row="1"][data-table-col="0"]');
     await formattedCell.click(); await workspace.keyboard.press('Control+v');
     await formattedCell.click();
-    const formattedInput = workspace.locator('textarea.note-table-cell-editor');
-    await formattedInput.evaluate(node => node.setSelectionRange(0, node.value.length));
+    const formattedInput = tableInput(workspace);
+    await formattedInput.evaluate(node => node.__noteCellInput.setSelectionRange(0, node.__noteCellInput.value.length));
     await workspace.keyboard.press('Control+b');
     assert.equal(await formattedInput.inputValue(), '**apple**');
     await workspace.keyboard.press('Control+z');

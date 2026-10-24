@@ -9,6 +9,7 @@ const os = require('node:os');
 const http = require('node:http');
 const { execFileSync } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
+const { tableInput } = require('./note-table-test-helpers');
 const repo = path.resolve(__dirname, '..');
 const reportPath = process.env.RELATUM_NOTE_INPUT_REPORT || path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-input-')), 'report.json');
 const performanceOnly = process.argv.includes('--performance-only');
@@ -17,7 +18,7 @@ const benchmark = performanceOnly || profileOnly || process.argv.includes('--per
 const noRegression = process.argv.includes('--no-regression');
 const baselineRef = process.env.RELATUM_NOTE_INPUT_BASELINE || 'fafc085';
 const baseline = new Map();
-if (benchmark) for (const file of ['note-live-editor.js', 'note-table-editor.js', 'markdown-table.js']) {
+if (benchmark) for (const file of ['note-live-editor.js', 'note-table-editor.js', 'markdown-table.js', 'styles.css']) {
   baseline.set(file, execFileSync('git', ['show', `${baselineRef}:assets/${file}`], { cwd: repo, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 }));
 }
 const html = prefix => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><base href="/${prefix}assets/">
@@ -195,10 +196,10 @@ const output = { keyboard: false, formatting: false, tableFormatting: false, sel
       assert.equal(await page.locator('td[data-table-row="1"][data-table-col="0"] .note-table-cell-content').innerText(), 'source');
       await page.evaluate(() => RelatumCodeMirror.undo(editor.view)); await settle(); assert.equal((await snapshot()).value, grid, 'source/live mode changes do not split or lose source history');
 
-      const input = page.locator('textarea.note-table-cell-editor');
+      const input = tableInput(page);
       await reset(grid); await page.locator('td[data-table-row="1"][data-table-col="0"]').click();
       const nativeHost = await input.elementHandle();
-      await input.evaluate(node => node.setSelectionRange(0, 3)); await input.press('Control+b');
+      await input.evaluate(node => node.__noteCellInput.setSelectionRange(0, 3)); await input.press('Control+b');
       assert.equal(await input.inputValue(), '**one**');
       assert(await nativeHost.evaluate(node => node === document.activeElement && node.isConnected));
       await input.press('Control+b'); assert.equal(await input.inputValue(), 'one');

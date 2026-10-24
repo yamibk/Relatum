@@ -918,10 +918,25 @@ body.start-page:not([data-start-theme="dark"]) .note-live-editor-host .note-live
 .note-live-rich-block.note-table td.is-table-selected { background: rgba(103,133,88,.14); }
 .note-live-rich-block.note-table td.is-table-editing { box-shadow: inset 0 0 0 1px rgba(103,133,88,.5); padding: 0; }
 .is-table-editing > .note-table-cell-content { visibility: hidden; height: 0; min-height: 0; }
-.note-table textarea.note-table-cell-editor {
-  display: block; width: 100%; min-height: 38px; padding: 7px 10px; margin: 0; border: 0; border-radius: 0;
-  resize: none; overflow: hidden; box-sizing: border-box; background: transparent; color: inherit;
-  font: inherit; font-weight: 400; line-height: 1.55; text-align: inherit; outline: none; box-shadow: none;
+.note-table .cm-editor.note-table-cell-input {
+  width: 100%; height: auto; min-height: 38px; padding: 0; margin: 0; border: 0; border-radius: 0;
+  background: transparent; color: inherit; font: inherit; font-weight: 400; line-height: 1.55;
+  text-align: inherit; outline: none; box-shadow: none;
+}
+.note-table .note-table-cell-input .cm-scroller { overflow: visible; font: inherit; }
+.note-table .note-table-cell-input .cm-content.note-table-cell-editor {
+  width: 100%; max-width: none; min-height: 38px; margin: 0; padding: 7px 10px;
+  box-sizing: border-box; text-align: inherit; overflow-wrap: anywhere; caret-color: var(--text);
+}
+.note-table .note-table-cell-input .cm-line { padding: 0; }
+.note-table .note-table-cell-input img.cm-widgetBuffer {
+  display: inline; margin: 0; max-width: none; max-height: none; border-radius: 0; box-shadow: none;
+}
+.note-table .note-table-cell-input .cm-content:focus { outline: none; }
+.note-table .note-table-cell-input .cm-selectionMatch { background: transparent; }
+.note-table .note-table-cell-input .cm-line::selection,
+.note-table .note-table-cell-input .cm-line ::selection {
+  background-color: rgba(65, 131, 196, .22) !important;
 }
 .note-table-alignment {
   position: fixed; z-index: 1100; display: flex; padding: 3px; box-sizing: border-box;

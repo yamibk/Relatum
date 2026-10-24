@@ -287,7 +287,7 @@
                 }
                 setTimeout(function () {
                   result.tableRemainsProjected = !!editor.view.contentDOM.querySelector('.note-live-rich-block.is-table');
-                  result.tableCellEditor = !!editor.view.contentDOM.querySelector('textarea.note-table-cell-editor');
+                  result.tableCellEditor = !!editor.view.contentDOM.querySelector('.note-table-cell-editor');
                   result.codeLinesAfterTableEdit = editor.view.contentDOM.querySelectorAll('.cm-line.note-live-code-line').length;
                   result.codeTokensAfterTableEdit = editor.view.contentDOM.querySelectorAll('[class*="note-live-code-"]:not(.note-live-code-line)').length;
                   result.headingsAfterTableEdit = editor.view.contentDOM.querySelectorAll('.cm-line.note-live-heading').length;

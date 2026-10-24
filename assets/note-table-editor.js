@@ -1,5 +1,5 @@
-// Native cell input inside a stable Markdown projection. The document, history
-// and saving remain owned by the parent CodeMirror; preedit stays in textarea.
+// One stable, text-only CodeMirror inside the active Markdown table cell.
+// The parent owns committed Markdown/history; preedit stays in the cell view.
 (function () {
   'use strict';
   const CM = window.RelatumCodeMirror;
@@ -35,6 +35,72 @@
     return { exact, text: exact || nearby,
       x: closest ? Math.max(closest.left, Math.min(x, closest.right)) : x,
       y: closest ? (closest.top + closest.bottom) / 2 : y };
+  }
+
+  const reconcileCell = CM.StateEffect.define();
+  class CellInput {
+    constructor(surface, cell, value, label) {
+      this.surface = surface;
+      const input = this;
+      const projection = CM.ViewPlugin.fromClass(class {
+        constructor(view) { this.decorations = surface.controller.options.tableInlineDecorations(view); }
+        update(update) {
+          if (surface.pending() || update.view.composing || update.view.compositionStarted) {
+            this.decorations = this.decorations.map(update.changes); return;
+          }
+          if (update.docChanged || update.selectionSet || update.focusChanged
+              || update.transactions.some(tr => tr.effects.some(effect => effect.is(reconcileCell)))) {
+            this.decorations = surface.controller.options.tableInlineDecorations(update.view);
+          }
+        }
+      }, { decorations: plugin => plugin.decorations });
+      this.view = new CM.EditorView({ parent: cell, state: CM.EditorState.create({ doc: value, extensions: [
+        CM.EditorView.editorAttributes.of({ class: 'note-table-cell-input' }),
+        CM.EditorView.contentAttributes.of({ class: 'note-table-cell-editor', 'aria-label': label, spellcheck: 'false' }),
+        CM.EditorView.lineWrapping, projection,
+        CM.EditorView.domEventHandlers({
+          keydown(event) { surface.keydown(event); return event.defaultPrevented; },
+          copy(event) { surface.copy(event, false); return event.defaultPrevented; },
+          cut(event) { surface.copy(event, true); return event.defaultPrevented; },
+          paste(event) { surface.paste(event); return event.defaultPrevented; },
+          beforeinput(event) {
+            if (!/^(?:historyUndo|historyRedo)$/.test(event.inputType) || surface.pending()) return false;
+            event.preventDefault(); surface.history(event.inputType === 'historyRedo'); return true;
+          },
+        }),
+        CM.keymap.of(CM.defaultKeymap),
+        CM.EditorView.updateListener.of(update => {
+          if (surface.edit?.input !== input) return;
+          if (update.docChanged && !input.syncing) {
+            surface.edit.emptyFormat = null;
+            if (!surface.pending()) surface.commit();
+          }
+          if (update.docChanged || update.geometryChanged) surface.controller.measure();
+        }),
+      ] }) });
+      this.dom = this.view.contentDOM;
+      // Local owner for source/selection access; never serialized with a note.
+      this.dom.__noteCellInput = this;
+    }
+    get value() { return this.view.state.doc.toString(); }
+    set value(value) {
+      if (value === this.value) return;
+      this.syncing = true;
+      try { this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: value } }); }
+      finally { this.syncing = false; }
+    }
+    get selectionStart() { return this.view.state.selection.main.from; }
+    get selectionEnd() { return this.view.state.selection.main.to; }
+    get selectionDirection() { const range = this.view.state.selection.main; return range.anchor > range.head ? 'backward' : 'forward'; }
+    setSelectionRange(from, to, direction) {
+      const length = this.view.state.doc.length;
+      from = Math.max(0, Math.min(length, from)); to = Math.max(0, Math.min(length, to));
+      this.view.dispatch({ selection: CM.EditorSelection.range(direction === 'backward' ? to : from, direction === 'backward' ? from : to) });
+    }
+    contains(target) { return this.dom.contains(target); }
+    focus() { this.view.focus(); }
+    reconcile() { this.view.dispatch({ effects: reconcileCell.of(null) }); }
+    remove() { delete this.dom.__noteCellInput; this.view.destroy(); this.view.dom.remove(); }
   }
 
   function createController(options) {
@@ -173,7 +239,7 @@
           if (scroller.scrollTop === lock.top && scroller.scrollLeft === lock.left) return;
           lock.target = { top: scroller.scrollTop, left: scroller.scrollLeft };
           // Keep the browser-owned IME host in the mounted viewport. Reparenting
-          // a focused textarea would make Chromium commit provisional Pinyin.
+          // a focused cell would make Chromium commit provisional Pinyin.
           scroller.scrollTop = lock.top; scroller.scrollLeft = lock.left;
         };
         scroller.addEventListener('scroll', lock.handler, { capture: true, passive: true });
@@ -378,7 +444,7 @@
       wrap.addEventListener('copy', (event) => this.copy(event, false));
       wrap.addEventListener('cut', (event) => this.copy(event, true));
       wrap.addEventListener('paste', (event) => this.paste(event));
-      wrap.addEventListener('contextmenu', (event) => { event.stopPropagation(); if (event.target.tagName !== 'TEXTAREA') event.preventDefault(); });
+      wrap.addEventListener('contextmenu', (event) => { event.stopPropagation(); if (!this.edit?.input.contains(event.target)) event.preventDefault(); });
       // These must never join the parent contenteditable's IME or clipboard chain.
       for (const name of ['beforeinput', 'input', 'compositionstart', 'compositionend', 'keyup', 'focusin', 'focusout']) {
         wrap.addEventListener(name, (event) => event.stopPropagation());
@@ -605,7 +671,7 @@
           || document.hidden || document.documentElement.dataset.desktopMinimized === '1'
           || !['left', 'center', 'right'].includes(align)) return;
       // Flush an ordinary cell edit separately. Alignment itself never closes,
-      // replaces or reparents the browser-owned textarea.
+      // replaces or reparents the browser-owned input host.
       this.commit();
       const current = this.current(); if (!current) return;
       const line = this.view.state.doc.line(this.view.state.doc.lineAt(current.from).number + 1);
@@ -624,35 +690,15 @@
       this.view.dispatch({ changes, selection: this.view.state.selection.map(changes), effects: cellUpdateEffect.of(update),
         userEvent: 'input.table-alignment', annotations: CM.isolateHistory ? CM.isolateHistory.of('full') : [] });
     }
-    // Textarea does not expose text nodes. This inert mirror gives real wrapped
-    // character rectangles without replacing, moving or blurring its IME host.
+    // Use actual projected glyphs, including variable-width bold/code and hidden
+    // delimiters. A plain-text mirror cannot match this geometry.
     inputPoint(point) {
       if (!this.edit) return { offset: 0, text: false, exact: false };
-      const input = this.edit.input, style = getComputedStyle(input), rect = input.getBoundingClientRect();
-      const mirror = document.createElement('div'), span = document.createElement('span');
-      for (const key of ['font', 'fontSize', 'fontFamily', 'fontWeight', 'lineHeight', 'letterSpacing', 'wordSpacing', 'textAlign', 'tabSize']) mirror.style[key] = style[key];
-      const px = parseFloat(style.paddingLeft) || 0, py = parseFloat(style.paddingTop) || 0;
-      Object.assign(mirror.style, { position: 'fixed', left: rect.left + px - input.scrollLeft + 'px', top: rect.top + py - input.scrollTop + 'px',
-        width: Math.max(1, rect.width - px - (parseFloat(style.paddingRight) || 0)) + 'px',
-        whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', pointerEvents: 'none', opacity: '0' });
-      mirror.setAttribute('aria-hidden', 'true'); span.textContent = input.value || ' '; mirror.appendChild(span); document.body.appendChild(mirror);
-      const node = span.firstChild, range = document.createRange(), length = input.value.length;
-      let low = 0, high = length, hit;
-      try {
-        range.selectNodeContents(node);
-        hit = textPoint(length ? range.getClientRects() : [], point, this.edit.cell.getBoundingClientRect(), textHitPadding(style), /\S/.test(input.value));
-        // Project to the nearest visual line before finding the character. A
-        // press just below a line must not be mistaken for the end of the cell.
-        while (low < high) {
-          let mid = (low + high) >>> 1;
-          if (mid && /[\uDC00-\uDFFF]/.test(node.textContent[mid])) mid--;
-          range.setStart(node, mid); range.setEnd(node, Math.min(node.length, mid + (/[\uD800-\uDBFF]/.test(node.textContent[mid]) ? 2 : 1)));
-          const box = range.getBoundingClientRect();
-          if (hit.y > box.bottom || hit.y >= box.top && hit.x > (box.left + box.right) / 2) low = Math.max(low + 1, range.endOffset);
-          else high = mid;
-        }
-      } finally { mirror.remove(); }
-      return { offset: Math.min(length, low), text: hit.text, exact: hit.exact };
+      const { input, cell } = this.edit, rects = [], range = document.createRange();
+      const walker = document.createTreeWalker(input.dom, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) { range.selectNodeContents(walker.currentNode); rects.push(...range.getClientRects()); }
+      const hit = textPoint(rects, point, cell.getBoundingClientRect(), textHitPadding(getComputedStyle(input.dom)), /\S/.test(input.value));
+      return { offset: input.view.posAtCoords({ x: hit.x, y: hit.y }, false) ?? input.value.length, text: hit.text, exact: hit.exact };
     }
     renderedTextHit(cell, point) {
       const root = cell.querySelector('.note-table-cell-content'), walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -690,7 +736,7 @@
         if (!blocked && !gesture.bounds) { this.select(gesture.kind, gesture.index, event.shiftKey); gesture.bounds = this.bounds(); }
       } else if (blocked || event.shiftKey) event.preventDefault();
       else {
-        const inputHit = this.edit && event.target === this.edit.input ? this.inputPoint(event) : null;
+        const inputHit = this.edit && this.edit.input.contains(event.target) ? this.inputPoint(event) : null;
         if (inputHit && inputHit.exact) gesture.mode = 'native-text';
         else if (inputHit ? inputHit.text : this.renderedTextHit(cell, event)) {
           event.preventDefault(); this.open(start.row, start.col, event); gesture.mode = 'text'; gesture.textAnchor = this.edit ? this.edit.input.selectionStart : 0;
@@ -710,7 +756,7 @@
       if (gesture.mode === 'reorder') {
         this.grip.addEventListener('lostpointercapture', cancel);
         window.addEventListener('keydown', escape, true);
-        // Capture only grips: a textarea must retain native text selection.
+        // Capture only grips: the cell must retain browser text selection.
         this.grip.setPointerCapture(gesture.id);
       }
       this.dragCleanup = () => {
@@ -887,22 +933,13 @@
       }
       this.controller.activate(this); this.close(); this.selection = null;
       const cell = this.cell(row, col); if (!cell) return;
-      const input = document.createElement('textarea');
-      input.className = 'note-table-cell-editor'; input.rows = 1; input.spellcheck = false;
-      input.setAttribute('aria-label', text('第 ' + (row + 1) + ' 行，第 ' + (col + 1) + ' 列', 'Row ' + (row + 1) + ', column ' + (col + 1)));
-      input.value = (row ? this.model.rows[row - 1] : this.model.header)[col];
-      const measurer = document.createElement('div'); measurer.setAttribute('aria-hidden', 'true');
-      measurer.style.cssText = 'position:fixed;left:-100000px;top:0;visibility:hidden;pointer-events:none;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere';
-      document.body.appendChild(measurer);
-      this.edit = { row, col, input, cell, measurer }; cell.classList.add('is-table-editing'); cell.appendChild(input);
-      input.addEventListener('input', () => { this.edit.emptyFormat = null; if (!this.pending()) this.commit(); this.sizeEditor(); });
-      input.addEventListener('beforeinput', (event) => {
-        if (event.inputType !== 'historyUndo' && event.inputType !== 'historyRedo' || this.pending()) return;
-        event.preventDefault(); this.history(event.inputType === 'historyRedo');
-      });
-      input.addEventListener('compositionstart', () => { this.cancelGesture(); this.cancelFrame(); this.phase = 'composing'; this.controller.lockScroll(this); });
-      input.addEventListener('compositionend', () => this.endComposition());
-      input.addEventListener('blur', () => {
+      cell.classList.add('is-table-editing');
+      const input = new CellInput(this, cell, (row ? this.model.rows[row - 1] : this.model.header)[col],
+        text('第 ' + (row + 1) + ' 行，第 ' + (col + 1) + ' 列', 'Row ' + (row + 1) + ', column ' + (col + 1)));
+      this.edit = { row, col, input, cell };
+      input.dom.addEventListener('compositionstart', () => { this.cancelGesture(); this.cancelFrame(); this.phase = 'composing'; this.controller.lockScroll(this); }, true);
+      input.dom.addEventListener('compositionend', () => this.endComposition(), true);
+      input.dom.addEventListener('blur', () => {
         if (this.pending()) { this.blurQueued = true; return; }
         this.commit(); this.removeEditor(); this.paintSelection();
       });
@@ -912,32 +949,20 @@
     }
     sizeEditor() {
       if (!this.edit) return;
-      const { input, cell, measurer } = this.edit, style = getComputedStyle(input);
-      const previous = this.edit.measureStyles || (this.edit.measureStyles = {});
-      for (const key of ['font', 'fontSize', 'fontFamily', 'fontWeight', 'lineHeight', 'letterSpacing', 'wordSpacing', 'textAlign', 'tabSize', 'padding']) {
-        if (previous[key] !== style[key]) { previous[key] = style[key]; measurer.style[key] = style[key]; }
-      }
-      const width = input.getBoundingClientRect().width + 'px';
-      if (measurer.style.width !== width) measurer.style.width = width;
-      const content = input.value + '\u200b';
-      if (measurer.textContent !== content) measurer.textContent = content;
-      // Never collapse the browser's native input, even briefly. WebView2 can
-      // cache the previous host's IME caret bounds during that zero-height box.
-      const height = Math.max(parseFloat(style.minHeight) || 38, Math.ceil(measurer.getBoundingClientRect().height)) + 'px';
-      if (input.style.height !== height) input.style.height = height;
-      if (cell.style.minHeight !== height) cell.style.minHeight = height;
       this.geometryCache = null;
     }
     cancelFrame() { this.sequence++; if (this.frame) cancelAnimationFrame(this.frame); this.frame = 0; }
     endComposition() {
       this.cancelFrame(); this.phase = 'settling'; const seq = this.sequence;
       this.frame = requestAnimationFrame(() => {
-        this.frame = requestAnimationFrame(() => {
+        const finish = () => {
           this.frame = 0; if (seq !== this.sequence || this.disposed) return;
-          this.phase = 'idle'; this.controller.unlockScroll(this, true); this.commit(true);
+          if (this.edit?.input.view.composing || this.edit?.input.view.compositionStarted) { this.frame = requestAnimationFrame(finish); return; }
+          this.phase = 'idle'; this.edit?.input.reconcile(); this.controller.unlockScroll(this, true); this.commit(true);
           if (this.blurQueued) { this.blurQueued = false; this.removeEditor(); }
           this.waiters.splice(0).forEach((resolve) => resolve(true));
-        });
+        };
+        this.frame = requestAnimationFrame(finish);
       });
     }
     commit(composed, userEvent) {
@@ -994,7 +1019,7 @@
       if (!this.edit || this.pending()) return;
       const edit = this.edit; this.edit = null;
       edit.cell.classList.remove('is-table-editing'); edit.cell.style.minHeight = '';
-      edit.input.remove(); edit.measurer.remove(); this.view.requestMeasure();
+      edit.input.remove(); this.view.requestMeasure();
       if (edit.contentDirty && this.current() && this.shape === (this.model.rows.length + 1) + ':' + this.model.header.length) this.renderCell(edit.cell, edit.row, edit.col);
     }
     close() { if (this.pending()) return; this.commit(); this.removeEditor(); }
@@ -1029,12 +1054,12 @@
       if (event.isComposing || event.keyCode === 229 || this.pending()) return;
       const mod = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
       if (event.key === 'Tab' && !event.shiftKey && !this.edit && this.controller.focusAlignment(this)) { event.preventDefault(); return; }
-      if (this.edit && event.target === this.edit.input && this.controller.options.onTableShortcut?.(event, this)) { event.preventDefault(); return; }
+      if (this.edit && this.edit.input.contains(event.target) && this.controller.options.onTableShortcut?.(event, this)) { event.preventDefault(); return; }
       if (mod && key === 's') { event.preventDefault(); this.controller.options.onSaveRequest(); return; }
       if (mod && (key === 'z' || key === 'y')) {
         event.preventDefault(); this.history(key === 'y' || event.shiftKey); return;
       }
-      if (this.edit && event.target === this.edit.input) {
+      if (this.edit && this.edit.input.contains(event.target)) {
         if (mod && event.key === 'Enter') {
           event.preventDefault(); this.controller.options.onTableBodyRequest(this.widget.spec.id, event.shiftKey ? 'before' : 'after'); return;
         }
@@ -1107,7 +1132,7 @@
     }
     destroy() {
       if (this.disposed) return; this.disposed = true; this.cancelFrame();
-      if (this.edit) this.edit.measurer.remove();
+      if (this.edit) { const edit = this.edit; this.edit = null; edit.input.remove(); }
       this.controller.unlockScroll(this, false);
       this.clearMath(this.body);
       this.cancelGesture(); this.cancelReorderIntent();
