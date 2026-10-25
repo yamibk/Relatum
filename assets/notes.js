@@ -359,6 +359,12 @@
       viewPanInertiaRaf = null;
     }
   }
+  function freezeViewForPageWheel() {
+    const wasMoving = zoomRaf != null || viewPanInertiaRaf != null;
+    cancelViewPanInertia();
+    cancelZoom(true);
+    if (wasMoving) saveViewSoon();
+  }
   function startViewPanInertia(dragState) {
     cancelViewPanInertia();
     if (!dragState || dragState.velX == null || !(noteInertia > 0)) return;
@@ -2236,6 +2242,11 @@
 
   surface.addEventListener('wheel', (e) => {
     if (!loaded || !pageUsable() || pageSwitching || archiving) return;
+    // 切页已接管或位于切页热区时，缩放入口也必须主动让出滚轮。
+    if (e.defaultPrevented || isPageRailWheel(e)) {
+      freezeViewForPageWheel();
+      return;
+    }
     const delta = wheelPixels(e);
     e.preventDefault();
     e.stopPropagation();
@@ -2675,6 +2686,11 @@
     return event.clientX <= rect.right && event.clientX >= rect.right - NOTES_PAGE_WHEEL_REACH
       && Math.abs(event.clientY - rect.top - rect.height / 2) > 71;
   }
+  function isPageRailWheel(event) {
+    return !!pageRail && !consoleOpen() && !interacting && !archiving
+      && !event.ctrlKey && !event.metaKey && !!event.deltaY
+      && Math.abs(event.deltaX) <= Math.abs(event.deltaY) && inPageRailHotZone(event);
+  }
   if (pageRail) {
     pageRail.addEventListener('click', (event) => {
       const button = event.target.closest('[data-note-page]');
@@ -2698,6 +2714,8 @@
     });
     const onPageRailWheel = (event) => {
       if (Math.abs(event.deltaX) > Math.abs(event.deltaY) || !event.deltaY) return;
+      // 在阈值累计及候选输入交接之前就停止旧缩放，不等到真正换页。
+      freezeViewForPageWheel();
       const direction = event.deltaY > 0 ? 1 : -1;
       const scroller = event.target.closest('.study-task-page-scroll');
       if (scroller) {
@@ -2718,12 +2736,10 @@
     pageRail.addEventListener('wheel', onPageRailWheel, { passive: false });
     // 页栏外的右缘滚轮也先切页，不能继续落到台面的缩放监听。
     notesView.addEventListener('wheel', (event) => {
-      if (!loaded || !pageUsable() || consoleOpen() || interacting || archiving
-        || event.defaultPrevented || event.ctrlKey || event.metaKey || !event.deltaY
-        || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      if (!loaded || !pageUsable() || event.defaultPrevented) return;
       if (pageRail.contains(event.target)
         || event.target.closest('.notes-console,button,input,select,textarea,[contenteditable="true"],[contenteditable="plaintext-only"],[role="dialog"]')) return;
-      if (!inPageRailHotZone(event)) return;
+      if (!isPageRailWheel(event)) return;
       railNear = true;
       revealPageRail(true);
       onPageRailWheel(event);

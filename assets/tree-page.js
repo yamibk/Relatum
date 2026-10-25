@@ -1671,6 +1671,14 @@
     if (panInertiaFrame) cancelAnimationFrame(panInertiaFrame);
     panInertiaFrame = 0;
   }
+  function freezeViewForPageWheel() {
+    var wasMoving = !!(viewFrame || panInertiaFrame);
+    stopViewAnimation();
+    stopPanInertia();
+    // 切页接管后保留实际显示的镜头，不能补到旧缩放目标造成跳变。
+    viewTarget = Object.assign({}, view);
+    if (wasMoving) saveViewSoon();
+  }
   function startPanInertia(source) {
     stopPanInertia();
     if (prefersReduced || !open || !source || source.velX == null) return;
@@ -5223,6 +5231,10 @@
 
   viewport.addEventListener('wheel', function (event) {
     if (!open) return;
+    if (event.defaultPrevented || isRailWheelHotZone(event)) {
+      freezeViewForPageWheel();
+      return;
+    }
     event.preventDefault();
     setZoom(viewTarget.zoom * Math.exp(-event.deltaY * .00115), event.clientX, event.clientY);
   }, { passive: false });
@@ -5304,8 +5316,16 @@
   rail.addEventListener('pointerleave', function () { railOver = false; setRailVisible(false); });
   // 滚轮切树：页栏及右缘热区向下滚 → 下一页，向上滚 → 上一页；
   // 树较多时先滚动数字列表，到边缘后继续滚才切页。
+  function isRailWheelHotZone(event) {
+    if (rail.inert || progressPanelIsVisible() || event.ctrlKey || event.metaKey
+      || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return false;
+    var rect = stageEl.getBoundingClientRect();
+    var rightDistance = rect.right - event.clientX;
+    return rightDistance >= 0 && rightDistance <= railRevealPx;
+  }
   function onRailWheel(event) {
-    if (!open || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    if (!open || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    freezeViewForPageWheel();
     var direction = event.deltaY > 0 ? 1 : -1;
     var targetInList = railList.contains(event.target);
     var maxScroll = railList.scrollHeight - railList.clientHeight;
@@ -5345,14 +5365,10 @@
   rail.addEventListener('wheel', onRailWheel, { passive: false });
   // 在视口缩放前接管右缘滚轮，编号栏本身仍走原来的列表滚动逻辑。
   stageEl.addEventListener('wheel', function (event) {
-    if (!open || rail.inert || progressPanelIsVisible() || event.defaultPrevented
-      || event.ctrlKey || event.metaKey || !event.deltaY
-      || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    if (!open || event.defaultPrevented) return;
     if (rail.contains(event.target)
       || event.target.closest('button,input,select,textarea,[contenteditable="true"],[contenteditable="plaintext-only"],.study-route-popover,.study-route-confirm,.study-route-guide,.tree-page-item-dock,.tree-page-progress-panel')) return;
-    var rect = stageEl.getBoundingClientRect();
-    var rightDistance = rect.right - event.clientX;
-    if (rightDistance < 0 || rightDistance > railRevealPx) return;
+    if (!isRailWheelHotZone(event)) return;
     setRailVisible(true);
     onRailWheel(event);
   }, { passive: false, capture: true });
