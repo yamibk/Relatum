@@ -929,11 +929,18 @@
     const pref = window.RelatumNotePreferences;
     const preloadPanel = graphEnabled() && graph ? document.createElement('div') : null;
     if (preloadPanel) graph.querySelectorAll('.note-graph-preload-setting, .note-graph-preload-hint').forEach(el => preloadPanel.append(el));
-    const systemSettings = noteSystem.createPanel({ language, graph: graphEnabled(), mermaid: !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid'), preload: preloadPanel });
+    const systemSettings = noteSystem.createPanel({ language, graph: graphEnabled(), mermaid: !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid'), preload: preloadPanel,
+      async getCacheStats({ signal }) {
+        const documents = { items: state.documentCache.size, bytes: 0 };
+        state.documentCache.forEach(item => { documents.bytes += item.content.length * 2; });
+        const graph = noteGraph?.getCacheStats();
+        const mermaid = await window.RelatumNoteMermaid?.getCacheStats({ signal });
+        return { documents, graph, mermaid };
+      } });
     const resetGuide = () => { try { localStorage.removeItem(GUIDE_TOPIC_KEY); } catch (_) {} applyGuideTopic('callout', false); };
     const resetCanvas = () => { try { localStorage.removeItem('canvas:noteCanvasDefaults:v1'); } catch (_) {} pref?.resetCanvasNodeScale?.(); canvasStylePanel?.refresh(); };
     const categories = [
-      { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-settings', panel: appearance, keywords: '字体 font size image text scale', reset: () => { pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
+      { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-laptop-minimal', panel: appearance, keywords: '字体 font size image text scale', reset: () => { pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
       { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮', reset: () => { try { localStorage.removeItem(SELECTION_MATCH_HIGHLIGHT_KEY); } catch (_) {} applySelectionMatchHighlight(false, false); } },
       { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings, keywords: '排序 命名 sort name timestamp', reset: resetLibraryPreferences },
       { id: 'sidebar', label: ['侧栏', 'Sidebar'], icon: 'note-icon-panel-right-frame', panel: sidebar, keywords: '页签 显示 隐藏 顺序 拖拽 tabs visibility reorder sidebar', reset: () => sidePreferences.reset() },
@@ -956,6 +963,7 @@
       },
       onClose({ reason }) {
         aiSequence++;
+        systemSettings.setActive(false);
         aiDialogReturning = reason === 'user' && aiSettingsCategory === 'ai-chat' && !aiPageHiding && noteWorkspaceVisible()
           && !graphPresentation && aiEnabled() && sidePages().includes('ai');
         state.settingsOpen = false; settingsTrigger.setAttribute('aria-expanded', 'false'); libraryTrigger.setAttribute('aria-expanded', 'false');
@@ -970,6 +978,7 @@
       },
       onCategoryChange(category) {
         aiSettingsCategory = category; aiDialogReturning = false;
+        systemSettings.setActive(category === 'system' && !!settingsDialog?.isOpen && noteWorkspaceVisible());
         stopShortcutRecording(true); canvasStylePanel?.suspend(); sidePreferences.suspend();
         if (category === 'ai') ensureAI().then(ai => { if (settingsDialog?.isOpen && aiSettingsCategory === 'ai' && noteWorkspaceVisible()) ai.settings(); }).catch(error => showToast(error.message, 'error'));
         else aiController?.closeSettings();

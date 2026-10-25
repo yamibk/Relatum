@@ -28,5 +28,23 @@ const render = (source, epoch) => send({ id: messages.length, source, cacheEpoch
   assert.equal(scope.inspect().size, 3, 'lowering the budget trims existing worker models immediately');
   await render('x'.repeat(600000), 2);
   assert(scope.inspect().bytes <= 2 * 1024 * 1024, 'oversized results cannot exceed the byte budget');
-  console.log('note system worker: generation isolation, model reuse, resizing and byte budgets passed');
+  const beforeStats = { ...scope.inspect() }, parsesBeforeStats = parses;
+  await send({ kind: 'cache-stats', requestId: 41 });
+  assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), { kind: 'cache-stats', requestId: 41,
+    items: beforeStats.size, bytes: beforeStats.bytes, cacheEpoch: beforeStats.cacheEpoch });
+  assert.deepEqual({ ...scope.inspect() }, beforeStats, 'statistics never mutate cache order or usage');
+  assert.equal(parses, parsesBeforeStats, 'statistics do not parse or render');
+  await send({ kind: 'cache', items: 128, bytes: 32 * 1024 * 1024, epoch: 3, clear: true });
+  for (let i = 0; i < 130; i++) await render(i + 'x'.repeat(40000), 3);
+  assert.equal(scope.inspect().size, 128, 'extra-large cache accepts the new item budget');
+  assert(scope.inspect().bytes > 16 * 1024 * 1024 && scope.inspect().bytes <= 32 * 1024 * 1024,
+    'extra-large cache accepts the new byte budget');
+  await send({ kind: 'cache', items: 4, bytes: 1024 * 1024, epoch: 3 });
+  assert.equal(scope.inspect().size, 4, 'minimal budget immediately trims existing models');
+  const inFlight = render('stats during font preparation', 3);
+  await send({ kind: 'cache-stats', requestId: 42 });
+  await inFlight;
+  assert(messages.some(message => message.kind === 'cache-stats' && message.requestId === 42));
+  assert(messages.at(-1).result, 'statistics do not replace an in-flight render response');
+  console.log('note system worker: generation isolation, statistics, five-level budgets and model reuse passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

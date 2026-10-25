@@ -441,6 +441,13 @@ for (const shaderFailure of [false, true]) {
   assert.deepEqual(f.engine.view, camera); assert.deepEqual(f.nodes.map(n => [n.x, n.y]), positions);
   assert.equal(f.engine.nodeAtClient(100, 120), 0, 'reduced drawing resolution preserves CSS hit coordinates');
   f.engine.setRenderScale(1); f.drain(); assert.equal(f.engine.canvas.width, 1200);
+  for (let percent = 50; percent <= 100; percent += 5) {
+    f.engine.setRenderScale(percent / 100); f.drain();
+    assert.equal(f.engine.canvas.width, 12 * percent);
+    assert.equal(f.engine.canvas.height, Math.round(7.2 * percent));
+    assert.deepEqual(f.engine.view, camera); assert.deepEqual(f.nodes.map(n => [n.x, n.y]), positions);
+    assert.equal(f.engine.nodeAtClient(100, 120), 0, 'all eleven scales preserve CSS hit testing');
+  }
   f.sandbox.devicePixelRatio = 2; f.engine.setRenderScale(.75); f.drain();
   assert.equal(f.engine.canvas.width, 1800, 'render scale multiplies the current monitor DPR');
   f.engine.destroy();

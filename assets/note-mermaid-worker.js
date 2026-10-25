@@ -44,10 +44,14 @@
   try {
     importScripts('vendor/pele/pele.global.js');
     self.onmessage = async event => {
+      if (event.data.kind === 'cache-stats') {
+        self.postMessage({ kind: 'cache-stats', requestId: event.data.requestId, items: cache.size, bytes, cacheEpoch });
+        return;
+      }
       if (event.data.kind === 'cache') {
         const config = event.data;
-        if (Number.isInteger(config.items) && config.items > 0 && config.items <= 64) maxItems = config.items;
-        if (Number.isInteger(config.bytes) && config.bytes > 0 && config.bytes <= 16 * 1024 * 1024) maxBytes = config.bytes;
+        if (Number.isInteger(config.items) && config.items > 0 && config.items <= 128) maxItems = config.items;
+        if (Number.isInteger(config.bytes) && config.bytes > 0 && config.bytes <= 32 * 1024 * 1024) maxBytes = config.bytes;
         if (Number.isInteger(config.epoch) && config.epoch >= 0) cacheEpoch = config.epoch;
         if (config.clear) { cache.clear(); bytes = 0; }
         trimCache(); return;

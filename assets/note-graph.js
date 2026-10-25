@@ -650,6 +650,7 @@
     document.fonts?.addEventListener('loadingdone', fontsChanged);
     updateLanguage(); updateCounts();
     return { activate, deactivate, preload, invalidatePreload, isOpen: () => wanted, checkExternalChanges,
+      getCacheStats: () => ({ items: scenes.size, bytes: sceneBytes }),
       invalidate(expectedRoot) { invalidatePreload(expectedRoot); return openJob || expectedRoot !== undefined && scope !== expectedRoot ? Promise.resolve(false) : checkExternalChanges(); },
       setLanguage: updateLanguage, remap, prune,
       destroy() {

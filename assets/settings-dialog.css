@@ -179,8 +179,7 @@ body.start-page[data-start-theme="dark"] .relatum-settings {
 .note-system-presets small, .note-system-settings small, .note-system-settings p { color: var(--text-secondary); line-height: 1.65; }
 .note-system-settings > p:first-child { margin-top: 0; }
 .note-system-current { font-size: 12px; }
-.note-system-settings details { margin-top: 22px; }
-.note-system-settings summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
+.note-system-controls { margin-top: 22px; }
 .note-system-toggle { display: flex; align-items: flex-start; gap: 10px; padding: 18px 0; }
 .note-system-toggle input { margin-top: 4px; accent-color: currentColor; }
 .note-system-toggle span, .note-system-range { display: grid; gap: 7px; }
@@ -189,10 +188,19 @@ body.start-page[data-start-theme="dark"] .relatum-settings {
 .note-system-range > span { display: flex; justify-content: space-between; gap: 12px; }
 .note-system-range input { width: 100%; accent-color: currentColor; }
 .note-system-range output { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.note-system-settings details > p, .note-system-clean p { font-size: 12px; }
+.note-system-controls > p, .note-system-clean p, .note-system-overview p { font-size: 12px; }
+.note-system-overview { margin-top: 24px; }
+.note-system-overview-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.note-system-overview-head h3 { margin: 0; font-size: 14px; }
+.note-system-cache-row { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(0, 1.4fr) minmax(0, 1.3fr); align-items: baseline; gap: 8px 16px; padding: 12px 0; border-bottom: 1px solid rgba(128,128,128,.15); font-size: 12px; font-variant-numeric: tabular-nums; }
+.note-system-cache-row strong { font-weight: 600; }
+.note-system-cache-row small { font-size: inherit; }
 .note-system-clean { margin-top: 24px; padding-top: 20px; border-top: 1px solid rgba(128,128,128,.18); }
-.note-system-clean button { padding: 9px 14px; border: 1px solid rgba(128,128,128,.3); border-radius: 7px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-@media (max-width: 720px) { .note-system-presets { grid-template-columns: 1fr; } }
+.note-system-clean button, .note-system-overview button { padding: 9px 14px; border: 1px solid rgba(128,128,128,.3); border-radius: 7px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+@media (max-width: 720px) {
+  .note-system-presets { grid-template-columns: 1fr; }
+  .note-system-cache-row { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+}
 html[data-note-reduced-motion="1"] .relatum-settings::backdrop,
 html[data-note-reduced-motion="1"] .relatum-settings *,
 html[data-note-reduced-motion="1"] .relatum-settings *::before,

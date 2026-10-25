@@ -25,7 +25,7 @@
   const heightHints = new Map(), lastGood = new Map();
   let heightBytes = 0, cacheBytes = 0, fontRevision = 0, nextId = 0, running = false;
   let stylePromise = null, fallbackPromise = null, workerState = null, workerDisabled = false;
-  let cacheEpoch = 0;
+  let cacheEpoch = 0, nextStatsId = 0;
   const cacheBudget = () => window.RelatumNoteSystem?.budget('mermaid') || { items: MAX_ITEMS, bytes: MAX_BYTES };
   function trimCache(clear = false) {
     const budget = cacheBudget(), protectedKeys = new Set();
@@ -77,24 +77,49 @@
     if (!state) return;
     workerState = null; state.stopped = true; clearTimeout(state.timeout);
     state.worker.terminate(); state.rejectReady(abort());
+    state.stats.forEach(request => request.finish({ state: 'stopped' }));
     state.pending?.reject(abort()); state.pending = null;
+  }
+  async function getCacheStats({ signal } = {}) {
+    const main = { items: cache.size, bytes: cacheBytes }, state = workerState;
+    if (!state || state.stopped) return { main, worker: { state: 'stopped' } };
+    const worker = await new Promise(resolve => {
+      const requestId = ++nextStatsId, epoch = cacheEpoch;
+      let timeout;
+      const finish = result => {
+        clearTimeout(timeout); signal?.removeEventListener('abort', cancel); state.stats.delete(requestId); resolve(result);
+      };
+      const cancel = () => finish({ state: 'unavailable' });
+      if (signal?.aborted) { cancel(); return; }
+      state.stats.set(requestId, { finish, epoch }); signal?.addEventListener('abort', cancel, { once: true });
+      timeout = setTimeout(cancel, 1500);
+      try { state.worker.postMessage({ kind: 'cache-stats', requestId }); } catch (_) { cancel(); }
+    });
+    return { main, worker };
   }
   function getWorker() {
     if (workerDisabled || typeof Worker !== 'function') return Promise.reject(new Error('Worker unavailable'));
     if (workerState) return workerState.ready;
     let worker;
     try { worker = new Worker(new URL('note-mermaid-worker.js', ownUrl)); } catch (error) { return Promise.reject(error); }
-    const state = { worker, pending: null, stopped: false };
+    const state = { worker, pending: null, stopped: false, stats: new Map() };
     state.ready = new Promise((resolve, reject) => { state.resolveReady = resolve; state.rejectReady = reject; });
     workerState = state;
     const fail = error => {
       if (state.stopped) return;
       clearTimeout(state.timeout); state.stopped = true; state.worker.terminate();
       if (workerState === state) workerState = null;
+      state.stats.forEach(request => request.finish({ state: 'unavailable' }));
       state.rejectReady(error); state.pending?.reject(error); state.pending = null;
     };
     state.worker.onmessage = event => {
       const data = event.data;
+      if (data.kind === 'cache-stats') {
+        const request = state.stats.get(data.requestId);
+        if (request) request.finish(!state.stopped && workerState === state && request.epoch === cacheEpoch && data.cacheEpoch === cacheEpoch
+          ? { state: 'ready', items: data.items, bytes: data.bytes } : { state: 'unavailable' });
+        return;
+      }
       if (data.ready) { clearTimeout(state.timeout); configureWorker(); state.resolveReady(state); return; }
       if (data.unavailable) { fail(new Error(data.unavailable)); return; }
       const pending = state.pending;
@@ -622,5 +647,5 @@
     };
     root.__noteMermaid = controller; sync(); return controller;
   }
-  window.RelatumNoteMermaid = Object.freeze({ attach, reserve });
+  window.RelatumNoteMermaid = Object.freeze({ attach, reserve, getCacheStats });
 })();

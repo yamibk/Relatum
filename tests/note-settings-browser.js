@@ -10,6 +10,7 @@ async function port() { const server = net.createServer(); await new Promise(res
 async function checkMotion(page, mode) {
   const report = [];
   await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.waitForFunction(() => !RelatumNoteSystem.motion.matches);
   for (const [theme, width] of [['light', 1440], ['dark', 560]]) {
     await page.setViewportSize({ width, height: 980 });
     await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
@@ -84,9 +85,11 @@ async function checkMotion(page, mode) {
     dialog.querySelector('[data-settings-action="reset-category"]').click();
   });
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.waitForFunction(() => RelatumNoteSystem.motion.matches);
   assert.equal(await page.locator('dialog.relatum-settings').evaluate(el => el.getAnimations({ subtree: true }).length), 0, 'switching to reduced motion finishes all active effects');
   await page.keyboard.press('Escape'); assert(await page.locator('.relatum-settings-confirm').isHidden());
   await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.waitForFunction(() => !RelatumNoteSystem.motion.matches);
   const reversed = await page.evaluate(() => {
     const dialog = document.querySelector('dialog.relatum-settings');
     T.setNoteSettingsOpen(false); dialog.getAnimations()[0].currentTime = 60;
