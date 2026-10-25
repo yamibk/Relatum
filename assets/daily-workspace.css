@@ -1,0 +1,24 @@
+.daily-workspace { position: relative; display: grid; grid-template-columns: 112px minmax(0, 1fr); height: 100%; min-height: 0; color: var(--start-ink, #191a19); }
+.daily-navigation { display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 36px 14px; }
+.daily-navigation button { border: 0; border-radius: 12px; padding: 12px 8px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; transition: background 140ms, color 140ms; }
+.daily-navigation button:hover { background: rgba(100, 100, 100, .09); }
+.daily-navigation button.active { background: #191a19; color: #fff; }
+.daily-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+.daily-workspace .daily-page { position: absolute; inset: 0; overflow: auto; padding: 24px clamp(20px, 3vw, 56px) 52px; opacity: 1; transform: none; pointer-events: auto; min-height: 0; }
+.daily-workspace .daily-page[hidden] { display: none !important; }
+.daily-page-tasks { display: grid; grid-template-rows: minmax(0, 1fr); }
+.daily-page-tasks > .focus-daily { min-height: 0; height: 100%; }
+.daily-page-focus > .focus-shell { min-height: 100%; }
+.daily-workspace.focus-zen { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.daily-workspace.focus-zen .daily-navigation { display: none; }
+.daily-workspace.focus-zen .daily-page-focus { padding-top: 0; }
+.daily-workspace .calendar-internal-view { display: block; }
+body[data-start-theme="dark"] .daily-workspace { color: #e8ebe6; }
+body[data-start-theme="dark"] .daily-navigation button.active { background: #e8ebe6; color: #171a17; }
+@media (max-width: 700px) {
+  .daily-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .daily-navigation { flex-direction: row; justify-content: center; gap: 6px; padding: 10px 12px; }
+  .daily-navigation button { padding: 9px 12px; }
+  .daily-workspace .daily-page { padding: 12px 14px 32px; }
+}
+@media (prefers-reduced-motion: reduce) { .daily-navigation button { transition: none; } }

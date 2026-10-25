@@ -14,6 +14,7 @@
     ['appearance', ['外观', 'Appearance'], '<rect x="3" y="3" width="18" height="14" rx="2"/><path d="M3 21h18"/>', 'theme background 主题 背景'],
     ['workspaces', ['工作区', 'Workspaces'], '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>', 'workspace visibility reorder 显示 隐藏 顺序 拖动'],
     ['navigation', ['画布与导航', 'Canvas & navigation'], '<path d="M4 4h16v16H4zM9 4v16"/>', 'canvas navigation search calendar speed 搜索 日历 翻页 滑块'],
+    ['daily', ['日常', 'Daily'], '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 11h18"/>', 'daily calendar focus tasks ledger 日常 日历 专注 任务 记账 倒数日'],
     ['learning', ['学习与树状', 'Learning & trees'], '<path d="M12 3v7M5 10h14M5 10v6m14-6v6"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/>', 'study tree unlock title color 学习 树状 解锁 标题 彩色'],
     ['starmap', ['星图', 'Star map'], '<circle cx="5" cy="5" r="2"/><circle cx="19" cy="7" r="2"/><circle cx="12" cy="19" r="2"/><path d="m7 5 10 2M6 7l5 10m7-8-5 8"/>', 'graph animation physics fit 动画 生长 阻尼 取景'],
     ['career', ['生涯', 'Career'], '<path d="M4 3v17h17M8 15l4-5 4 2 5-7"/>', 'career scroll inertia reveal 生涯 滚动 惯性 揭示'],
@@ -48,8 +49,8 @@
   panels.get('appearance').querySelector('.start-panel-theme')?.prepend(themeLabel);
   const canvas = features.workspaceEnabled('canvas');
   takeToggle('library-search-toggle', 'navigation', features.enabled('canvas.library'));
-  takeToggle('hide-special-toggle', 'navigation', canvas && ['canvas.review', 'canvas.calendar', 'canvas.activity', 'canvas.quicknotes', 'canvas.tree', 'canvas.study', 'canvas.focus'].some(features.enabled));
-  takeToggle('calendar-countdown-toggle', 'navigation', features.enabled('canvas.calendar'));
+  takeToggle('hide-special-toggle', 'navigation', canvas && ['canvas.review', 'canvas.activity', 'canvas.quicknotes', 'canvas.tree', 'canvas.study'].some(features.enabled));
+  takeToggle('calendar-countdown-toggle', 'daily', features.enabled('daily.calendar'));
   takeRange('start-speed-range', 'navigation', canvas); takeRange('spine-speed-range', 'navigation', canvas);
   const learning = features.enabled('canvas.study') || features.enabled('canvas.tree');
   takeToggle('goal-tree-simple-toggle', 'learning', learning);
@@ -66,7 +67,7 @@
   toggle('starmap-motion-settings', 'starmap', features.enabled('canvas.activity'));
   toggle('career-scroll-feel-settings', 'career', features.enabled('career'));
   const usage = document.querySelector('[data-usage-panel]');
-  const usageFeatures = ['notes', 'canvas.editor', 'canvas.library', 'notes.canvas', 'research', 'canvas.study', 'canvas.tree', 'canvas.quicknotes', 'canvas.review', 'canvas.focus'];
+  const usageFeatures = ['notes', 'canvas.editor', 'canvas.library', 'notes.canvas', 'research', 'canvas.study', 'canvas.tree', 'canvas.quicknotes', 'canvas.review', 'daily.tasks'];
   if (usage && usageFeatures.some(features.enabled)) panels.get('usage').append(usage); else usage?.remove();
   source.remove();
   const hint = document.createElement('p'), rows = document.createElement('div');
@@ -104,6 +105,11 @@
     if (id === 'workspaces') {
       if (!await window.RelatumStartWorkspace.applyLayout(null, { reset: true })) throw new Error('Workspace handoff failed');
       orderList?.sync();
+    } else if (id === 'daily') {
+      localStorage.removeItem('daily:calendarCountdownEnabled');
+      localStorage.removeItem('daily:calendarCountdownProgressMode');
+      window.RelatumDailyLoader.applyCountdown(true);
+      document.dispatchEvent(new Event('daily:settings-reset'));
     } else if (id === 'usage') window.RelatumUsage?.resetSettings();
     else await adapter?.reset(id);
   }

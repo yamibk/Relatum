@@ -1,5 +1,9 @@
 'use strict';
 
+// Historical 2026-10-17 Canvas topology (calendar/focus spine and dual pages).
+// Retained for matching Git/release comparisons. Current Daily handoffs are
+// covered by daily-workspace-browser.js; current Canvas component/edit checks
+// use start-navigation-regression.js and start-navigation-edit-browser.js.
 // Continuous navigation on an isolated real homepage. No application dependency.
 // --baseline-only records Git assets; --compare alternates those assets/current.
 // --behavior checks real-page handoffs; --glyphs checks stroke-mask visibility.

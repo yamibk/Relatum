@@ -1,0 +1,173 @@
+<div class="focus-shell focus-timer-view" data-role="focus-timer-view">
+          <header class="focus-head">
+            <div>
+              <p class="study-eyebrow">FOCUS</p>
+              <h1>专注钟</h1>
+            </div>
+            <div class="focus-head-right">
+              <div class="focus-stats" aria-label="今日专注统计">
+                <div><strong data-role="focus-today-count">0</strong><span>今日段数</span></div>
+                <div><strong data-role="focus-today-time">0m</strong><span>今日专注</span></div>
+              </div>
+              <button type="button" class="page-refresh" data-action="focus-refresh"
+                aria-label="重新读取专注数据" title="重新读取任务/每日/记录（平时翻进来用上次结果；在别处改了，点这里才更新）">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+                <span>更新</span>
+              </button>
+              <button type="button" class="focus-gear" data-action="focus-settings"
+                aria-label="专注设置" aria-expanded="false">⚙</button>
+              <button type="button" class="focus-gear focus-help-btn" data-action="focus-help"
+                aria-label="专注页使用帮助" aria-expanded="false">?</button>
+            </div>
+          </header>
+
+          <div class="focus-workbench">
+            <div class="focus-timer-column">
+              <div class="focus-stage">
+                <div class="focus-ring-wrap" data-role="focus-ring-wrap" data-phase="idle">
+                  <svg class="focus-ring" viewBox="0 0 240 240" aria-hidden="true" focusable="false">
+                    <circle class="focus-ring-track" cx="120" cy="120" r="108"></circle>
+                    <circle class="focus-ring-fill" data-role="focus-ring-fill" cx="120" cy="120" r="108"
+                      transform="rotate(-90 120 120)"></circle>
+                  </svg>
+                  <div class="focus-ring-center">
+                    <div class="focus-time" data-role="focus-time" tabindex="0"
+                      title="双击修改专注时长">25:00</div>
+                    <input class="focus-time-edit" type="number" min="1" max="180" step="1"
+                      data-role="focus-time-edit" aria-label="专注时长（分钟）" hidden>
+                    <div class="focus-phase" data-role="focus-phase">准备开始</div>
+                  </div>
+                </div>
+                <div class="focus-mode-caption" data-role="focus-caption">番茄钟 · 专注 25 / 休息 5 分</div>
+              </div>
+              <div class="focus-cockpit" data-role="focus-cockpit" hidden aria-live="polite">
+                <p class="focus-cockpit-task" data-role="focus-cockpit-task"></p>
+                <div class="focus-cockpit-goal-row">
+                  <button type="button" class="focus-cockpit-goal" data-role="focus-cockpit-goal"
+                    title="点击修改这一段的目标"></button>
+                  <input class="focus-cockpit-goal-edit" type="text" maxlength="500"
+                    data-role="focus-cockpit-goal-edit" placeholder="为这一段写个目标" hidden>
+                </div>
+                <div class="focus-cockpit-rounds" data-role="focus-cockpit-rounds" hidden aria-hidden="true"></div>
+              </div>
+              <div class="focus-controls">
+                <button type="button" class="focus-action primary" data-role="focus-primary">开始</button>
+                <button type="button" class="focus-action" data-role="focus-finish" hidden>完成本段</button>
+                <button type="button" class="focus-action ghost" data-role="focus-reset" hidden>重置</button>
+              </div>
+              <p class="focus-zen-hint"><kbd>Space</kbd> 暂停　<kbd>Esc</kbd> 退出深度专注</p>
+            </div>
+
+            <div class="focus-prepare">
+              <div class="focus-prepare-head">
+                <div><p class="study-eyebrow">THIS SESSION</p><strong>准备这一段</strong></div>
+                <div class="focus-mode-switch" data-role="focus-mode-switch" role="group" aria-label="计时模式">
+                  <span class="focus-mode-slider" data-role="focus-mode-slider" aria-hidden="true"></span>
+                  <button type="button" data-mode="pomodoro" class="active">番茄钟</button>
+                  <button type="button" data-mode="countup">正计时</button>
+                </div>
+              </div>
+
+              <div class="focus-bind">
+                <span class="focus-bind-label">专注于</span>
+                <select class="focus-bind-select" data-role="focus-task" aria-label="绑定每日任务">
+                  <option value="">不绑定 · 只是专注</option>
+                </select>
+              </div>
+              <p class="focus-bind-feedback" data-role="focus-bind-feedback" aria-live="polite" hidden></p>
+              <label class="focus-goal">
+                <span>本段目标</span>
+                <input type="text" maxlength="500" data-role="focus-goal"
+                  placeholder="这一段准备完成什么？（可选）">
+              </label>
+              <p class="focus-ready-hint"><kbd>Space</kbd><span>开始或暂停</span></p>
+            </div>
+
+            <button type="button" class="focus-zen-enter" data-action="focus-zen-enter"
+              aria-label="进入深度专注（Z）" title="深度专注 · Z">⛶</button>
+          </div>
+
+          <div class="focus-footprint">
+            <p class="study-eyebrow">今日足迹</p>
+            <div class="focus-dots" data-role="focus-dots"></div>
+            <p class="focus-footprint-note" data-role="focus-footprint-note">今天还没有专注记录 · 开始第一段吧</p>
+          </div>
+
+          <section class="focus-overlay focus-wrapup" data-role="focus-wrapup" hidden aria-live="polite">
+            <div class="focus-overlay-card">
+              <p class="study-eyebrow">本段完成</p>
+              <h2 data-role="focus-wrapup-title">专注了 25 分钟</h2>
+              <p class="focus-wrapup-goal" data-role="focus-wrapup-goal"></p>
+              <label>
+                <span>实际完成</span>
+                <textarea rows="3" maxlength="1000" data-role="focus-outcome"
+                  placeholder="可选：留下结果、进度或下一步。"></textarea>
+              </label>
+              <div class="focus-wrapup-actions">
+                <button type="button" class="focus-action primary" data-action="focus-wrapup-next">保存并继续</button>
+                <button type="button" class="focus-action" data-action="focus-wrapup-stop">保存并收工</button>
+                <button type="button" class="focus-action" data-action="focus-wrapup-done" hidden>保存并完成任务</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="focus-overlay focus-session-editor" data-role="focus-session-editor" hidden>
+            <div class="focus-overlay-card">
+              <header>
+                <div><p class="study-eyebrow">专注记录</p><h2 data-role="focus-session-title">编辑这一段</h2></div>
+                <button type="button" class="study-icon-button" data-action="focus-session-close" aria-label="关闭">×</button>
+              </header>
+              <div class="focus-session-source" data-role="focus-session-source" hidden>
+                <span>任务簿</span>
+                <button type="button" data-action="focus-session-open-source">回到任务</button>
+              </div>
+              <label><span>目标</span><input type="text" maxlength="500" data-role="focus-session-goal"></label>
+              <label><span>成果</span><textarea rows="3" maxlength="1000" data-role="focus-session-outcome"></textarea></label>
+              <div class="focus-wrapup-actions">
+                <button type="button" class="focus-action ghost" data-action="focus-session-delete">删除记录</button>
+                <button type="button" class="focus-action primary" data-action="focus-session-save">保存修改</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- 设置浮层：时长 + 提示音（focus.js 控制开合，偏好存 localStorage）-->
+          <div class="focus-settings-pop" data-role="focus-settings-pop" hidden>
+            <div class="focus-settings-row">
+              <label>专注（分）<input type="number" min="1" max="180" step="1" data-role="focus-set-focus"></label>
+              <label>休息（分）<input type="number" min="1" max="60" step="1" data-role="focus-set-break"></label>
+            </div>
+            <div class="focus-settings-row">
+              <label>长休（分）<input type="number" min="1" max="90" step="1" data-role="focus-set-long"></label>
+              <label>几段后长休<input type="number" min="2" max="12" step="1" data-role="focus-set-rounds"></label>
+            </div>
+            <label class="focus-settings-toggle">
+              <input type="checkbox" data-role="focus-set-sound"> 结束提示音
+            </label>
+            <label class="focus-settings-toggle">
+              <input type="checkbox" data-role="focus-set-noise"> 柔和噪音 · 专注时
+            </label>
+            <label class="focus-settings-noise-vol" data-role="focus-noise-vol-row" hidden>
+              <span>噪音音量</span>
+              <span class="focus-noise-volume-range" style="--default-pos:50%;">
+                <input type="range" min="0" max="100" step="1" data-role="focus-set-noise-vol"
+                  aria-label="柔和噪音音量">
+              </span>
+            </label>
+          </div>
+          <aside class="focus-help-pop" data-role="focus-help-pop" hidden>
+            <header><div><p class="study-eyebrow">QUICK GUIDE</p><h2>怎么使用</h2></div>
+              <button type="button" class="study-icon-button" data-action="focus-help-close" aria-label="关闭">×</button>
+            </header>
+            <dl>
+              <div><dt>双击时间</dt><dd>修改番茄钟的专注分钟数；运行中不可修改。</dd></div>
+              <div><dt>选择任务</dt><dd>这一段可以计入所选的每日任务。</dd></div>
+              <div><dt>每日任务</dt><dd>从日常导航打开完整清单：勾选完成、管理分组，并回看累计天数与专注分钟。切换页面时计时继续。</dd></div>
+              <div><dt>本段目标</dt><dd>开始前写下这一段准备完成什么；运行中也可点座舱目标行随时补改。</dd></div>
+              <div><dt>结束收尾</dt><dd>补一句实际成果，再继续、收工或明确完成任务。</dd></div>
+              <div><dt>今日足迹</dt><dd>点击圆点可查看、修改或删除一段记录。</dd></div>
+              <div><dt>深度专注</dt><dd>运行时点 ⛶ 或按 Z 进入全屏极简，Esc 退出。</dd></div>
+            </dl>
+            <p class="focus-help-shortcuts"><kbd>Space</kbd> 开始 / 暂停　<kbd>Z</kbd> 深度专注　<kbd>?</kbd> 帮助　<kbd>Esc</kbd> 关闭 / 退出</p>
+            <footer>学习页记录长期进度，专注页负责执行，日历负责回看。</footer>
+          </aside>
+        </div>

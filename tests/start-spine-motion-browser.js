@@ -40,6 +40,17 @@ async function fixture(browser, config) {
     .replace('function measure() {', 'function measure() { window.P.measures++;') });
   await page.addScriptTag({ content: `
     const spine = document.querySelector('.left-spine');
+    // Keep this component stress fixture independent of the product page count.
+    const extra = label => {
+      const button = document.createElement('button'); button.className = 'study-spine-tab';
+      button.dataset.action = 'fixture-' + label;
+      const glyph = document.createElement('span'); glyph.textContent = label;
+      const tooltip = document.createElement('span'); tooltip.className = 'dot-bubble'; tooltip.textContent = label;
+      button.append(glyph, tooltip);
+      return button;
+    };
+    spine.insertBefore(extra('甲'), spine.querySelectorAll('.study-spine-tab')[1]);
+    spine.insertBefore(extra('乙'), spine.querySelector('[data-role="page-dots"]'));
     const dots = document.querySelector('[data-role="page-dots"]');
     for (const [id, title] of [['','最近'], ['__favorites__','收藏'], ['__inbox__','未分组']]) {
       const button = document.createElement('button');
@@ -182,8 +193,8 @@ async function behavior(browser, config) {
       assert(Math.abs(reverse.before - reverse.synchronous) < 1);
       assert(reverse.next > reverse.final + 10, 'reversal starts at displayed position');
       const stationary = await page.evaluate(async () => {
-        const original = document.querySelector('.calendar-spine-tab > .calendar-spine-glyph');
-        const copy = document.querySelector('.spine-copy-calendar');
+        const original = document.querySelector('.review-spine-tab > .review-spine-glyph');
+        const copy = document.querySelector('.spine-copy-review');
         let maxError = 0;
         for (const [index, delay] of [[6, 180], [0, 480]]) {
           S.activate(index); const start = performance.now();
@@ -214,10 +225,10 @@ async function behavior(browser, config) {
         assert.equal(state.activeProperties, 'transform'); assert.equal(state.trackProperties, 'transform');
       }
     }
-    await page.locator('.calendar-spine-tab').focus(); await page.waitForTimeout(360);
-    assert((await geometry(page, 1)).hoverError < 1.1);
+    await page.locator('.review-spine-tab').focus(); await page.waitForTimeout(360);
+    assert((await geometry(page, 0)).hoverError < 1.1);
     await page.keyboard.press('Tab'); await page.waitForTimeout(360);
-    assert((await geometry(page, 2)).hoverError < 1.1);
+    assert((await geometry(page, 1)).hoverError < 1.1);
     await page.evaluate(() => S.clear({ animate: false }));
     await page.setViewportSize({ width: 680, height: 450 }); await frame(page);
     let calibrated = await geometry(page);
@@ -233,10 +244,10 @@ async function behavior(browser, config) {
 
     await page.evaluate(() => {
       document.documentElement.lang = 'en';
-      document.querySelector('.calendar-spine-tab > .calendar-spine-glyph').textContent = 'D';
+      document.querySelector('.review-spine-tab > .review-spine-glyph').textContent = 'D';
     }); await frame(page);
-    assert.equal(await page.locator('.spine-copy-calendar').textContent(), 'D');
-    assert.equal(await page.locator('.calendar-spine-glyph').count(), 1);
+    assert.equal(await page.locator('.spine-copy-review').textContent(), 'D');
+    assert.equal(await page.locator('.review-spine-glyph').count(), 1);
     const replicas = await page.locator('.spine-glyph-clip').evaluate(element => ({
       hidden: element.getAttribute('aria-hidden'), copies: element.querySelectorAll('.spine-glyph-slot').length,
       interactive: element.querySelectorAll('button,[id],[data-action],[data-i18n],[tabindex]').length

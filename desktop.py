@@ -1029,7 +1029,7 @@ def main() -> int:
         show_main=show_main_window,
         request_quit=request_quit_from_tray,
         fatal_error=wallpaper_fatal_error,
-    ) if profile.enabled("calendar.wallpaper") else None
+    ) if profile.enabled("daily.calendar.wallpaper") else None
 
     def on_shown() -> None:
         startup_mark("window-shown")

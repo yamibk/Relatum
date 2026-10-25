@@ -186,21 +186,21 @@ async function runChecks(browser, url) {
         entrance.pause();
         entrance.currentTime = Number(entrance.effect.getTiming().duration) * .2;
         const before = { opacity: Number(getComputedStyle(element).opacity), transform: getComputedStyle(element).transform };
-        document.querySelector('.calendar-spine-tab').click();
+        document.querySelector('.review-spine-tab').click();
         const afterInput = { opacity: Number(getComputedStyle(element).opacity), transform: getComputedStyle(element).transform };
         return { before, afterInput };
       });
       assert(continuity.before.opacity > .1 && continuity.before.opacity < .95);
       assert(Math.abs(continuity.before.opacity - continuity.afterInput.opacity) < .001);
       assert.equal(continuity.before.transform, continuity.afterInput.transform);
-      await f.page.waitForSelector('.calendar-spine-tab.active');
+      await f.page.waitForSelector('.review-spine-tab.active');
       const submitted = await f.page.evaluate(() => {
         const element = document.querySelector('.book-page'), stage = document.querySelector('[data-role="book-stage"]');
         return { view: document.querySelector('.book-view').dataset.viewName, leaving: stage.classList.contains('view-leaving'),
           retired: stage.getAttribute('aria-hidden') === 'true' && getComputedStyle(stage).visibility === 'hidden',
           opacity: Number(getComputedStyle(element).opacity), transform: getComputedStyle(element).transform };
       });
-      assert.equal(submitted.view, 'calendar');
+      assert.equal(submitted.view, 'review');
       assert(submitted.leaving || submitted.retired, 'the library stage is exiting or has completed its early fade');
       assert(Math.abs(continuity.before.opacity - submitted.opacity) < .001,
         'committing a special page retains the old library entrance opacity beneath the outer exit');

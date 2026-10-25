@@ -3,7 +3,7 @@
   'use strict';
   const seed = window.RelatumDesktopPreferencesSeed;
   if (!seed) return;
-  const managed = key => typeof key === 'string' && /^(canvas:|research:)/.test(key);
+  const managed = key => typeof key === 'string' && /^(canvas:|research:|daily:)/.test(key);
   const storage = window.localStorage;
   const proto = Storage.prototype;
   const set = proto.setItem, remove = proto.removeItem, clear = proto.clear;

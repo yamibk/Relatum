@@ -82,18 +82,22 @@ class LaunchProfile:
         parent = FEATURES[key].get("parent")
         return self.choices[key] and (not parent or self.enabled(parent)) and all(self.enabled(dependency) for dependency in FEATURES[key].get("requires", []))
 
+    def workspace_available(self, key: str) -> bool:
+        candidates = FEATURES.get(key, {}).get("availableWhenAny", [])
+        return self.enabled(key) and (not candidates or any(self.enabled(child) for child in candidates))
+
     @property
     def canvas_home(self) -> bool:
         return any(self.enabled(key) for key in CANVAS_HOME_IDS)
 
     @property
     def has_home(self) -> bool:
-        return self.canvas_home or any(self.enabled(key) for key in WORKSPACE_IDS if key != "canvas")
+        return self.canvas_home or any(self.workspace_available(key) for key in WORKSPACE_IDS if key != "canvas")
 
     @property
     def workspaces(self) -> tuple[str, ...]:
         canvas = ("canvas",) if self.canvas_home or self.enabled("canvas.editor") else ()
-        return canvas + tuple(key for key in WORKSPACE_IDS if key != "canvas" and self.enabled(key))
+        return canvas + tuple(key for key in WORKSPACE_IDS if key != "canvas" and self.workspace_available(key))
 
     @property
     def session_key(self) -> str:
@@ -152,7 +156,7 @@ class LaunchProfile:
     def bootstrap(self) -> str:
         features = {key: self.enabled(key) for key in FEATURES}
         views = {item["view"]: key for key, item in FEATURES.items() if "view" in item}
-        return "<script>window.RelatumFeatures=Object.freeze(" + json.dumps({"restricted": self.restricted, "features": features, "views": views, "canvasHome": self.canvas_home, "workspaces": WORKSPACES}, ensure_ascii=True) + ");</script>"
+        return "<script>window.RelatumFeatures=Object.freeze(" + json.dumps({"restricted": self.restricted, "features": features, "views": views, "canvasHome": self.canvas_home, "workspaces": WORKSPACES, "availableWorkspaces": self.workspaces}, ensure_ascii=True) + ");</script>"
 
 
 FULL_PROFILE = LaunchProfile({key: True for key in FEATURES})
@@ -243,7 +247,7 @@ class FeatureHTML(HTMLParser):
         if (action == "graph" or attrs.get("data-role") == "graph-overlay") and not p.enabled("editor.graph"):
             return True
         workspace = attrs.get("data-start-workspace") or attrs.get("data-start-workspace-panel")
-        if workspace and not (p.canvas_home if workspace == "canvas" else p.enabled(workspace)):
+        if workspace and not (p.canvas_home if workspace == "canvas" else p.workspace_available(workspace)):
             return True
         role = attrs.get("data-role")
         for key, item in FEATURES.items():

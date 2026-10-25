@@ -1,16 +1,57 @@
 {
   "version": 1,
   "workspaces": [
-    { "id": "canvas", "label": ["画布", "Canvas"], "panel": "start-canvas-workspace", "defaultVisible": true },
-    { "id": "notes", "label": ["笔记", "Notes"], "panel": "start-notes-workspace", "defaultVisible": true },
-    { "id": "research", "label": ["研究", "Research"], "panel": "start-research-workspace", "defaultVisible": true },
-    { "id": "career", "label": ["生涯", "Career"], "panel": "start-career-workspace", "defaultVisible": true }
+    {
+      "id": "canvas",
+      "label": [
+        "画布",
+        "Canvas"
+      ],
+      "panel": "start-canvas-workspace",
+      "defaultVisible": true
+    },
+    {
+      "id": "notes",
+      "label": [
+        "笔记",
+        "Notes"
+      ],
+      "panel": "start-notes-workspace",
+      "defaultVisible": true
+    },
+    {
+      "id": "research",
+      "label": [
+        "研究",
+        "Research"
+      ],
+      "panel": "start-research-workspace",
+      "defaultVisible": true
+    },
+    {
+      "id": "career",
+      "label": [
+        "生涯",
+        "Career"
+      ],
+      "panel": "start-career-workspace",
+      "defaultVisible": true
+    },
+    {
+      "id": "daily",
+      "label": [
+        "日常",
+        "Daily"
+      ],
+      "panel": "start-daily-workspace",
+      "defaultVisible": false
+    }
   ],
   "features": [
     {
       "id": "canvas",
       "label": "画布工作区",
-      "description": "画布文件管理、编辑器与七个特殊页面的总开关。",
+      "description": "画布文件管理、编辑器、复习、活跃、速记、树状和学习。",
       "default": true
     },
     {
@@ -150,35 +191,33 @@
       "default": true
     },
     {
-      "id": "canvas.calendar",
-      "parent": "canvas",
-      "label": "日历",
-      "description": "日历、日记、记账与倒数日。",
+      "id": "daily.calendar",
+      "parent": "daily",
+      "label": "日历与日记",
+      "description": "日历、日记与倒数日。",
       "view": "calendar",
-      "home": true,
-      "role": "calendar-view",
       "scripts": [
         "calendar.js",
-        "ledger.js",
-        "ledger-model.js",
+        "daily-calendar.css",
         "countdown.js"
       ],
       "pages": [
         "countdown.html"
-      ],
-      "writePrefixes": [
-        "/api/ledger-"
       ],
       "writePaths": [
         "/api/diary-save",
         "/api/diary-delete",
         "/api/countdown-save"
       ],
-      "default": true
+      "default": true,
+      "readPaths": [
+        "/api/calendar",
+        "/api/countdown"
+      ]
     },
     {
-      "id": "calendar.wallpaper",
-      "parent": "canvas.calendar",
+      "id": "daily.calendar.wallpaper",
+      "parent": "daily.calendar",
       "label": "动态桌面背景",
       "description": "允许倒数日启动独立桌面背景进程。关闭后不创建背景宿主。",
       "default": true
@@ -248,21 +287,24 @@
       "default": true
     },
     {
-      "id": "canvas.focus",
-      "parent": "canvas",
+      "id": "daily.focus",
+      "parent": "daily",
       "label": "专注",
-      "description": "专注钟、每日任务与声音。",
+      "description": "独立专注计时、成果记录与声音。",
       "view": "focus",
-      "home": true,
-      "role": "focus-view",
       "scripts": [
-        "focus.js"
+        "focus.js",
+        "focus-service.js",
+        "daily-focus.css",
+        "daily-focus.html"
       ],
       "writePrefixes": [
-        "/api/focus-",
-        "/api/daily-"
+        "/api/focus-"
       ],
-      "default": true
+      "default": true,
+      "readPaths": [
+        "/api/focus"
+      ]
     },
     {
       "id": "notes",
@@ -298,9 +340,16 @@
       "parent": "notes",
       "label": "笔记 AI",
       "description": "临时聊天和系统预设，对话退出后不保存；关闭后不加载 AI 或访问其配置和服务。",
-      "scripts": ["note-ai.js", "note-ai.css"],
-      "readPrefixes": ["/api/note-ai/"],
-      "writePrefixes": ["/api/note-ai/"],
+      "scripts": [
+        "note-ai.js",
+        "note-ai.css"
+      ],
+      "readPrefixes": [
+        "/api/note-ai/"
+      ],
+      "writePrefixes": [
+        "/api/note-ai/"
+      ],
       "default": true
     },
     {
@@ -308,8 +357,13 @@
       "parent": "notes",
       "label": "笔记图谱",
       "description": "笔记本关系图谱；关闭后不加载图谱脚本、数据或绘制引擎。",
-      "scripts": ["note-graph.js", "note-graph-layout-worker.js"],
-      "readPaths": ["/api/note-graph"],
+      "scripts": [
+        "note-graph.js",
+        "note-graph-layout-worker.js"
+      ],
+      "readPaths": [
+        "/api/note-graph"
+      ],
       "default": true
     },
     {
@@ -317,7 +371,12 @@
       "parent": "notes",
       "label": "Mermaid 图表",
       "description": "笔记中的 Mermaid 图表，使用离线 Pele 引擎；关闭后保留代码，不加载专属脚本、样式或引擎。",
-      "scripts": ["note-mermaid.js", "note-mermaid-worker.js", "note-mermaid.css", "vendor/pele/"],
+      "scripts": [
+        "note-mermaid.js",
+        "note-mermaid-worker.js",
+        "note-mermaid.css",
+        "vendor/pele/"
+      ],
       "default": true
     },
     {
@@ -325,9 +384,16 @@
       "parent": "notes",
       "label": "笔记内嵌画布",
       "description": "笔记中的独立画布块；关闭后显示原引用，不加载引擎或读取画布。",
-      "scripts": ["note-canvas/", "note-canvas-style.js"],
-      "readPrefixes": ["/api/notes-canvas/"],
-      "writePrefixes": ["/api/notes-canvas/"],
+      "scripts": [
+        "note-canvas/",
+        "note-canvas-style.js"
+      ],
+      "readPrefixes": [
+        "/api/notes-canvas/"
+      ],
+      "writePrefixes": [
+        "/api/notes-canvas/"
+      ],
       "default": true
     },
     {
@@ -353,9 +419,12 @@
       "label": "生涯工作区",
       "description": "本地冻结使用报告。关闭后不预载报告。",
       "scripts": [
-        "career-report.js", "career/"
+        "career-report.js",
+        "career/"
       ],
-      "readPrefixes": ["/api/career/"],
+      "readPrefixes": [
+        "/api/career/"
+      ],
       "writePrefixes": [
         "/api/career/"
       ],
@@ -366,12 +435,80 @@
       "label": "后台预加载",
       "description": "提前准备未打开的页面、笔记编辑器和展示字体。取消后首次使用时加载，减少启动后的内存占用；所有已选功能仍可使用。",
       "default": true
+    },
+    {
+      "id": "daily",
+      "label": "日常工作区",
+      "description": "每日任务、日历、专注与记账。",
+      "default": true,
+      "availableWhenAny": [
+        "daily.tasks",
+        "daily.calendar",
+        "daily.focus",
+        "daily.ledger"
+      ],
+      "scripts": [
+        "daily-workspace.js",
+        "daily-workspace.css"
+      ]
+    },
+    {
+      "id": "daily.tasks",
+      "parent": "daily",
+      "label": "每日任务",
+      "description": "分组、每日打卡与累计目标。",
+      "default": true,
+      "scripts": [
+        "daily-tasks.js",
+        "daily-tasks.css",
+        "daily-tasks.html"
+      ],
+      "readPaths": [
+        "/api/daily"
+      ],
+      "writePrefixes": [
+        "/api/daily-"
+      ]
+    },
+    {
+      "id": "daily.ledger",
+      "parent": "daily",
+      "label": "记账",
+      "description": "独立收支账本。",
+      "default": true,
+      "scripts": [
+        "ledger.js",
+        "ledger-model.js",
+        "daily-ledger.css"
+      ],
+      "readPaths": [
+        "/api/ledger"
+      ],
+      "writePrefixes": [
+        "/api/ledger-"
+      ]
     }
   ],
   "sharedScripts": {
-    "review-controls.js": ["canvas.review", "notes.ai"],
-    "review-controls.css": ["canvas.review", "notes.ai"],
-    "usage-tracker.js": ["notes", "research", "canvas.editor", "canvas.library", "canvas.study", "canvas.tree", "canvas.quicknotes", "canvas.review", "canvas.focus"],
+    "review-controls.js": [
+      "canvas.review",
+      "notes.ai"
+    ],
+    "review-controls.css": [
+      "canvas.review",
+      "notes.ai"
+    ],
+    "usage-tracker.js": [
+      "notes",
+      "research",
+      "canvas.editor",
+      "canvas.library",
+      "canvas.study",
+      "canvas.tree",
+      "canvas.quicknotes",
+      "canvas.review",
+      "daily.tasks"
+    ],
     "markdown-table.js": [
       "canvas.editor",
       "notes"
@@ -394,38 +531,46 @@
     "study-palette.js": [
       "canvas.tree",
       "canvas.study",
-      "canvas.calendar",
-      "canvas.quicknotes"
+      "daily.calendar",
+      "canvas.quicknotes",
+      "daily.ledger"
     ],
     "study-goal-tree.js": [
       "canvas.tree",
       "canvas.study"
     ],
     "start-sticky-notes.js": [
+      "daily.calendar",
+      "daily.focus",
+      "daily.ledger",
       "canvas.library",
       "canvas.study",
       "canvas.activity",
-      "canvas.calendar",
-      "canvas.review",
-      "canvas.focus"
+      "canvas.review"
     ],
     "start-navigation.js": [
-      "canvas.library", "canvas.review", "canvas.calendar", "canvas.activity",
-      "canvas.quicknotes", "canvas.tree", "canvas.study", "canvas.focus"
+      "canvas.library",
+      "canvas.review",
+      "canvas.activity",
+      "canvas.quicknotes",
+      "canvas.tree",
+      "canvas.study"
     ],
     "start-spine.js": [
-      "canvas.library", "canvas.review", "canvas.calendar", "canvas.activity",
-      "canvas.quicknotes", "canvas.tree", "canvas.study", "canvas.focus"
+      "canvas.library",
+      "canvas.review",
+      "canvas.activity",
+      "canvas.quicknotes",
+      "canvas.tree",
+      "canvas.study"
     ],
     "start.js": [
       "canvas.library",
       "canvas.review",
-      "canvas.calendar",
       "canvas.activity",
       "canvas.quicknotes",
       "canvas.tree",
-      "canvas.study",
-      "canvas.focus"
+      "canvas.study"
     ],
     "windowed-list.js": [
       "canvas.library",
@@ -443,9 +588,9 @@
       "canvas.library",
       "canvas.study",
       "canvas.activity",
-      "canvas.calendar",
+      "daily.calendar",
       "canvas.review",
-      "canvas.focus"
+      "daily.tasks"
     ],
     "markdown.js": [
       "research",
@@ -454,18 +599,29 @@
       "canvas.quicknotes",
       "canvas.study",
       "canvas.tree",
-      "canvas.calendar"
+      "daily.calendar"
     ],
     "mermaid-renderer.js": [
       "canvas.editor",
       "canvas.quicknotes",
       "canvas.study",
       "canvas.tree",
-      "canvas.calendar"
+      "daily.calendar"
     ]
   },
   "sharedWrites": {
-    "/api/usage/batch": ["career", "notes", "research", "canvas.editor", "canvas.library", "canvas.study", "canvas.tree", "canvas.quicknotes", "canvas.review", "canvas.focus"],
+    "/api/usage/batch": [
+      "career",
+      "notes",
+      "research",
+      "canvas.editor",
+      "canvas.library",
+      "canvas.study",
+      "canvas.tree",
+      "canvas.quicknotes",
+      "canvas.review",
+      "daily.tasks"
+    ],
     "/api/rename": [
       "canvas.editor",
       "canvas.library"
@@ -475,12 +631,14 @@
       "canvas.library"
     ],
     "/api/start-sticky-notes-save": [
+      "daily.focus",
+      "daily.ledger",
       "canvas.library",
       "canvas.study",
       "canvas.activity",
-      "canvas.calendar",
+      "daily.calendar",
       "canvas.review",
-      "canvas.focus"
+      "daily.tasks"
     ]
   }
 }

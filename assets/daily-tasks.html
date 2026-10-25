@@ -1,0 +1,53 @@
+<section class="focus-daily focus-daily-view" data-role="focus-daily" aria-label="每日任务视图">
+          <div class="focus-daily-scroll" data-role="focus-daily-scroll" tabindex="-1">
+            <header class="focus-daily-head">
+              <div>
+                <p class="study-eyebrow">DAILY</p>
+                <h1>每日任务 <span data-role="focus-daily-count">0</span></h1>
+              </div>
+              <button type="button" class="focus-daily-create" data-action="daily-compose-toggle"
+                aria-label="新增每日任务或分组" aria-expanded="false">＋</button>
+            </header>
+            <div class="focus-daily-content">
+              <div class="focus-daily-skeleton" data-role="focus-daily-skeleton" aria-hidden="true" hidden>
+                <span></span><span></span><span></span>
+              </div>
+              <div class="focus-daily-list" data-role="focus-daily-list"></div>
+            </div>
+            <div class="focus-daily-composer" data-role="focus-daily-composer" hidden>
+              <div class="focus-daily-composer-inner">
+                <div class="focus-daily-compose" data-role="focus-daily-compose">
+                  <div class="focus-daily-compose-modes" role="group" aria-label="新增类型">
+                    <button type="button" class="is-active" data-role="daily-compose-task" aria-pressed="true">任务</button>
+                    <button type="button" data-role="daily-compose-group" aria-pressed="false">分组</button>
+                  </div>
+                  <button type="button" class="focus-daily-compose-target" data-role="daily-compose-target" hidden></button>
+                </div>
+                <form class="focus-daily-add" data-role="focus-daily-add">
+                  <input type="text" maxlength="80" data-role="focus-daily-input"
+                    placeholder="添加一件今天想坚持的事…" aria-label="新增每日任务">
+                  <button type="submit" class="focus-daily-add-btn" aria-label="添加每日任务">＋</button>
+                </form>
+              </div>
+            </div>
+            <p class="focus-daily-foot" data-role="focus-daily-foot"></p>
+          </div>
+          <div class="focus-daily-celebrate" data-role="focus-daily-celebrate"
+            data-phase="hidden" aria-hidden="true" aria-labelledby="focus-daily-celebrate-title">
+            <div class="focus-daily-celebrate-inner">
+              <div class="focus-daily-star-gather" aria-hidden="true">
+                <span class="focus-daily-star-halo"></span>
+                <i class="focus-daily-star-dot dot-far-left"></i>
+                <i class="focus-daily-star-dot dot-near-left"></i>
+                <span class="focus-daily-star-main"></span>
+                <i class="focus-daily-star-dot dot-near-right"></i>
+                <i class="focus-daily-star-dot dot-far-right"></i>
+              </div>
+              <div class="focus-daily-celebrate-copy" aria-live="polite" aria-atomic="true">
+                <strong id="focus-daily-celebrate-title">今日清单已全部完成</strong>
+                <span class="focus-daily-celebrate-sub" data-role="focus-daily-celebrate-sub"></span>
+              </div>
+              <button type="button" class="focus-daily-review-today" data-action="daily-review-today">回顾今日</button>
+            </div>
+          </div>
+        </section>

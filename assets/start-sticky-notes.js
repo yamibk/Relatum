@@ -3,8 +3,8 @@
 (function () {
   'use strict';
 
-  const bookView = document.querySelector('.book-view');
-  const main = document.querySelector('.start-main');
+  const bookView = document.querySelector('.book-view') || document.querySelector('#start-daily-workspace');
+  const main = document.querySelector('.start-main') || bookView;
   const bookStage = document.querySelector('[data-role="book-stage"]');
   const leftSpine = document.querySelector('.left-spine');
   if (!bookView || !main) return;
@@ -55,6 +55,7 @@
   let lastColor = '';
   let lastColorFamily = '';
   let suppressClickUntil = 0;
+  let cancelActiveDrag = null;
 
   function tr(text) {
     return window.RelatumI18n && typeof window.RelatumI18n.t === 'function'
@@ -381,6 +382,7 @@
     };
 
     const finish = (upEvent) => {
+      cancelActiveDrag = null;
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', cancel);
@@ -406,6 +408,7 @@
     };
 
     const cancel = (cancelEvent) => {
+      cancelActiveDrag = null;
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', cancel);
@@ -417,6 +420,7 @@
       if (cancelEvent) cancelEvent.stopPropagation();
     };
 
+    cancelActiveDrag = cancel;
     window.addEventListener('pointermove', onMove, { passive: false });
     window.addEventListener('pointerup', finish);
     window.addEventListener('pointercancel', cancel);
@@ -564,6 +568,7 @@
   }
 
   function activateView(view) {
+    cancelActiveDrag?.();
     if (editingEl) finishEdit();
     clearSelected();
     activeRawView = view || '';
@@ -571,6 +576,7 @@
     activeHost = hostForView(activeRawView);
     if (!activeScope || !activeHost) {
       ensureLayer(null);
+      layer?.replaceChildren();
       return;
     }
     ensureLayer(activeHost);
@@ -614,7 +620,21 @@
   });
 
   document.addEventListener('start:viewchange', (event) => {
+    if (window.RelatumStartWorkspace?.current !== 'canvas') return;
     activateView(event.detail && event.detail.current ? event.detail.current : '');
+  });
+  document.addEventListener('daily:hostchange', event => {
+    activateView('');
+    hosts.calendar = null; hosts.focus = null;
+    const { scope, root } = event.detail || {};
+    if (root && (scope === 'calendar' || scope === 'focus')) {
+      hosts[scope] = root;
+      activateView(scope);
+    }
+  });
+  document.addEventListener('relatum:start-workspacechange', event => {
+    if (event.detail.workspace === 'canvas') activateView(bookView.dataset.viewName || main.dataset.state || '');
+    else if (event.detail.workspace !== 'daily') activateView('');
   });
 
   if (window.RelatumI18n && typeof window.RelatumI18n.onChange === 'function') {
@@ -638,5 +658,6 @@
   });
 
   const initialView = bookView.dataset.viewName || main.dataset.state || '';
-  activateView(initialView);
+  if (window.RelatumStartWorkspace?.current === 'canvas') activateView(initialView);
+  window.RelatumStartPageNotes = Object.freeze({ flush: flushSave });
 })();

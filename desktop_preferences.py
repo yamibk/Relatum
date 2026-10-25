@@ -19,7 +19,7 @@ def read_launcher_language(root: Path) -> str:
 
 
 def managed_key(key) -> bool:
-    return isinstance(key, str) and key.startswith(("canvas:", "research:")) and len(key) <= 256
+    return isinstance(key, str) and key.startswith(("canvas:", "research:", "daily:")) and len(key) <= 256
 
 
 class DesktopPreferences:

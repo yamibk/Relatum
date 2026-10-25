@@ -9,24 +9,14 @@ const start = read('assets/start.js');
 const calendar = read('assets/calendar.js');
 const ledger = read('assets/ledger.js');
 const ledgerModel = read('assets/ledger-model.js');
-const styles = read('assets/styles.css');
+const styles = read('assets/styles.css') + read('assets/daily-calendar.css') + read('assets/daily-ledger.css');
 const backend = read('app.py');
 
-// 日历和记账必须是同一页内两个真正隔离的叠层，隐藏层不参与布局、焦点或辅助技术。
-assert(index.includes('data-role="calendar-shell"'), 'calendar layer is missing');
-assert(index.includes('data-role="ledger-shell"'), 'ledger layer is missing');
-assert(index.includes('aria-hidden="true" inert hidden'), 'ledger starts hidden and inert');
-assert(index.includes('<script src="ledger.js" defer></script>'), 'ledger runtime is not loaded');
-assert(index.includes('<script src="ledger-model.js" defer></script>'), 'ledger model is not loaded');
-assert(styles.includes('.calendar-mode-stage') && styles.includes('grid-area: 1 / 1'), 'internal layers are not overlaid');
-
-// 再次点击已激活的书脊只委托给日历协调层，内部模式和无障碍状态由一处维护。
-assert(start.includes('window.CanvasCalendar.toggleMode()'), 'repeat spine click does not toggle calendar mode');
-assert(calendar.includes("const VIEW_MODE_KEY = 'calendar:viewMode:v1'"), 'view preference key is missing');
-assert(calendar.includes('toggleMode()') && calendar.includes('getViewMode()'), 'calendar public mode contract is incomplete');
-assert(calendar.includes("layer.toggleAttribute('inert', !active)"), 'hidden mode is not made inert');
-assert(calendar.includes("layer.setAttribute('aria-hidden', active ? 'false' : 'true')"), 'mode aria-hidden is not synchronized');
-assert(calendar.includes('api.activate()') && calendar.includes('api.deactivate()'), 'ledger lifecycle is not coordinated');
+// Both pages load through Daily, with no hidden startup DOM or cross-page warmup.
+assert(!index.includes('data-role="calendar-shell"') && !index.includes('data-role="ledger-shell"'));
+assert(!index.includes('<script src="ledger.js"') && !index.includes('<script src="calendar.js"'));
+assert(calendar.includes('RelatumDailyCalendar') && ledger.includes('RelatumDailyLedger'));
+assert(!calendar.includes('ledgerApi()') && !calendar.includes('toggleMode()'));
 
 // 锚定设置卡包含收支、金额、可选倍率、日期和可选备注；已有流水支持进入编辑和同槽二次删除。
 for (const marker of ["['expense', 'income']", 'ledgerAmount', 'ledgerMultiplier', 'ledgerDate', 'ledgerNote']) {
@@ -74,8 +64,8 @@ assert(!changePageSection.includes('discardDraft') && !changePageSection.include
 
 // 记账只保留月导航、四个无文字色块和单一新增入口，不混入首版明确排除的复杂功能。
 assert(ledger.includes("const fallback = ['', '', '', '']") && ledger.includes('raw.colors.length !== 4'), 'four visual legend chips are missing');
-assert(ledger.includes("const LEGEND_KEY = 'ledger:legend:v1'"), 'legend preference key is missing');
-assert(ledger.includes("const PAGE_KEY = 'ledger:page:v1'") && ledger.includes('const PAGE_MAX = model.PAGE_MAX'),
+assert(ledger.includes("const LEGEND_KEY = 'daily:ledger:legend:v1'"), 'legend preference key is missing');
+assert(ledger.includes("const PAGE_KEY = 'daily:ledger:page:v1'") && ledger.includes('const PAGE_MAX = model.PAGE_MAX'),
   'ledger page preference or range is missing');
 assert(ledger.includes('data-ledger-page-rail') && ledger.includes('data-ledger-page-orb')
   && ledger.includes('data-ledger-page-list'), 'right-edge ledger page rail is missing');
@@ -89,13 +79,13 @@ assert(ledger.includes('data-ledger-page-settings') && ledger.includes('data-led
   && ledger.includes("'/api/ledger-page-unit'"), 'per-page amount unit editor is missing');
 assert(ledger.includes('if (unit === previousUnit)') && ledger.includes('setViewForPage(page, nextViewMode)'),
   'local display settings still depend on an unnecessary unit request');
-assert(ledger.includes("const VIEW_KEY = 'ledger:viewByPage:v1'") && ledger.includes('data-ledger-view')
+assert(ledger.includes("const VIEW_KEY = 'daily:ledger:viewByPage:v1'") && ledger.includes('data-ledger-view')
   && ledger.includes("'cumulative'"),
   'remembered monthly/cumulative ledger view is missing');
 assert(ledger.includes('function viewForPage(') && ledger.includes('function setViewForPage(')
   && ledger.includes('state.viewMode = viewForPage(next)'),
   'per-page ledger view store is missing');
-assert(ledger.includes("const HIDE_KEY = 'ledger:hideDecimalsByPage:v1'")
+assert(ledger.includes("const HIDE_KEY = 'daily:ledger:hideDecimalsByPage:v1'")
   && ledger.includes('function hideDecimalsForPage(') && ledger.includes('function setHideForPage(')
   && ledger.includes('state.hideDecimals = hideDecimalsForPage(next)'),
   'per-page hide-decimals store is missing');
@@ -103,7 +93,7 @@ assert(ledger.includes('absolute / 100n') && ledger.includes('state.hideDecimals
   'hide-decimals display truncation is missing');
 assert(ledger.includes('data-ledger-hide-decimals') && ledger.includes("'隐藏小数'"),
   'hide-decimals toggle in page settings is missing');
-assert(ledger.includes("const DEFAULT_TYPE_KEY = 'ledger:defaultTypeByPage:v1'")
+assert(ledger.includes("const DEFAULT_TYPE_KEY = 'daily:ledger:defaultTypeByPage:v1'")
   && ledger.includes('function defaultTypeForPage(') && ledger.includes('function setDefaultTypeForPage('),
   'per-page default entry type preference is missing');
 assert(ledger.includes('dataset.ledgerDefaultType')
@@ -135,7 +125,7 @@ assert(ledger.includes("window.crypto.randomUUID()") && ledger.includes('id: opt
 assert(ledgerModel.includes('BigInt(amount)') && ledgerModel.includes('MULTIPLIER_SCALE / 2n')
   && ledgerModel.includes('derivePayload'), 'exact fixed-point ledger model is missing');
 assert(ledger.includes('requestIdleCallback') && ledger.includes('function warmup()'), 'full ledger is not warmed during start-page idle time');
-assert(ledger.includes('mount();') && ledger.includes('warmup();'), 'ledger is not mounted and warmed at startup');
+assert(ledger.includes('mount();') && !/\n\s*warmup\(\);/.test(ledger), 'ledger warms only when explicitly requested');
 assert(styles.includes('@media (prefers-reduced-motion: reduce)') && styles.includes('.ledger-shell'), 'reduced-motion fallback is missing');
 
 // 前后端接口与 v2 文件、revision、备份/损坏隔离和原子替换契约必须同时存在。

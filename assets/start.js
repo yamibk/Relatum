@@ -61,7 +61,7 @@
   const notesConsoleHelpTrigger = document.querySelector('[data-role="notes-console-help-trigger"]');
   const notesConsoleShortcutsToggle = document.querySelector('[data-role="notes-console-shortcuts-toggle"]');
   const notesConsoleHelpPanel = document.querySelector('[data-role="notes-console-help-panel"]');
-  const calendarCountdownToggle = document.querySelector('[data-role="calendar-countdown-toggle"]');
+
   const hideSpecialToggle = document.querySelector('[data-role="hide-special-toggle"]');
   const goalTreeSimpleToggle = document.querySelector('[data-role="goal-tree-simple-toggle"]');
   const goalTreeUnlockToggle = document.querySelector('[data-role="goal-tree-unlock-toggle"]');
@@ -144,7 +144,7 @@
   const NOTES_CREATE_BROWSE_SHORTCUTS_DISABLED_KEY = 'canvas:notesCreateBrowseShortcutsDisabled:v1';
   const NOTES_CONSOLE_HOTSPOT_WIDTH = 48;
   const NOTES_CONSOLE_HOTSPOT_HEIGHT = 72;
-  const CALENDAR_COUNTDOWN_KEY = 'canvas:calendarCountdownEnabled';
+
   const HIDE_SPECIAL_KEY = 'canvas:hideSpecialPages';
   const GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
   const GOAL_TREE_ENFORCE_UNLOCK_KEY = 'canvas:goalTreeEnforceUnlock:v1';
@@ -163,7 +163,7 @@
   let darkCardPresentation = null;
   let startViewTransitionTimer = 0;
   let startViewMotionVersion = 0;
-  const START_VIEW_ORDER = { review: 0, calendar: 1, cadence: 2, notes: 3, tree: 4, study: 5, focus: 6, recent: 7, empty: 7, loading: 7 };
+  const START_VIEW_ORDER = { review: 0, cadence: 1, notes: 2, tree: 3, study: 4, recent: 5, empty: 5, loading: 5 };
   const START_VIEW_MOTION_CLASSES = ['view-entering', 'view-leaving', 'view-motion-forward', 'view-motion-back'];
   // No legacy heartbeat or JSON ledger collector.
 
@@ -416,16 +416,7 @@
     return active;
   }
 
-  function applyCalendarCountdownEnabled(enabled, persist) {
-    const active = enabled !== false;
-    if (calendarCountdownToggle) calendarCountdownToggle.checked = active;
-    if (persist) {
-      try { localStorage.setItem(CALENDAR_COUNTDOWN_KEY, active ? '1' : '0'); } catch (e) {}
-    }
-    document.dispatchEvent(new CustomEvent('calendar:countdown-visibility', {
-      detail: { enabled: active },
-    }));
-  }
+
 
   // Recording preferences are owned by the unified usage service.
 
@@ -633,10 +624,9 @@
   }
 
   function startViewCleanupDelay(previous, next) {
-    const calendarMotion = previous === 'calendar' || next === 'calendar';
     if (next === 'review') return Math.max(760, startTurnSpeed + 500);
     if (previous === 'review') return Math.max(480, startTurnSpeed + 220);
-    return Math.max(calendarMotion ? 480 : 280, startTurnSpeed + (calendarMotion ? 220 : 140));
+    return Math.max(280, startTurnSpeed + 140);
   }
 
   function startBookSwapDelay() {
@@ -669,9 +659,9 @@
     notesCreateBrowseShortcutsDisabled = localStorage.getItem(NOTES_CREATE_BROWSE_SHORTCUTS_DISABLED_KEY) !== '0';
   } catch (e) {}
   applyNotesCreateBrowseShortcutsDisabled(notesCreateBrowseShortcutsDisabled, false);
-  let calendarCountdownEnabled = true;
-  try { calendarCountdownEnabled = localStorage.getItem(CALENDAR_COUNTDOWN_KEY) !== '0'; } catch (e) {}
-  applyCalendarCountdownEnabled(calendarCountdownEnabled, false);
+
+
+
   let hideSpecialInit = false;  // 默认关闭：出厂即显示特殊页，只有显式存过 '1' 才隐藏
   try { hideSpecialInit = localStorage.getItem(HIDE_SPECIAL_KEY) === '1'; } catch (e) {}
   applyHideSpecialPages(hideSpecialInit, false);
@@ -962,11 +952,7 @@
       }
     });
   })();
-  if (calendarCountdownToggle) {
-    calendarCountdownToggle.addEventListener('change', () => {
-      applyCalendarCountdownEnabled(calendarCountdownToggle.checked, true);
-    });
-  }
+
   // Category switches are rendered by usage-tracker.js.
   if (hideSpecialToggle) {
     hideSpecialToggle.addEventListener('change', () => {
@@ -1762,8 +1748,8 @@
     const remove = (...keys) => keys.forEach(key => { try { localStorage.removeItem(key); } catch (_) {} });
     if (category === 'appearance') { remove(START_BACKGROUND_KEY); applyStartBackgroundStyle('simple', false); }
     if (category === 'navigation') {
-      remove(CALENDAR_COUNTDOWN_KEY, HIDE_SPECIAL_KEY, LIBRARY_SEARCH_ENABLED_KEY, START_SPEED_KEY, SPINE_SPEED_KEY);
-      applyCalendarCountdownEnabled(true, false); applyHideSpecialPages(false, false); applyLibrarySearchEnabled(false, false);
+      remove(HIDE_SPECIAL_KEY, LIBRARY_SEARCH_ENABLED_KEY, START_SPEED_KEY, SPINE_SPEED_KEY);
+      applyHideSpecialPages(false, false); applyLibrarySearchEnabled(false, false);
       applyStartSpeed(START_SPEED_DEFAULT, false); applySpineSpeed(SPINE_SPEED_DEFAULT, false);
     }
     if (category === 'learning') {
@@ -1951,8 +1937,6 @@
 
   function getStartViewElement(name) {
     if (name === 'review') return document.querySelector('.review-embedded');
-    if (name === 'calendar') return document.querySelector('.calendar-embedded');
-    if (name === 'focus') return document.querySelector('.focus-embedded');
     if (name === 'study') return document.querySelector('.study-embedded');
     if (name === 'cadence') return document.querySelector('.cadence-embedded');
     if (name === 'tree') return document.querySelector('.tree-page-embedded');
@@ -1967,9 +1951,7 @@
       ['cadence', document.querySelector('.cadence-embedded')],
       ['tree', document.querySelector('.tree-page-embedded')],
       ['notes', document.querySelector('.notes-embedded')],
-      ['calendar', document.querySelector('.calendar-embedded')],
       ['review', document.querySelector('.review-embedded')],
-      ['focus', document.querySelector('.focus-embedded')],
     ];
     layers.forEach(([viewName, element]) => {
       if (!element) return;
@@ -1991,9 +1973,8 @@
 
   function clearStartViewMotion() {
     [bookStage, document.querySelector('.study-embedded'), document.querySelector('.cadence-embedded'), document.querySelector('.tree-page-embedded'),
-      document.querySelector('.notes-embedded'), document.querySelector('.calendar-embedded'),
-      document.querySelector('.review-embedded'),
-      document.querySelector('.focus-embedded')].forEach((el) => {
+      document.querySelector('.notes-embedded'),
+      document.querySelector('.review-embedded')].forEach((el) => {
       if (el) el.classList.remove(...START_VIEW_MOTION_CLASSES);
     });
   }
@@ -2001,14 +1982,8 @@
   function finalizeDeferredStartViewExitMotion() {
     finalizeCadenceEntranceExit(false);
     window.StudyActivity?.finalizeExitMotion?.();
-    if (window.CanvasCalendar && typeof window.CanvasCalendar.finalizeExitMotion === 'function') {
-      window.CanvasCalendar.finalizeExitMotion();
-    }
     if (window.StudyView && typeof window.StudyView.finalizeExitMotion === 'function') {
       window.StudyView.finalizeExitMotion();
-    }
-    if (window.CanvasFocus && typeof window.CanvasFocus.finalizeExitMotion === 'function') {
-      window.CanvasFocus.finalizeExitMotion();
     }
   }
 
@@ -2052,8 +2027,8 @@
     // 这样 [data-start-state="study"] 那批布局 CSS 仍然生效，无需为 cadence 再写一套。
     const previous = bookView ? (bookView.dataset.viewName || '') : '';
     const wasHidden = bookView?.hidden;
-    const layout = (name === 'cadence' || name === 'tree' || name === 'notes' || name === 'calendar'
-      || name === 'review' || name === 'focus') ? 'study' : name;
+    const layout = (name === 'cadence' || name === 'tree' || name === 'notes'
+      || name === 'review') ? 'study' : name;
     main.dataset.state = layout;
     document.body.dataset.startState = layout;   // 顶部常驻操作条按视图显隐（CSS 控制）
     if (loadingView) loadingView.hidden = layout !== 'loading';
@@ -2061,17 +2036,11 @@
     recentView.hidden = layout !== 'recent' && layout !== 'study';
     if (bookView) {
       markStartViewTransition(name);
-      if (previous === 'focus' && name !== 'focus'
-        && window.CanvasFocus && typeof window.CanvasFocus.deactivate === 'function') {
-        window.CanvasFocus.deactivate();
-      }
       bookView.classList.toggle('study-active', name === 'study');
       bookView.classList.toggle('cadence-active', name === 'cadence');
       bookView.classList.toggle('tree-page-active', name === 'tree');
       bookView.classList.toggle('notes-active', name === 'notes');
-      bookView.classList.toggle('calendar-active', name === 'calendar');
       bookView.classList.toggle('review-active', name === 'review');
-      bookView.classList.toggle('focus-active', name === 'focus');
     }
     syncNavigationSemantics();
     if (!previous || wasHidden) spineView?.invalidate({ animate: false });
@@ -2082,9 +2051,6 @@
     if (name !== 'cadence') {
       cadenceEntranceSeq++;
       if (previous === 'cadence') freezeCadenceEntranceForExit();
-    }
-    if (previous === 'calendar' && name !== 'calendar' && window.CanvasCalendar?.deactivate) {
-      window.CanvasCalendar.deactivate();
     }
     if (previous === 'tree' && name !== 'tree' && window.CanvasTreePage?.deactivate) {
       window.CanvasTreePage.deactivate();
@@ -2238,14 +2204,6 @@
     return requestSpecialView('review', active, options);
   }
 
-  function setCalendarActive(active, options) {
-    return requestSpecialView('calendar', active, options);
-  }
-
-  function setFocusActive(active, options) {
-    return requestSpecialView('focus', active, options);
-  }
-
   function requestSpecialView(view, active, options) {
     // A repeat click is a command on the mounted page, not a transient page
     // to skip. Preserve every such command outside composition handoff.
@@ -2263,8 +2221,7 @@
   const navigationModules = {
     study: () => window.StudyView, cadence: () => window.StudyActivity,
     tree: () => window.CanvasTreePage, notes: () => window.CanvasNotes,
-    review: () => window.CanvasReview, calendar: () => window.CanvasCalendar,
-    focus: () => window.CanvasFocus,
+    review: () => window.CanvasReview,
   };
   let libraryNavigationMotion = null;
 
@@ -2343,11 +2300,9 @@
     const style = getComputedStyle(element);
     const snapshot = { opacity: style.opacity, transform: style.transform };
     disposeNavigationExitPreview(previous, !!previous?.committed);
-    const calendarExit = state.current.view === 'calendar';
     const animation = element.animate([
       snapshot, { opacity: 0, transform: snapshot.transform },
-    ], { duration: calendarExit ? Math.max(50, Math.min(100, Math.round(startTurnSpeed * .25)))
-      : Math.max(120, Math.min(220, Math.round(startTurnSpeed * .65))),
+    ], { duration: Math.max(120, Math.min(220, Math.round(startTurnSpeed * .65))),
       easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'both' });
     const preview = { element, animation, recovering: false, committed: false, done: false, finish: null };
     preview.finish = () => {
@@ -2380,7 +2335,6 @@
         window.clearTimeout(timeout);
         document.removeEventListener('DOMContentLoaded', check);
         window.removeEventListener('load', check);
-        document.removeEventListener('canvasfocus:ready', check);
         ctx.signal.removeEventListener('abort', abort);
       };
       const finish = error => {
@@ -2393,13 +2347,12 @@
       const check = () => {
         if (ctx.signal.aborted || !ctx.isCurrent()) { abort(); return; }
         if (getModule()) finish();
-        else if (document.readyState === 'complete' && route.view !== 'focus') {
+        else if (document.readyState === 'complete') {
           finish(new Error(englishUI() ? 'This page could not be loaded.' : '页面未能完成加载，请重试。'));
         }
       };
       document.addEventListener('DOMContentLoaded', check);
       window.addEventListener('load', check);
-      if (route.view === 'focus') document.addEventListener('canvasfocus:ready', check);
       ctx.signal.addEventListener('abort', abort, { once: true });
       timeout = window.setTimeout(() => finish(new Error(englishUI()
         ? 'This page is taking too long to prepare. Please try again.' : '页面准备超时，请重试。')), 10000);
@@ -2498,14 +2451,13 @@
   function runNavigationAction(route, api, ctx) {
     if (ctx.options.action === 'toggle') api?.toggleMode?.();
     else if (ctx.options.action === 'reset') api?.resetView?.();
-    if (route.view === 'focus' && ctx.options.forceTimer) api?.showTimer?.({ persist: false, animate: false });
     if (ctx.isCurrent() && typeof ctx.options.afterActivate === 'function') ctx.options.afterActivate(api);
   }
 
   navigation = window.RelatumStartNavigation.create({
     initialRoute: { view: 'library', groupId: activeGroup },
     enabled: route => route.view === 'library' ? features.enabled('canvas.library')
-      : !specialPagesHidden && features.viewEnabled(route.view),
+      : !!navigationModules[route.view] && !specialPagesHidden && features.viewEnabled(route.view),
     visible: navigationVisible,
     feedback: route => updateNavigationFeedback(route),
     prepare(route, ctx) {
@@ -2541,12 +2493,12 @@
         animateLibraryPageEntrance(ctx);
       } else {
         if (route.view === 'cadence') stageCadenceEntrance();
-        if (route.view === 'calendar') api?.activate?.();
-        if (route.view === 'focus') api?.prepareActivate?.(ctx.options);
+
+
         showView(route.view);
         commitNavigationExitPreview();
         if (route.view === 'cadence') armCadenceEntrance();
-        else if (route.view !== 'calendar') api?.activate?.();
+        else api?.activate?.();
       }
       if (ctx.isCurrent() && typeof ctx.options.afterActivate === 'function') ctx.options.afterActivate(api);
     },
@@ -4585,16 +4537,8 @@
   document.querySelectorAll('[data-action="review-view"]').forEach((btn) => {
     btn.addEventListener('click', () => { setReviewActive(true); });
   });
-  document.querySelectorAll('[data-action="calendar-view"]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      setCalendarActive(true, { action: isView('calendar') ? 'toggle' : undefined });
-    });
-  });
-  document.querySelectorAll('[data-action="focus-view"]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      setFocusActive(true, { action: isView('focus') ? 'toggle' : undefined });
-    });
-  });
+
+
   // 速记归档：把当前页便签里「有名字」的搬进 data/学习归档/<日期>+<N>条速记/，
   // 无名便签随之清空但不归档；归档后刷新活跃页统计。由长按速记图标触发。
   function archiveNotes() {
@@ -4651,19 +4595,14 @@
     });
   });
 
-  document.addEventListener('calendar:navigate', (event) => {
-    const view = event.detail && event.detail.view;
-    if (view === 'cadence') setCadenceActive(true);
-    if (view === 'focus') {
-      const { day, sessionId } = event.detail;
-      setFocusActive(true, { forceTimer: true, afterActivate(focus) {
-        if (day && focus.showDay) focus.showDay(day, sessionId);
-      } });
-    }
+
+
+  document.addEventListener('daily:navigate-canvas', async event => {
+    if (event.detail?.view === 'cadence' && await workspaceRuntime.set('canvas')) setCadenceActive(true);
   });
 
   // ── 翻书式翻页 ────────────────────────────────
-  // 「页」= [复习, 日历, 活跃, 速记, 树状, 学习, 专注, 最近, 收藏, ...自定义分组]。
+  // 「页」= [复习, 活跃, 速记, 树状, 学习, 最近, 收藏, ...自定义分组]。
   let wheelAccum = 0;
   let wheelResetTimer = null;
   const prefersReduced = (function () {
@@ -4688,8 +4627,8 @@
 
   // 相对待选页翻 ±1；首尾停留，不将越界滚轮转为同页命令。
   const pageActivators = {
-    review: setReviewActive, calendar: setCalendarActive, cadence: setCadenceActive,
-    notes: setNotesActive, tree: setTreePageActive, study: setStudyActive, focus: setFocusActive,
+    review: setReviewActive, cadence: setCadenceActive,
+    notes: setNotesActive, tree: setTreePageActive, study: setStudyActive,
   };
   function availableSpecialPages() {
     return specialPagesHidden ? [] : Object.keys(pageActivators).filter(features.viewEnabled);

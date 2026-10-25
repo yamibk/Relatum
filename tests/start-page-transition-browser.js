@@ -1,5 +1,8 @@
 'use strict';
 
+// Historical Canvas calendar/focus topology; run against its matching revision.
+// Current Daily exits, quick reversal and resource release are verified in
+// daily-workspace-browser.js. This preserves the earlier comparison harness.
 // Real page transitions on a disposable server; browser/runtime are test-host only.
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), net = require('node:net');

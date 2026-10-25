@@ -1,6 +1,6 @@
 # 全局设置与工作区展示
 
-左上角齿轮与笔记设置复用同一个原生 dialog 控制器，分别管理业务偏好。全局设置按外观、工作区、画布与导航、学习与树状、星图、生涯、使用统计分组；日历倒数日归画布与导航。功能裁剪作用于控件和分类，用户隐藏工作区不裁掉其设置。
+左上角齿轮与笔记设置复用同一个原生 dialog 控制器，分别管理业务偏好。全局设置按外观、工作区、画布与导航、日常、学习与树状、星图、生涯、使用统计分组；日历倒数日归日常。功能裁剪作用于控件和分类，用户隐藏工作区不裁掉其设置。
 
 ## 入口与持久化
 
@@ -12,7 +12,7 @@
 
 ## 工作区契约与扩展
 
-1. 在 `assets/feature-catalog.json` 的 `workspaces` 加入 `{id,label:[中文,英文],panel}`，清单顺序是默认顺序。新项默认隐藏；现有四项显式使用 `defaultVisible:true`。
+1. 在 `assets/feature-catalog.json` 的 `workspaces` 加入 `{id,label:[中文,英文],panel}`，清单顺序是默认顺序。新项默认隐藏；原有四项显式使用 `defaultVisible:true`，日常追加且默认隐藏。
 2. 登记对应功能并提供带 `data-start-workspace-panel` 的面板；现有功能授权和服务端资源过滤继续生效。
 3. 在 `start-workspace-runtime.js` 的 `lifecycle` 表登记 `load/leave`。加载结果提供可选 `activate()`；离场可异步返回 false 阻止切换。专用资源在自身生命周期中暂停/释放。
 

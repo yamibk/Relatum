@@ -88,7 +88,9 @@
     }, { once: true });
     return Object.freeze({ waitForIdle, beginBusy, touch, wake, observeDocument, signal: lifetime.signal });
   }
-  window.RelatumWorkspaceRuntime = Object.freeze({ create(config) {
+  window.RelatumWorkspaceRuntime = Object.freeze({
+  preparation() { return window.RelatumBackgroundPreparation ||= createBackgroundPreparation(); },
+  create(config) {
   const features = window.RelatumFeatureRuntime;
   const preparation = window.RelatumBoot?.noteGraphPreloadRequested
     ? (window.RelatumBackgroundPreparation ||= createBackgroundPreparation()) : null;
@@ -129,6 +131,11 @@
   let noteWorkspaceWarmupHandle = 0, careerWorkspaceWarmupHandle = 0;
   let noteWorkspaceWarmupScheduled = false, careerWorkspaceWarmupScheduled = false;
   let workspaceTransitionTimer = 0;
+  const retiringWorkspaces = new Set();
+  function finishWorkspaceExits(except) {
+    retiringWorkspaces.forEach(id => { if (id !== except) lifecycle[id]?.afterLeave?.(); });
+    retiringWorkspaces.clear();
+  }
   let layoutSignature = '';
   function englishUI() { return !!(window.RelatumI18n && window.RelatumI18n.language === 'en'); }
   function loadNoteWorkspace(background = false) {
@@ -335,6 +342,8 @@
 
   function showWorkspacePanel(name, previous, animate, previousStageTop) {
     clearTimeout(workspaceTransitionTimer);
+    finishWorkspaceExits(name);
+    if (name !== previous) retiringWorkspaces.add(previous);
     document.body.classList.remove('start-workspace-turning');
     const nextPanel = workspacePanels.find((panel) => panel.dataset.startWorkspacePanel === name);
     const previousPanel = workspacePanels.find((panel) => panel.dataset.startWorkspacePanel === previous);
@@ -345,7 +354,7 @@
         panel.hidden = true; panel.inert = true;
       }
     });
-    if (!nextPanel) { workspacePanels.forEach(panel => { panel.hidden = true; panel.inert = true; }); return; }
+    if (!nextPanel) { workspacePanels.forEach(panel => { panel.hidden = true; panel.inert = true; }); finishWorkspaceExits(name); return; }
     nextPanel.hidden = false;
     nextPanel.inert = false;
     if (!animate || !previousPanel || previousPanel === nextPanel
@@ -355,6 +364,7 @@
         previousPanel.inert = true;
       }
       if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
+      finishWorkspaceExits(name);
       return;
     }
     const forward = layout.order.indexOf(name) > layout.order.indexOf(previous);
@@ -378,6 +388,7 @@
       previousPanel.style.removeProperty('--workspace-layout-shift-y');
       document.body.classList.remove('start-workspace-turning');
       if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
+      finishWorkspaceExits(name);
     }, Math.max(220, config.turnSpeed()) + 140);
     if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
   }
@@ -393,6 +404,7 @@
     notes: { load: loadNoteWorkspace, leave: () => window.CanvasNoteWorkspace?.deactivate() },
     research: { load: loadResearchWorkspace, leave: () => researchWorkspaceApi?.suspend() },
     career: { load: loadCareerWorkspace },
+    daily: { load: () => window.RelatumDailyLoader.load(), leave: () => window.RelatumDailyWorkspace?.leave(), afterLeave: () => window.RelatumDailyWorkspace?.afterLeave() },
   };
   async function performStartWorkspace(name, options = {}, failed = new Set()) {
     if (name !== 'none' && !visibleWorkspaces().includes(name)) return false;
@@ -415,7 +427,8 @@
       const descriptor = features.workspaces.find(item => item.id === name);
       config.notice(englishUI() ? 'Workspace unavailable' : '工作区暂时无法打开', (descriptor?.label[englishUI() ? 1 : 0] || name) + ': ' + (error.message || String(error)));
       const fallback = visibleWorkspaces().find(item => !failed.has(item) && features.workspaceEnabled(item)) || 'none';
-      return performStartWorkspace(fallback, { ...options, animate: false, allowEmpty: true }, failed);
+      await performStartWorkspace(fallback, { ...options, animate: false, allowEmpty: true }, failed);
+      return options.commitLayout === true;
     }
     if (name === 'canvas') {
       scheduleCareerWorkspaceIdleWarmup();
@@ -442,7 +455,7 @@
       layout = features.normalizeLayout(value);
       const next = features.workspace(activeStartWorkspace, layout);
       try {
-        if (next !== activeStartWorkspace && !await performStartWorkspace(next)) { layout = previous; return false; }
+        if (next !== activeStartWorkspace && !await performStartWorkspace(next, { commitLayout: true })) { layout = previous; return false; }
       } catch (error) {
         layout = previous;
         config.notice(englishUI() ? 'Could not switch workspace' : '无法切换工作区', error.message || String(error));

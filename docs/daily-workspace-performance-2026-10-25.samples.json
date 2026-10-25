@@ -1,0 +1,517 @@
+{
+  "baselineRef": "e0c297e16b4512a1a432f4e1cbf1cabc15451296",
+  "note": "Fresh browser profiles; OS file cache is retained. Native samples use a hidden source desktop shell.",
+  "medians": {
+    "browser-before": {
+      "dom": 3374,
+      "scripts": 58,
+      "scriptAndCssBytes": 5597074,
+      "heapBytes": 5442160,
+      "listeners": 1500,
+      "scriptMs": 113.089,
+      "layoutMs": 60.33
+    },
+    "browser-after": {
+      "dom": 2901,
+      "scripts": 43,
+      "scriptAndCssBytes": 4926423,
+      "heapBytes": 5044600,
+      "listeners": 1176,
+      "scriptMs": 83.423,
+      "layoutMs": 63.515
+    },
+    "native-before": {
+      "dom": 3388,
+      "scripts": 59,
+      "scriptAndCssBytes": 5600826,
+      "heapBytes": 5733324,
+      "listeners": 1523,
+      "scriptMs": 763.082,
+      "layoutMs": 448.094,
+      "privateMiB": 363.83984375
+    },
+    "native-after": {
+      "dom": 2917,
+      "scripts": 44,
+      "scriptAndCssBytes": 4930182,
+      "heapBytes": 5485780,
+      "listeners": 1199,
+      "scriptMs": 544.9509999999999,
+      "layoutMs": 397.743,
+      "privateMiB": 356.703125
+    }
+  },
+  "browser": [
+    {
+      "round": 0,
+      "label": "before",
+      "dom": 3374,
+      "scripts": 58,
+      "scriptAndCssBytes": 5597074,
+      "navigation": {
+        "domContentLoadedMs": 386.6000000014901,
+        "loadMs": 400.5
+      },
+      "documentHidden": false,
+      "heapBytes": 5441572,
+      "nodes": 7450,
+      "listeners": 1500,
+      "scriptMs": 113.089,
+      "layoutMs": 48.120000000000005
+    },
+    {
+      "round": 0,
+      "label": "after",
+      "dom": 2901,
+      "scripts": 43,
+      "scriptAndCssBytes": 4926423,
+      "navigation": {
+        "domContentLoadedMs": 121.10000000149012,
+        "loadMs": 458.6000000014901
+      },
+      "documentHidden": false,
+      "heapBytes": 5041952,
+      "nodes": 6421,
+      "listeners": 1176,
+      "scriptMs": 83.423,
+      "layoutMs": 63.515
+    },
+    {
+      "round": 1,
+      "label": "before",
+      "dom": 3374,
+      "scripts": 58,
+      "scriptAndCssBytes": 5597074,
+      "navigation": {
+        "domContentLoadedMs": 161.80000000074506,
+        "loadMs": 193
+      },
+      "documentHidden": false,
+      "heapBytes": 5442520,
+      "nodes": 7450,
+      "listeners": 1500,
+      "scriptMs": 111.389,
+      "layoutMs": 60.33
+    },
+    {
+      "round": 1,
+      "label": "after",
+      "dom": 2901,
+      "scripts": 43,
+      "scriptAndCssBytes": 4926423,
+      "navigation": {
+        "domContentLoadedMs": 101.90000000223517,
+        "loadMs": 134.19999999925494
+      },
+      "documentHidden": false,
+      "heapBytes": 5044600,
+      "nodes": 6421,
+      "listeners": 1176,
+      "scriptMs": 80.481,
+      "layoutMs": 61.384
+    },
+    {
+      "round": 2,
+      "label": "before",
+      "dom": 3374,
+      "scripts": 58,
+      "scriptAndCssBytes": 5597074,
+      "navigation": {
+        "domContentLoadedMs": 165.80000000074506,
+        "loadMs": 197.5
+      },
+      "documentHidden": false,
+      "heapBytes": 5442160,
+      "nodes": 7450,
+      "listeners": 1500,
+      "scriptMs": 119.052,
+      "layoutMs": 62.007
+    },
+    {
+      "round": 2,
+      "label": "after",
+      "dom": 2901,
+      "scripts": 43,
+      "scriptAndCssBytes": 4926423,
+      "navigation": {
+        "domContentLoadedMs": 108.69999999925494,
+        "loadMs": 390.3999999985099
+      },
+      "documentHidden": false,
+      "heapBytes": 5041864,
+      "nodes": 6421,
+      "listeners": 1176,
+      "scriptMs": 73.45,
+      "layoutMs": 54.933
+    },
+    {
+      "round": 3,
+      "label": "before",
+      "dom": 3374,
+      "scripts": 58,
+      "scriptAndCssBytes": 5597074,
+      "navigation": {
+        "domContentLoadedMs": 148.19999999925494,
+        "loadMs": 178.69999999925494
+      },
+      "documentHidden": false,
+      "heapBytes": 5441648,
+      "nodes": 7450,
+      "listeners": 1500,
+      "scriptMs": 100.88900000000001,
+      "layoutMs": 57.620999999999995
+    },
+    {
+      "round": 3,
+      "label": "after",
+      "dom": 2901,
+      "scripts": 43,
+      "scriptAndCssBytes": 4926423,
+      "navigation": {
+        "domContentLoadedMs": 636.5,
+        "loadMs": 822.8999999985099
+      },
+      "documentHidden": false,
+      "heapBytes": 5050560,
+      "nodes": 6421,
+      "listeners": 1176,
+      "scriptMs": 473.21200000000005,
+      "layoutMs": 395.851
+    },
+    {
+      "round": 4,
+      "label": "before",
+      "dom": 3374,
+      "scripts": 58,
+      "scriptAndCssBytes": 5597074,
+      "navigation": {
+        "domContentLoadedMs": 794.1000000014901,
+        "loadMs": 959.5
+      },
+      "documentHidden": false,
+      "heapBytes": 5442176,
+      "nodes": 7450,
+      "listeners": 1500,
+      "scriptMs": 519.4839999999999,
+      "layoutMs": 365.34
+    },
+    {
+      "round": 4,
+      "label": "after",
+      "dom": 2901,
+      "scripts": 43,
+      "scriptAndCssBytes": 4926423,
+      "navigation": {
+        "domContentLoadedMs": 534.3000000007451,
+        "loadMs": 694.1000000014901
+      },
+      "documentHidden": false,
+      "heapBytes": 5049500,
+      "nodes": 6421,
+      "listeners": 1176,
+      "scriptMs": 476.368,
+      "layoutMs": 333.502
+    }
+  ],
+  "native": [
+    {
+      "round": 0,
+      "label": "before",
+      "dom": 3390,
+      "scripts": 59,
+      "scriptAndCssBytes": 5600826,
+      "navigation": {
+        "domContentLoadedMs": 2728.099999997765,
+        "loadMs": 2816.89999999851
+      },
+      "documentHidden": false,
+      "heapBytes": 5884964,
+      "nodes": 7472,
+      "listeners": 1523,
+      "scriptMs": 779.1850000000001,
+      "layoutMs": 448.094,
+      "privateMiB": 354.4296875,
+      "processCount": 9
+    },
+    {
+      "round": 0,
+      "label": "after",
+      "dom": 2917,
+      "scripts": 44,
+      "scriptAndCssBytes": 4930182,
+      "navigation": {
+        "domContentLoadedMs": 2836.7000000029802,
+        "loadMs": 3055.5
+      },
+      "documentHidden": false,
+      "heapBytes": 5486876,
+      "nodes": 6443,
+      "listeners": 1199,
+      "scriptMs": 564.0450000000001,
+      "layoutMs": 515.197,
+      "privateMiB": 355.66796875,
+      "processCount": 9
+    },
+    {
+      "round": 1,
+      "label": "before",
+      "dom": 3388,
+      "scripts": 59,
+      "scriptAndCssBytes": 5600826,
+      "navigation": {
+        "domContentLoadedMs": 2429.39999999851,
+        "loadMs": 2521.300000000745
+      },
+      "documentHidden": false,
+      "heapBytes": 5733324,
+      "nodes": 7470,
+      "listeners": 1523,
+      "scriptMs": 671.212,
+      "layoutMs": 382.772,
+      "privateMiB": 363.83984375,
+      "processCount": 9
+    },
+    {
+      "round": 1,
+      "label": "after",
+      "dom": 2917,
+      "scripts": 44,
+      "scriptAndCssBytes": 4930182,
+      "navigation": {
+        "domContentLoadedMs": 2582.39999999851,
+        "loadMs": 2664
+      },
+      "documentHidden": false,
+      "heapBytes": 5485780,
+      "nodes": 6443,
+      "listeners": 1199,
+      "scriptMs": 524.01,
+      "layoutMs": 397.743,
+      "privateMiB": 360.9765625,
+      "processCount": 9
+    },
+    {
+      "round": 2,
+      "label": "before",
+      "dom": 3388,
+      "scripts": 59,
+      "scriptAndCssBytes": 5600826,
+      "navigation": {
+        "domContentLoadedMs": 2585.400000002235,
+        "loadMs": 2811.10000000149
+      },
+      "documentHidden": false,
+      "heapBytes": 5732864,
+      "nodes": 7470,
+      "listeners": 1523,
+      "scriptMs": 763.082,
+      "layoutMs": 468.277,
+      "privateMiB": 370.0390625,
+      "processCount": 9
+    },
+    {
+      "round": 2,
+      "label": "after",
+      "dom": 2917,
+      "scripts": 44,
+      "scriptAndCssBytes": 4930182,
+      "navigation": {
+        "domContentLoadedMs": 476.19999999925494,
+        "loadMs": 2202.89999999851
+      },
+      "documentHidden": false,
+      "heapBytes": 5484944,
+      "nodes": 6443,
+      "listeners": 1199,
+      "scriptMs": 544.9509999999999,
+      "layoutMs": 151.09900000000002,
+      "privateMiB": 356.703125,
+      "processCount": 9
+    }
+  ],
+  "pageNavigation": {
+    "note": "Separate five paired fresh-browser samples; reduced motion; real navigation buttons; business reads finish and two RAFs are presented. First Tasks entry includes opening Daily. Automated latency is not physical display latency.",
+    "samples": [
+      {
+        "round": 0,
+        "label": "before",
+        "domContentLoadedMs": 434.5,
+        "loadMs": 449.30000000074506,
+        "firstMs": {
+          "tasks": 223.8655000000008,
+          "calendar": 185.9960000000001,
+          "focus": 183.9296000000004,
+          "ledger": 149.89069999999992
+        },
+        "returnMs": {
+          "tasks": 95.66290000000026,
+          "calendar": 91.19230000000061,
+          "focus": 91.70370000000003,
+          "ledger": 96.05400000000009
+        }
+      },
+      {
+        "round": 0,
+        "label": "after",
+        "domContentLoadedMs": 129.30000000074506,
+        "loadMs": 163.10000000149012,
+        "firstMs": {
+          "tasks": 89.02850000000035,
+          "calendar": 75.09300000000076,
+          "focus": 81.16109999999935,
+          "ledger": 43.41239999999925
+        },
+        "returnMs": {
+          "tasks": 26.30249999999978,
+          "calendar": 23.737299999998868,
+          "focus": 28.957300000000032,
+          "ledger": 20.843300000000454
+        }
+      },
+      {
+        "round": 1,
+        "label": "before",
+        "domContentLoadedMs": 163.19999999925494,
+        "loadMs": 452.3999999985099,
+        "firstMs": {
+          "tasks": 174.43089999999938,
+          "calendar": 125.83729999999923,
+          "focus": 112.9393,
+          "ledger": 98.90920000000006
+        },
+        "returnMs": {
+          "tasks": 75.34690000000046,
+          "calendar": 79.2414000000008,
+          "focus": 78.97340000000077,
+          "ledger": 87.8127999999997
+        }
+      },
+      {
+        "round": 1,
+        "label": "after",
+        "domContentLoadedMs": 109.39999999850988,
+        "loadMs": 424.5,
+        "firstMs": {
+          "tasks": 93.1807000000008,
+          "calendar": 70.79539999999906,
+          "focus": 75.28870000000097,
+          "ledger": 41.48029999999926
+        },
+        "returnMs": {
+          "tasks": 24.72429999999804,
+          "calendar": 21.14809999999852,
+          "focus": 24.86869999999908,
+          "ledger": 24.83179999999993
+        }
+      },
+      {
+        "round": 2,
+        "label": "before",
+        "domContentLoadedMs": 167.19999999925494,
+        "loadMs": 199.69999999925494,
+        "firstMs": {
+          "tasks": 239.3737000000001,
+          "calendar": 129.83079999999973,
+          "focus": 108.14410000000134,
+          "ledger": 100.02079999999842
+        },
+        "returnMs": {
+          "tasks": 83.40509999999995,
+          "calendar": 79.22529999999824,
+          "focus": 83.1147000000019,
+          "ledger": 91.44880000000194
+        }
+      },
+      {
+        "round": 2,
+        "label": "after",
+        "domContentLoadedMs": 117.10000000149012,
+        "loadMs": 422.80000000074506,
+        "firstMs": {
+          "tasks": 89.08169999999882,
+          "calendar": 75.21029999999882,
+          "focus": 67.09720000000016,
+          "ledger": 45.378600000000006
+        },
+        "returnMs": {
+          "tasks": 24.771099999998114,
+          "calendar": 20.825199999999313,
+          "focus": 25.254399999997986,
+          "ledger": 24.793799999999464
+        }
+      },
+      {
+        "round": 3,
+        "label": "before",
+        "domContentLoadedMs": 172.69999999925494,
+        "loadMs": 206.40000000223517,
+        "firstMs": {
+          "tasks": 169.311099999999,
+          "calendar": 121.91359999999986,
+          "focus": 103.52999999999884,
+          "ledger": 100.25710000000254
+        },
+        "returnMs": {
+          "tasks": 82.94799999999668,
+          "calendar": 75.83469999999943,
+          "focus": 78.5338000000047,
+          "ledger": 87.48709999999846
+        }
+      },
+      {
+        "round": 3,
+        "label": "after",
+        "domContentLoadedMs": 112.30000000074506,
+        "loadMs": 416.4000000022352,
+        "firstMs": {
+          "tasks": 79.53629999999976,
+          "calendar": 67.74429999999847,
+          "focus": 65.82359999999608,
+          "ledger": 42.12609999999404
+        },
+        "returnMs": {
+          "tasks": 24.305400000004738,
+          "calendar": 21.091199999995297,
+          "focus": 24.91939999999886,
+          "ledger": 16.3237999999983
+        }
+      },
+      {
+        "round": 4,
+        "label": "before",
+        "domContentLoadedMs": 148.60000000149012,
+        "loadMs": 177.10000000149012,
+        "firstMs": {
+          "tasks": 202.7905000000028,
+          "calendar": 158.64969999999448,
+          "focus": 108.29389999999694,
+          "ledger": 100.03750000000582
+        },
+        "returnMs": {
+          "tasks": 83.56179999999586,
+          "calendar": 87.44789999999921,
+          "focus": 79.04739999999583,
+          "ledger": 75.05049999999756
+        }
+      },
+      {
+        "round": 4,
+        "label": "after",
+        "domContentLoadedMs": 101.60000000149012,
+        "loadMs": 400.30000000074506,
+        "firstMs": {
+          "tasks": 88.9658999999956,
+          "calendar": 67.58129999999801,
+          "focus": 80.13670000000275,
+          "ledger": 52.479599999998754
+        },
+        "returnMs": {
+          "tasks": 25.28859999999986,
+          "calendar": 32.96050000000105,
+          "focus": 24.908300000002782,
+          "ledger": 25.053899999998976
+        }
+      }
+    ]
+  }
+}

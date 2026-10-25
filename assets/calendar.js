@@ -1,13 +1,12 @@
 (function () {
   'use strict';
-
-  const root = document.querySelector('[data-role="calendar-shell"]');
-  if (!root) return;
-  const pageRoot = root.closest('.calendar-embedded');
+  window.RelatumDailyCalendar = function (root, host) {
+    const scope = host.createScope();
+    const { listen, setTimeout, clearTimeout, requestAnimationFrame, cancelAnimationFrame } = scope;
+  const pageRoot = root;
   const ledgerRoot = pageRoot && pageRoot.querySelector('[data-role="ledger-shell"]');
-  const VIEW_MODE_KEY = 'calendar:viewMode:v1';
-  const COUNTDOWN_ENABLED_KEY = 'canvas:calendarCountdownEnabled';
-  const COUNTDOWN_PROGRESS_MODE_KEY = 'canvas:calendarCountdownProgressMode';
+  const COUNTDOWN_ENABLED_KEY = 'daily:calendarCountdownEnabled';
+  const COUNTDOWN_PROGRESS_MODE_KEY = 'daily:calendarCountdownProgressMode';
   const MONTH_CACHE_MAX = 24;
   const DAY_CACHE_MAX = 96;
   const DRAFT_CACHE_MAX = 96;
@@ -70,19 +69,14 @@
   };
   let entranceExitFrozen = false;
   const dayColumnAnimations = new Set();
-  let calendarPageActive = false;
-  let viewMode = readViewMode();
-  let modeTransitionTimer = 0;
-  let modeTransitionSeq = 0;
+  if (host.state.day) {
+    state.day = host.state.day; state.year = host.state.year; state.month = host.state.month;
+  }
   const prefersReduced = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
     catch (error) { return false; }
   })();
 
-  function readViewMode() {
-    try { return localStorage.getItem(VIEW_MODE_KEY) === 'ledger' ? 'ledger' : 'calendar'; }
-    catch (error) { return 'calendar'; }
-  }
 
   function localDay(value) {
     const year = value.getFullYear();
@@ -122,13 +116,7 @@
   }
 
   function showToast(message) {
-    const toast = document.querySelector('[data-role="study-toast"]')
-      || document.querySelector('[data-role="toast"]');
-    if (!toast) return;
-    toast.textContent = message;
-    toast.classList.add('show');
-    clearTimeout(showToast.timer);
-    showToast.timer = window.setTimeout(() => toast.classList.remove('show'), 2200);
+    host.toast(message);
   }
 
   function monthKey(year, month) {
@@ -153,7 +141,7 @@
     if (state.initialPreloadUsesIdle && 'cancelIdleCallback' in window) {
       window.cancelIdleCallback(state.initialPreloadHandle);
     } else {
-      window.clearTimeout(state.initialPreloadHandle);
+      clearTimeout(state.initialPreloadHandle);
     }
     state.initialPreloadHandle = 0;
     state.initialPreloadUsesIdle = false;
@@ -186,7 +174,7 @@
     state.initialPreloadUsesIdle = 'requestIdleCallback' in window;
     state.initialPreloadHandle = state.initialPreloadUsesIdle
       ? window.requestIdleCallback(warm, { timeout: 1500 })
-      : window.setTimeout(warm, 600);
+      : setTimeout(warm, 600);
   }
 
   function trimMap(map, max, preserveKey) {
@@ -342,7 +330,7 @@
     state.neighborPrefetchUsesIdle = 'requestIdleCallback' in window;
     state.neighborPrefetchHandle = state.neighborPrefetchUsesIdle
       ? window.requestIdleCallback(run, { timeout: 1200 })
-      : window.setTimeout(run, 240);
+      : setTimeout(run, 240);
   }
 
   function cancelNeighborPrefetch() {
@@ -350,7 +338,7 @@
     if (state.neighborPrefetchUsesIdle && 'cancelIdleCallback' in window) {
       window.cancelIdleCallback(state.neighborPrefetchHandle);
     } else {
-      window.clearTimeout(state.neighborPrefetchHandle);
+      clearTimeout(state.neighborPrefetchHandle);
     }
     state.neighborPrefetchHandle = 0;
   }
@@ -484,7 +472,7 @@
       } else {
         showToast('日历同步失败 · ' + error.message);
         root.classList.add('calendar-sync-failed');
-        window.setTimeout(() => root.classList.remove('calendar-sync-failed'), 900);
+        setTimeout(() => root.classList.remove('calendar-sync-failed'), 900);
       }
     } finally {
       if (requestId === state.requestSeq) {
@@ -939,7 +927,7 @@
     clearTimeout(state.countdownProgressBreathTimer);
     state.countdownProgressBreathTimer = 0;
     if (prefersReduced || !state.active || document.hidden) return;
-    state.countdownProgressBreathTimer = window.setTimeout(() => {
+    state.countdownProgressBreathTimer = setTimeout(() => {
       state.countdownProgressBreathTimer = 0;
       if (prefersReduced || !state.active || document.hidden) return;
       const section = visibleCountdownProgressBar();
@@ -952,7 +940,7 @@
       section.classList.remove('is-breathing');
       void section.offsetWidth;
       section.classList.add('is-breathing');
-      window.setTimeout(() => {
+      setTimeout(() => {
         if (section.isConnected) section.classList.remove('is-breathing');
       }, 2540);
       scheduleCountdownProgressBreath(2800);
@@ -1121,7 +1109,7 @@
     if (focusField) {
       const activeInput = box.querySelector('[data-progress-mode-row="' + mode
         + '"] .calendar-countdown-progress-field');
-      if (activeInput) window.setTimeout(() => activeInput.focus(), prefersReduced ? 0 : 90);
+      if (activeInput) setTimeout(() => activeInput.focus(), prefersReduced ? 0 : 90);
     }
   }
 
@@ -1130,7 +1118,7 @@
     element.classList.remove(className);
     void element.offsetWidth;
     element.classList.add(className);
-    window.setTimeout(() => {
+    setTimeout(() => {
       if (element.isConnected) element.classList.remove(className);
     }, 190);
   }
@@ -1250,7 +1238,7 @@
       state.countdownProgressPopover.classList.add('is-open');
       positionCountdownProgressSettings();
     });
-    window.setTimeout(() => {
+    setTimeout(() => {
       const input = state.countdownProgressPopover
         && state.countdownProgressPopover.querySelector('.calendar-countdown-progress-field:not(:disabled)');
       if (input) {
@@ -1279,7 +1267,7 @@
     }
     popover.classList.remove('is-open');
     popover.classList.add('is-closing');
-    window.setTimeout(finish, 190);
+    setTimeout(finish, 190);
   }
 
   function positionCountdownProgressSettings() {
@@ -1405,7 +1393,7 @@
     if (!editor) return;
     editor.classList.remove('is-visible');
     if (immediate || prefersReduced) editor.remove();
-    else window.setTimeout(() => { if (editor.isConnected) editor.remove(); }, 220);
+    else setTimeout(() => { if (editor.isConnected) editor.remove(); }, 220);
   }
 
   function refreshCountdownClock() {
@@ -1556,7 +1544,7 @@
     flip.classList.remove('is-flipping');
     void flip.offsetWidth;
     flip.classList.add('is-flipping');
-    window.setTimeout(() => {
+    setTimeout(() => {
       if (flip._generation !== generation || !flip.isConnected) return;
       flip.classList.remove('is-flipping');
       bottom.textContent = value;
@@ -1577,7 +1565,7 @@
 
   function closeCountdownClock() {
     window.clearInterval(state.countdownClockTimer);
-    window.clearTimeout(state.countdownClockCloseTimer);
+    clearTimeout(state.countdownClockCloseTimer);
     state.countdownClockTimer = 0;
     state.countdownClockCloseTimer = 0;
     state.countdownClockUnits = {};
@@ -1591,7 +1579,7 @@
     const params = new URLSearchParams(window.location.search);
     const destination = 'countdown.html' + (params.get('desktop') === '1' ? '?desktop=1' : '');
     document.body.classList.add('canvas-route-leaving');
-    window.setTimeout(() => { window.location.href = destination; }, prefersReduced ? 0 : 180);
+    setTimeout(() => { window.location.href = destination; }, prefersReduced ? 0 : 180);
   }
 
   async function saveCountdown(previous) {
@@ -1851,7 +1839,7 @@
     const direction = motion.direction < 0 ? 'prev' : 'next';
     grid.classList.add('calendar-grid-from-' + direction);
     if (title) title.classList.add('calendar-month-title-enter');
-    window.setTimeout(() => {
+    setTimeout(() => {
       grid.classList.remove('calendar-grid-from-next', 'calendar-grid-from-prev');
       if (title) title.classList.remove('calendar-month-title-enter');
     }, 620);
@@ -1937,7 +1925,7 @@
       if (selected && animate && !prefersReduced) {
         void button.offsetWidth;
         button.classList.add('calendar-day-arrived');
-        window.setTimeout(() => button.classList.remove('calendar-day-arrived'), 540);
+        setTimeout(() => button.classList.remove('calendar-day-arrived'), 540);
       }
     });
   }
@@ -2066,7 +2054,7 @@
     );
     fade.onfinish = proceed;
     fade.oncancel = proceed;
-    window.setTimeout(proceed, 380);  // 兜底：动画事件没触发也要继续，绝不卡在骨架上
+    setTimeout(proceed, 380);  // 兜底：动画事件没触发也要继续，绝不卡在骨架上
   }
 
   // 旧内容退场：淡出当前一天，返回「退场已完成」Promise。退场不需要新数据，可在点击瞬间就起跑。
@@ -2088,7 +2076,7 @@
       const done = () => { if (settled) return; settled = true; resolve(); };
       last.onfinish = done;
       last.oncancel = done;
-      window.setTimeout(done, 260);  // 兜底：动画事件没触发也要继续
+      setTimeout(done, 260);  // 兜底：动画事件没触发也要继续
     });
   }
 
@@ -2351,7 +2339,7 @@
       return operation;
     };
     if (immediate) return run();
-    draft.timer = window.setTimeout(run, 700);
+    draft.timer = setTimeout(run, 700);
     return draft.chain;
   }
 
@@ -2391,7 +2379,7 @@
     if (!panel || panel.hidden) return;
     panel.classList.remove('open');
     panel.classList.add('closing');
-    window.setTimeout(() => {
+    setTimeout(() => {
       if (panel.classList.contains('open')) return;
       panel.hidden = true;
       panel.classList.remove('closing');
@@ -2460,7 +2448,7 @@
     }
     if (options && options.updated) {
       next.classList.add('calendar-countdown-updated');
-      window.setTimeout(() => next.classList.remove('calendar-countdown-updated'), 420);
+      setTimeout(() => next.classList.remove('calendar-countdown-updated'), 420);
     }
   }
 
@@ -2468,12 +2456,12 @@
     if (!card || card.hidden || prefersReduced
       || state.countdownRevealPlayed || state.countdownRevealPending) return;
     state.countdownRevealPending = true;
-    window.setTimeout(() => {
+    setTimeout(() => {
       state.countdownRevealPending = false;
       if (!state.active || !card.isConnected || card.hidden || state.countdownRevealPlayed) return;
       state.countdownRevealPlayed = true;
       card.classList.add('calendar-countdown-revealing');
-      window.setTimeout(() => card.classList.remove('calendar-countdown-revealing'), 360);
+      setTimeout(() => card.classList.remove('calendar-countdown-revealing'), 360);
     }, Math.max(0, delay || 0));
   }
 
@@ -2568,7 +2556,7 @@
   function launchAfterFeedback(button, detail) {
     button.classList.add('is-launching');
     requestAnimationFrame(() => {
-      document.dispatchEvent(new CustomEvent('calendar:navigate', { detail }));
+      host.navigateTarget(detail);
     });
   }
 
@@ -2649,7 +2637,7 @@
     const operation = removeDiaryFromLocal(day);
     const card = button.closest('.calendar-diary-card');
     if (card && !prefersReduced) card.classList.add('calendar-diary-removing');
-    window.setTimeout(() => {
+    setTimeout(() => {
       if (state.day !== day) return;
       state.payload = cachedPayload(day, state.year, state.month);
       reconcileCalendarPanel();
@@ -2713,7 +2701,7 @@
           entering.classList.remove('calendar-editor-enter');
           void entering.offsetWidth;
           entering.classList.add('calendar-editor-enter');
-          window.setTimeout(() => entering.classList.remove('calendar-editor-enter'), 190);
+          setTimeout(() => entering.classList.remove('calendar-editor-enter'), 190);
         }
       });
     });
@@ -2768,23 +2756,27 @@
     });
   }
 
-  document.addEventListener('canvas:data-changed', () => {
+  listen(document, 'canvas:data-changed', () => {
     state.stale = true;
     state.monthCache.clear();
     state.dayCache.clear();
     if (!state.active) return;
     clearTimeout(state.reloadTimer);
-    state.reloadTimer = window.setTimeout(() => load(state.day, { kind: 'refresh', direction: 0 }), 180);
+    state.reloadTimer = setTimeout(() => load(state.day, { kind: 'refresh', direction: 0 }), 180);
   });
 
-  document.addEventListener('calendar:countdown-visibility', (event) => {
+  listen(document, 'calendar:countdown-visibility', (event) => {
     state.countdownEnabled = !(event.detail && event.detail.enabled === false);
     if (!state.loaded) return;
     syncCountdownCard({ reveal: state.countdownEnabled });
     syncCountdownProgress();
   });
+  listen(document, 'daily:settings-reset', () => {
+    state.countdownProgressMode = 'length';
+    closeCountdownProgressSettings(false, true);
+  });
 
-  document.addEventListener('relatum:languagechange', () => {
+  listen(document, 'relatum:languagechange', () => {
     const trigger = root.querySelector('[data-date-range-open]');
     if (trigger) {
       trigger.setAttribute('aria-label', uiText('计算日期间隔'));
@@ -2809,7 +2801,7 @@
     refreshDateRange();
   });
 
-  document.addEventListener('pointerdown', (event) => {
+  listen(document, 'pointerdown', (event) => {
     if (state.countdownProgressPopover
       && !state.countdownProgressPopover.contains(event.target)
       && !(state.countdownProgressTrigger && state.countdownProgressTrigger.contains(event.target))) {
@@ -2819,10 +2811,10 @@
     closeSearch(root.querySelector('[data-calendar-search-results]'));
   });
 
-  window.addEventListener('resize', scheduleCountdownProgressPosition);
-  window.addEventListener('scroll', scheduleCountdownProgressPosition, true);
+  listen(window, 'resize', scheduleCountdownProgressPosition);
+  listen(window, 'scroll', scheduleCountdownProgressPosition, true);
 
-  document.addEventListener('keydown', (event) => {
+  listen(document, 'keydown', (event) => {
     if (!state.active || event.defaultPrevented) return;
     if (state.countdownProgressPopover) {
       if (event.key === 'Escape') {
@@ -2876,7 +2868,7 @@
     }
   });
 
-  window.addEventListener('pagehide', () => {
+  listen(window, 'pagehide', () => {
     state.resumeAfterPageShow = state.active;
     state.active = false;
     stopCountdownProgressBreath();
@@ -2894,10 +2886,10 @@
       }).catch(() => {});
     });
   });
-  window.addEventListener('pageshow', (event) => {
+  listen(window, 'pageshow', (event) => {
     if (!event.persisted || !state.resumeAfterPageShow) return;
     state.resumeAfterPageShow = false;
-    window.CanvasCalendar.activate();
+    activateCalendarPanel();
   });
   // stale 刷新完成：先解除「等待期隐藏」，再与数据渲染同帧启动入场
   // （同步加类 + 直接创建 WAAPI 动画，不经过 rAF）——内容从第一帧就以动画起点呈现，
@@ -2935,8 +2927,6 @@
       replayEntranceMotion(interrupted);
     }
     scheduleCountdownProgressBreath(900);
-    const ledger = ledgerApi();
-    if (ledger && typeof ledger.warmup === 'function') ledger.warmup();
   }
 
   function deactivateCalendarPanel() {
@@ -2955,137 +2945,22 @@
     });
   }
 
-  function ledgerApi() {
-    return window.CanvasLedger || null;
-  }
 
-  function modeLayer(mode) {
-    return mode === 'ledger' ? ledgerRoot : root;
-  }
-
-  function clearModeTransitionClasses() {
-    [root, ledgerRoot].forEach((layer) => {
-      if (layer) layer.classList.remove('calendar-mode-entering', 'calendar-mode-leaving');
-    });
-    if (pageRoot) pageRoot.classList.remove('calendar-mode-switching');
-  }
-
-  function syncModeAccessibility(options) {
-    const opts = options || {};
-    const activeLayer = modeLayer(viewMode);
-    [root, ledgerRoot].forEach((layer) => {
-      if (!layer) return;
-      const active = layer === activeLayer;
-      layer.setAttribute('aria-hidden', active ? 'false' : 'true');
-      layer.toggleAttribute('inert', !active);
-      if (!active && !opts.keepBoth) layer.hidden = true;
-      else layer.hidden = false;
-    });
-    if (pageRoot) pageRoot.dataset.calendarMode = viewMode;
-  }
-
-  function activateMode(mode) {
-    if (mode === 'ledger') {
-      const api = ledgerApi();
-      if (api && typeof api.activate === 'function') api.activate();
-      return;
-    }
-    activateCalendarPanel();
-  }
-
-  function deactivateMode(mode) {
-    if (mode === 'ledger') {
-      const api = ledgerApi();
-      if (api && typeof api.deactivate === 'function') api.deactivate();
-      return;
-    }
-    deactivateCalendarPanel();
-  }
-
-  function finishModeTransition(seq) {
-    if (seq !== modeTransitionSeq) return;
-    clearTimeout(modeTransitionTimer);
-    modeTransitionTimer = 0;
-    clearModeTransitionClasses();
-    syncModeAccessibility();
-    finalizeEntranceExit(false);
-    const api = ledgerApi();
-    if (api && typeof api.finalizeExitMotion === 'function') api.finalizeExitMotion();
-  }
-
-  function setViewMode(mode, options) {
-    const opts = options || {};
-    const next = mode === 'ledger' && ledgerRoot && ledgerApi() ? 'ledger' : 'calendar';
-    const previous = viewMode;
-    if (opts.persist !== false) {
-      try { localStorage.setItem(VIEW_MODE_KEY, next); } catch (error) {}
-    }
-    if (previous === next) {
-      viewMode = next;
-      syncModeAccessibility();
-      if (calendarPageActive && opts.activate !== false) activateMode(next);
-      return true;
-    }
-
-    clearTimeout(modeTransitionTimer);
-    modeTransitionTimer = 0;
-    modeTransitionSeq += 1;
-    const seq = modeTransitionSeq;
-    const outgoing = modeLayer(previous);
-    viewMode = next;
-    const incoming = modeLayer(next);
-    if (calendarPageActive) deactivateMode(previous);
-    clearModeTransitionClasses();
-    syncModeAccessibility({ keepBoth: true });
-    if (calendarPageActive) activateMode(next);
-
-    const animate = opts.animate !== false && !prefersReduced
-      && calendarPageActive && outgoing && incoming;
-    if (!animate) {
-      finishModeTransition(seq);
-      return true;
-    }
-    if (pageRoot) pageRoot.classList.add('calendar-mode-switching');
-    outgoing.classList.add('calendar-mode-leaving');
-    incoming.classList.add('calendar-mode-entering');
-    modeTransitionTimer = window.setTimeout(() => finishModeTransition(seq), 300);
-    return true;
-  }
-
-  window.CanvasCalendar = {
-    activate() {
-      calendarPageActive = true;
-      viewMode = readViewMode();
-      setViewMode(viewMode, { persist: false, animate: false, activate: true });
-    },
-    deactivate() {
-      calendarPageActive = false;
-      clearTimeout(modeTransitionTimer);
-      modeTransitionTimer = 0;
-      modeTransitionSeq += 1;
-      clearModeTransitionClasses();
-      deactivateCalendarPanel();
-      const api = ledgerApi();
-      if (api && typeof api.deactivate === 'function') api.deactivate();
-      syncModeAccessibility();
-    },
-    finalizeExitMotion() {
-      finalizeEntranceExit(false);
-      const api = ledgerApi();
-      if (api && typeof api.finalizeExitMotion === 'function') api.finalizeExitMotion();
-    },
-    reload() {
-      state.stale = true;
-      if (state.active) load(state.day, { kind: 'refresh', direction: 0 });
-    },
-    toggleMode() {
-      return setViewMode(viewMode === 'calendar' ? 'ledger' : 'calendar', {
-        persist: true,
-        animate: true,
-      });
-    },
-    getViewMode() { return viewMode; },
+return {
+  activate: activateCalendarPanel,
+  async beforeLeave() {
+    captureCurrentDraft();
+    const values = await Promise.all([...state.drafts.values()].filter(draft => !draft.deleting).map(draft => queueDiarySave(draft.day, true)));
+    return values.every(value => value !== false);
+  },
+  deactivate({ freeze = false } = {}) {
+    Object.assign(host.state, { day: state.day, year: state.year, month: state.month });
+    deactivateCalendarPanel(); if (!freeze) finalizeEntranceExit(true); scope.stop({ freeze });
+  },
+  destroy() {
+    this.deactivate(); window.MathJax?.typesetClear?.([root]);
+    state.monthCache.clear(); state.dayCache.clear(); state.drafts.clear(); scope.destroy(); root.replaceChildren();
+  },
+};
   };
-  syncModeAccessibility();
-  scheduleInitialPreload();
 })();

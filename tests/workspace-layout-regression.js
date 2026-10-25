@@ -15,11 +15,12 @@ function run(workspaces, stored, allowed = null) {
 }
 const plain = value => JSON.parse(JSON.stringify(value));
 const ids = catalog.workspaces.map(item => item.id);
+const defaultIds = catalog.workspaces.filter(item => item.defaultVisible).map(item => item.id);
 const defaults = run(catalog.workspaces, null);
-assert.deepEqual(plain(defaults.api.visibleWorkspaces()), ids);
+assert.deepEqual(plain(defaults.api.visibleWorkspaces()), defaultIds);
 assert.equal(defaults.api.workspace('unknown'), ids[0]);
 assert.equal(defaults.writes(), 0, 'reading defaults does not persist preferences');
-const reordered = { order: ['career', 'notes', 'canvas', 'research'], hidden: ['notes'] };
+const reordered = { order: ['career', 'notes', 'canvas', 'research', 'daily'], hidden: ['notes', 'daily'] };
 const selected = run(catalog.workspaces, JSON.stringify(reordered));
 assert.equal(selected.api.workspace('notes'), 'career');
 assert.equal(selected.api.workspace('research'), 'research');
@@ -37,6 +38,6 @@ for (const stored of [null, JSON.stringify(reordered), JSON.stringify({ order: i
   assert.equal(next.api.readLayout().order.at(-1), 'future');
   assert(next.api.readLayout().hidden.includes('future'), 'new workspace defaults to hidden');
 }
-for (const invalid of ['{bad', 'null', '[]', '{"order":1,"hidden":[]}']) assert.deepEqual(plain(run(catalog.workspaces, invalid).api.visibleWorkspaces()), ids);
-assert.deepEqual(plain(defaults.api.normalizeLayout({ order: ['notes', 'notes', 'missing'], hidden: ['notes', 'missing'] })), { order: ['notes', 'canvas', 'research', 'career'], hidden: ['notes'] });
+for (const invalid of ['{bad', 'null', '[]', '{"order":1,"hidden":[]}']) assert.deepEqual(plain(run(catalog.workspaces, invalid).api.visibleWorkspaces()), defaultIds);
+assert.deepEqual(plain(defaults.api.normalizeLayout({ order: ['notes', 'notes', 'missing'], hidden: ['notes', 'missing'] })), { order: ['notes', 'canvas', 'research', 'career', 'daily'], hidden: ['notes', 'daily'] });
 console.log('Workspace defaults, normalization, unavailable slots, empty state and future registration passed');

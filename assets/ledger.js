@@ -1,17 +1,17 @@
 (function () {
   'use strict';
-
-  const root = document.querySelector('[data-role="ledger-shell"]');
-  if (!root) return;
+  window.RelatumDailyLedger = function (root, host) {
+    const scope = host.createScope();
+    const { listen, setTimeout, clearTimeout, requestAnimationFrame, cancelAnimationFrame } = scope;
   const model = window.RelatumLedgerModel;
   if (!model) return;
-  const pageHost = root.closest('.calendar-embedded') || root;
+  const pageHost = root;
 
-  const LEGEND_KEY = 'ledger:legend:v1';
-  const PAGE_KEY = 'ledger:page:v1';
-  const VIEW_KEY = 'ledger:viewByPage:v1';
-  const HIDE_KEY = 'ledger:hideDecimalsByPage:v1';
-  const DEFAULT_TYPE_KEY = 'ledger:defaultTypeByPage:v1';
+  const LEGEND_KEY = 'daily:ledger:legend:v1';
+  const PAGE_KEY = 'daily:ledger:page:v1';
+  const VIEW_KEY = 'daily:ledger:viewByPage:v1';
+  const HIDE_KEY = 'daily:ledger:hideDecimalsByPage:v1';
+  const DEFAULT_TYPE_KEY = 'daily:ledger:defaultTypeByPage:v1';
   const DRAFT_ID = 'ledger-local-draft';
   const PAGE_MAX = model.PAGE_MAX;
   const PAGE_EDGE_PX = 84;
@@ -45,6 +45,9 @@
     pageCrossfading: false, flowHeightFloor: 0,
   };
   const entryRows = new Map();
+  if (host.state.month) {
+    state.year = host.state.year; state.month = host.state.month; state.activatedOnce = true;
+  }
   const dayGroups = new Map();
   // 视图按页独立：viewMode 只镜像当前页，切页与保存视图时同步；
   // 隐藏小数点同样按页独立，hideDecimals 只镜像当前页。
@@ -346,13 +349,7 @@
   }
 
   function showToast(message) {
-    const toast = document.querySelector('[data-role="study-toast"]')
-      || document.querySelector('[data-role="toast"]');
-    if (!toast) return;
-    toast.textContent = message;
-    toast.classList.add('show');
-    window.clearTimeout(showToast.timer);
-    showToast.timer = window.setTimeout(() => toast.classList.remove('show'), 2200);
+    host.toast(message);
   }
 
   function loadLegend() {
@@ -524,10 +521,10 @@
       if (focusTarget) focusTarget.focus({ preventScroll: true });
     }
     const orbMs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--start-orb-ms')) || 239;
-    window.requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
       state.pageOrbSettleUntil = performance.now() + orbMs + 10;
       positionPageOrb(false);
-      window.setTimeout(() => positionPageOrb(false), orbMs + 20);
+      setTimeout(() => positionPageOrb(false), orbMs + 20);
     });
   }
 
@@ -635,9 +632,9 @@
 
   function replayClass(element, className, cleanupMs) {
     if (!element || reducedMotion) return;
-    window.clearTimeout(element.__ledgerReplayTimer);
+    clearTimeout(element.__ledgerReplayTimer);
     element.classList.remove(className); void element.offsetWidth; element.classList.add(className);
-    element.__ledgerReplayTimer = window.setTimeout(() => {
+    element.__ledgerReplayTimer = setTimeout(() => {
       element.classList.remove(className); element.__ledgerReplayTimer = 0;
     }, cleanupMs);
   }
@@ -769,7 +766,7 @@
     if (!hasEntries && opts.revealEmptyAfterDelete) {
       replayClass(dom.empty, 'ledger-empty-after-delete', 880);
     }
-    window.requestAnimationFrame(() => animateEntryChanges(previous));
+    requestAnimationFrame(() => animateEntryChanges(previous));
     revealHighlightedEntry();
   }
 
@@ -787,7 +784,7 @@
     state.highlightId = '';
     highlighted.classList.add('is-highlighted');
     highlighted.scrollIntoView({ block: 'center', behavior: reducedMotion ? 'auto' : 'smooth' });
-    window.setTimeout(() => highlighted.classList.remove('is-highlighted'), reducedMotion ? 0 : 900);
+    setTimeout(() => highlighted.classList.remove('is-highlighted'), reducedMotion ? 0 : 900);
   }
 
   function cancelMainRequest() {
@@ -860,7 +857,7 @@
         : currentMonthDefaultDate(state.year, state.month), note: '', color: '',
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     syncEntries({ previousRects: previous, newIds: new Set([DRAFT_ID]) });
-    window.requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
       const row = entryRows.get(DRAFT_ID);
       if (row) {
         row.scrollIntoView({ block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' });
@@ -882,7 +879,7 @@
     let settled = false; let timer = 0;
     const finish = () => {
       if (settled) return;
-      settled = true; window.clearTimeout(timer);
+      settled = true; clearTimeout(timer);
       row.removeEventListener('animationend', onEnd);
       const sameView = state.page === removalView.page && state.viewMode === removalView.viewMode
         && state.year === removalView.year && state.month === removalView.month;
@@ -895,7 +892,7 @@
     };
     row.addEventListener('animationend', onEnd);
     row.classList.add('is-leaving');
-    timer = window.setTimeout(finish, 250);
+    timer = setTimeout(finish, 250);
   }
 
   function findEntry(id) {
@@ -970,7 +967,7 @@
 
   function scheduleSettingsPosition() {
     if (!state.settingsPopover || state.settingsPositionFrame) return;
-    state.settingsPositionFrame = window.requestAnimationFrame(() => {
+    state.settingsPositionFrame = requestAnimationFrame(() => {
       state.settingsPositionFrame = 0;
       if (!state.settingsTrigger || !state.settingsTrigger.isConnected) closeSettings(false, true);
       else positionSettings();
@@ -983,11 +980,11 @@
     state.settings = { id, saving: false, deleteArmed: false };
     state.settingsTrigger = trigger; state.settingsPopover = buildSettings(entry);
     trigger.setAttribute('aria-expanded', 'true'); document.body.appendChild(state.settingsPopover); positionSettings();
-    window.requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
       if (!state.settingsPopover) return;
       state.settingsPopover.classList.add('is-open'); positionSettings();
     });
-    window.setTimeout(() => {
+    setTimeout(() => {
       const input = state.settingsPopover && state.settingsPopover.querySelector('[data-ledger-amount]');
       if (input) { input.focus(); input.select(); }
     }, reducedMotion ? 0 : 80);
@@ -997,8 +994,8 @@
   function closeSettings(restoreFocus, instant) {
     const popover = state.settingsPopover; const trigger = state.settingsTrigger;
     if (!popover) return;
-    window.clearTimeout(state.deleteTimer); state.deleteTimer = 0;
-    if (state.settingsPositionFrame) window.cancelAnimationFrame(state.settingsPositionFrame);
+    clearTimeout(state.deleteTimer); state.deleteTimer = 0;
+    if (state.settingsPositionFrame) cancelAnimationFrame(state.settingsPositionFrame);
     state.settingsPositionFrame = 0; state.settings = null; state.settingsPopover = null; state.settingsTrigger = null;
     if (trigger) trigger.setAttribute('aria-expanded', 'false');
     const finish = () => {
@@ -1007,7 +1004,7 @@
     };
     if (instant || reducedMotion) finish();
     else {
-      popover.classList.remove('is-open'); popover.classList.add('is-closing'); window.setTimeout(finish, 190);
+      popover.classList.remove('is-open'); popover.classList.add('is-closing'); setTimeout(finish, 190);
     }
   }
 
@@ -1118,11 +1115,11 @@
     state.unitTrigger = dom.pageSettings; state.unitPopover = buildUnitSettings(); state.unitSaving = false;
     dom.pageSettings.setAttribute('aria-expanded', 'true');
     document.body.appendChild(state.unitPopover); positionUnitSettings();
-    window.requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
       if (!state.unitPopover) return;
       state.unitPopover.classList.add('is-open'); positionUnitSettings();
     });
-    window.setTimeout(() => {
+    setTimeout(() => {
       const input = state.unitPopover && state.unitPopover.querySelector('[data-ledger-unit]');
       if (input) { input.focus(); input.select(); }
     }, reducedMotion ? 0 : 80);
@@ -1138,7 +1135,7 @@
       if (restoreFocus && trigger && trigger.isConnected) trigger.focus({ preventScroll: true });
     };
     if (instant || reducedMotion) finish();
-    else { box.classList.remove('is-open'); box.classList.add('is-closing'); window.setTimeout(finish, 190); }
+    else { box.classList.remove('is-open'); box.classList.add('is-closing'); setTimeout(finish, 190); }
   }
 
   function saveUnitSettings() {
@@ -1335,8 +1332,8 @@
     const button = state.settingsPopover.querySelector('[data-ledger-delete]');
     if (!state.settings.deleteArmed) {
       state.settings.deleteArmed = true; button.classList.add('is-armed'); button.textContent = T('确认删除');
-      window.clearTimeout(state.deleteTimer);
-      state.deleteTimer = window.setTimeout(() => {
+      clearTimeout(state.deleteTimer);
+      state.deleteTimer = setTimeout(() => {
         if (!state.settings || !state.settingsPopover) return;
         state.settings.deleteArmed = false; button.classList.remove('is-armed'); button.textContent = T('删除');
       }, 3200); return;
@@ -1349,7 +1346,7 @@
     let revealEmptyAfterDelete = false;
     let removalSettled = false; let removalTimer = 0; let removalEndHandler = null;
     const cleanupRemovalMotion = () => {
-      window.clearTimeout(removalTimer); removalTimer = 0;
+      clearTimeout(removalTimer); removalTimer = 0;
       if (row && removalEndHandler) row.removeEventListener('animationend', removalEndHandler);
       removalEndHandler = null;
     };
@@ -1378,7 +1375,7 @@
       };
       row.addEventListener('animationend', removalEndHandler);
       row.classList.add('is-leaving');
-      removalTimer = window.setTimeout(finishRemovalMotion, 250);
+      removalTimer = setTimeout(finishRemovalMotion, 250);
     } else finishRemovalMotion();
     postInOrder(id, '/api/ledger-entry-delete', { id }).then((result) => {
       acceptMutationRevision(result.revision);
@@ -1453,8 +1450,8 @@
   function beginMonthMotion(delta) {
     dom.flow.classList.remove('ledger-month-next', 'ledger-month-previous'); void dom.flow.offsetWidth;
     dom.flow.classList.add(delta > 0 ? 'ledger-month-next' : 'ledger-month-previous');
-    window.clearTimeout(state.monthMotionTimer);
-    state.monthMotionTimer = window.setTimeout(() => {
+    clearTimeout(state.monthMotionTimer);
+    state.monthMotionTimer = setTimeout(() => {
       dom.flow.classList.remove('ledger-month-next', 'ledger-month-previous'); state.monthMotionTimer = 0;
     }, reducedMotion ? 0 : 380);
   }
@@ -1521,21 +1518,21 @@
     dom.flow.style.minHeight = state.flowHeightFloor + 'px';
     dom.flow.style.height = state.flowHeightFloor + 'px';
     void dom.flow.offsetWidth;
-    window.cancelAnimationFrame(state.pageSwitchFrame);
-    state.pageSwitchFrame = window.requestAnimationFrame(() => {
+    cancelAnimationFrame(state.pageSwitchFrame);
+    state.pageSwitchFrame = requestAnimationFrame(() => {
       state.pageSwitchFrame = 0;
       if (!dom.page) return;
       dom.page.classList.remove('ledger-page-crossfade-ready');
       dom.page.classList.add('ledger-page-crossfade-active');
     });
-    state.pageSwitchTimer = window.setTimeout(() => {
+    state.pageSwitchTimer = setTimeout(() => {
       state.pageSwitchTimer = 0; clearPageSwitchMotion();
     }, PAGE_SWITCH_MS + 40);
   }
 
   function clearPageSwitchMotion() {
-    window.clearTimeout(state.pageSwitchTimer); state.pageSwitchTimer = 0;
-    window.cancelAnimationFrame(state.pageSwitchFrame); state.pageSwitchFrame = 0;
+    clearTimeout(state.pageSwitchTimer); state.pageSwitchTimer = 0;
+    cancelAnimationFrame(state.pageSwitchFrame); state.pageSwitchFrame = 0;
     if (dom.page) dom.page.classList.remove('ledger-page-crossfade-ready', 'ledger-page-crossfade-active');
     root.querySelectorAll('.ledger-flow-outgoing, .ledger-summary-outgoing').forEach((item) => item.remove());
     if (dom.flow) {
@@ -1566,8 +1563,8 @@
       if (!atEdge) { event.stopPropagation(); return; }
       event.preventDefault(); event.stopPropagation();
       state.pageWheelAccum += event.deltaY;
-      window.clearTimeout(state.pageWheelTimer);
-      state.pageWheelTimer = window.setTimeout(() => { state.pageWheelAccum = 0; }, 200);
+      clearTimeout(state.pageWheelTimer);
+      state.pageWheelTimer = setTimeout(() => { state.pageWheelAccum = 0; }, 200);
       if (Math.abs(state.pageWheelAccum) < 24) return;
       const next = state.page + (state.pageWheelAccum > 0 ? 1 : -1);
       state.pageWheelAccum = 0;
@@ -1643,23 +1640,23 @@
   //    不使用 WAAPI element.animate（其 pending 帧会造成“完整内容闪一帧”的闪烁）。
   function startPageEntrance() {
     if (!dom.page || reducedMotion || !state.active) return;
-    window.clearTimeout(state.entranceTimer);
+    clearTimeout(state.entranceTimer);
     void dom.page.offsetWidth;
     dom.page.classList.add('is-revealing');
-    state.entranceTimer = window.setTimeout(() => {
+    state.entranceTimer = setTimeout(() => {
       state.entranceTimer = 0;
       if (dom.page) dom.page.classList.remove('is-revealing');
     }, 1450);
   }
 
   function stopPageEntrance() {
-    window.clearTimeout(state.entranceTimer);
+    clearTimeout(state.entranceTimer);
     state.entranceTimer = 0;
     if (dom.page) dom.page.classList.remove('is-revealing');
   }
 
   function freezePageEntranceForExit() {
-    window.clearTimeout(state.entranceTimer);
+    clearTimeout(state.entranceTimer);
     state.entranceTimer = 0;
     if (!dom.page || !dom.page.classList.contains('is-revealing') || state.entranceExitFrozen) return;
     state.entranceExitFrozen = true;
@@ -1697,11 +1694,11 @@
         .finally(() => { state.warmupPromise = null; });
     };
     if ('requestIdleCallback' in window) window.requestIdleCallback(run, { timeout: 1400 });
-    else window.setTimeout(run, 260);
+    else setTimeout(run, 260);
     return state.warmupPromise;
   }
 
-  document.addEventListener('click', (event) => {
+  listen(document, 'click', (event) => {
     if (state.settingsPopover && !state.settingsPopover.contains(event.target)
         && !(state.settingsTrigger && state.settingsTrigger.contains(event.target))) closeSettings(true);
     const palette = paletteController && paletteController.getElement();
@@ -1711,26 +1708,26 @@
     if (state.unitPopover && !state.unitPopover.contains(event.target)
         && !(state.unitTrigger && state.unitTrigger.contains(event.target))) closeUnitSettings(true);
   });
-  document.addEventListener('keydown', (event) => {
+  listen(document, 'keydown', (event) => {
     if (!state.active || event.key !== 'Escape') return;
     if (paletteController && paletteController.isOpen()) { event.preventDefault(); paletteController.close(true); }
     else if (state.unitPopover) { event.preventDefault(); closeUnitSettings(true); }
     else if (state.settingsPopover) { event.preventDefault(); closeSettings(true); }
   });
-  window.addEventListener('resize', () => {
+  listen(window, 'resize', () => {
     resetFlowHeightFloor();
     scheduleSettingsPosition(); positionUnitSettings(); renderPageRail();
     if (paletteController) paletteController.schedulePosition();
   });
-  window.addEventListener('scroll', () => {
+  listen(window, 'scroll', () => {
     scheduleSettingsPosition(); positionUnitSettings(); if (paletteController) paletteController.schedulePosition();
   }, true);
-  document.addEventListener('relatum:languagechange', () => {
+  listen(document, 'relatum:languagechange', () => {
     if (!state.mounted) return;
     if (state.settingsPopover) closeSettings(false, true);
     if (state.unitPopover) closeUnitSettings(false, true); syncLanguage();
   });
-  window.addEventListener('pagehide', () => {
+  listen(window, 'pagehide', () => {
     state.active = false; discardDraft({ instant: true }); cancelMainRequest();
     resetFlowHeightFloor();
     closeSettings(false, true); closeUnitSettings(false, true);
@@ -1738,10 +1735,8 @@
   });
 
   mount();
-  // 与起步页其他重页一样，首屏空闲时就预取整本账本，
-  // 用户第一次翻到记账视图时直接消费内存快照。
-  if (window.RelatumFeatureRuntime?.preloadEnabled !== false) warmup();
-  window.CanvasLedger = {
+
+  return {
     activate() {
       finalizePageEntranceExit(true);
       state.active = true;
@@ -1754,11 +1749,12 @@
         const today = new Date(); state.year = today.getFullYear(); state.month = today.getMonth() + 1;
         state.activatedOnce = true;
       }
-      renderPageRail(); window.requestAnimationFrame(renderPageRail);
+      renderPageRail(); requestAnimationFrame(renderPageRail);
       syncLedger({ skipFlip: true }); startPageEntrance();
       loadLedger({ sync: false });
     },
-    deactivate() {
+    deactivate({ freeze = false } = {}) {
+      Object.assign(host.state, { year: state.year, month: state.month });
       state.active = false;
       freezePageEntranceForExit();
       resetFlowHeightFloor();
@@ -1766,9 +1762,13 @@
       discardDraft({ instant: true }); cancelMainRequest(); closeSettings(false, true);
       closeUnitSettings(false, true);
       if (paletteController) paletteController.close(false, true);
+      scope.stop({ freeze });
     },
     finalizeExitMotion() { finalizePageEntranceExit(false); },
-    warmup,
+    async beforeLeave(){await Promise.allSettled([...state.mutationChains.values()]);return !state.pendingMutations;},
+    destroy(){this.deactivate();paletteController?.destroy?.();scope.destroy();entryRows.clear();dayGroups.clear();state.ledger=null;root.replaceChildren();},
     getMonth() { return { year: state.year, month: state.month }; },
+  };
+
   };
 })();

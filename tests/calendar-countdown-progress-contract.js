@@ -10,7 +10,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const calendar = fs.readFileSync(path.join(root, 'assets', 'calendar.js'), 'utf8');
 const countdown = fs.readFileSync(path.join(root, 'assets', 'countdown.js'), 'utf8');
-const styles = fs.readFileSync(path.join(root, 'assets', 'styles.css'), 'utf8');
+const styles = fs.readFileSync(path.join(root, 'assets', 'daily-calendar.css'), 'utf8');
 const i18n = fs.readFileSync(path.join(root, 'assets', 'i18n.js'), 'utf8');
 const appPy = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
 
@@ -48,7 +48,7 @@ assert(calendar.includes('commitCountdownProgressSettings(box)'));
 assert(calendar.includes('closeCountdownProgressSettings(true)'));
 
 // 编辑模式是用户级本地偏好，非事件字段；非法值回退 length。
-assert(calendar.includes("const COUNTDOWN_PROGRESS_MODE_KEY = 'canvas:calendarCountdownProgressMode'"));
+assert(calendar.includes("const COUNTDOWN_PROGRESS_MODE_KEY = 'daily:calendarCountdownProgressMode'"));
 assert(calendar.includes("let initialCountdownProgressMode = 'length'"));
 assert(calendar.includes("storedProgressMode === 'length' || storedProgressMode === 'startDate'"));
 assert(calendar.includes('localStorage.setItem(COUNTDOWN_PROGRESS_MODE_KEY, mode)'));
@@ -63,7 +63,7 @@ assert(calendar.includes('visibleCountdownProgressBar'));
 assert(calendar.includes('syncCountdownProgress()'));
 assert(calendar.includes('updateCountdownEverywhere'));
 assert(calendar.includes('reconcileCalendarPanel'));
-assert(calendar.includes("document.addEventListener('calendar:countdown-visibility'"));
+assert(calendar.includes("listen(document, 'calendar:countdown-visibility'"));
 
 // —— countdown.js 规范化保留 lengthDays ——
 assert(countdown.includes('Number.isInteger(lengthDays) && lengthDays >= 1 && lengthDays <= 9999'));

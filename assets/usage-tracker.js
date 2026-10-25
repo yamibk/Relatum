@@ -10,7 +10,7 @@
   } catch (_) { /* An unrelated external frame cannot own this document. */ }
 
   const categories = ['notes', 'canvas', 'embedded', 'research', 'study', 'tree', 'quicknotes', 'review', 'checkin'];
-  const owners = { notes: 'notes', canvas: 'canvas.editor', embedded: 'notes.canvas', research: 'research', study: 'canvas.study', tree: 'canvas.tree', quicknotes: 'canvas.quicknotes', review: 'canvas.review', checkin: 'canvas.focus' };
+  const owners = { notes: 'notes', canvas: 'canvas.editor', embedded: 'notes.canvas', research: 'research', study: 'canvas.study', tree: 'canvas.tree', quicknotes: 'canvas.quicknotes', review: 'canvas.review', checkin: 'daily.tasks' };
   const labels = { notes: ['笔记', 'Notes'], canvas: ['画布', 'Canvas'], embedded: ['笔记内嵌画布', 'Embedded canvases'], research: ['研究', 'Research'], study: ['学习', 'Learning'], tree: ['树状', 'Trees'], quicknotes: ['速记', 'Quick notes'], review: ['复习', 'Review'], checkin: ['打卡', 'Check-ins'] };
   const queuePrefix = 'canvas:usageQueue:v2:';
   let owner;

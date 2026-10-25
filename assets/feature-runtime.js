@@ -5,7 +5,8 @@
   const enabled = key => !profile || !profile.restricted || profile.features[key] === true;
   const workspaces = Object.freeze((profile?.workspaces || []).map(item => Object.freeze({ ...item, label: Object.freeze(item.label.slice()) })));
   const workspaceIds = workspaces.map(item => item.id);
-  const workspaceEnabled = key => workspaceIds.includes(key) && (key === 'canvas' ? !profile || profile.canvasHome : enabled(key));
+  const workspaceEnabled = key => workspaceIds.includes(key) && (key === 'canvas' ? !profile || profile.canvasHome
+    : enabled(key) && (!profile?.availableWorkspaces || profile.availableWorkspaces.includes(key)));
   const layoutKey = 'canvas:workspaceLayout:v1';
   function normalizeLayout(raw) {
     const valid = raw && Array.isArray(raw.order) && Array.isArray(raw.hidden);
@@ -50,7 +51,7 @@
   if (!enabled('canvas.library')) selectors.push('.top-actions', '.canvas-library-head', '[data-role="file-list"]', '[data-role="page-dots"]', '[data-role="trash-entry"]', '[data-action="new"]', '[data-action="import-canvas-file"]', '[data-action="import-canvas-folder"]');
   if (!enabled('editor.ai')) selectors.push('[data-role="ai-toggle"]', '[data-role="ai-panel"]');
   if (!enabled('editor.graph')) selectors.push('[data-action="graph"]');
-  if (!enabled('calendar.wallpaper')) selectors.push('[data-countdown-wallpaper]');
+  if (!enabled('daily.calendar.wallpaper')) selectors.push('[data-countdown-wallpaper]');
   if (!workspaces.some(item => workspaceEnabled(item.id))) selectors.push('.editor-back');
   if (selectors.length) {
     const style = document.createElement('style');
@@ -63,7 +64,7 @@
       ['notes', '[data-role="note-font-scale"], [data-role="note-image-text-scale"], [data-role="note-graph-spacing"]'],
       ['career', '[data-role^="career-scroll-"]'],
       ['canvas.quicknotes', '[data-role^="notes-"]'],
-      ['canvas.calendar', '[data-role="calendar-countdown-toggle"]'],
+      ['daily.calendar', '[data-role="calendar-countdown-toggle"]'],
       ['canvas.library', '[data-role="library-search-toggle"]'],
     ];
     groups.forEach(([key, selector]) => {

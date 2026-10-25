@@ -17,7 +17,7 @@ const desktop = read('desktop.py');
 const shell = read('assets/desktop-shell.js');
 
 const workspaces = JSON.parse(read('assets/feature-catalog.json')).workspaces;
-assert.strictEqual(workspaces.length, 4, 'the catalog registers the four current workspaces');
+assert.strictEqual(workspaces.length, 5, 'the catalog registers five workspaces including hidden Daily');
 assert(workspaces.some(item => item.id === 'research' && item.panel === 'start-research-workspace'), 'Research must be registered');
 assert(html.includes('features.workspaces.filter') && html.includes("button.setAttribute('aria-controls', item.panel)"), 'tabs are generated from the shared catalog');
 assert(/<section class="research-workspace start-workspace-panel" id="start-research-workspace"\s+data-start-workspace-panel="research" aria-label="研究工作区" hidden><\/section>/.test(html),
@@ -35,7 +35,7 @@ assert(start.includes('research: { load: loadResearchWorkspace, leave: () => res
   'leaving Research must suspend its active resources');
 assert(start.includes('lifecycle[name]?.load?.()') && start.includes('await workspace?.activate?.()'),
   'entering Research must activate the loaded workspace');
-assert(start.includes('return performStartWorkspace(fallback,') && start.includes('visibleWorkspaces().find') && start.includes('features.workspaceEnabled(item)'),
+assert(start.includes('await performStartWorkspace(fallback,') && start.includes('visibleWorkspaces().find') && start.includes('features.workspaceEnabled(item)'),
   'a failed Research load must return to an enabled workspace');
 assert(!start.includes('scheduleResearchWorkspaceIdleWarmup'),
   'Research must not gain an idle warmup path');

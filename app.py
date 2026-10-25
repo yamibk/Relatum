@@ -106,12 +106,12 @@ STUDY_ARCHIVE_DIR = DATA / "学习归档"
 CANVAS_ARCHIVE_DIR = DATA / "画布归档"   # 编辑器顶栏「归档」：移走划线节点 + 这里留轻量记录
 NOTES_FILE = DATA / "notes.json"   # 起步页「速记」便签墙（独立数据，不进 .canvas）
 START_STICKY_NOTES_FILE = DATA / "start-sticky-notes.json"   # 起步页跨页便签（不含「速记」页）
-FOCUS_FILE = DATA / "focus.json"   # 起步页「专注钟」专注记录（自成一体，不进 .canvas；供活跃页专注镜头汇总）
-DAILY_FILE = DATA / "daily.json"   # 专注页「每日任务」习惯清单（每天重置勾选，累计天数/分钟；自成一体，不进 .canvas）
+FOCUS_FILE = DATA / "focus.json"   # 日常「专注」记录（自成一体，不进 .canvas；供活跃页专注镜头汇总）
+DAILY_FILE = DATA / "daily.json"   # 日常「每日任务」习惯清单（每天重置勾选，累计天数/分钟；自成一体，不进 .canvas）
 DAILY_BACKUP_FILE = DATA / "daily.backup.json"
-LEDGER_FILE = DATA / "ledger.json"   # 日历页第二视图「记账」的独立收支流水
+LEDGER_FILE = DATA / "ledger.json"   # 日常「记账」的独立收支流水
 LEDGER_BACKUP_FILE = DATA / "ledger.backup.json"
-DIARY_DIR = DATA / "diary"   # 起步页「日历」日记：每天一份 Markdown，与学习/速记数据解耦
+DIARY_DIR = DATA / "diary"   # 日常「日历」日记：每天一份 Markdown，与学习/速记数据解耦
 COUNTDOWN_FILE = DATA / "countdown.json"   # 日历页轻量倒数日：目标事件 + 目标日期
 TEMPLATES_FILE = DATA / "templates.json"   # 「模板」库：常用节点组的可复用快照（全局，所有画布共用，不进 .canvas）
 REVIEW_DB_FILE = DATA / "review.db"   # 独立复习卡片、调度状态与复习事件；不扫描、不改写 .canvas
@@ -3355,6 +3355,8 @@ def append_focus_session(item: object) -> dict:
     if not session:
         raise ValueError("无效的专注记录")
     data = load_focus()
+    if any(existing.get("id") == session["id"] for existing in data["sessions"]):
+        return data
     data["sessions"].append(session)
     data["sessions"] = data["sessions"][-FOCUS_SESSIONS_MAX:]
     bucket = data["days"].setdefault(_focus_day_key(session), {"sec": 0, "count": 0})
@@ -3697,6 +3699,9 @@ def _sanitize_daily_task(item: object) -> dict | None:
         "todayMinutes": _daily_nat(item.get("todayMinutes")),
         "doneDates": done_dates[-DAILY_HISTORY_MAX:],
         "minutesByDate": _daily_minutes_by_date(item.get("minutesByDate")),
+        "focusMinuteRequests": [value for value in item.get("focusMinuteRequests", [])
+                                if isinstance(value, str) and 0 < len(value) <= 64][-FOCUS_SESSIONS_MAX:]
+        if isinstance(item.get("focusMinuteRequests"), list) else [],
         "createdAt": str(item.get("createdAt") or "")[:40],
         "groupId": str(item.get("groupId") or "")[:64],   # 所属分组；"" = 挂在根（未分组）
     }
@@ -4087,6 +4092,12 @@ def daily_add_minutes(body: dict) -> dict:
     data = load_daily()
     task = _daily_find(data, str(body.get("id") or "").strip() if isinstance(body, dict) else "")
     minutes = min(_daily_nat(body.get("minutes")), 24 * 60)
+    request_id = body.get("requestId", "")
+    if not isinstance(request_id, str) or len(request_id) > 64:
+        raise ValueError("无效的专注请求身份")
+    receipts = task.setdefault("focusMinuteRequests", [])
+    if request_id and request_id in receipts:
+        return daily_public_payload(data)
     if minutes:
         task["todayMinutes"] = _daily_nat(task.get("todayMinutes")) + minutes
         task["totalMinutes"] = _daily_nat(task.get("totalMinutes")) + minutes
@@ -4094,6 +4105,8 @@ def daily_add_minutes(body: dict) -> dict:
         today = _today_iso()
         by_date[today] = min(24 * 60, by_date.get(today, 0) + minutes)
         task["minutesByDate"] = by_date
+        if request_id:
+            task["focusMinuteRequests"] = (receipts + [request_id])[-FOCUS_SESSIONS_MAX:]
         save_daily(data)
     return daily_public_payload(data)
 
@@ -4383,7 +4396,7 @@ _CAREER_INSTANCE = None
 _USAGE_INSTANCE_LOCK = threading.RLock()
 _USAGE_FEATURES = {"notes": "notes", "canvas": "canvas.editor", "embedded": "notes.canvas",
                    "research": "research", "study": "canvas.study", "tree": "canvas.tree",
-                   "quicknotes": "canvas.quicknotes", "review": "canvas.review", "checkin": "canvas.focus"}
+                   "quicknotes": "canvas.quicknotes", "review": "canvas.review", "checkin": "daily.tasks"}
 
 
 def _usage_available(category, profile=None):

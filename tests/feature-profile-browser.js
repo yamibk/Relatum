@@ -28,7 +28,9 @@ const cases = [
   ['career', only(['career'])],
   ['notes-career', only(['notes', 'career'])],
   ['library', only(['canvas', 'canvas.library'])],
-  ...catalog.features.filter(item => item.view).map(item => [item.view, only(['canvas', item.id])]),
+  ...catalog.features.filter(item => item.view).map(item => [item.view, only([item.parent, item.id])]),
+  ['daily-tasks', only(['daily', 'daily.tasks'])],
+  ['daily-ledger', only(['daily', 'daily.ledger'])],
   ['editor', only(['canvas', 'canvas.editor'])],
 ];
 (async () => {
@@ -58,7 +60,8 @@ const cases = [
       const server = spawn(process.env.RELATUM_SERVER_EXE || process.env.RELATUM_PYTHON || 'python', process.env.RELATUM_SERVER_EXE ? args.slice(1) : args, { cwd: repo, env: { ...process.env, RELATUM_DATA_ROOT: root }, windowsHide: true, stdio: 'ignore' });
       const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
       // Restore a workspace/page that may have been disabled in this session.
-      await context.addInitScript(noteFixture => {
+      await context.addInitScript(({ noteFixture, dailyCase, ids }) => {
+        if (dailyCase) localStorage.setItem('canvas:workspaceLayout:v1', JSON.stringify({ order: ids, hidden: [] }));
         localStorage.setItem('canvas:startWorkspace:v1', 'notes');
         localStorage.setItem('canvas:hideSpecialPages', '1');
         localStorage.setItem('canvas:noteFocusMode:v1', '0');
@@ -73,7 +76,7 @@ const cases = [
           window.__firstHeader = { height: header.getBoundingClientRect().height, opacity: getComputedStyle(header).opacity };
         }
         requestAnimationFrame(firstHeader);
-      }, noteFixture);
+      }, { noteFixture, dailyCase: choices?.daily, ids: catalog.workspaces.map(item => item.id) });
       try {
         let ready = false;
         for (let i = 0; i < 100; i++) {
@@ -101,6 +104,7 @@ const cases = [
         if (name === 'research') await page.waitForFunction(() => document.querySelector('iframe')?.contentWindow.RelatumResearchWorkspace);
         if (name === 'career') await page.waitForFunction(() => window.RelatumCareerReport);
         if (name === 'editor') await page.waitForFunction(() => document.body.classList.contains('canvas-ready'));
+        if (choices?.daily) await page.waitForSelector('.daily-navigation');
         await sleep(2400); // includes the existing idle prewarm jobs
         if (noteFixture) {
           await page.waitForSelector('.note-live-editor-host .cm-editor');
@@ -120,7 +124,7 @@ const cases = [
           } else {
             assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '1', 'workspace count does not hide the header');
           }
-          const labels = { 'zh-CN': { canvas: '画布', notes: '笔记', research: '研究', career: '生涯' }, en: { canvas: 'Canvas', notes: 'Notes', research: 'Research', career: 'Career' } };
+          const labels = { 'zh-CN': { canvas: '画布', notes: '笔记', research: '研究', career: '生涯', daily: '日常' }, en: { canvas: 'Canvas', notes: 'Notes', research: 'Research', career: 'Career', daily: 'Daily' } };
           for (const language of ['en', 'zh-CN']) {
             await page.evaluate(language => window.RelatumI18n.setLanguage(language), language);
             for (const width of [1280, 720]) {
@@ -145,7 +149,7 @@ const cases = [
           if (name === 'notes' && enabled('notes') && process.env.RELATUM_NOTES_PREVIEW) await page.screenshot({ path: process.env.RELATUM_NOTES_PREVIEW });
           assert.deepEqual(errors, [], `${name}: language and viewport changes`);
         }
-        if (name === 'calendar') assert(await page.evaluate(() => !!window.RelatumStudyPalette), 'calendar keeps its shared ledger palette');
+        if (name === 'calendar') assert(!await page.evaluate(() => !!window.RelatumLedgerModel), 'calendar does not load the ledger');
         if (name === 'career') {
           await page.evaluate(() => {
             const panel = document.querySelector('[data-chart-key="note-network"]').closest('.career-panel');

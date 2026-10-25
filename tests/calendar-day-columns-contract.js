@@ -9,7 +9,7 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const calendar = fs.readFileSync(path.join(root, 'assets', 'calendar.js'), 'utf8');
-const styles = fs.readFileSync(path.join(root, 'assets', 'styles.css'), 'utf8');
+const styles = fs.readFileSync(path.join(root, 'assets', 'daily-calendar.css'), 'utf8');
 const i18n = fs.readFileSync(path.join(root, 'assets', 'i18n.js'), 'utf8');
 const appPy = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
 

@@ -305,7 +305,7 @@
   }
 
   async function refreshWallpaperState() {
-    if (!window.RelatumFeatureRuntime.enabled('calendar.wallpaper')) return;
+    if (!window.RelatumFeatureRuntime.enabled('daily.calendar.wallpaper')) return;
     if (wallpaperMode || !window.CanvasDesktop
         || typeof window.CanvasDesktop.getCountdownWallpaperState !== 'function') return;
     try {
@@ -648,7 +648,7 @@
     window.clearTimeout(state.timer);
     document.body.classList.add('is-leaving');
     const params = new URLSearchParams(window.location.search);
-    const destination = 'index.html?view=calendar' + (params.get('desktop') === '1' ? '&desktop=1' : '');
+    const destination = 'index.html?workspace=daily&view=calendar' + (params.get('desktop') === '1' ? '&desktop=1' : '');
     window.setTimeout(() => { window.location.href = destination; }, reducedMotion ? 0 : 240);
   }
 

@@ -57,7 +57,7 @@ function instrumentResources() {
     AudioBufferSourceNode.prototype.stop = function (...args) { stats.sourcesStopped++; return stop.apply(this, args); };
   }
   localStorage.setItem('canvas:startWorkspace:v1', 'canvas');
-  localStorage.setItem('canvas:focusNoise', '1');
+  localStorage.setItem('daily:focusNoise', '1');
   localStorage.setItem('canvas:hideSpecialPages', '0');
 }
 
@@ -150,7 +150,7 @@ async function snapshot(page) {
     const page = await context.newPage(), errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(base + '/');
-    await page.waitForFunction(() => window.CanvasFocus);
+    await page.waitForFunction(() => window.RelatumStartWorkspace);
     await sleep(3500);
     report.homeIdle = await snapshot(page);
     if (!baseline) assert.equal(report.homeIdle.buffers, 0, 'hidden star graph allocates no GPU buffers');
@@ -176,9 +176,12 @@ async function snapshot(page) {
       await page.evaluate(() => window.RelatumStartWorkspace.set('canvas', { animate: false }));
       await page.waitForFunction(() => window.__resources.buffers > 0);
     }
-    await page.locator('.left-spine [data-action="focus-view"]').click();
-    await page.evaluate(() => {
-      window.CanvasFocus.showTimer({ animate: false });
+    await page.evaluate(async () => {
+      const layout = window.RelatumStartWorkspace.layout;
+      layout.hidden = layout.hidden.filter(id => id !== 'daily');
+      await window.RelatumStartWorkspace.applyLayout(layout);
+      await window.RelatumStartWorkspace.set('daily');
+      await window.RelatumDailyWorkspace.navigate('focus');
     });
     await sleep(1100);
     report.starClosed = await snapshot(page);
@@ -236,6 +239,7 @@ async function snapshot(page) {
       assert.equal(report.pageHidden.retainedPCMBytes, 0, 'pagehide releases PCM');
       await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
       await page.waitForFunction(() => window.__resources.sourcesStarted - window.__resources.sourcesStopped === 1);
+      await page.locator('[data-action="focus-settings"]').click();
       await page.locator('[data-role="focus-set-noise"]').uncheck();
       await sleep(2200);
       // Abort a late fetch and ensure its result cannot reactivate or retain PCM.

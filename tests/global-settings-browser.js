@@ -79,7 +79,7 @@ async function run(browser, mode) {
     await page.evaluate(() => RelatumGlobalSettings.open()); await dialog.waitFor();
     assert(await dialog.evaluate(node => node.matches(':modal') && !node.closest('.start-workspace-stage')));
     assert.deepEqual(await dialog.locator('nav button').evaluateAll(nodes => nodes.map(node => node.dataset.settingsCategory)), mode === 'full'
-      ? ['appearance', 'workspaces', 'navigation', 'learning', 'starmap', 'career', 'usage']
+      ? ['appearance', 'workspaces', 'navigation', 'daily', 'learning', 'starmap', 'career', 'usage']
       : ['appearance', 'workspaces', ...(mode === 'library' ? ['navigation'] : []), ...(['career', 'mixed'].includes(mode) ? ['career'] : []), ...(mode === 'career' ? [] : ['usage'])]);
     const bounds = await dialog.boundingBox(); assert.equal(Math.round(bounds.width), 1200); assert.equal(Math.round(bounds.height), 820);
     await category('workspaces').click();
@@ -122,7 +122,7 @@ async function run(browser, mode) {
     if (mode === 'mixed') {
       await dialog.locator('[data-sidebar-page="career"] .note-sidebar-grip').focus(); await page.keyboard.press('Home');
       await page.waitForFunction(() => RelatumStartWorkspace.layout.order[1] === 'career');
-      assert.deepEqual((await layout()).order, ['canvas', 'career', 'research', 'notes'], 'unavailable workspaces retain their slots while available rows reorder');
+      assert.deepEqual((await layout()).order, ['canvas', 'career', 'research', 'notes', 'daily'], 'unavailable workspaces retain their slots while available rows reorder');
     }
     const active = await current();
     for (const id of available.filter(id => id !== active)) await check(id, false);
@@ -176,7 +176,7 @@ async function run(browser, mode) {
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteFontScale:v1')), '120');
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:startTheme')), 'dark');
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:toolbarLanguage')), 'en');
-    assert.deepEqual((await layout()).hidden, [], 'reset restores the current four workspaces');
+    assert.deepEqual((await layout()).hidden, ['daily'], 'reset keeps Daily hidden by default');
     await page.evaluate(() => { document.documentElement.dataset.desktopMinimized = '1'; window.dispatchEvent(new Event('canvasdesktop:visibility')); });
     assert(await dialog.isHidden(), 'native minimization closes settings');
     await page.evaluate(() => { delete document.documentElement.dataset.desktopMinimized; window.dispatchEvent(new Event('canvasdesktop:visibility')); });
