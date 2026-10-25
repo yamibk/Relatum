@@ -10,6 +10,7 @@
 .global-settings-dialog :is(.start-setting-toggle strong, .start-root-title-size-setting strong, .start-dark-card-setting strong, .start-speed-head) { font-size: 13px; font-weight: 580; }
 .global-settings-dialog .start-setting-toggle small { font-size: 11px; line-height: 1.6; margin-top: 4px; }
 .global-settings-dialog .start-setting-toggle input { position: static; opacity: 1; pointer-events: auto; width: 16px; height: 16px; }
+.global-settings-dialog .start-setting-toggle[hidden] { display: none; }
 .global-settings-dialog .start-setting-toggle > i { display: none; }
 .global-settings-dialog .start-panel-theme { display: flex; align-items: center; justify-content: space-between; }
 .global-settings-dialog .start-panel-theme > strong { font-size: 13px; font-weight: 580; }

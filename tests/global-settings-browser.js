@@ -29,6 +29,20 @@ async function run(browser, mode) {
   try {
     for (let i = 0; i < 150; i++) { try { if ((await fetch(url + '/api/runtime')).ok) break; } catch (_) {} await pause(100); }
     await context.addInitScript(() => { localStorage.setItem('canvas:noteFocusMode:v1', '0'); localStorage.setItem('canvas:noteActivePath:v1', 'Main.md'); localStorage.setItem('canvas:noteOpenTabs:v1', '["Main.md"]'); });
+    if (mode === 'system') await context.addInitScript(() => {
+      window.__launcherSupported = true; window.__launcherCalls = [];
+      window.pywebview = { api: {
+        set_dirty() {}, set_note_workspace_active() {}, get_window_state: async () => ({ maximized: false }),
+        get_restored_size: async () => ({ width: 1080, height: 700, minWidth: 720, minHeight: 480, maxWidth: 1800, maxHeight: 1100 }),
+        get_launcher_settings: async () => ({ supported: __launcherSupported, skipSelection: localStorage.getItem('qa:launcher-skip') === '1' }),
+        set_launcher_skip_selection: async value => {
+          __launcherCalls.push(value);
+          if (window.__holdLauncherSave) await new Promise(resolve => { window.__releaseLauncherSave = resolve; });
+          if (window.__failLauncherSave) throw new Error('test failure');
+          localStorage.setItem('qa:launcher-skip', value ? '1' : '0'); return { supported: true, skipSelection: value };
+        },
+      } };
+    });
     if (mode === 'cold') await context.addInitScript(({ ids, key }) => {
       localStorage.setItem(key, JSON.stringify({ order: ids, hidden: ids }));
       localStorage.setItem('canvas:startBackgroundStyle', 'scenic'); localStorage.setItem('canvas:noteGraphPreload:v1', '1');
@@ -39,7 +53,54 @@ async function run(browser, mode) {
       }
       requestAnimationFrame(firstFrame);
     }, { ids, key });
-    await page.goto(url); await page.waitForFunction(() => window.RelatumStartWorkspace && window.RelatumGlobalSettings);
+    await page.goto(url + (mode === 'system' ? '/?desktop=1' : '')); await page.waitForFunction(() => window.RelatumStartWorkspace && window.RelatumGlobalSettings);
+    if (mode === 'system') {
+      await page.waitForFunction(() => !document.querySelector('[data-role="launcher-skip-selection"]').disabled);
+      await page.evaluate(() => RelatumGlobalSettings.open({ category: 'system' }));
+      const globalToggle = dialog.locator('[data-role="global-launcher-skip-selection"]');
+      await globalToggle.waitFor({ state: 'visible' });
+      const categories = await dialog.locator('nav [data-settings-category]').evaluateAll(nodes => nodes.map(node => node.dataset.settingsCategory));
+      assert.deepEqual(categories.slice(-2), ['usage', 'system']);
+      assert.equal(await dialog.locator('section[data-settings-category="system"] input').count(), 1);
+      assert(await dialog.locator('[data-settings-action="reset-category"]').isHidden(), 'client preference has no category reset');
+      const original = page.locator('[data-role="launcher-skip-selection"]');
+      await page.evaluate(() => { window.__holdLauncherSave = true; });
+      await globalToggle.click();
+      await page.waitForFunction(() => !!window.__releaseLauncherSave);
+      assert(await globalToggle.isDisabled()); assert(await original.isDisabled());
+      assert(await original.isChecked());
+      await page.evaluate(() => { __holdLauncherSave = false; __releaseLauncherSave(); });
+      await page.waitForFunction(() => !document.querySelector('[data-role="global-launcher-skip-selection"]').disabled);
+      assert(await globalToggle.isChecked()); assert(await original.isChecked());
+      await dialog.locator('[data-settings-action="reset-all"]').click(); await dialog.locator('[data-settings-action="accept-reset"]').click();
+      assert(await globalToggle.isChecked(), 'global reset preserves launcher settings');
+      await page.evaluate(() => RelatumGlobalSettings.close({ instant: true }));
+      await page.locator('[data-action="desktop-settings-open"]').click(); await original.uncheck();
+      await page.waitForFunction(() => !document.querySelector('[data-role="launcher-skip-selection"]').disabled);
+      assert.equal(await globalToggle.isChecked(), false, 'original entry synchronizes the global entry');
+      await page.locator('.desktop-settings-close').click();
+      await page.evaluate(() => RelatumGlobalSettings.open({ category: 'system' }));
+      page.once('dialog', alert => alert.dismiss()); await page.evaluate(() => { window.__failLauncherSave = true; });
+      await globalToggle.click();
+      await page.waitForFunction(() => !document.querySelector('[data-role="global-launcher-skip-selection"]').disabled);
+      assert.equal(await globalToggle.isChecked(), false); assert.equal(await original.isChecked(), false);
+      await page.evaluate(() => { window.__failLauncherSave = false; RelatumI18n.setLanguage('en'); });
+      assert.equal(await category('system').textContent(), 'System');
+      assert((await globalToggle.locator('..').textContent()).includes('RelatumLauncher'));
+      await page.screenshot({ path: path.join(artifacts, 'system.png') });
+      await page.evaluate(() => RelatumGlobalSettings.close({ instant: true }));
+      await page.reload(); await page.waitForFunction(() => window.RelatumGlobalSettings && !document.querySelector('[data-role="launcher-skip-selection"]').disabled);
+      await page.evaluate(() => RelatumGlobalSettings.open({ category: 'system' }));
+      assert.equal(await globalToggle.isChecked(), false, 'saved value is read again after reload');
+      await page.evaluate(() => { RelatumGlobalSettings.close({ instant: true }); window.__launcherSupported = false; });
+      await page.locator('[data-action="desktop-settings-open"]').click();
+      await page.waitForFunction(() => document.querySelector('[data-role="launcher-setting"]').hidden);
+      await page.locator('.desktop-settings-close').click();
+      await page.evaluate(() => RelatumGlobalSettings.open());
+      assert.equal(await category('system').count(), 0, 'unsupported launcher hides the empty category');
+      assert.deepEqual(errors, []); console.log('system: category placement, shared toggle, single-flight save, failure rollback, reset protection, language, reload and unsupported host passed');
+      return;
+    }
     if (mode === 'cold') {
       await page.waitForFunction(() => window.firstWorkspaceFrame);
       assert.deepEqual(await page.evaluate(() => firstWorkspaceFrame), { name: 'none', stage: 'none', sky: 'none' }, 'the first rendered frame is already blank');

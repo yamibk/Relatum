@@ -118,27 +118,39 @@
   const launcherSetting = document.querySelector('[data-role="launcher-setting"]');
   const launcherToggle = document.querySelector('[data-role="launcher-skip-selection"]');
   if (launcherSetting && launcherToggle) {
-    let savedSkipSelection = false;
+    let savedSkipSelection = false, launcherSupported = false, savingLauncherSetting = false, requestedSkipSelection = false, launcherReadVersion = 0;
+    const launcherToggles = () => document.querySelectorAll('[data-role="launcher-skip-selection"], [data-role="global-launcher-skip-selection"]');
+    function renderLauncherSettings() {
+      document.querySelectorAll('[data-role="launcher-setting"]').forEach(setting => { setting.hidden = !launcherSupported; });
+      launcherToggles().forEach(toggle => { toggle.checked = savingLauncherSetting ? requestedSkipSelection : savedSkipSelection; toggle.disabled = !launcherSupported || savingLauncherSetting; });
+      document.dispatchEvent(new CustomEvent('canvasdesktop:launcher-settings', { detail: { supported: launcherSupported } }));
+    }
     async function syncLauncherSetting() {
+      if (savingLauncherSetting) return;
+      const version = ++launcherReadVersion;
       try {
         const settings = await window.CanvasDesktop.getLauncherSettings();
-        launcherSetting.hidden = !settings.supported;
+        if (version !== launcherReadVersion) return;
+        launcherSupported = settings.supported === true;
         savedSkipSelection = settings.skipSelection === true;
-        launcherToggle.checked = savedSkipSelection;
-        launcherToggle.disabled = !settings.supported;
-      } catch (error) { launcherSetting.hidden = true; }
+      } catch (error) { if (version !== launcherReadVersion) return; launcherSupported = false; }
+      renderLauncherSettings();
     }
-    launcherToggle.addEventListener('change', async () => {
-      launcherToggle.disabled = true;
+    document.addEventListener('change', async event => {
+      const toggle = event.target;
+      if (!toggle.matches('[data-role="launcher-skip-selection"], [data-role="global-launcher-skip-selection"]') || savingLauncherSetting || !launcherSupported) return;
+      const requested = toggle.checked;
+      requestedSkipSelection = requested; launcherReadVersion++;
+      savingLauncherSetting = true; renderLauncherSettings();
       try {
-        const settings = await window.CanvasDesktop.setLauncherSkipSelection(launcherToggle.checked);
+        const settings = await window.CanvasDesktop.setLauncherSkipSelection(requested);
+        launcherSupported = settings.supported === true;
         savedSkipSelection = settings.skipSelection === true;
       } catch (error) {
         const message = '保存启动器设置失败，请重试。';
         window.alert(window.RelatumI18n ? window.RelatumI18n.t(message) : message);
       } finally {
-        launcherToggle.checked = savedSkipSelection;
-        launcherToggle.disabled = false;
+        savingLauncherSetting = false; renderLauncherSettings();
       }
     });
     const settingsOpen = document.querySelector('[data-action="desktop-settings-open"]');

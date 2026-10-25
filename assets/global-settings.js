@@ -20,10 +20,11 @@
     ['starmap', ['星图', 'Star map'], '<circle cx="5" cy="5" r="2"/><circle cx="19" cy="7" r="2"/><circle cx="12" cy="19" r="2"/><path d="m7 5 10 2M6 7l5 10m7-8-5 8"/>', 'graph animation physics fit 动画 生长 阻尼 取景'],
     ['career', ['生涯', 'Career'], '<path d="M4 3v17h17M8 15l4-5 4 2 5-7"/>', 'career scroll inertia reveal 生涯 滚动 惯性 揭示'],
     ['usage', ['使用统计', 'Usage statistics'], '<path d="M5 21V11m7 10V3m7 18V7"/>', 'usage statistics tracking time 统计 记录 时间'],
+    ['system', ['系统', 'System'], '<path d="M4 4h16v12H4zM8 20h8m-4-4v4"/>', 'system desktop launcher startup selection 系统 启动器 启动 弹窗 选择'],
   ];
   definitions.forEach(([id, label, iconMarkup, keywords]) => {
     const panel = document.createElement('section'); panels.set(id, panel);
-    categories.push({ id, label, iconMarkup, keywords, panel, reset: () => resetCategory(id) });
+    categories.push({ id, label, iconMarkup, keywords, panel, reset: id === 'system' ? null : () => resetCategory(id) });
   });
   function take(selector, category, enabled = true) {
     source.querySelectorAll(selector).forEach(element => {
@@ -71,6 +72,13 @@
   const usage = document.querySelector('[data-usage-panel]');
   const usageFeatures = ['notes', 'canvas.editor', 'canvas.library', 'notes.canvas', 'research', 'canvas.study', 'canvas.tree', 'canvas.quicknotes', 'canvas.review', 'daily.tasks'];
   if (usage && usageFeatures.some(features.enabled)) panels.get('usage').append(usage); else usage?.remove();
+  const launcherSetting = document.querySelector('[data-role="launcher-setting"]');
+  const systemEntry = window.CanvasDesktop && launcherSetting ? launcherSetting.cloneNode(true) : null;
+  if (systemEntry) {
+    systemEntry.className = 'start-setting-toggle';
+    systemEntry.querySelector('input').dataset.role = 'global-launcher-skip-selection';
+    panels.get('system').append(systemEntry);
+  }
   source.remove();
   const hint = document.createElement('p'), rows = document.createElement('div');
   hint.dataset.i18nManaged = 'true'; rows.dataset.role = 'workspace-layout-list';
@@ -88,12 +96,13 @@
   content.hidden = true; visibleCategories.forEach(category => content.append(category.panel)); document.body.append(content);
   function ensureDialog() {
     if (dialog) return dialog;
-    dialog = window.RelatumSettingsDialog.create({ id: 'global-settings-dialog', content, categories: visibleCategories, language, motion,
+    const activeCategories = visibleCategories.filter(category => category.id !== 'system' || !systemEntry.hidden);
+    dialog = window.RelatumSettingsDialog.create({ id: 'global-settings-dialog', content, categories: activeCategories, language, motion,
       labels: { title: ['全局设置', 'Settings'], 'reset-all': ['恢复全部设置', 'Reset all settings'], confirmAll: ['恢复全部全局设置？', 'Reset all global settings?'],
         confirmDescription: ['恢复工作区顺序、显示选择及本面板其他偏好。保留主题、语言、笔记设置、客户端窗口设置及所有内容。', 'Restore workspace order, visibility and other preferences in this panel. Keep theme, language, note settings, window settings and all content.'] },
       async resetAll() {
         await resetCategory('workspaces');
-        for (const category of visibleCategories) if (category.id !== 'workspaces') await resetCategory(category.id);
+        for (const category of activeCategories) if (category.id !== 'workspaces' && category.id !== 'system') await resetCategory(category.id);
       },
       onCategoryChange(id) { if (id !== 'workspaces') orderList?.suspend(); if (id !== 'navigation') pageLists.forEach(list => list.suspend()); },
       onOpen() { trigger.setAttribute('aria-expanded', 'true'); orderList?.sync(); pageLists.forEach(list => list.sync()); },
@@ -102,6 +111,14 @@
     dialog.dialog.classList.add('global-settings-dialog'); ensureOrderList(); ensurePageLists(); translate();
     return dialog;
   }
+  document.addEventListener('canvasdesktop:launcher-settings', () => {
+    if (!dialog || !systemEntry) return;
+    const registered = !!dialog.dialog.querySelector('nav [data-settings-category="system"]');
+    if (registered === !systemEntry.hidden) return;
+    const wasOpen = dialog.isOpen, category = dialog.dialog.querySelector('nav [aria-current="page"]')?.dataset.settingsCategory;
+    dialog.destroy(); dialog = null; content.hidden = true; document.body.append(content);
+    if (wasOpen) ensureDialog().open({ trigger, category });
+  });
   function ensureOrderList() {
     if (orderList || !window.RelatumStartWorkspace) return;
     orderList = window.RelatumSettingsOrderList.create({ ids: features.workspaces.map(item => item.id), names: Object.fromEntries(features.workspaces.map(item => [item.id, item.label])),
