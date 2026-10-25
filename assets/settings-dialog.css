@@ -26,6 +26,7 @@
 .relatum-settings-search { display: flex; align-items: center; gap: 7px; border-radius: 9px; background: var(--settings-bg); padding: 9px 10px; color: var(--settings-muted); }
 .relatum-settings-search svg { width: 15px; height: 15px; }
 .relatum-settings-search input { min-width: 0; width: 100%; border: 0; background: transparent; color: var(--settings-text); font-size: 12px; outline: none; }
+.relatum-settings .relatum-settings-search input:focus-visible { outline: none; }
 .relatum-settings-nav { display: flex; flex-direction: column; gap: 4px; margin-top: 22px; overflow-y: auto; }
 .relatum-settings-nav button { display: flex; align-items: center; gap: 11px; min-height: 39px; padding: 9px 12px; border: 0; border-radius: 9px; background: transparent; text-align: left; white-space: nowrap; }
 .relatum-settings-nav button:hover { background: var(--settings-card); }
