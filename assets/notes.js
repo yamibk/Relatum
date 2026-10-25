@@ -33,6 +33,7 @@
   const NOTES_PAGE_KEY = 'canvas:notesPage:v1';
   const NOTES_PAGE_COLORS_KEY = 'canvas:notesPageColors:v1';
   const NOTES_PAGE_MAX = 99;
+  const NOTES_PAGE_WHEEL_REACH = 120;
   const NOTES_VIEW_MIN = 0.45;
   const NOTES_VIEW_MAX = 2.35;
   const NOTES_ZOOM_EASE = 0.32;    // 滚轮缩放缓动，贴近主画布滚轮手感
@@ -2669,6 +2670,11 @@
     pagePalette?.close(false, true);
     if (pageRail) { pageRail.classList.remove('revealed'); pageRail.inert = true; }
   }
+  function inPageRailHotZone(event) {
+    const rect = notesView.getBoundingClientRect();
+    return event.clientX <= rect.right && event.clientX >= rect.right - NOTES_PAGE_WHEEL_REACH
+      && Math.abs(event.clientY - rect.top - rect.height / 2) > 71;
+  }
   if (pageRail) {
     pageRail.addEventListener('click', (event) => {
       const button = event.target.closest('[data-note-page]');
@@ -2690,7 +2696,7 @@
       });
       revealPageRail(true);
     });
-    pageRail.addEventListener('wheel', (event) => {
+    const onPageRailWheel = (event) => {
       if (Math.abs(event.deltaX) > Math.abs(event.deltaY) || !event.deltaY) return;
       const direction = event.deltaY > 0 ? 1 : -1;
       const scroller = event.target.closest('.study-task-page-scroll');
@@ -2708,7 +2714,20 @@
       const next = requestedPage + (pageWheelAccum > 0 ? 1 : -1);
       pageWheelAccum = 0;
       changePage(next);
-    }, { passive: false });
+    };
+    pageRail.addEventListener('wheel', onPageRailWheel, { passive: false });
+    // 页栏外的右缘滚轮也先切页，不能继续落到台面的缩放监听。
+    notesView.addEventListener('wheel', (event) => {
+      if (!loaded || !pageUsable() || consoleOpen() || interacting || archiving
+        || event.defaultPrevented || event.ctrlKey || event.metaKey || !event.deltaY
+        || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      if (pageRail.contains(event.target)
+        || event.target.closest('.notes-console,button,input,select,textarea,[contenteditable="true"],[contenteditable="plaintext-only"],[role="dialog"]')) return;
+      if (!inPageRailHotZone(event)) return;
+      railNear = true;
+      revealPageRail(true);
+      onPageRailWheel(event);
+    }, { passive: false, capture: true });
     pageRail.addEventListener('pointerenter', () => { railOver = true; revealPageRail(true); });
     pageRail.addEventListener('pointerleave', () => { railOver = false; revealPageRail(railNear); });
     pageRail.addEventListener('focusin', () => revealPageRail(true));
@@ -2727,12 +2746,7 @@
     }, { passive: true }));
     notesView.addEventListener('pointermove', (event) => {
       if (!pageUsable() || (event.pointerType && !['mouse', 'pen'].includes(event.pointerType))) return;
-      railNear = false;
-      if (event.clientX >= window.innerWidth - 84) {
-        const rect = notesView.getBoundingClientRect();
-        railNear = event.clientX <= rect.right && event.clientX >= rect.right - 84
-          && Math.abs(event.clientY - rect.top - rect.height / 2) > 71;
-      }
+      railNear = event.clientX >= window.innerWidth - NOTES_PAGE_WHEEL_REACH && inPageRailHotZone(event);
       revealPageRail(railNear || railOver);
     }, { passive: true });
     notesView.addEventListener('pointerleave', () => { railNear = false; revealPageRail(railOver); });

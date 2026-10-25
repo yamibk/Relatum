@@ -1445,7 +1445,7 @@
     rail.style.height = newHeight + 'px';
     railFlipTimer = setTimeout(clearRailTransients, 320);
   }
-  var railRevealPx = 84, railOver = false, railVisible = false;
+  var railRevealPx = 120, railOver = false, railVisible = false;
   var railWheelAccum = 0, railWheelTimer = 0, railWheelGestureActive = false;
   var railWheelCommitTimer = 0;
   var railWheelPersistedTreeId = '';
@@ -5302,9 +5302,9 @@
   }, { passive: true });
   rail.addEventListener('pointerenter', function () { railOver = true; setRailVisible(true); });
   rail.addEventListener('pointerleave', function () { railOver = false; setRailVisible(false); });
-  // 滚轮切树：页栏上向下滚 → 下一页，向上滚 → 上一页；
+  // 滚轮切树：页栏及右缘热区向下滚 → 下一页，向上滚 → 上一页；
   // 树较多时先滚动数字列表，到边缘后继续滚才切页。
-  rail.addEventListener('wheel', function (event) {
+  function onRailWheel(event) {
     if (!open || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
     var direction = event.deltaY > 0 ? 1 : -1;
     var targetInList = railList.contains(event.target);
@@ -5341,7 +5341,21 @@
     railWheelTargetId = state.trees[nextIndex].id;
     previewRailWheelTarget(railWheelTargetId);
     flushRailWheelTarget();
-  }, { passive: false });
+  }
+  rail.addEventListener('wheel', onRailWheel, { passive: false });
+  // 在视口缩放前接管右缘滚轮，编号栏本身仍走原来的列表滚动逻辑。
+  stageEl.addEventListener('wheel', function (event) {
+    if (!open || rail.inert || progressPanelIsVisible() || event.defaultPrevented
+      || event.ctrlKey || event.metaKey || !event.deltaY
+      || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    if (rail.contains(event.target)
+      || event.target.closest('button,input,select,textarea,[contenteditable="true"],[contenteditable="plaintext-only"],.study-route-popover,.study-route-confirm,.study-route-guide,.tree-page-item-dock,.tree-page-progress-panel')) return;
+    var rect = stageEl.getBoundingClientRect();
+    var rightDistance = rect.right - event.clientX;
+    if (rightDistance < 0 || rightDistance > railRevealPx) return;
+    setRailVisible(true);
+    onRailWheel(event);
+  }, { passive: false, capture: true });
   railList.addEventListener('click', function (event) {
     var button = event.target.closest('[data-route-tree-id]');
     if (!button) return;
