@@ -9162,52 +9162,26 @@ body.start-page.desktop-host[data-start-workspace="research"] .desktop-settings-
 }
 
 .start-theme-toggle-icon {
-  position: relative;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: inset -5px -3px 0 rgba(255, 255, 255, 0.62);
-  transition: background var(--duration) var(--easing-soft),
-              box-shadow var(--duration) var(--easing-soft),
-              transform var(--duration) var(--easing-soft);
+  display: block; width: 20px; height: 20px; flex: none;
 }
-
-.start-theme-toggle[aria-pressed="true"] .start-theme-toggle-icon {
-  background: transparent;
-  box-shadow: inset 0 0 0 2px currentColor;
-  transform: rotate(18deg);
+.start-theme-toggle .start-theme-toggle-icon > svg { display: block; width: 20px; height: 20px; overflow: visible; }
+.start-theme-toggle-icon :is(.theme-icon-disc, .theme-icon-rays) {
+  transform-box: view-box; transform-origin: 12px 12px;
 }
-
-.start-theme-toggle[aria-pressed="true"] .start-theme-toggle-icon::before,
-.start-theme-toggle[aria-pressed="true"] .start-theme-toggle-icon::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  border-radius: 999px;
-  background: currentColor;
-  transform: translate(-50%, -50%);
-}
-
-.start-theme-toggle[aria-pressed="true"] .start-theme-toggle-icon::before {
-  width: 3px;
-  height: 23px;
-}
-
-.start-theme-toggle[aria-pressed="true"] .start-theme-toggle-icon::after {
-  width: 23px;
-  height: 3px;
-}
-
-.start-theme-toggle.is-switching {
-  animation: startThemeToggleSnap 360ms var(--easing-page) both;
-}
-
-@keyframes startThemeToggleSnap {
-  0%   { transform: scale(0.92); }
-  54%  { transform: scale(1.045); }
-  100% { transform: scale(1); }
+.start-theme-toggle-icon .theme-icon-disc { transform: scale(1); }
+.start-theme-toggle-icon .theme-icon-rays { transform: rotate(0deg) scale(1); opacity: 1; }
+.start-theme-toggle-icon .theme-icon-cutout { transform: translateX(0); }
+html[data-start-theme="dark"] .start-theme-toggle-icon .theme-icon-disc { transform: scale(1.7); }
+html[data-start-theme="dark"] .start-theme-toggle-icon .theme-icon-rays { transform: rotate(-25deg) scale(.6); opacity: 0; }
+html[data-start-theme="dark"] .start-theme-toggle-icon .theme-icon-cutout { transform: translateX(-7px); }
+@media (prefers-reduced-motion: no-preference) {
+  .start-theme-toggle-icon .theme-icon-disc { transition: transform 360ms cubic-bezier(.22,1,.36,1); }
+  .start-theme-toggle-icon .theme-icon-rays {
+    transition: transform 220ms cubic-bezier(.22,1,.36,1) 140ms, opacity 180ms ease 140ms;
+  }
+  .start-theme-toggle-icon .theme-icon-cutout { transition: transform 280ms cubic-bezier(.22,1,.36,1); }
+  html[data-start-theme="dark"] .start-theme-toggle-icon .theme-icon-rays { transition-delay: 0s; transition-duration: 140ms; }
+  html[data-start-theme="dark"] .start-theme-toggle-icon .theme-icon-cutout { transition-delay: 80ms; }
 }
 
 .left-spine .start-theme-toggle {
@@ -10124,10 +10098,9 @@ body.start-page[data-start-workspace="career"] > .top-bar:is(:hover, :focus-with
               color 150ms var(--easing-page);
 }
 
-/* 硬切主题：切换的那一帧给 <body> 挂上 .theme-instant，禁掉起始页所有过渡，
-   让整页在一帧内直接翻成目标主题（不渐变、不盖蒙版），下一帧再移除恢复过渡。 */
+/* Page colors commit in one frame; sun/moon artwork transitions independently. */
 body.start-page.theme-instant,
-body.start-page.theme-instant *,
+body.start-page.theme-instant *:not(.start-theme-toggle-icon, .start-theme-toggle-icon *),
 body.start-page.theme-instant *::before,
 body.start-page.theme-instant *::after {
   transition: none !important;
@@ -19024,7 +18997,6 @@ body.start-page[data-start-theme="dark"] .recent-sync-button:hover {
   }
   .spine-hover-rail,
   .spine-hover-orb { transition: none; }
-  .start-theme-toggle.is-switching,
   .book-stage.view-entering,
   .study-embedded.view-entering,
   .cadence-embedded.view-entering,

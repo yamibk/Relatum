@@ -252,8 +252,10 @@
     const next = value === 'dark' ? 'dark' : 'light';
     document.documentElement.dataset.startTheme = document.body.dataset.startTheme = next;
     themeButtons.forEach(button => {
+      const label = next === 'dark' ? '切换为浅色起始页' : '切换为深色起始页';
       button.setAttribute('aria-pressed', String(next === 'dark'));
-      button.setAttribute('aria-label', next === 'dark' ? '切换为浅色起始页' : '切换为深色起始页');
+      button.dataset.i18nSourceAriaLabel = label;
+      button.setAttribute('aria-label', window.RelatumI18n?.t(label) || label);
     });
     if (persist) try { localStorage.setItem('canvas:startTheme', next); } catch (e) {}
   }

@@ -115,7 +115,6 @@
   const START_BACKGROUND_KEY = 'canvas:startBackgroundStyle';
   let startTheme = 'light';
   let startBackgroundStyle = 'simple';
-  let startThemeButtonTimer = 0;
   let startThemeApplyFrame = 0;
   const START_SPEED_KEY = 'canvas:startTurnMs';
   const START_SPEED_MIN = 180;
@@ -214,8 +213,10 @@
     document.body.dataset.startTheme = startTheme;
     const dark = startTheme === 'dark';
     startThemeToggles.forEach((button) => {
+      const label = dark ? '切换为浅色起始页' : '切换为深色起始页';
       button.setAttribute('aria-pressed', dark ? 'true' : 'false');
-      button.setAttribute('aria-label', dark ? '切换为浅色起始页' : '切换为深色起始页');
+      button.dataset.i18nSourceAriaLabel = label;
+      button.setAttribute('aria-label', window.RelatumI18n?.t(label) || label);
     });
     syncDarkCardPresentationControls();
   }
@@ -236,16 +237,7 @@
 
   function transitionStartTheme(next) {
     const nextTheme = next === 'dark' ? 'dark' : 'light';
-    if (startThemeToggles.length) {
-      startThemeToggles.forEach((button) => button.classList.add('is-switching'));
-      clearTimeout(startThemeButtonTimer);
-      startThemeButtonTimer = window.setTimeout(() => {
-        startThemeToggles.forEach((button) => button.classList.remove('is-switching'));
-        startThemeButtonTimer = 0;
-      }, 360);
-    }
-    // 硬切主题：先在这一帧禁掉起始页所有过渡（.theme-instant），让整页一次性翻成目标主题，
-    // 不做颜色渐变、不盖蒙版——点一下就是它，最跟手；下一帧再恢复过渡。
+    // Page colors switch immediately; the shared sun/moon SVG keeps its own transition.
     document.body.classList.add('theme-instant');
     applyStartTheme(nextTheme);
     void document.body.offsetWidth;   // 强制同步提交“无过渡 + 新主题”这一帧

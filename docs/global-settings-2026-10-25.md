@@ -6,6 +6,7 @@
 
 - `assets/global-settings.js` 迁移现有控件并首次打开时创建弹窗；原控件仍由 `start.js` 或 `start-shell.js` 绑定。公共设置资源不归笔记独占。
 - `settings-dialog.js` 的可选 `id/labels/motion` 区分实例，旧笔记调用和标题 ID 保持兼容。全局动效不受笔记动画选项影响。
+- `theme-toggle.js` 为主题的两个现有入口创建独立遮罩的 20px SVG，浅色显示太阳、深色显示月牙；约 360ms CSS 形变独立于页面即时切色，支持反向接续及低动态，隐藏/最小化/pagehide 结束过渡。主题仍使用原存储和两种外壳的事件，不新增依赖或出站请求。
 - `settings-order-list.js` 共用勾选、拖动、键盘、取消及有限反馈；笔记适配器保留原偏好与接口。异步提交期间禁止重复操作，失败重新读取已确认布局，恢复原控件焦点。
 - `canvas:workspaceLayout:v1` 为完整 `{order,hidden}`，复用桌面模式偏好快照。启动不写默认，正常化过滤重复/无效 ID，缺失或损坏值使用描述默认。启动器未启用的已知项仍保存原槽位与显隐。
 
@@ -27,6 +28,7 @@
 
 ```text
 node tests/workspace-layout-regression.js
+node tests/theme-toggle-browser.js
 node tests/global-settings-browser.js
 node tests/note-settings-browser.js --motion
 node tests/note-sidebar-browser.js
