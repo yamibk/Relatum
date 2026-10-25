@@ -72,6 +72,19 @@ def launcher_root() -> Path:
     return Path(override).expanduser().resolve() if override else (Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent)
 
 
+def feature_rows():
+    """Keep each subtree contiguous even when the catalog interleaves features."""
+    def children(parent, depth):
+        items = [item for item in CATALOG["features"] if item.get("parent") == parent]
+        preferred = FEATURES.get(parent, {}).get("availableWhenAny", [])
+        if preferred:
+            items.sort(key=lambda item: preferred.index(item["id"]) if item["id"] in preferred else len(preferred))
+        for item in items:
+            yield item, depth
+            yield from children(item["id"], depth + 1)
+    yield from children(None, 0)
+
+
 def session_arguments(profile: LaunchProfile, file: str = "") -> list[str]:
     profile.validate()
     if not profile.has_home and not file:
@@ -172,12 +185,8 @@ def create_form(root: Path, *, initial_profile=None, initial_file="", notice="")
             selected_file[0] = ""
             file_label.Text = text("未指定画布 · 默认进入已启用工作区")
 
-    for item in CATALOG["features"]:
+    for item, depth in feature_rows():
         key = item["id"]
-        depth, parent = 0, item.get("parent")
-        while parent:
-            depth += 1
-            parent = FEATURES[parent].get("parent")
         button = CheckBox()
         label, explanation = FEATURE_TEXT_EN[key] if language == "en" else (item["label"], item["description"])
         button.Text = label

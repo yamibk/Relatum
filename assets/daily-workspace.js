@@ -2,6 +2,8 @@
   'use strict';
   const element = document.querySelector('#start-daily-workspace');
   const features = window.RelatumFeatureRuntime;
+  const pageLayout = window.RelatumPageLayout;
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   const pages = {
     tasks: { label: ['每日任务', 'Daily tasks'], factory: 'RelatumDailyTasks', scripts: ['daily-tasks.js'], role: 'focus-view' },
     calendar: { label: ['日历', 'Calendar'], factory: 'RelatumDailyCalendar', scripts: ['markdown.js', 'mermaid-renderer.js', 'start-sticky-notes.js', 'calendar.js'], role: 'calendar-shell' },
@@ -15,11 +17,59 @@
   let active = false, current = '', sequence = 0, disposed = false, releaseTimer = 0;
   let warmup = null, dataVersion = 0, navigation = Promise.resolve(true), pageHidden = false;
   let composing = null;
+  let sliderTarget = '', sliderFrame = 0, sliderRestore = 0, sliderInstant = false, sliderReady = false, navResize = null;
+  let wheelAccum = 0, wheelResetTimer = 0;
   element.addEventListener('compositionstart', event => { composing = event.target; }, true);
   element.addEventListener('compositionend', event => { if (composing === event.target) composing = null; }, true);
   const visible = () => active && !pageHidden && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1';
-  const available = () => Object.keys(pages).filter(id => features.enabled('daily.' + id));
+  const available = () => pageLayout.items('daily').map(item => item.id);
   const text = pair => pair[window.RelatumI18n?.language === 'en' ? 1 : 0];
+  function syncSlider() {
+    sliderFrame = 0;
+    const nav = element.querySelector('.daily-navigation'), slider = nav?.querySelector('.daily-nav-slider');
+    const button = nav?.querySelector('[data-daily-page="' + (sliderTarget || current) + '"]');
+    if (!slider || !button || !visible() || !button.offsetWidth) { sliderReady = false; return; }
+    const instant = sliderInstant || !sliderReady || reducedMotion.matches;
+    sliderInstant = false; sliderReady = true;
+    cancelAnimationFrame(sliderRestore); sliderRestore = 0;
+    nav.classList.toggle('daily-nav-no-motion', instant);
+    const track = slider.firstElementChild;
+    const x = button.offsetLeft, y = button.offsetTop;
+    const buttons = [...nav.querySelectorAll('button')];
+    // Read local coordinates: workspace entrance transforms must not scale them.
+    const boxes = buttons.map(item => ({ x: item.offsetLeft, y: item.offsetTop, w: item.offsetWidth, h: item.offsetHeight }));
+    slider.style.width = button.offsetWidth + 'px'; slider.style.height = button.offsetHeight + 'px';
+    slider.style.transform = 'translate3d(' + x + 'px,' + y + 'px,0)';
+    track.style.transform = 'translate3d(' + -x + 'px,' + -y + 'px,0)';
+    [...track.children].forEach((label, index) => {
+      const box = boxes[index]; label.textContent = buttons[index].textContent;
+      Object.assign(label.style, { left: box.x + 'px', top: box.y + 'px', width: box.w + 'px', height: box.h + 'px' });
+    });
+    slider.classList.add('show');
+    if (instant) sliderRestore = requestAnimationFrame(() => { sliderRestore = 0; nav.classList.remove('daily-nav-no-motion'); });
+  }
+  function queueSlider(instant = false) {
+    sliderInstant ||= instant;
+    if (visible() && !sliderFrame) sliderFrame = requestAnimationFrame(syncSlider);
+  }
+  function stopSlider() {
+    clearTimeout(wheelResetTimer); wheelResetTimer = 0; wheelAccum = 0;
+    cancelAnimationFrame(sliderFrame); cancelAnimationFrame(sliderRestore); sliderFrame = sliderRestore = 0;
+    sliderTarget = current; sliderInstant = true;
+    const nav = element.querySelector('.daily-navigation'); nav?.classList.add('daily-nav-no-motion');
+    // Commit the resting position before the outer workspace exits.
+    if (visible()) syncSlider();
+    cancelAnimationFrame(sliderRestore); sliderRestore = 0; sliderReady = false;
+    nav?.getAnimations({ subtree: true }).forEach(animation => animation.cancel());
+  }
+  function orderNavigation() {
+    const nav = element.querySelector('.daily-navigation'); if (!nav) return;
+    const focused = nav.contains(document.activeElement) ? document.activeElement : null;
+    const buttons = new Map([...nav.querySelectorAll('button')].map(button => [button.dataset.dailyPage, button]));
+    available().forEach(id => nav.append(buttons.get(id)));
+    if (focused && document.activeElement !== focused) focused.focus({ preventScroll: true });
+    queueSlider(true);
+  }
   function createScope(root) {
     const controller = new AbortController(), timers = new Set(), frames = new Set();
     let alive = true;
@@ -79,14 +129,37 @@
       const button = document.createElement('button'); button.type = 'button'; button.dataset.dailyPage = id;
       button.textContent = text(pages[id].label); button.addEventListener('click', () => navigate(id)); nav.append(button);
     }
+    const slider = document.createElement('span'), track = document.createElement('span');
+    slider.className = 'daily-nav-slider'; slider.setAttribute('aria-hidden', 'true'); track.className = 'daily-nav-slider-track';
+    available().forEach(() => track.append(document.createElement('span'))); slider.append(track); nav.prepend(slider);
     nav.addEventListener('keydown', event => {
-      if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+      const horizontal = matchMedia('(max-width: 700px)').matches;
+      const previousKey = horizontal ? 'ArrowLeft' : 'ArrowUp', nextKey = horizontal ? 'ArrowRight' : 'ArrowDown';
+      if (![previousKey, nextKey, 'Home', 'End'].includes(event.key)) return;
       const buttons = [...nav.querySelectorAll('button')], index = buttons.indexOf(event.target);
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
-        : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+        : (index + (event.key === nextKey ? 1 : -1) + buttons.length) % buttons.length;
       event.preventDefault(); buttons[next]?.focus(); if (buttons[next]) navigate(buttons[next].dataset.dailyPage);
     });
+    nav.addEventListener('wheel', event => {
+      if (!visible() || event.ctrlKey || event.metaKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      const order = available(), index = order.indexOf(sliderTarget || current);
+      const direction = Math.sign(event.deltaY);
+      if (!direction || index < 0) return;
+      // Keep content scrolling native; only this navigation surface flips pages.
+      event.preventDefault();
+      if (wheelAccum && Math.sign(wheelAccum) !== direction) wheelAccum = 0;
+      wheelAccum += event.deltaY;
+      clearTimeout(wheelResetTimer);
+      wheelResetTimer = setTimeout(() => { wheelAccum = 0; wheelResetTimer = 0; }, 200);
+      if (Math.abs(wheelAccum) < 24) return;
+      wheelAccum = 0;
+      const next = order[index + direction];
+      if (next) navigate(next);
+    }, { passive: false });
     const stage = document.createElement('div'); stage.className = 'daily-stage'; element.append(nav, stage);
+    navResize = new ResizeObserver(() => queueSlider(true)); navResize.observe(nav);
+    nav.querySelectorAll('button').forEach(button => navResize.observe(button));
   }
   async function mount(id, expected) {
     if (instances.has(id)) return instances.get(id);
@@ -142,7 +215,9 @@
     document.dispatchEvent(new CustomEvent('daily:hostchange', { detail: {} }));
   }
   function navigate(id, params = {}) {
+    if (!active || !available().includes(id)) return Promise.resolve(false);
     const expected = ++sequence;
+    sliderTarget = id; queueSlider();
     navigation = navigation.catch(() => false).then(async () => {
       if (!active || expected !== sequence || !available().includes(id)) return false;
       if (current === id && instances.get(id)?.front && !Object.keys(params).length) return true;
@@ -174,6 +249,10 @@
       document.dispatchEvent(new CustomEvent('daily:hostchange', { detail: { scope: id === 'ledger' ? 'calendar' : id, root: entry.root } }));
       return true;
     });
+    navigation = navigation.catch(error => { if (expected === sequence) notice(error); return false; }).then(ok => {
+      if (!ok && active && expected === sequence) { sliderTarget = current; queueSlider(); }
+      return ok;
+    });
     return navigation;
   }
   function notice(error) {
@@ -181,6 +260,7 @@
   }
   function release() {
     if (active) return;
+    stopSlider(); navResize?.disconnect(); navResize = null;
     instances.forEach((entry, id) => { entry.api.destroy?.(); snapshots.set(id, { ...entry.state }); entry.scopes.forEach(scope => scope.destroy()); entry.root.remove(); });
     instances.clear(); prepared.clear(); element.replaceChildren(); current = ''; disposed = true;
     styles.forEach(pending => pending.then(link => link.remove()).catch(() => {})); styles.clear();
@@ -198,21 +278,27 @@
   }
   async function leave() {
     if (!await beforeLeave()) return false;
+    stopSlider();
     active = false; sequence++; cancelWarmup(); deactivatePage({ freeze: true });
     return true;
   }
   function visibility() {
     cancelWarmup();
     const entry = instances.get(current);
-    if (!visible()) { if (entry) entry.front = false; entry?.api.deactivate?.(); entry?.controller?.abort(); }
-    else if (entry) { entry.front = true; entry.controller = new AbortController(); entry.api.activate?.(); prepare(); }
+    if (!visible()) { stopSlider(); if (entry) entry.front = false; entry?.api.deactivate?.(); entry?.controller?.abort(); }
+    else if (entry) { queueSlider(true); entry.front = true; entry.controller = new AbortController(); entry.api.activate?.(); prepare(); }
   }
   document.addEventListener('canvas:data-changed', changed);
   document.addEventListener('visibilitychange', visibility);
   window.addEventListener('canvasdesktop:visibility', visibility);
   window.addEventListener('pagehide', () => { pageHidden = true; active = false; sequence++; cancelWarmup(); release(); });
   window.addEventListener('pageshow', event => { pageHidden = false; if (event.persisted && window.RelatumStartWorkspace.current === 'daily') activate(); });
-  document.addEventListener('relatum:languagechange', () => element.querySelectorAll('[data-daily-page]').forEach(button => { button.textContent = text(pages[button.dataset.dailyPage].label); }));
+  document.addEventListener('relatum:languagechange', () => {
+    element.querySelector('.daily-navigation')?.setAttribute('aria-label', text(['日常页面', 'Daily pages']));
+    element.querySelectorAll('[data-daily-page]').forEach(button => { button.textContent = text(pages[button.dataset.dailyPage].label); }); queueSlider(true);
+  });
+  document.addEventListener('relatum:page-layout', event => { if (event.detail.workspace === 'daily') orderNavigation(); });
+  reducedMotion.addEventListener('change', () => { stopSlider(); queueSlider(true); });
   window.RelatumDailyWorkspace = Object.freeze({ activate, leave, navigate, release,
     afterLeave() { clearTimeout(releaseTimer); releaseTimer = setTimeout(release, 0); }, get current() { return current; } });
 })();

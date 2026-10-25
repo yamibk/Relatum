@@ -172,7 +172,7 @@
     '请先创建倒数日': 'Create a countdown first',
     '时': 'hr', '秒': 'sec',
     '隐藏特殊页': 'Hide utility pages',
-    '收起复习/日历/活跃/速记/树状/学习/专注，只留最近·收藏·分组': 'Hide Review, Calendar, Activity, Quick Notes, Tree, Study, and Focus; keep Recent, Favorites, and Groups.',
+    '收起复习/活跃/速记/树状/学习，只留最近·收藏·分组': 'Hide Review, Activity, Quick Notes, Tree, and Study; keep Recent, Favorites, and Groups.',
     '精简目标树编辑': 'Simplify Goal Tree editing',
     '强制按解锁顺序': 'Enforce unlock order',
     '开启后，完成前项才能勾选或推进后项': 'When enabled, finish prerequisites before completing or advancing later tasks.',

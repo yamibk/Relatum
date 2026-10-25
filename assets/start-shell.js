@@ -305,6 +305,10 @@
   window.RelatumGlobalSettings.configure({ reset(category) {
     const remove = (...keys) => keys.forEach(key => { try { localStorage.removeItem(key); } catch (_) {} });
     if (category === 'appearance') { remove('canvas:startBackgroundStyle'); background('simple', false); }
+    if (category === 'navigation') {
+      remove(START_SPEED_KEY, SPINE_SPEED_KEY);
+      applyStartSpeed(START_SPEED_DEFAULT, false); applySpineSpeed(SPINE_SPEED_DEFAULT, false);
+    }
     if (category === 'career') { remove(CAREER_SCROLL_FEEL_KEY, CAREER_SCROLL_IDLE_KEY); applyCareerScrollFeel(readCareerScrollFeel(), false); }
   } });
 })();

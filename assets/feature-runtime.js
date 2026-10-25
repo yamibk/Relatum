@@ -48,7 +48,7 @@
   }
   if (!profile || !profile.restricted) return;
   const selectors = [];
-  if (!enabled('canvas.library')) selectors.push('.top-actions', '.canvas-library-head', '[data-role="file-list"]', '[data-role="page-dots"]', '[data-role="trash-entry"]', '[data-action="new"]', '[data-action="import-canvas-file"]', '[data-action="import-canvas-folder"]');
+  if (!enabled('canvas.library')) selectors.push('.top-actions', '.canvas-library-head', '[data-role="file-list"]', '[data-role="page-dots"] > .page-dot', '[data-role="trash-entry"]', '[data-action="new"]', '[data-action="import-canvas-file"]', '[data-action="import-canvas-folder"]');
   if (!enabled('editor.ai')) selectors.push('[data-role="ai-toggle"]', '[data-role="ai-panel"]');
   if (!enabled('editor.graph')) selectors.push('[data-action="graph"]');
   if (!enabled('daily.calendar.wallpaper')) selectors.push('[data-countdown-wallpaper]');

@@ -2,7 +2,8 @@
 (function () {
   'use strict';
   function create(options) {
-    const KEY = options.key, IDS = options.ids, NAMES = options.names;
+    const KEY = options.key;
+    let IDS = options.ids.slice(), NAMES = options.names;
     let order = IDS.slice(), hidden = new Set(), host = null, drag = null;
     let pending = false;
     const lifetime = new AbortController();
@@ -12,8 +13,9 @@
       try {
         const raw = options.read ? options.read() : JSON.parse(localStorage.getItem(KEY));
         order = IDS.slice(); hidden = new Set();
-        if (Array.isArray(raw?.order)) order = [...new Set(raw.order.filter(id => IDS.includes(id))), ...IDS.filter(id => !raw.order.includes(id))];
-        if (Array.isArray(raw?.hidden)) hidden = new Set(raw.hidden.filter(id => IDS.includes(id)));
+        const known = new Set(IDS), saved = new Set(Array.isArray(raw?.order) ? raw.order.filter(id => known.has(id)) : []);
+        if (Array.isArray(raw?.order)) order = [...saved, ...IDS.filter(id => !saved.has(id))];
+        if (Array.isArray(raw?.hidden)) hidden = new Set(raw.hidden.filter(id => known.has(id)));
       } catch (_) {}
     }
     read();
@@ -130,7 +132,9 @@
         const grip = document.createElement('button'); grip.type = 'button'; grip.className = 'note-sidebar-grip'; grip.textContent = '⠿'; grip.setAttribute('aria-label', text('拖动调整顺序：', 'Reorder: ') + NAMES[id][options.language() === 'en' ? 1 : 0]);
         const label = document.createElement('label'), input = document.createElement('input'), name = document.createElement('strong');
         input.type = 'checkbox'; input.checked = !hidden.has(id); input.dataset.sidebarVisible = id;
-        name.textContent = NAMES[id][options.language() === 'en' ? 1 : 0]; label.append(input, name);
+        name.textContent = NAMES[id][options.language() === 'en' ? 1 : 0];
+        if (options.visibility !== false) label.append(input);
+        label.append(name);
         input.addEventListener('change', () => { if (pending) return; if (input.checked) hidden.delete(id); else hidden.add(id); persist(); });
         grip.addEventListener('pointerdown', event => begin(event, row, grip));
         grip.addEventListener('keydown', event => {
@@ -164,6 +168,7 @@
     listen(window, 'pagehide', suspend);
     listen(motion, 'change', suspend);
     return { visible, available, suspend, refresh: render,
+      setItems(ids, names) { suspend(); IDS = ids.slice(); NAMES = names; if (!pending) { read(); render(); } },
       sync() { if (!pending) { read(); render(); } },
       destroy() { suspend(); lifetime.abort(); host = null; },
       initPanel(element) { host = element; render(); host.addEventListener('keydown', event => { if (event.key === 'Escape' && drag) { event.preventDefault(); event.stopPropagation(); finish(true); } }, true); },

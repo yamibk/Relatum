@@ -7,7 +7,8 @@
 - 清单登记 `daily / 日常 / Daily`，追加且默认隐藏。全局设置提供勾选、排序和恢复；全部子功能关闭时不可用，启动器父项仍可开启子项。
 - 能力为 `daily.tasks`、`daily.calendar`、`daily.focus`、`daily.ledger`，动态桌面为 `daily.calendar.wallpaper`。没有旧功能 ID、旧页面模式或旧偏好的迁移层。
 - 首页常驻的 `daily-loader.js` 只负责加载、设置接线、轻提示和必要的专注恢复检测。`daily-workspace.js` 首次进入才加载；四页各有独立 CSS，任务和计时器另有独立 HTML。
-- 四个入口固定按每日任务、日历、专注、记账排序。`daily:page:v1` 恢复有效子页，否则使用第一项可用页。各页工厂接收 `(root, host)`，提供 `activate/deactivate/destroy`，需要保存交接的页面另提供异步 `beforeLeave`。
+- 四个入口默认按每日任务、日历、专注、记账排序；全局设置“导航”可拖动调整，用 `daily:pageOrder:v1` 的 `{order}` 保存，重排保留当前页，未启用子项保留槽位。`daily:page:v1` 恢复有效子页，否则使用新顺序第一项可用页。各页工厂接收 `(root, host)`，提供 `activate/deactivate/destroy`，需要保存交接的页面另提供异步 `beforeLeave`。
+- 导航栏使用独立选中滑块和反向文字轨道，共用 `--spine-motion-ms`（默认 447ms）及既有缓动；快速点击从当前显示位置接续，业务选择只在交接成功后提交，失败回到原页。宽窗纵向、窄窗横向，尺寸/语言/恢复/低动态直接校准。导航栏内滚轮累计 24 单位触发一页，200ms 安静后清零，反向立即接续最新目标，到首尾停住；正文滚轮与缩放/横向手势保留原行为。离场、隐藏、最小化与销毁清理动效、滚轮计时器及测量任务，闲置无 RAF。
 - 宿主统一负责最新导航身份、页面请求取消、全局监听和有限绘制任务。日记失败返回 false，候选输入尚未完成时保留原编辑现场；快速切换不让旧加载挂载到新页面。
 - 工作区内保留已加载视图；离开后先完成外层过渡，再销毁视图、订阅、弹层、监听和闲置数据。保留子页、日历日期、账本月份及滚动等轻量会话状态。快速返回作废旧释放任务。
 - `navigate(page, params)` 支持日期和专注记录定位；日历跳活跃通过画布宿主交接，专注历史沿原授权打开来源画布。倒数日返回 `index.html?workspace=daily&view=calendar`。
@@ -37,6 +38,8 @@
 
 ```text
 node tests/daily-focus-service.js
+node tests/page-layout-regression.js
+node tests/page-navigation-browser.js
 node tests/daily-workspace-browser.js
 node tests/feature-profile-browser.js calendar focus daily-tasks daily-ledger library
 node tests/global-settings-browser.js full library cold mixed

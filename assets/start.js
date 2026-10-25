@@ -7,6 +7,7 @@
 (function () {
   'use strict';
   const features = window.RelatumFeatureRuntime;
+  const pageLayout = window.RelatumPageLayout;
 
   const main = document.querySelector('.start-main');
   const workspacePanels = Array.from(document.querySelectorAll('[data-start-workspace-panel]'));
@@ -103,7 +104,7 @@
   let pendingDeleteIndex = -1; // 右方向键：待确认删除（再按一次右键执行）
   const trashingPaths = new Set(); // 防止右键菜单与键盘对同一画布重复提交
   function isView(name) { return navigation?.getState().current.view === name; }
-  let specialPagesHidden = false; // 「隐藏特殊页」开启：书脊只留普通书页，7 张前置页既不显示也不可翻入
+  let specialPagesHidden = false; // 「隐藏特殊页」开启：五个功能页既不显示也不可翻入
   const FAVORITES_PAGE = '__favorites__';
   const INBOX_PAGE = '__inbox__';
   const LARGE_LIST_THRESHOLD = 80;
@@ -163,7 +164,7 @@
   let darkCardPresentation = null;
   let startViewTransitionTimer = 0;
   let startViewMotionVersion = 0;
-  const START_VIEW_ORDER = { review: 0, cadence: 1, notes: 2, tree: 3, study: 4, recent: 5, empty: 5, loading: 5 };
+  let lastMotionRoute = null;
   const START_VIEW_MOTION_CLASSES = ['view-entering', 'view-leaving', 'view-motion-forward', 'view-motion-back'];
   // No legacy heartbeat or JSON ledger collector.
 
@@ -422,7 +423,7 @@
 
 
   // 「隐藏特殊页」：开启后书脊只剩普通书页（最近 / 收藏 / 自定义分组）的圆点，
-  // 7 张前置页（复习/日历/活跃/速记/树状/学习/专注）的入口被 CSS 收起，滚轮翻页也跳过它们。
+  // 五个功能页（复习/活跃/速记/树状/学习）的入口被 CSS 收起，滚轮翻页也跳过它们。
   function applyHideSpecialPages(hidden, persist) {
     specialPagesHidden = !!hidden && features.enabled('canvas.library');
     if (hideSpecialToggle) hideSpecialToggle.checked = specialPagesHidden;
@@ -1992,8 +1993,10 @@
     const previous = bookView.dataset.viewName || '';
     bookView.dataset.viewName = name;
     if (!previous || previous === name) return;
-    const previousOrder = START_VIEW_ORDER[previous] ?? START_VIEW_ORDER.recent;
-    const nextOrder = START_VIEW_ORDER[name] ?? START_VIEW_ORDER.recent;
+    const order = pageLayout.layout('canvas').order;
+    const nextRoute = navigation?.getState().current;
+    const previousOrder = order.indexOf(lastMotionRoute || 'recent');
+    const nextOrder = order.indexOf(nextRoute ? pageLayout.routeId(nextRoute) : 'recent');
     if (previousOrder === nextOrder) return;
     const version = ++startViewMotionVersion;
     bookView.classList.remove('view-switching', 'view-forward', 'view-back');
@@ -2036,6 +2039,7 @@
     recentView.hidden = layout !== 'recent' && layout !== 'study';
     if (bookView) {
       markStartViewTransition(name);
+      lastMotionRoute = pageLayout.routeId(navigation.getState().current);
       bookView.classList.toggle('study-active', name === 'study');
       bookView.classList.toggle('cadence-active', name === 'cadence');
       bookView.classList.toggle('tree-page-active', name === 'tree');
@@ -2937,21 +2941,27 @@
   }
 
   function renderDots() {
-    const order = pageOrder(), orderKey = JSON.stringify(order);
+    const focused = dots.contains(document.activeElement) ? document.activeElement : null;
+    const pages = pageLayout.items('canvas'), orderKey = JSON.stringify(pages.map(item => item.id));
     let layoutChanged = spineDotsOrder !== orderKey;
     spineDotsOrder = orderKey;
     const existing = new Map(Array.from(dots.querySelectorAll(':scope > .page-dot:not(.dot-add)'))
       .map(dot => [dot.dataset.groupId, dot]));
     let anchor = dots.firstElementChild;
-    for (const id of order) {
-      const dot = existing.get(id) || createPageDot(id);
-      existing.delete(id);
-      const name = nameOf(id), text = name + '  ' + filesOf(id).length;
-      if (dot.getAttribute('aria-label') !== name) dot.setAttribute('aria-label', name);
-      const bubble = dot.querySelector('.dot-bubble');
-      if (bubble.textContent !== text) bubble.textContent = text;
-      if (dot !== anchor) { dots.insertBefore(dot, anchor); layoutChanged = true; }
-      anchor = dot.nextElementSibling;
+    for (const page of pages) {
+      const route = pageLayout.route(page.id);
+      let button;
+      if (route.view === 'library') {
+        const id = route.groupId;
+        button = existing.get(id) || createPageDot(id); existing.delete(id);
+        const name = nameOf(id), text = name + '  ' + filesOf(id).length;
+        if (button.getAttribute('aria-label') !== name) button.setAttribute('aria-label', name);
+        const bubble = button.querySelector('.dot-bubble');
+        if (bubble.textContent !== text) bubble.textContent = text;
+      } else button = spineEl.querySelector('[data-action="' + (route.view === 'tree' ? 'tree-page' : route.view) + '-view"]');
+      if (!button) continue;
+      if (button !== anchor) { dots.insertBefore(button, anchor); layoutChanged = true; }
+      anchor = button.nextElementSibling;
     }
     for (const dot of existing.values()) {
       if (anchor === dot) anchor = dot.nextElementSibling;
@@ -2961,7 +2971,7 @@
 
     // 「+」新建分组（加一页）
     let add = dots.querySelector(':scope > .dot-add');
-    if (!add) {
+    if (!add && features.enabled('canvas.library')) {
       add = document.createElement('button');
       add.type = 'button';
       add.className = 'page-dot dot-add';
@@ -2976,10 +2986,11 @@
       });
       bindSpineHoverTarget(add);
     }
-    if (add !== anchor) { dots.insertBefore(add, anchor); layoutChanged = true; }
+    if (add && add !== anchor) { dots.insertBefore(add, anchor); layoutChanged = true; }
     updateNavigationFeedback(navigation?.getState().desired);
     syncNavigationSemantics();
     if (layoutChanged) spineView?.invalidate({ animate: false });
+    if (focused?.isConnected && document.activeElement === document.body) focused.focus({ preventScroll: true });
   }
 
   // 浮动单行输入（新建分组 / 重命名分组），锚定到书脊上的圆点右侧
@@ -4267,9 +4278,10 @@
       anchor: anchorEl,
       onCommit: (name) => commitGroupRename(group, name),
     }));
-    const index = lastGroups.findIndex((item) => item.id === group.id);
+    const orderedGroups = pageLayout.items('canvas').filter(item => item.groupId !== undefined);
+    const index = orderedGroups.findIndex((item) => item.groupId === group.id);
     if (index > 0) addMenuItem('向上移动', () => moveGroupBy(group.id, -1));
-    if (index >= 0 && index < lastGroups.length - 1) {
+    if (index >= 0 && index < orderedGroups.length - 1) {
       addMenuItem('向下移动', () => moveGroupBy(group.id, 1));
     }
     addMenuItem('删除分组', () => deleteGroup(group), true);
@@ -4277,20 +4289,29 @@
   }
 
   async function moveGroupBy(groupId, delta) {
-    const index = lastGroups.findIndex((group) => group.id === groupId);
+    const previous = pageLayout.layout('canvas');
+    const ids = previous.order.filter(id => id.startsWith('group:'));
+    const index = ids.indexOf('group:' + groupId);
     const next = index + delta;
-    if (index < 0 || next < 0 || next >= lastGroups.length) return;
-    const moved = lastGroups.splice(index, 1)[0];
-    lastGroups.splice(next, 0, moved);
-    renderDots();
+    if (index < 0 || next < 0 || next >= ids.length) return;
+    [ids[index], ids[next]] = [ids[next], ids[index]];
+    let cursor = 0;
+    const order = previous.order.map(id => id.startsWith('group:') ? ids[cursor++] : id);
+    if (!pageLayout.apply('canvas', { order })) return;
     try {
       const response = await fetch('/api/groups-reorder', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order: lastGroups.map((group) => group.id) }),
+        body: JSON.stringify({ order: ids.map(id => id.slice(6)) }),
       });
-      if (!response.ok) await refresh();
+      if (!response.ok) throw new Error('Group reorder failed');
+      const byId = new Map(lastGroups.map(group => [group.id, group]));
+      const orderedIds = new Set(ids.map(id => id.slice(6)));
+      lastGroups = ids.map(id => byId.get(id.slice(6))).filter(Boolean).concat(lastGroups.filter(group => !orderedIds.has(group.id)));
+      pageLayout.setGroups(lastGroups);
     } catch (err) {
+      // Do not roll back a newer order submitted while this request was pending.
+      if (JSON.stringify(pageLayout.layout('canvas').order) === JSON.stringify(order)) pageLayout.apply('canvas', previous);
       await refresh();
     }
   }
@@ -4611,8 +4632,7 @@
 
   function pageOrder() {
     if (!features.enabled('canvas.library')) return [];
-    return ['', FAVORITES_PAGE]
-      .concat(lastGroups.map((g) => g.id), [INBOX_PAGE]);
+    return pageLayout.items('canvas').map(item => pageLayout.route(item.id)).filter(route => route.view === 'library').map(route => route.groupId);
   }
   function pageIndexOf(gid) {
     const i = pageOrder().indexOf(gid);
@@ -4631,7 +4651,7 @@
     notes: setNotesActive, tree: setTreePageActive, study: setStudyActive,
   };
   function availableSpecialPages() {
-    return specialPagesHidden ? [] : Object.keys(pageActivators).filter(features.viewEnabled);
+    return specialPagesHidden ? [] : pageLayout.items('canvas').map(item => item.id).filter(id => pageActivators[id]);
   }
   let initialPageOpened = false;
   function openInitialPage() {
@@ -4647,22 +4667,22 @@
     }
   }
   function flipBy(delta) {
-    const order = availableSpecialPages().map(view => ({ view }))
-      .concat(features.enabled('canvas.library') ? pageOrder().map(group => ({ group })) : []);
+    const order = pageLayout.items('canvas').map(item => pageLayout.route(item.id)).filter(route => route.view === 'library' || !specialPagesHidden);
     if (!order.length) return;
     const desired = navigation.getState().desired;
-    let current = order.findIndex(item => item.view ? item.view === desired.view
-      : desired.view === 'library' && item.group === desired.groupId);
+    let current = order.findIndex(item => pageLayout.routeId(item) === pageLayout.routeId(desired));
     if (current < 0) current = 0;
     const next = order[current + delta];
     if (!next) return;
-    if (next.view) pageActivators[next.view](true);
-    else navigateTo(next.group, delta > 0);
+    if (next.view !== 'library') pageActivators[next.view](true);
+    else navigateTo(next.groupId, delta > 0);
   }
 
   // 两套滚动系统：
   //  · 鼠标在「书页内容区」→ 浏览器原生滚动该组的画布文件（不翻页）
   //  · 鼠标在「左侧书脊附近」→ 滚轮翻页，到首尾停止
+  document.addEventListener('relatum:page-layout', event => { if (event.detail.workspace === 'canvas') renderDots(); });
+  renderDots();
   spineView = window.RelatumStartSpine.create({
     spine: spineEl, bookView, dots, getTarget: getNavigationTarget,
     getGroupIndex: id => lastGroups.findIndex(group => group.id === id),
@@ -4760,9 +4780,10 @@
     try {
       const resp = await fetch('/api/recent');
       const json = await resp.json();
+      if (!resp.ok || json?.ok === false) throw new Error('Canvas list could not be read');
       if (requestId !== recentRefreshSeq) return false;
       lastFiles = (json && json.files) || [];
-      lastGroups = (json && json.groups) || [];
+      if (Array.isArray(json?.groups)) { lastGroups = json.groups; pageLayout.setGroups(lastGroups); }
       libraryLoaded = true;
       recentLimit = Number.isFinite(Number(json && json.recentLimit))
         ? Math.max(1, Number(json.recentLimit)) : 30;

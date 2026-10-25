@@ -10,10 +10,11 @@
   const text = (zh, en) => language() === 'en' ? en : zh;
   const panels = new Map(), categories = [];
   let adapter = null, orderList = null, dialog = null;
+  const pageLists = new Map(), pageSections = new Map(), pageAvailability = new Map();
   const definitions = [
     ['appearance', ['外观', 'Appearance'], '<rect x="3" y="3" width="18" height="14" rx="2"/><path d="M3 21h18"/>', 'theme background 主题 背景'],
     ['workspaces', ['工作区', 'Workspaces'], '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>', 'workspace visibility reorder 显示 隐藏 顺序 拖动'],
-    ['navigation', ['画布与导航', 'Canvas & navigation'], '<path d="M4 4h16v16H4zM9 4v16"/>', 'canvas navigation search calendar speed 搜索 日历 翻页 滑块'],
+    ['navigation', ['导航', 'Navigation'], '<path d="M4 4h16v16H4zM9 4v16"/>', 'canvas daily navigation search calendar speed reorder 画布 日常 搜索 日历 翻页 滑块 顺序 拖动'],
     ['daily', ['日常', 'Daily'], '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 11h18"/>', 'daily calendar focus tasks ledger 日常 日历 专注 任务 记账 倒数日'],
     ['learning', ['学习与树状', 'Learning & trees'], '<path d="M12 3v7M5 10h14M5 10v6m14-6v6"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/>', 'study tree unlock title color 学习 树状 解锁 标题 彩色'],
     ['starmap', ['星图', 'Star map'], '<circle cx="5" cy="5" r="2"/><circle cx="19" cy="7" r="2"/><circle cx="12" cy="19" r="2"/><path d="m7 5 10 2M6 7l5 10m7-8-5 8"/>', 'graph animation physics fit 动画 生长 阻尼 取景'],
@@ -51,7 +52,8 @@
   takeToggle('library-search-toggle', 'navigation', features.enabled('canvas.library'));
   takeToggle('hide-special-toggle', 'navigation', canvas && ['canvas.review', 'canvas.activity', 'canvas.quicknotes', 'canvas.tree', 'canvas.study'].some(features.enabled));
   takeToggle('calendar-countdown-toggle', 'daily', features.enabled('daily.calendar'));
-  takeRange('start-speed-range', 'navigation', canvas); takeRange('spine-speed-range', 'navigation', canvas);
+  const hasPageNavigation = canvas || features.workspaceEnabled('daily');
+  takeRange('start-speed-range', 'navigation', hasPageNavigation); takeRange('spine-speed-range', 'navigation', hasPageNavigation);
   const learning = features.enabled('canvas.study') || features.enabled('canvas.tree');
   takeToggle('goal-tree-simple-toggle', 'learning', learning);
   takeToggle('goal-tree-unlock-toggle', 'learning', learning);
@@ -73,6 +75,14 @@
   const hint = document.createElement('p'), rows = document.createElement('div');
   hint.dataset.i18nManaged = 'true'; rows.dataset.role = 'workspace-layout-list';
   panels.get('workspaces').append(hint, rows);
+  for (const workspace of ['canvas', 'daily']) {
+    if (!features.workspaceEnabled(workspace)) continue;
+    const section = document.createElement('section'), title = document.createElement('h3'), description = document.createElement('p'), list = document.createElement('div');
+    section.className = 'global-page-order'; section.dataset.pageOrderWorkspace = workspace;
+    title.dataset.i18nManaged = description.dataset.i18nManaged = 'true';
+    list.dataset.role = workspace + '-page-order-list'; section.append(title, description, list);
+    panels.get('navigation').append(section); pageSections.set(workspace, { title, description, list });
+  }
   const visibleCategories = categories.filter(category => category.panel.childElementCount);
   // Keep original controls queryable by page bindings; defer the modal chrome/list.
   content.hidden = true; visibleCategories.forEach(category => content.append(category.panel)); document.body.append(content);
@@ -85,11 +95,11 @@
         await resetCategory('workspaces');
         for (const category of visibleCategories) if (category.id !== 'workspaces') await resetCategory(category.id);
       },
-      onCategoryChange(id) { if (id !== 'workspaces') orderList?.suspend(); },
-      onOpen() { trigger.setAttribute('aria-expanded', 'true'); orderList?.sync(); },
-      onClose() { trigger.setAttribute('aria-expanded', 'false'); orderList?.suspend(); },
+      onCategoryChange(id) { if (id !== 'workspaces') orderList?.suspend(); if (id !== 'navigation') pageLists.forEach(list => list.suspend()); },
+      onOpen() { trigger.setAttribute('aria-expanded', 'true'); orderList?.sync(); pageLists.forEach(list => list.sync()); },
+      onClose() { trigger.setAttribute('aria-expanded', 'false'); orderList?.suspend(); pageLists.forEach(list => list.suspend()); },
     });
-    dialog.dialog.classList.add('global-settings-dialog'); ensureOrderList(); translate();
+    dialog.dialog.classList.add('global-settings-dialog'); ensureOrderList(); ensurePageLists(); translate();
     return dialog;
   }
   function ensureOrderList() {
@@ -101,10 +111,33 @@
     });
     orderList.initPanel(rows);
   }
+  function pageListData(workspace) {
+    const model = window.RelatumPageLayout, items = model.items(workspace);
+    return { ids: model.layout(workspace).order, names: Object.fromEntries(items.map(item => [item.id, item.label])), available: new Set(items.map(item => item.id)) };
+  }
+  function ensurePageLists() {
+    pageSections.forEach(({ list: host }, workspace) => {
+      if (pageLists.has(workspace)) return;
+      const data = pageListData(workspace); pageAvailability.set(workspace, data.available);
+      const list = window.RelatumSettingsOrderList.create({ ids: data.ids, names: data.names, visibility: false,
+        language, motion, available: id => pageAvailability.get(workspace).has(id),
+        read: () => window.RelatumPageLayout.layout(workspace), commit: value => window.RelatumPageLayout.apply(workspace, value),
+        onError() { dialog.setStatus(text('未能保存页面顺序，请重试。', 'Could not save the page order. Please retry.')); },
+      });
+      list.initPanel(host); pageLists.set(workspace, list);
+    });
+  }
+  document.addEventListener('relatum:page-layout', event => {
+    const workspace = event.detail.workspace, list = pageLists.get(workspace);
+    if (list) { const data = pageListData(workspace); pageAvailability.set(workspace, data.available); list.setItems(data.ids, data.names); }
+  });
   async function resetCategory(id) {
     if (id === 'workspaces') {
       if (!await window.RelatumStartWorkspace.applyLayout(null, { reset: true })) throw new Error('Workspace handoff failed');
       orderList?.sync();
+    } else if (id === 'navigation') {
+      for (const workspace of ['canvas', 'daily']) if (!window.RelatumPageLayout.apply(workspace, null, { reset: true })) throw new Error('Page order reset failed');
+      await adapter?.reset(id);
     } else if (id === 'daily') {
       localStorage.removeItem('daily:calendarCountdownEnabled');
       localStorage.removeItem('daily:calendarCountdownProgressMode');
@@ -118,7 +151,11 @@
     trigger.setAttribute('aria-label', text('全局设置', 'Settings'));
     themeLabel.textContent = text('主题', 'Theme');
     hint.textContent = text('勾选要显示的工作区，拖动手柄或使用箭头调整顺序。全部取消后主区域留白，仍可从顶栏设置重新开启。', 'Choose which workspaces to show. Drag handles or use arrows to reorder. With all unchecked, the main area stays blank; reopen them here from the top bar.');
-    dialog?.setLanguage(); orderList?.refresh();
+    pageSections.forEach(({ title, description }, workspace) => {
+      title.textContent = workspace === 'canvas' ? text('画布页面顺序', 'Canvas page order') : text('日常页面顺序', 'Daily page order');
+      description.textContent = text('拖动手柄或使用箭头调整顺序，当前页面保持不变。', 'Drag handles or use arrows to reorder. The current page stays open.');
+    });
+    dialog?.setLanguage(); orderList?.refresh(); pageLists.forEach(list => list.refresh());
   }
   trigger.addEventListener('click', () => { const settings = ensureDialog(); if (settings.isOpen) settings.close(); else settings.open({ trigger }); });
   document.addEventListener('relatum:languagechange', translate);

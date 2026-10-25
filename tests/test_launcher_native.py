@@ -13,6 +13,20 @@ from desktop_preferences import DesktopPreferences
 
 
 class LauncherTextTests(unittest.TestCase):
+    def test_feature_rows_keep_subtrees_together(self):
+        rows = list(launcher.feature_rows())
+        ids = [item['id'] for item, _ in rows]
+        self.assertEqual(set(ids), set(FEATURES))
+        self.assertEqual(len(ids), len(set(ids)))
+        start = ids.index('daily')
+        self.assertEqual(ids[start:start + 6], ['daily', 'daily.tasks', 'daily.calendar', 'daily.calendar.wallpaper', 'daily.focus', 'daily.ledger'])
+        self.assertEqual([depth for _, depth in rows[start:start + 6]], [0, 1, 1, 2, 1, 1])
+        for item, depth in rows:
+            parent = item.get('parent')
+            if parent:
+                self.assertLess(ids.index(parent), ids.index(item['id']))
+                self.assertEqual(depth, next(value for entry, value in rows if entry['id'] == parent) + 1)
+
     def test_feature_and_message_translations(self):
         from desktop_instance import conflict_message
         self.assertEqual(set(launcher.FEATURE_TEXT_EN), set(FEATURES))
@@ -50,6 +64,9 @@ class NativeLauncherTests(unittest.TestCase):
                         form = launcher.create_form(root)
                         try:
                             buttons, pick, detail, start, _ = form._relatum_controls
+                            self.assertEqual(list(buttons), [item['id'] for item, _ in launcher.feature_rows()])
+                            for item, depth in launcher.feature_rows():
+                                self.assertEqual(buttons[item['id']].Margin.Left, depth * 20)
                             expected = launcher.FEATURE_TEXT_EN['notes.graph'][0] if language == 'en' else '笔记图谱'
                             self.assertEqual(buttons['notes.graph'].Text, expected)
                             self.assertEqual(start.Text, 'Start Relatum' if language == 'en' else '启动 Relatum')

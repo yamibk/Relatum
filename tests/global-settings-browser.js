@@ -104,7 +104,7 @@ async function run(browser, mode) {
       await dialog.locator('[data-settings-search]').fill('画布名称搜索'); await dialog.locator('.relatum-settings-result').first().click();
       assert.equal(await category('navigation').getAttribute('aria-current'), 'page');
       await category('workspaces').click();
-      await dialog.locator('[data-sidebar-page="notes"] .note-sidebar-grip').focus(); await page.keyboard.press('End');
+      await dialog.locator('[data-role="workspace-layout-list"] [data-sidebar-page="notes"] .note-sidebar-grip').focus(); await page.keyboard.press('End');
       await page.waitForFunction(() => RelatumStartWorkspace.layout.order.at(-1) === 'notes');
       assert.equal(await current(), 'canvas', 'reordering keeps the current workspace');
       const from = await dialog.locator('[data-sidebar-page="career"] .note-sidebar-grip').boundingBox();

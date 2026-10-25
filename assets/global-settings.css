@@ -1,6 +1,9 @@
 /* The common dialog owns layout and motion; this file styles legacy controls. */
 .global-settings-dialog .relatum-settings-page { display: grid; gap: 12px; }
 .global-settings-dialog .relatum-settings-page > p { margin: 6px 3px 14px; }
+.global-settings-dialog .global-page-order { min-width: 0; }
+.global-settings-dialog .global-page-order h3 { margin: 16px 3px 8px; font-size: 14px; }
+.global-settings-dialog .global-page-order p { margin: 0 3px 16px; color: var(--settings-muted); font-size: 12px; line-height: 1.6; }
 .global-settings-dialog :is(.start-setting-toggle, .global-settings-range, .start-root-title-size-setting, .start-priority-background, .start-panel-theme, .start-dark-card-settings, .starmap-motion-row, .start-setting-row) {
   padding: 18px 20px; border-radius: 14px; margin: 0; background: var(--settings-card); min-width: 0;
 }
