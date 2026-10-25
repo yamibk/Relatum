@@ -1,6 +1,6 @@
 'use strict';
 
-// Cross-tree folder drops use the real UI/API and disposable notes only.
+// Cross-tree note/folder drops use the real UI/API and disposable notes only.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -13,13 +13,15 @@ const repo = path.resolve(__dirname, '..');
 const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-notebook-drop-'));
 const notes = path.join(dataRoot, 'notes');
 const sourceBook = 'CustomNotebook/源本', targetBook = 'CustomNotebook/目标本';
+const noteTargetBook = 'CustomNotebook/单篇目标本';
 const topic = '戴维宁定理', originalNote = `${sourceBook}/${topic}/小节/正文.md`;
+const singleNote = `${sourceBook}/单篇.md`;
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
 function write(relative, value) {
   const target = path.join(notes, relative); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, value);
 }
 write('Keep.md', '# 保留正文\nkeep content\n');
-write('Index.md', `[[${originalNote.slice(0, -3)}]]`);
+write('Index.md', `[[${originalNote.slice(0, -3)}]]\n[[${singleNote.slice(0, -3)}#单篇|单篇引用]]`);
 write(originalNote, '# 定理\n#迁移\n' + '测试段落\n\n'.repeat(160) + '\n![diagram](正文.assets/images/diagram.png)\n');
 write(`${sourceBook}/${topic}/小节/正文.assets/images/diagram.png`, png);
 for (const name of ['空目录', '冲突', 'CaseFolder', '服务失败', '保存失败', '迟到', '失败迟到', '隐藏前', '保存时隐藏', '目标消失', 'zz移动']) {
@@ -30,7 +32,16 @@ write(`${targetBook}/冲突/Keep.md`, 'target conflict');
 fs.mkdirSync(path.join(notes, targetBook, 'casefolder'));
 for (let i = 0; i < 225; i++) fs.mkdirSync(path.join(notes, targetBook, 'A' + String(i).padStart(3, '0')));
 fs.mkdirSync(path.join(notes, 'CustomNotebook/消失本'));
+fs.mkdirSync(path.join(notes, noteTargetBook));
 fs.mkdirSync(path.join(notes, 'Parent/Sub'), { recursive: true });
+for (const name of ['单篇', 'zz未打开', '单篇冲突', 'CaseNote', '素材冲突', '单篇服务失败', '单篇保存失败', '单篇迟到', '单篇失败迟到', '单篇隐藏前', '单篇保存时隐藏']) {
+  write(`${sourceBook}/${name}.md`, `# ${name}\n![diagram](${name}.assets/images/diagram.png)\n\n` + '测试段落\n\n'.repeat(160));
+  write(`${sourceBook}/${name}.assets/images/diagram.png`, png);
+}
+write(`${sourceBook}/单篇.assets/attachment.pdf`, 'companion attachment');
+write(`${targetBook}/单篇冲突.md`, 'target note conflict');
+write(`${targetBook}/casenote.md`, 'target case conflict');
+write(`${targetBook}/素材冲突.assets/keep.bin`, 'target assets conflict');
 
 async function freePort() {
   const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
@@ -53,7 +64,7 @@ async function waitFor(check, message) {
     windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let diagnostics = '', browser, page;
-  const failures = [];
+  const failures = [], indexStates = [], movePayloads = [];
   const log = chunk => { diagnostics = (diagnostics + chunk).slice(-16000); };
   server.stdout.on('data', log); server.stderr.on('data', log);
   try {
@@ -68,14 +79,18 @@ async function waitFor(check, message) {
       page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, reducedMotion: 'reduce' });
     }
     page.on('response', async response => { if (!response.ok() && response.url().includes('/api/note-')) failures.push([response.status(), response.url(), await response.text().catch(() => '')]); });
+    page.on('response', async response => {
+      if (new URL(response.url()).pathname !== '/api/note-index-state') return;
+      indexStates.push(await response.json().catch(() => null)); if (indexStates.length > 8) indexStates.shift();
+    });
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     let script = fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8');
     script = script.replace('  window.CanvasNoteWorkspace = {',
-      '  window.__dropTest = {state, get editor() { return liveEditor; }, openNote, flushSave, triggerExternalSync, treeRowIndexes, isBusy: () => !!(noteMovePromise || notebookDropRunning)};\n  window.CanvasNoteWorkspace = {');
+      '  window.__dropTest = {state, get editor() { return liveEditor; }, openNote, flushSave, setViewMode, editorSnapshot, triggerExternalSync, treeRowIndexes, isBusy: () => !!(noteMovePromise || notebookDropRunning)};\n  window.CanvasNoteWorkspace = {');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: script }));
     let moveRequests = 0, importRequests = 0;
     page.on('request', request => {
-      if (new URL(request.url()).pathname === '/api/note-move') moveRequests++;
+      if (new URL(request.url()).pathname === '/api/note-move') { moveRequests++; movePayloads.push(request.postDataJSON()); }
       if (new URL(request.url()).pathname === '/api/note-import-begin') importRequests++;
     });
     const left = '[data-role="note-tree"]', right = '[data-role="note-notebook-tree"]';
@@ -144,7 +159,78 @@ async function waitFor(check, message) {
     await page.locator('[data-note-action="toggle-sort"]').click();
     await page.locator('#note-sort-menu [data-note-sort-mode="name-asc"]').click();
     await sync();
-    await open(originalNote);
+
+    await open(singleNote);
+    await page.waitForFunction(() => document.querySelector('.note-live-image-frame img')?.naturalWidth > 0);
+    await page.evaluate(() => {
+      const editor = __dropTest.editor;
+      editor.view.dispatch({ changes: { from: editor.view.state.doc.length, insert: '\nunsaved single note marker\n' }, selection: { anchor: 80, head: 85 } });
+      editor.view.scrollDOM.scrollTop = 300; window.__singleNoteEditor = editor.view;
+    });
+    await page.waitForTimeout(100);
+    const singleBefore = await page.evaluate(() => { const s = __dropTest.editor.snapshot(); return [s.anchor, s.head, s.scrollTop, __dropTest.state.viewMode]; });
+    await drag(singleNote, noteTargetBook);
+    let movedSingle = `${noteTargetBook}/单篇.md`;
+    assert.equal(await page.evaluate(() => CanvasNoteWorkspace.currentPath), movedSingle);
+    assert.equal(await page.evaluate(() => __dropTest.editor.view === __singleNoteEditor), true);
+    const singleAfter = await page.evaluate(() => { const s = __dropTest.editor.snapshot(); return [s.anchor, s.head, s.scrollTop, __dropTest.state.viewMode]; });
+    assert.deepEqual(singleAfter.slice(0, 2), singleBefore.slice(0, 2));
+    assert(Math.abs(singleAfter[2] - singleBefore[2]) < 2); assert.equal(singleAfter[3], singleBefore[3]);
+    assert.deepEqual(await page.evaluate(() => [__dropTest.state.selectedPath, __dropTest.state.selectedFolder]), [movedSingle, noteTargetBook]);
+    assert(fs.readFileSync(path.join(notes, movedSingle), 'utf8').includes('unsaved single note marker'));
+    assert(!fs.existsSync(path.join(notes, singleNote))); assert(!fs.existsSync(path.join(notes, sourceBook, '单篇.assets')));
+    assert.equal(fs.readFileSync(path.join(notes, noteTargetBook, '单篇.assets/attachment.pdf'), 'utf8'), 'companion attachment');
+    assert(fs.readFileSync(path.join(notes, 'Index.md'), 'utf8').includes(`[[${movedSingle.slice(0, -3)}#单篇|单篇引用]]`));
+    const imageResponse = await page.request.get(url + '/api/note-asset?' + new URLSearchParams({ note: movedSingle, src: '单篇.assets/images/diagram.png' }));
+    assert(imageResponse.ok()); assert.deepEqual(await imageResponse.body(), png);
+    await page.evaluate(() => { __dropTest.editor.view.dispatch({ selection: { anchor: 0 } }); __dropTest.editor.view.scrollDOM.scrollTop = 0; });
+    await page.waitForFunction(value => {
+      const image = document.querySelector('.note-live-image-frame img');
+      return image?.naturalWidth > 0 && new URL(image.src).searchParams.get('note') === value;
+    }, movedSingle);
+    assert.equal(await rootRow(noteTargetBook).getAttribute('aria-expanded'), 'false', 'a note drop does not expand the right tree');
+    for (const [target, mode] of [['', 'source'], [sourceBook, 'reading']]) {
+      await page.evaluate(mode => __dropTest.setViewMode(mode), mode);
+      await page.evaluate(mode => {
+        if (mode === 'reading') document.querySelector('[data-role="note-reading-view"]').scrollTop = 200;
+        else __dropTest.editor.view.scrollDOM.scrollTop = 200;
+      }, mode);
+      await page.waitForTimeout(100);
+      const position = await page.evaluate(() => { const s = __dropTest.editorSnapshot(); return [s.anchor, s.head, s.scrollTop]; });
+      await drag(movedSingle, target);
+      movedSingle = (target ? target + '/' : '') + '单篇.md';
+      assert.equal(await page.evaluate(() => CanvasNoteWorkspace.currentPath), movedSingle);
+      assert.equal(await page.evaluate(() => __dropTest.state.viewMode), mode);
+      await page.waitForFunction(position => Math.abs(__dropTest.editorSnapshot().scrollTop - position[2]) < 2, position);
+      assert.deepEqual(await page.evaluate(() => { const s = __dropTest.editorSnapshot(); return [s.anchor, s.head]; }), position.slice(0, 2));
+      assert.deepEqual(fs.readFileSync(path.join(notes, target, '单篇.assets/images/diagram.png')), png);
+      const count = moveRequests; await drag(movedSingle, target);
+      assert.equal(moveRequests, count, 'same-parent note drops are no-ops');
+    }
+    await page.evaluate(() => __dropTest.setViewMode('live'));
+    await sync(); await open('Keep.md'); await choose(sourceBook);
+    const retainedTabs = await page.evaluate(() => __dropTest.state.tabs.slice());
+    await drag(`${sourceBook}/zz未打开.md`, targetBook); await sync();
+    assert.equal(await page.evaluate(() => CanvasNoteWorkspace.currentPath), 'Keep.md', 'an unopened note is never opened by the move');
+    assert.deepEqual(await page.evaluate(() => __dropTest.state.tabs), retainedTabs);
+    assert.deepEqual(await page.evaluate(() => [__dropTest.state.selectedPath, __dropTest.state.selectedFolder]), [`${targetBook}/zz未打开.md`, targetBook]);
+    assert.equal(await row(left, `${targetBook}/zz未打开.md`).isVisible(), true, 'the selected unopened note survives paginated refresh');
+    await cleanDrag(); await indexes();
+    for (const name of ['单篇冲突', 'CaseNote', '素材冲突']) {
+      await choose(sourceBook); const count = moveRequests;
+      await drag(`${sourceBook}/${name}.md`, targetBook);
+      assert.equal(moveRequests, count + 1);
+      assert.equal(await page.locator('[data-role="note-toast"]').textContent(), '目标笔记本有重名笔记或素材目录');
+      assert.equal(await page.evaluate(() => __dropTest.state.notebookRoot), sourceBook);
+      assert(fs.existsSync(path.join(notes, sourceBook, `${name}.md`)));
+      assert.deepEqual(fs.readFileSync(path.join(notes, sourceBook, `${name}.assets/images/diagram.png`)), png);
+      await cleanDrag(); await indexes();
+    }
+    assert.equal(fs.readFileSync(path.join(notes, targetBook, '单篇冲突.md'), 'utf8'), 'target note conflict');
+    assert.equal(fs.readFileSync(path.join(notes, targetBook, 'casenote.md'), 'utf8'), 'target case conflict');
+    assert.equal(fs.readFileSync(path.join(notes, targetBook, '素材冲突.assets/keep.bin'), 'utf8'), 'target assets conflict');
+
+    await sync(); await open(originalNote);
     assert.equal(await rootRow(targetBook).getAttribute('aria-expanded'), 'false');
     await page.evaluate(() => {
       const editor = __dropTest.editor;
@@ -198,8 +284,8 @@ async function waitFor(check, message) {
     assert.equal(moveRequests, hoverCount);
     await page.evaluate(() => __dragSource.dispatchEvent(new DragEvent('dragend', { bubbles: true })));
     await cleanDrag();
-    for (const lifecycle of ['blur', 'minimize', 'pagehide']) {
-      await beginDrag(`${sourceBook}/服务失败`, targetBook);
+    for (const [name, lifecycle] of ['服务失败', '单篇服务失败.md'].flatMap(name => ['blur', 'minimize', 'pagehide'].map(lifecycle => [name, lifecycle]))) {
+      await beginDrag(`${sourceBook}/${name}`, targetBook);
       await page.evaluate(lifecycle => {
         if (lifecycle === 'minimize') { document.documentElement.dataset.desktopMinimized = '1'; window.dispatchEvent(new Event('canvasdesktop:visibility')); }
         else window.dispatchEvent(new Event(lifecycle));
@@ -212,7 +298,8 @@ async function waitFor(check, message) {
     }
     assert.equal(moveRequests, hoverCount);
     await choose('');
-    assert.equal((await beginDrag('Keep.md', targetBook)).accepted, false, 'individual notes are outside the new drop scope');
+    assert.deepEqual(await beginDrag('Keep.md', targetBook), { accepted: true, highlighted: true });
+    assert.equal(await page.evaluate(() => __dropTest.state.notebookRoot), '', 'note hover preserves the selected notebook');
     await page.evaluate(() => __dragSource.dispatchEvent(new DragEvent('dragend', { bubbles: true })));
     const importsBefore = importRequests;
     await rootRow(targetBook).evaluate(el => {
@@ -224,21 +311,29 @@ async function waitFor(check, message) {
     await rootRow(sourceBook).locator('.note-tree-toggle').click();
     assert.equal((await beginDrag(`${sourceBook}/服务失败`, `${sourceBook}/冲突`)).accepted, false, 'right subfolders are outside the new drop scope');
     await page.evaluate(() => __dragSource.dispatchEvent(new DragEvent('dragend', { bubbles: true })));
+    assert.equal((await beginDrag(singleNote, `${sourceBook}/冲突`)).accepted, false, 'note drops also require a notebook root');
+    await page.evaluate(() => __dragSource.dispatchEvent(new DragEvent('dragend', { bubbles: true })));
     await rootRow(sourceBook).locator('.note-tree-toggle').click();
 
     await choose(sourceBook);
     await page.route('**/api/note-move', route => route.fulfill({ status: 500, json: { error: 'simulated move failure' } }));
-    await drag(`${sourceBook}/服务失败`, targetBook); await page.unroute('**/api/note-move');
-    assert(fs.existsSync(path.join(notes, sourceBook, '服务失败'))); assert(!fs.existsSync(path.join(notes, targetBook, '服务失败')));
-    assert.equal(await row(left, `${sourceBook}/服务失败`).count(), 1); await indexes();
-    assert.equal(await page.locator('[data-role="note-toast"]').textContent(), 'simulated move failure');
+    for (const name of ['服务失败', '单篇服务失败.md']) {
+      await drag(`${sourceBook}/${name}`, targetBook);
+      assert(fs.existsSync(path.join(notes, sourceBook, name))); assert(!fs.existsSync(path.join(notes, targetBook, name)));
+      assert.equal(await row(left, `${sourceBook}/${name}`).count(), 1); await indexes();
+      assert.equal(await page.locator('[data-role="note-toast"]').textContent(), 'simulated move failure');
+    }
+    await page.unroute('**/api/note-move');
+    assert.deepEqual(fs.readFileSync(path.join(notes, sourceBook, '单篇服务失败.assets/images/diagram.png')), png);
 
     await page.route('**/api/note-save', route => route.fulfill({ status: 500, json: { error: 'simulated save failure' } }));
     await page.evaluate(() => { const view = __dropTest.editor.view; view.dispatch({ changes: { from: view.state.doc.length, insert: '\nsave gate marker' } }); });
     const countBeforeSaveFailure = moveRequests;
-    await drag(`${sourceBook}/保存失败`, targetBook);
-    assert.equal(moveRequests, countBeforeSaveFailure); assert(fs.existsSync(path.join(notes, sourceBook, '保存失败')));
-    assert.equal(await page.evaluate(() => __dropTest.state.notebookRoot), sourceBook);
+    for (const name of ['保存失败', '单篇保存失败.md']) {
+      await drag(`${sourceBook}/${name}`, targetBook);
+      assert.equal(moveRequests, countBeforeSaveFailure); assert(fs.existsSync(path.join(notes, sourceBook, name)));
+      assert.equal(await page.evaluate(() => __dropTest.state.notebookRoot), sourceBook);
+    }
     await page.unroute('**/api/note-save'); await page.evaluate(() => __dropTest.flushSave());
 
     await beginDrag(`${sourceBook}/目标消失`, 'CustomNotebook/消失本');
@@ -246,34 +341,40 @@ async function waitFor(check, message) {
     await drop('CustomNotebook/消失本'); await idle();
     assert(fs.existsSync(path.join(notes, sourceBook, '目标消失'))); await indexes();
 
-    await delayedMove(`${sourceBook}/迟到`, targetBook, async () => { await choose(''); await row(left, 'Keep.md').click(); });
-    await page.waitForFunction(() => CanvasNoteWorkspace.currentPath === 'Keep.md');
-    assert.equal(await page.evaluate(() => __dropTest.state.notebookRoot), '');
-    assert(fs.existsSync(path.join(notes, targetBook, '迟到')));
-    await choose(sourceBook);
-    await delayedMove(`${sourceBook}/失败迟到`, targetBook, () => choose(''), true);
-    assert.equal(await page.evaluate(() => __dropTest.state.notebookRoot), '', 'rollback preserves a later notebook selection');
-    assert(fs.existsSync(path.join(notes, sourceBook, '失败迟到')));
-    await choose(sourceBook);
-    await delayedMove(`${sourceBook}/隐藏前`, targetBook, () => page.evaluate(() => {
-      document.documentElement.dataset.desktopMinimized = '1'; window.dispatchEvent(new Event('canvasdesktop:visibility'));
-    }));
-    assert(fs.existsSync(path.join(notes, targetBook, '隐藏前')));
-    assert.equal(await page.evaluate(() => __dropTest.state.notebookRoot), sourceBook);
-    await page.evaluate(() => { document.documentElement.dataset.desktopMinimized = '0'; window.dispatchEvent(new Event('canvasdesktop:visibility')); });
+    for (const suffix of ['', '.md']) {
+      const prefix = suffix ? '单篇' : '';
+      await choose(sourceBook);
+      await delayedMove(`${sourceBook}/${prefix}迟到${suffix}`, targetBook, async () => { await choose(''); await row(left, 'Keep.md').click(); });
+      await page.waitForFunction(() => CanvasNoteWorkspace.currentPath === 'Keep.md');
+      assert.equal(await page.evaluate(() => __dropTest.state.notebookRoot), '');
+      assert(fs.existsSync(path.join(notes, targetBook, `${prefix}迟到${suffix}`)));
+      await choose(sourceBook);
+      await delayedMove(`${sourceBook}/${prefix}失败迟到${suffix}`, targetBook, () => choose(''), true);
+      assert.equal(await page.evaluate(() => __dropTest.state.notebookRoot), '', 'rollback preserves a later notebook selection');
+      assert(fs.existsSync(path.join(notes, sourceBook, `${prefix}失败迟到${suffix}`)));
+      await choose(sourceBook);
+      await delayedMove(`${sourceBook}/${prefix}隐藏前${suffix}`, targetBook, () => page.evaluate(() => {
+        document.documentElement.dataset.desktopMinimized = '1'; window.dispatchEvent(new Event('canvasdesktop:visibility'));
+      }));
+      assert(fs.existsSync(path.join(notes, targetBook, `${prefix}隐藏前${suffix}`)));
+      assert.equal(await page.evaluate(() => __dropTest.state.notebookRoot), sourceBook);
+      await page.evaluate(() => { document.documentElement.dataset.desktopMinimized = '0'; window.dispatchEvent(new Event('canvasdesktop:visibility')); });
+    }
 
-    let releaseSave, saving = false;
-    const saveGate = new Promise(resolve => { releaseSave = resolve; });
-    await page.route('**/api/note-save', async route => { saving = true; await saveGate; await route.continue(); });
-    await page.evaluate(() => { const view = __dropTest.editor.view; view.dispatch({ changes: { from: view.state.doc.length, insert: '\ncancel before move' } }); });
-    const countBeforeHiddenSave = moveRequests;
-    await beginDrag(`${sourceBook}/保存时隐藏`, targetBook); await drop(targetBook);
-    await waitFor(() => saving, 'save request did not arrive');
-    await page.evaluate(() => { document.documentElement.dataset.desktopMinimized = '1'; window.dispatchEvent(new Event('canvasdesktop:visibility')); });
-    releaseSave(); await idle(); await page.unroute('**/api/note-save');
-    assert.equal(moveRequests, countBeforeHiddenSave, 'hiding before the move request cancels the drop after saving');
-    assert(fs.existsSync(path.join(notes, sourceBook, '保存时隐藏')));
-    await page.evaluate(() => { document.documentElement.dataset.desktopMinimized = '0'; window.dispatchEvent(new Event('canvasdesktop:visibility')); });
+    for (const name of ['保存时隐藏', '单篇保存时隐藏.md']) {
+      let releaseSave, saving = false;
+      const saveGate = new Promise(resolve => { releaseSave = resolve; });
+      await page.route('**/api/note-save', async route => { saving = true; await saveGate; await route.continue(); });
+      await page.evaluate(() => { const view = __dropTest.editor.view; view.dispatch({ changes: { from: view.state.doc.length, insert: '\ncancel before move' } }); });
+      const countBeforeHiddenSave = moveRequests;
+      await beginDrag(`${sourceBook}/${name}`, targetBook); await drop(targetBook);
+      await waitFor(() => saving, 'save request did not arrive');
+      await page.evaluate(() => { document.documentElement.dataset.desktopMinimized = '1'; window.dispatchEvent(new Event('canvasdesktop:visibility')); });
+      releaseSave(); await idle(); await page.unroute('**/api/note-save');
+      assert.equal(moveRequests, countBeforeHiddenSave, 'hiding before the move request cancels the drop after saving');
+      assert(fs.existsSync(path.join(notes, sourceBook, name)));
+      await page.evaluate(() => { document.documentElement.dataset.desktopMinimized = '0'; window.dispatchEvent(new Event('canvasdesktop:visibility')); });
+    }
 
     await choose(''); await row(left, 'Parent').click();
     await drag('Parent/Sub', ''); assert(fs.existsSync(path.join(notes, 'Sub')));
@@ -291,15 +392,17 @@ async function waitFor(check, message) {
     await page.setViewportSize({ width: 920, height: 800 });
     await drag(`${sourceBook}/CaseFolder`, targetBook);
     assert.equal(await page.locator('[data-role="note-toast"]').textContent(), 'The target notebook already has a folder with this name');
+    await drag(`${sourceBook}/CaseNote.md`, targetBook);
+    assert.equal(await page.locator('[data-role="note-toast"]').textContent(), 'The target notebook already has a note or companion assets folder with this name');
     await cleanDrag(); await indexes();
     assert.deepEqual(errors, []);
     if (process.env.RELATUM_ARTIFACT_DIR) {
       fs.mkdirSync(process.env.RELATUM_ARTIFACT_DIR, { recursive: true });
       await page.screenshot({ path: path.join(process.env.RELATUM_ARTIFACT_DIR, 'notebook-folder-drop.png') });
     }
-    console.log('note notebook folder drop ' + (native ? 'WebView2' : 'Edge') + ': ok');
+    console.log('note notebook note/folder drop ' + (native ? 'WebView2' : 'Edge') + ': ok');
   } catch (error) {
-    console.error(diagnostics); console.error(JSON.stringify(failures));
+    console.error(diagnostics); console.error(JSON.stringify(failures)); console.error(JSON.stringify(indexStates)); console.error(JSON.stringify(movePayloads));
     if (page) console.error(await page.locator('[data-role="note-toast"]').textContent().catch(() => ''));
     throw error;
   }

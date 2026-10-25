@@ -2062,7 +2062,7 @@
   function treeView() {
     let saved = ''; try { saved = localStorage.getItem(ACTIVE_PATH_KEY) || ''; } catch (error) {}
     return { expanded: Array.from(new Set([state.notebookRoot || '', ...state.expanded, ...state.notebookExpanded])).slice(0, 4096),
-      pins: Array.from(new Set([state.selectedFolder, ...state.tabs, saved, state.current?.path || ''].filter(path => path && !isSpecialTab(path)))).slice(0, 256), sort: state.treeSort };
+      pins: Array.from(new Set([state.selectedPath, state.selectedFolder, ...state.tabs, saved, state.current?.path || ''].filter(path => path && !isSpecialTab(path)))).slice(0, 256), sort: state.treeSort };
   }
   function post(url, payload, options) {
     if (['/api/note-create', '/api/note-move', '/api/note-trash', '/api/note-import-commit'].includes(url)) payload = Object.assign({}, payload, { _tree: treeView() });
@@ -3076,7 +3076,7 @@
         if (notebookTree) {
           const source = notebookEntry ? notebookDropSource(rowPath) : '';
           if (!source) return;
-          event.preventDefault(); event.stopPropagation(); clearNoteTreeDrag(); moveFolderToNotebook(source, rowPath); return;
+          event.preventDefault(); event.stopPropagation(); clearNoteTreeDrag(); moveEntryToNotebook(source, rowPath); return;
         }
         event.preventDefault(); event.stopPropagation(); row.classList.remove('note-drop-target');
         const liveEntry = getEntry(rowPath); if (!liveEntry) return;
@@ -3756,12 +3756,14 @@
     if (!noteWorkspaceVisible() || effectiveSideMode() !== 'notebooks' || !root.classList.contains('links-overlay-open')
         || noteMovePromise || notebookDropRunning || !noteTreeDragRow || !treeEl.contains(noteTreeDragRow)) return '';
     const source = state.draggedPath;
-    if (!source || noteTreeDragRow.dataset.notePath !== source || findEntry(source)?.kind !== 'folder'
+    if (!source || noteTreeDragRow.dataset.notePath !== source || !['folder', 'note'].includes(findEntry(source)?.kind)
         || isNotebookRoot(source) || isNotebookContainer(source)) return '';
     return target === '' || isNotebookRoot(target) && findEntry(target)?.kind === 'folder' ? source : '';
   }
-  async function moveFolderToNotebook(source, target) {
+  async function moveEntryToNotebook(source, target) {
     if (notebookDropRunning) return;
+    const kind = findEntry(source)?.kind;
+    if (!['folder', 'note'].includes(kind)) return;
     const destination = joinPath(target, baseName(source));
     if (source === destination) return;
     const selection = notebookSelectionSequence, visibility = noteVisibilityEpoch, sequence = state.openSeq;
@@ -3770,7 +3772,7 @@
       && selection === notebookSelectionSequence && sequence === state.openSeq && state.current === documentState
       && state.activeTab === (moved ? mapPath(tab, source, destination) : tab)
       && state.selectedPath === (moved ? mapPath(selectedPath, source, destination) : selectedPath);
-    const validPaths = () => findEntry(source)?.kind === 'folder' && !isNotebookRoot(source) && !isNotebookContainer(source)
+    const validPaths = () => findEntry(source)?.kind === kind && !isNotebookRoot(source) && !isNotebookContainer(source)
       && (target === '' || isNotebookRoot(target) && findEntry(target)?.kind === 'folder');
     notebookDropRunning = true;
     try {
@@ -3792,11 +3794,13 @@
           if (!current(ok)) return;
           if (!ok) {
             if (message) showToast(code === 'exists'
-              ? (language() === 'en' ? 'The target notebook already has a folder with this name' : '目标笔记本有重名文件夹') : message, 'error');
+              ? (kind === 'note'
+                ? (language() === 'en' ? 'The target notebook already has a note or companion assets folder with this name' : '目标笔记本有重名笔记或素材目录')
+                : (language() === 'en' ? 'The target notebook already has a folder with this name' : '目标笔记本有重名文件夹')) : message, 'error');
             return;
           }
           selectNotebook(target, { noRender: true });
-          state.rootTargeted = false; state.selectedPath = destination; state.selectedFolder = destination;
+          state.rootTargeted = false; state.selectedPath = destination; state.selectedFolder = kind === 'folder' ? destination : parentPath(destination);
           expandTreePath(destination, false); renderTree();
           const row = treeEl.__noteWindow?.scrollToKey(destination) || treeRowIndexes.get(treeEl).rows.get(destination);
           row?.scrollIntoView({ block: 'nearest', inline: 'nearest' });

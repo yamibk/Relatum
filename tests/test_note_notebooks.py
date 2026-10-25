@@ -95,6 +95,78 @@ class NotebookTests(unittest.TestCase):
                     self.assertEqual(conn.execute("SELECT COUNT(*) FROM tags WHERE entry=?", (identity,)).fetchone()[0], 1)
                 folder = destination
 
+    def test_note_moves_across_notebooks_preserve_assets_links_and_index_identity(self):
+        source = self.notebook("源本")
+        target = self.notebook("目标本")
+        note = self.store.create(source + "/小节", "单篇", "note", create_parents=True)["path"]
+        image = b"\x89PNG\r\n\x1a\n" + b"x" * 20
+        uploaded = self.store.upload_image(note, "diagram.png", image, "image/png")
+        loaded = self.store.load(note)
+        self.store.save(note, "# 单篇\n#迁移\n![diagram](" + uploaded["path"] + ")", loaded["revision"])
+        companion = (self.store.root / note).with_suffix(".assets")
+        (companion / "attachment.pdf").write_bytes(b"companion attachment")
+        self.store.create("", "Index", "note", content="[[" + note[:-3] + "#单篇|引用]]")
+        self.store.sync.complete()
+        with self.store.index.read() as conn:
+            identity = conn.execute("SELECT id FROM entries WHERE path=?", (note,)).fetchone()[0]
+        for root in (target, "", source):
+            destination = (root + "/" if root else "") + "单篇.md"
+            with self.subTest(target=root):
+                self.store.move(note, destination)
+                self.store.sync.complete()
+                self.assertFalse((self.store.root / note).exists())
+                self.assertFalse((self.store.root / note).with_suffix(".assets").exists())
+                self.assertIn("#单篇|引用]]", self.store.load("Index.md")["content"])
+                self.assertEqual(self.store.links("Index.md")["outgoing"][0]["path"], destination)
+                resolved, media_type = self.store.resolve_image(destination, uploaded["path"])
+                self.assertEqual(media_type, "image/png")
+                self.assertEqual(resolved.read_bytes(), image)
+                self.assertEqual((self.store.root / destination).with_suffix(".assets").joinpath("attachment.pdf").read_bytes(), b"companion attachment")
+                self.assertEqual(self.store.links(destination)["backlinks"][0]["path"], "Index.md")
+                with self.store.index.read() as conn:
+                    row = conn.execute("SELECT e.id,b.root FROM entries e JOIN books b ON b.id=e.book WHERE e.path=?", (destination,)).fetchone()
+                    self.assertEqual(tuple(row), (identity, root))
+                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM tags WHERE entry=?", (identity,)).fetchone()[0], 1)
+                note = destination
+
+    def test_cross_notebook_note_and_companion_conflicts_preserve_both_sides(self):
+        source = self.notebook("Source")
+        target = self.notebook("Target")
+        image = b"\x89PNG\r\n\x1a\n" + b"x" * 20
+        for name, conflict in (("Same", "Same.md"), ("CaseNote", "casenote.md"), ("Assets", "Assets.assets")):
+            with self.subTest(conflict=conflict):
+                note = self.store.create(source, name, "note", content="source content")["path"]
+                uploaded = self.store.upload_image(note, "diagram.png", image, "image/png")
+                existing = self.store.root / target / conflict
+                if conflict.endswith(".assets"):
+                    existing.mkdir()
+                    existing = existing / "keep.bin"
+                existing.write_bytes(b"target content")
+                with self.assertRaises(NotesError) as caught:
+                    self.store.move(note, target + "/" + name + ".md")
+                self.assertEqual(caught.exception.code, "exists")
+                self.assertEqual(self.store.load(note)["content"], "source content")
+                self.assertEqual(self.store.resolve_image(note, uploaded["path"])[0].read_bytes(), image)
+                self.assertEqual(existing.read_bytes(), b"target content")
+
+    def test_cross_notebook_note_failed_rewrite_rolls_back_assets(self):
+        source = self.notebook("Source")
+        target = self.notebook("Target")
+        note = self.store.create(source, "单篇", "note", content="source content")["path"]
+        image = b"\x89PNG\r\n\x1a\n" + b"x" * 20
+        uploaded = self.store.upload_image(note, "diagram.png", image, "image/png")
+        reference = "[[" + note[:-3] + "]]"
+        self.store.create("", "Index", "note", content=reference)
+        self.store.sync.complete()
+        with mock.patch.object(self.store, "atomic_text", side_effect=OSError("simulated write failure")):
+            with self.assertRaises(OSError):
+                self.store.move(note, target + "/单篇.md")
+        self.assertEqual(self.store.load(note)["content"], "source content")
+        self.assertEqual(self.store.load("Index.md")["content"], reference)
+        self.assertEqual(self.store.resolve_image(note, uploaded["path"])[0].read_bytes(), image)
+        self.assertFalse((self.store.root / target / "单篇.md").exists())
+        self.assertFalse((self.store.root / target / "单篇.assets").exists())
+
     def test_cross_notebook_empty_folder_and_case_conflict(self):
         source = self.notebook("Source")
         target = self.notebook("Target")
