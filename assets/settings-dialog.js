@@ -4,10 +4,12 @@
   function create(options) {
     const { content, categories } = options;
     const dialog = document.createElement('dialog');
-    dialog.className = 'relatum-settings'; dialog.id = 'note-settings-dialog'; dialog.dataset.role = 'note-settings-dialog';
-    dialog.setAttribute('aria-labelledby', 'relatum-settings-title'); dialog.hidden = true;
+    dialog.className = 'relatum-settings'; dialog.id = options.id || 'note-settings-dialog'; dialog.dataset.role = dialog.id;
+    const titleId = options.id ? dialog.id + '-title' : 'relatum-settings-title';
+    const confirmId = options.id ? dialog.id + '-confirm-title' : 'relatum-settings-confirm-title';
+    dialog.setAttribute('aria-labelledby', titleId); dialog.hidden = true;
     dialog.innerHTML = `<aside class="relatum-settings-sidebar">
-      <h2 id="relatum-settings-title"></h2>
+      <h2 id="${titleId}"></h2>
       <label class="relatum-settings-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input type="search" autocomplete="off" data-settings-search></label>
       <nav class="relatum-settings-nav"></nav>
       <button type="button" class="relatum-settings-reset-all" data-settings-action="reset-all"></button>
@@ -16,15 +18,15 @@
         <button type="button" class="relatum-settings-close" data-settings-action="close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </header><div class="relatum-settings-scroll"><div class="relatum-settings-results" role="region" aria-live="polite" hidden></div></div>
       <footer class="relatum-settings-footer"><span data-settings-status role="status" aria-live="polite"></span><button type="button" data-settings-action="reset-category"></button></footer>
-    </main><div class="relatum-settings-confirm" role="alertdialog" aria-modal="true" aria-labelledby="relatum-settings-confirm-title" hidden>
-      <div><h3 id="relatum-settings-confirm-title"></h3><p></p><footer><button type="button" data-settings-action="cancel-reset"></button><button type="button" data-settings-action="accept-reset"></button></footer></div>
+    </main><div class="relatum-settings-confirm" role="alertdialog" aria-modal="true" aria-labelledby="${confirmId}" hidden>
+      <div><h3 id="${confirmId}"></h3><p></p><footer><button type="button" data-settings-action="cancel-reset"></button><button type="button" data-settings-action="accept-reset"></button></footer></div>
     </div>`;
     const find = selector => dialog.querySelector(selector);
     const nav = find('nav'), search = find('input'), scroll = find('.relatum-settings-scroll');
     const results = find('.relatum-settings-results'), confirm = find('.relatum-settings-confirm');
     const title = find('[data-settings-title]'), reset = find('[data-settings-action="reset-category"]');
     const status = find('[data-settings-status]');
-    const motion = window.RelatumNoteSystem?.motion || matchMedia('(prefers-reduced-motion: reduce)');
+    const motion = options.motion || window.RelatumNoteSystem?.motion || matchMedia('(prefers-reduced-motion: reduce)');
     let selected = categories[0].id, trigger = null, closing = false, statusTimer = 0, resetTarget = '', backdropDown = false, disposed = false, surfaceRevision = 0;
     const positions = new Map(), buttons = new Map(), lifetime = new AbortController();
     const animations = new Map();
@@ -32,6 +34,7 @@
     const english = () => options.language() === 'en';
     const text = (zh, en) => english() ? en : zh;
     const label = category => category.label[english() ? 1 : 0];
+    const message = (key, zh, en) => options.labels?.[key]?.[english() ? 1 : 0] ?? text(zh, en);
     // One finite animation per surface; cancellation releases its compositor state.
     function stopMotion(key, finish = false) {
       const entry = animations.get(key);
@@ -60,7 +63,7 @@
       category.panel.dataset.settingsCategory = category.id;
       category.panel.classList.add('relatum-settings-page'); content.append(category.panel);
       const button = document.createElement('button'); button.type = 'button'; button.dataset.settingsCategory = category.id;
-      button.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#${category.icon}"/></svg><span></span>`;
+      button.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${category.iconMarkup || `<use href="#${category.icon}"/>`}</svg><span></span>`;
       nav.append(button); buttons.set(category.id, button);
       listen(button, 'click', () => { search.value = ''; show(category.id); button.focus({ preventScroll: true }); });
     });
@@ -145,9 +148,9 @@
       const visible = !confirm.hidden, from = visible ? appearance(confirm) : { opacity: 0, transform: 'none' };
       const card = confirm.firstElementChild, cardFrom = visible ? appearance(card) : { opacity: 0, transform: 'translateY(6px) scale(.985)' };
       resetTarget = all ? 'all' : selected;
-      find('#relatum-settings-confirm-title').textContent = all ? text('恢复全部笔记设置？', 'Reset all note settings?') : text('恢复此分类的默认设置？', 'Reset this category?');
+      confirm.querySelector('h3').textContent = all ? message('confirmAll', '恢复全部笔记设置？', 'Reset all note settings?') : text('恢复此分类的默认设置？', 'Reset this category?');
       confirm.querySelector('p').textContent = all
-        ? text('恢复笔记界面、侧栏顺序、AI 调用参数及其他笔记偏好。保留笔记、模型、API Key、自定义预设和聊天历史。', 'Restore note preferences, sidebar order and AI parameters. Keep notes, model, API key, custom presets and chat history.')
+        ? message('confirmDescription', '恢复笔记界面、侧栏顺序、AI 调用参数及其他笔记偏好。保留笔记、模型、API Key、自定义预设和聊天历史。', 'Restore note preferences, sidebar order and AI parameters. Keep notes, model, API key, custom presets and chat history.')
         : text('将“' + label(categories.find(item => item.id === selected)) + '”恢复为默认值。', 'Restore defaults for “' + label(categories.find(item => item.id === selected)) + '”.');
       confirm.hidden = false; confirm.inert = false; confirm.removeAttribute('aria-hidden'); confirm.classList.remove('is-closing');
       find('.relatum-settings-sidebar').inert = true; find('.relatum-settings-main').inert = true;
@@ -176,7 +179,7 @@
     function setLanguage() {
       finishMotion();
       status.textContent = '';
-      find('h2').textContent = text('笔记设置', 'Note settings');
+      find('h2').textContent = message('title', '笔记设置', 'Note settings');
       find('[data-settings-eyebrow]').textContent = text('偏好设置', 'PREFERENCES');
       search.placeholder = text('搜索设置', 'Search settings'); search.setAttribute('aria-label', search.placeholder);
       nav.setAttribute('aria-label', text('设置分类', 'Settings categories'));
@@ -184,7 +187,7 @@
       const labels = { close: ['关闭设置', 'Close settings'], 'reset-all': ['恢复全部笔记设置', 'Reset all note settings'], 'reset-category': ['恢复此分类默认值', 'Reset category'], 'cancel-reset': ['取消', 'Cancel'], 'accept-reset': ['恢复默认', 'Restore defaults'] };
       Object.entries(labels).forEach(([action, values]) => {
         const button = find('[data-settings-action="' + action + '"]');
-        if (action === 'close') button.setAttribute('aria-label', values[english() ? 1 : 0]); else button.textContent = values[english() ? 1 : 0];
+        if (action === 'close') button.setAttribute('aria-label', values[english() ? 1 : 0]); else button.textContent = message(action, ...values);
       });
       if (search.value) searchSettings(); else title.textContent = label(categories.find(category => category.id === selected));
       if (resetTarget) askReset(resetTarget === 'all');
@@ -240,7 +243,7 @@
       items[next].click();
     });
     setLanguage(); content.hidden = true;
-    return { dialog, setLanguage, get isOpen() { return dialog.open && !dialog.inert; },
+    return { dialog, setLanguage, setStatus(value) { status.textContent = value; }, get isOpen() { return dialog.open && !dialog.inert; },
       finishContentMotion() { if (!closing) { stopMotion('dialog', true); stopMotion('page', true); stopMotion('title', true); } },
       whenContentSettled() { return Promise.all(['dialog', 'page', 'title'].map(key => animations.get(key)?.animation.finished.catch(() => {}))); },
       open({ category = selected, trigger: source } = {}) {

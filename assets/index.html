@@ -15,14 +15,12 @@
         document.documentElement.dataset.startTheme = theme;
         document.documentElement.dataset.startBackground = backgroundStyle;
         var storedWorkspace = localStorage.getItem('canvas:startWorkspace:v1');
-        var workspace = storedWorkspace === 'notes' || storedWorkspace === 'research' || storedWorkspace === 'career'
-          ? storedWorkspace : 'canvas';
-        workspace = window.RelatumFeatureRuntime.workspace(workspace);
+        var workspace = window.RelatumFeatureRuntime.workspace(storedWorkspace);
         document.documentElement.dataset.startWorkspace = workspace;
         window.RelatumBoot = window.RelatumBoot || {};
         window.RelatumBoot.noteFocusMode = localStorage.getItem('canvas:noteFocusMode:v1') === '1';
         var boot = window.RelatumBoot, features = window.RelatumFeatureRuntime;
-        boot.noteGraphPreloadRequested = features.enabled('notes') && features.enabled('notes.graph')
+        boot.noteGraphPreloadRequested = features.visibleWorkspaces().includes('notes') && features.enabled('notes.graph')
           && features.preloadEnabled !== false && localStorage.getItem('canvas:noteGraphPreload:v1') === '1';
         if (workspace === 'notes') {
           document.documentElement.classList.add('note-boot-pending');
@@ -87,7 +85,7 @@
   <script>
     // 专注页位于脚本队列末端。页面解析时就并行读取其轻量数据，第一次翻页与后续翻页共用缓存。
     (function () {
-      if (!window.RelatumFeatureRuntime.enabled('canvas.focus') || window.RelatumFeatureRuntime.preloadEnabled === false) return;
+      if (!window.RelatumFeatureRuntime.visibleWorkspaces().includes('canvas') || !window.RelatumFeatureRuntime.enabled('canvas.focus') || window.RelatumFeatureRuntime.preloadEnabled === false) return;
       function preloadJson(path) {
         return fetch(path, { credentials: 'same-origin' }).then(function (response) {
           if (!response.ok) throw new Error('preload failed');
@@ -106,6 +104,8 @@
     })();
   </script>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="settings-dialog.css">
+  <link rel="stylesheet" href="global-settings.css">
   <link rel="stylesheet" href="review-controls.css" data-feature="canvas.review">
 </head>
 <body class="start-page">
@@ -115,11 +115,7 @@
         document.documentElement.dataset.startTheme === 'dark' ? 'dark' : 'light';
       document.body.dataset.startBackground =
         document.documentElement.dataset.startBackground === 'scenic' ? 'scenic' : 'simple';
-      document.body.dataset.startWorkspace =
-        document.documentElement.dataset.startWorkspace === 'notes'
-          || document.documentElement.dataset.startWorkspace === 'research'
-          || document.documentElement.dataset.startWorkspace === 'career'
-          ? document.documentElement.dataset.startWorkspace : 'canvas';
+      document.body.dataset.startWorkspace = document.documentElement.dataset.startWorkspace;
       if (window.RelatumBoot && window.RelatumBoot.noteFocusMode) {
         document.body.classList.add('note-focus-mode', 'note-focus-restoring');
         window.addEventListener('load', function () {
@@ -142,18 +138,14 @@
       <div class="brand">Relatum</div>
       <div class="start-speed-control">
         <button type="button" class="start-speed-trigger" data-action="start-speed-toggle"
-          title="翻页速度" aria-label="调整翻页速度" aria-expanded="false"
-          aria-controls="start-speed-pop">
+          title="全局设置" aria-label="全局设置" aria-expanded="false"
+          aria-controls="global-settings-dialog">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="3"/>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </button>
-        <div class="start-speed-pop" id="start-speed-pop" data-role="start-speed-pop" hidden>
-          <div class="start-speed-head start-panel-head">
-            <span>设置</span>
-            <button type="button" class="starmap-motion-reset" data-action="start-panel-reset">恢复默认</button>
-          </div>
+        <div data-role="global-settings-source" hidden>
           <div class="start-priority-settings">
             <div class="start-panel-theme">
               <button type="button" class="start-theme-toggle" data-action="start-theme-toggle"
@@ -328,7 +320,6 @@
             <div class="start-speed-section starmap-motion-pop" data-role="starmap-motion-settings">
               <div class="start-speed-head">
                 <span>足迹星图动画</span>
-                <button type="button" class="starmap-motion-reset" data-action="starmap-motion-reset">重置</button>
               </div>
               <label class="starmap-motion-row" style="--default-pos:53.85%;">
                 <span>生长时长 <output data-role="starmap-motion-value" data-setting="introMs">1080ms</output></span>
@@ -355,7 +346,6 @@
           <div class="start-speed-section starmap-motion-pop" data-role="career-scroll-feel-settings">
             <div class="start-speed-head">
               <span>生涯滚动手感</span>
-              <button type="button" class="starmap-motion-reset" data-action="career-scroll-feel-reset">重置</button>
             </div>
             <label class="starmap-motion-row" style="--default-pos:34.36%;">
               <span>滚轮力度 <output data-role="career-scroll-feel-value" data-setting="strength">100%</output></span>
@@ -396,16 +386,22 @@
         <div data-usage-settings></div>
       </div>
       <nav class="start-workspace-switch" data-role="start-workspace-switch"
-        role="tablist" aria-label="工作区">
+        role="tablist" aria-label="工作区" data-i18n-managed="true">
         <span class="start-workspace-slider" aria-hidden="true"></span>
-        <button type="button" role="tab" data-start-workspace="canvas"
-          aria-controls="start-canvas-workspace">画布</button>
-        <button type="button" role="tab" data-start-workspace="notes"
-          aria-controls="start-notes-workspace">笔记</button>
-        <button type="button" role="tab" data-start-workspace="research"
-          aria-controls="start-research-workspace">研究</button>
-        <button type="button" role="tab" data-start-workspace="career"
-          aria-controls="start-career-workspace">生涯</button>
+        <script>
+          (function () {
+            var nav = document.currentScript.parentElement, features = window.RelatumFeatureRuntime;
+            var visible = features.visibleWorkspaces();
+            nav.hidden = !visible.length;
+            features.workspaces.filter(function (item) { return features.workspaceEnabled(item.id); }).forEach(function (item) {
+              var button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'tab');
+              button.dataset.startWorkspace = item.id; button.setAttribute('aria-controls', item.panel);
+              button.textContent = item.label[document.documentElement.dataset.uiLanguage === 'en' ? 1 : 0];
+              button.hidden = !visible.includes(item.id); button.disabled = button.hidden;
+              nav.appendChild(button);
+            });
+          })();
+        </script>
       </nav>
     </div>
     <!-- 常驻操作条：仅在画布列表视图显示（空状态由 hero 区承担操作）-->
@@ -2046,6 +2042,9 @@
   <script src="sticky-palette.js" defer></script>
   <link rel="stylesheet" href="usage-settings.css">
   <script src="usage-tracker.js" defer></script>
+  <script src="settings-dialog.js" defer></script>
+  <script src="settings-order-list.js" defer></script>
+  <script src="global-settings.js" defer></script>
   <script src="start-workspace-runtime.js" defer></script>
   <script src="start-shell.js" defer></script>
   <script src="windowed-list.js" defer></script>

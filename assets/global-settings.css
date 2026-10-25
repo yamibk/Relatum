@@ -1,0 +1,43 @@
+/* The common dialog owns layout and motion; this file styles legacy controls. */
+.global-settings-dialog .relatum-settings-page { display: grid; gap: 12px; }
+.global-settings-dialog .relatum-settings-page > p { margin: 6px 3px 14px; }
+.global-settings-dialog :is(.start-setting-toggle, .global-settings-range, .start-root-title-size-setting, .start-priority-background, .start-panel-theme, .start-dark-card-settings, .starmap-motion-row, .start-setting-row) {
+  padding: 18px 20px; border-radius: 14px; margin: 0; background: var(--settings-card); min-width: 0;
+}
+.global-settings-dialog :is(.start-setting-toggle strong, .start-root-title-size-setting strong, .start-dark-card-setting strong, .start-speed-head) { font-size: 13px; font-weight: 580; }
+.global-settings-dialog .start-setting-toggle small { font-size: 11px; line-height: 1.6; margin-top: 4px; }
+.global-settings-dialog .start-setting-toggle input { position: static; opacity: 1; pointer-events: auto; width: 16px; height: 16px; }
+.global-settings-dialog .start-setting-toggle > i { display: none; }
+.global-settings-dialog .start-panel-theme { display: flex; align-items: center; justify-content: space-between; }
+.global-settings-dialog .start-panel-theme > strong { font-size: 13px; font-weight: 580; }
+.global-settings-dialog .relatum-settings-page .start-panel-theme .start-theme-toggle {
+  position: static; left: auto; bottom: auto; z-index: auto; flex: 0 0 34px;
+  margin: 0; padding: 0; width: 34px; height: 34px; border: 1px solid var(--settings-selected);
+  border-radius: 9px; background: var(--settings-bg); color: var(--settings-text);
+  box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.global-settings-dialog .start-speed-head { margin-bottom: 12px; }
+.global-settings-dialog :is(.start-background-switch, .start-dark-card-ink-switch) { box-shadow: none; background: var(--settings-selected); border-color: transparent; }
+.global-settings-dialog .start-background-switch button { box-shadow: none; }
+.global-settings-dialog .start-background-switch button.active { background: var(--settings-bg); color: var(--settings-text); }
+.global-settings-dialog .start-dark-card-ink-slider { will-change: auto; transition-duration: 160ms; background: var(--settings-text); box-shadow: none; }
+.global-settings-dialog .start-dark-card-ink-switch button.active { color: var(--settings-bg); }
+.global-settings-dialog .start-dark-card-settings { gap: 18px; }
+.global-settings-dialog .start-dark-card-settings-head strong { font-size: 13px; }
+.global-settings-dialog .start-dark-card-settings-head small { font-size: 11px; }
+.global-settings-dialog .start-dark-card-settings section { gap: 14px; }
+.global-settings-dialog .start-dark-card-settings section > h3 { font-size: 12px; }
+.global-settings-dialog .start-dark-card-setting { gap: 8px; }
+.global-settings-dialog :is(.start-dark-card-setting output, .starmap-motion-row > span, .start-root-title-size-setting output) { font-size: 12px; font-weight: 500; }
+.global-settings-dialog .start-speed-section { padding: 0; margin: 0; border: 0; }
+.global-settings-dialog .starmap-motion-pop { gap: 12px; }
+.global-settings-dialog .start-usage-settings { padding: 0; margin: 0; border: 0; }
+.global-settings-dialog .start-usage-settings h3 { display: none; }
+.global-settings-dialog .start-usage-settings .start-setting-row { margin-bottom: 10px; padding: 18px 20px; font-size: 13px; }
+.global-settings-dialog .start-speed-range-wrap { margin-top: 8px; }
+.global-settings-dialog input[type="range"] { width: 100%; margin-inline: 0; }
+html[data-start-theme="dark"] { --workspace-active-ink: #1b1d1b; }
+html[data-start-workspace="none"] body.start-page { height: 100vh; overflow: hidden; }
+html[data-start-workspace="none"] :is(.start-sky, .start-workspace-stage, .top-actions, .desktop-settings-trigger, .start-workspace-switch) { display: none !important; }
+html[data-start-workspace="none"] body.start-page { background: #fbfbfa; }
+html[data-start-theme="dark"][data-start-workspace="none"] body.start-page { background: #111213; }

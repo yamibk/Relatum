@@ -210,6 +210,17 @@ async function run(browser, mode) {
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteGuideTopic:v1')), 'markdown');
     await dialog.locator('[data-settings-search]').fill('mermaid'); await dialog.locator('.relatum-settings-result').first().click();
     assert.equal(await category('guide').getAttribute('aria-current'), 'page');
+    await category('sidebar').click();
+    const sidebarOrder = await dialog.locator('[data-sidebar-page]').evaluateAll(nodes => nodes.map(node => node.dataset.sidebarPage));
+    await dialog.locator('[data-sidebar-page="notebooks"] .note-sidebar-grip').focus(); await page.keyboard.press('End');
+    const storedSidebarOrder = await page.evaluate(() => JSON.parse(localStorage.getItem('canvas:noteSidebarPages:v1')).order);
+    assert.equal(storedSidebarOrder.filter(id => sidebarOrder.includes(id)).at(-1), 'notebooks', 'shared list preserves note sidebar keyboard sorting within available slots');
+    if (!sidebarOrder.includes('ai')) assert.equal(storedSidebarOrder.indexOf('ai'), 5, 'a disabled sidebar page keeps its original slot');
+    const hiddenSidebar = dialog.locator('[data-sidebar-visible="links"]'); await hiddenSidebar.uncheck();
+    assert((await page.evaluate(() => JSON.parse(localStorage.getItem('canvas:noteSidebarPages:v1')).hidden)).includes('links'));
+    await dialog.locator('[data-settings-action="reset-category"]').click(); await dialog.locator('[data-settings-action="accept-reset"]').click();
+    assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteSidebarPages:v1')), null);
+    assert.deepEqual(await dialog.locator('[data-sidebar-page]').evaluateAll(nodes => nodes.map(node => node.dataset.sidebarPage)), sidebarOrder);
     if (enabled.includes('notes.canvas') || mode === 'full') {
       await category('canvas').click();
       const width = dialog.locator('[data-canvas-default-fields] [data-field="width"] input');

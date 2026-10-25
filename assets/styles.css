@@ -80,10 +80,6 @@
   transition: transform var(--start-turn-ms) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-body[data-start-workspace="notes"] .start-workspace-slider { transform: translateX(calc(100% + 1px)); }
-body[data-start-workspace="research"] .start-workspace-slider { transform: translateX(calc(200% + 2px)); }
-body[data-start-workspace="career"] .start-workspace-slider { transform: translateX(calc(300% + 3px)); }
-
 .start-workspace-switch button {
   position: relative;
   z-index: 1;
@@ -102,11 +98,7 @@ body[data-start-workspace="career"] .start-workspace-slider { transform: transla
 
 /* 工作区偏好会在 <head> 中同步恢复，而 .active 要等 start.js 执行后才补上。
    直接跟随根节点状态可让选中文字与滑块在首帧同时使用最终纯色。 */
-.start-workspace-switch button.active,
-html[data-start-workspace="canvas"] .start-workspace-switch button[data-start-workspace="canvas"],
-html[data-start-workspace="notes"] .start-workspace-switch button[data-start-workspace="notes"],
-html[data-start-workspace="research"] .start-workspace-switch button[data-start-workspace="research"],
-html[data-start-workspace="career"] .start-workspace-switch button[data-start-workspace="career"] { color: #fff; }
+.start-workspace-switch button.active { color: var(--workspace-active-ink, #fff); }
 .start-workspace-switch button:active { transform: scale(0.96); }
 .start-workspace-switch button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
@@ -1202,11 +1194,7 @@ body.start-page[data-start-theme="dark"] .start-workspace-switch {
   border-color: transparent; background: transparent; box-shadow: none;
 }
 body.start-page[data-start-theme="dark"] .start-workspace-slider { background: #efeee8; box-shadow: 0 2px 7px rgba(0,0,0,.28); }
-body.start-page[data-start-theme="dark"] .start-workspace-switch button.active,
-html[data-start-theme="dark"][data-start-workspace="canvas"] .start-workspace-switch button[data-start-workspace="canvas"],
-html[data-start-theme="dark"][data-start-workspace="notes"] .start-workspace-switch button[data-start-workspace="notes"],
-html[data-start-theme="dark"][data-start-workspace="research"] .start-workspace-switch button[data-start-workspace="research"],
-html[data-start-theme="dark"][data-start-workspace="career"] .start-workspace-switch button[data-start-workspace="career"] { color: #1b1d1b; }
+body.start-page[data-start-theme="dark"] .start-workspace-switch button.active { color: #1b1d1b; }
 body.start-page[data-start-theme="dark"] .note-workspace {
   border-color: rgba(235,240,235,.08); background: #181a19; box-shadow: 0 18px 52px rgba(0,0,0,.2);
 }
@@ -9535,46 +9523,6 @@ body.start-page.desktop-host[data-start-workspace="research"] .desktop-settings-
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-.start-speed-pop {
-  position: absolute;
-  left: 0;
-  top: calc(100% + 10px);
-  z-index: 40;
-  width: 286px;
-  max-height: min(640px, calc(100vh - 156px));
-  overflow: auto;
-  padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 22px;
-  background:
-    radial-gradient(circle at 12% -8%, rgba(255, 255, 255, 0.32), transparent 34%),
-    linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(248, 246, 242, 0.08)),
-    rgba(252, 250, 247, 0.18);
-  box-shadow: 0 24px 64px rgba(28, 28, 30, 0.14),
-              0 4px 14px rgba(28, 28, 30, 0.05),
-              inset 0 1px 0 rgba(255, 255, 255, 0.88),
-              inset 1px 0 0 rgba(255, 255, 255, 0.25),
-              inset 0 -1px 0 rgba(28, 28, 30, 0.030);
-  backdrop-filter: blur(18px) saturate(1.35);
-  -webkit-backdrop-filter: blur(18px) saturate(1.35);
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-  animation: corner-panel-in 220ms var(--easing-soft) both;
-  transform-origin: left top;
-}
-
-.start-speed-pop::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
-}
-
-.start-speed-pop[hidden] { display: none; }
-.start-speed-pop.is-closing {
-  pointer-events: none;
-  animation: corner-panel-out 180ms cubic-bezier(.4, 0, .8, .2) both;
-}
-
 .start-speed-head {
   display: flex;
   align-items: baseline;
@@ -9592,12 +9540,6 @@ body.start-page.desktop-host[data-start-workspace="research"] .desktop-settings-
   font-size: 12px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
-}
-
-.start-speed-pop input[type="range"] {
-  width: 100%;
-  margin: 0;
-  accent-color: var(--accent);
 }
 
 .start-speed-range-wrap {
@@ -9625,16 +9567,6 @@ body.start-page.desktop-host[data-start-workspace="research"] .desktop-settings-
   display: grid;
   gap: 10px;
 }
-
-.starmap-motion-reset {
-  border: 0;
-  background: transparent;
-  color: var(--text-tertiary);
-  font: 650 11px var(--font-ui);
-  cursor: pointer;
-}
-
-.starmap-motion-reset:hover { color: var(--text); }
 
 .starmap-motion-row {
   position: relative;
@@ -9699,41 +9631,6 @@ body.start-page.desktop-host[data-start-workspace="research"] .desktop-settings-
   justify-content: flex-start;
   min-height: 32px;
   margin-bottom: 8px;
-}
-
-.start-speed-pop .start-priority-settings .start-panel-theme .start-theme-toggle {
-  position: relative;
-  left: auto;
-  bottom: auto;
-  z-index: auto;
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
-  box-sizing: border-box;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--surface);
-  color: var(--text-secondary);
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.start-speed-pop .start-priority-settings .start-panel-theme .start-theme-toggle:hover {
-  color: var(--text);
-  box-shadow: none;
-}
-
-.start-speed-pop .start-priority-settings .start-panel-theme .start-theme-toggle:focus-visible {
-  box-shadow: 0 0 0 3px var(--focus-ring);
-}
-
-/* 齿轮面板顶部「设置 · 恢复默认」：行内样式对齐各分区标题，底部细线与首组分隔对称。 */
-.start-speed-pop .start-panel-head {
-  margin-bottom: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid rgba(26, 26, 26, 0.06);
 }
 
 .start-priority-background {
@@ -10252,8 +10149,7 @@ body.start-page.theme-instant *::after {
    让模糊与底色从下沿柔和化开——消除与背景之间的硬分隔线。 */
 .start-page[data-start-state] .top-bar {
   position: relative;
-  /* 顶栏里的齿轮弹层需要跨过学习 / 活跃 / 速记 / 复习前置页（它们为 z-index:10）。
-     提升父级层叠上下文才有效；只抬高 .start-speed-pop 本身无法越过父级。 */
+  /* 顶栏保持高于工作区内部页面；设置使用原生 dialog 顶层。 */
   z-index: 200;
   background: transparent;
 }
@@ -18615,7 +18511,6 @@ body.start-page[data-start-theme="dark"] .notes-surface:not(.notes-searching) .s
   .notes-console-panel.is-closing,
   .notes-console-shortcuts,
   .notes-console-shortcuts.is-closing { animation: none; }
-  .start-speed-pop,
   .sticky-note.note-enter,
   .sticky-note.note-leaving,
   .sticky-note.note-recolor { animation: none; }
@@ -32514,7 +32409,6 @@ body.dual-screen-open .formula-panel {
 
 @media (prefers-reduced-motion: reduce) {
   .settings-pop,
-  .start-speed-pop,
   .formula-panel,
   .formula-panel.is-closing,
   .node-menu:not([hidden]) {
@@ -38600,7 +38494,6 @@ body.start-page[data-start-theme="dark"] .study-detail,
 body.start-page[data-start-theme="dark"] .study-calendar-pop,
 body.start-page[data-start-theme="dark"] .study-trash-panel,
 body.start-page[data-start-theme="dark"] .desktop-settings-card,
-body.start-page[data-start-theme="dark"] .start-speed-pop,
 body.start-page[data-start-theme="dark"] .start-help-panel,
 body.start-page[data-start-theme="dark"] .context-menu {
   border-color: rgba(255, 255, 255, 0.10);
@@ -38608,32 +38501,6 @@ body.start-page[data-start-theme="dark"] .context-menu {
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
-/* 齿轮面板暗色调：照搬编辑器 .settings-pop 的深色玻璃质感 */
-body.start-page[data-start-theme="dark"] .start-speed-pop {
-  --text: #edf3f0;
-  --text-secondary: rgba(229, 238, 234, 0.74);
-  --text-tertiary: rgba(214, 227, 221, 0.48);
-  --border: rgba(221, 237, 230, 0.10);
-  --border-strong: rgba(221, 237, 230, 0.20);
-  --surface: rgba(235, 246, 241, 0.055);
-  color-scheme: dark;
-  background:
-    radial-gradient(circle at 12% -8%, rgba(151, 180, 171, 0.12), transparent 36%),
-    linear-gradient(145deg, rgba(42, 51, 50, 0.24), rgba(15, 20, 21, 0.08)),
-    rgba(18, 24, 25, 0.28);
-  border-color: rgba(220, 238, 230, 0.20);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.38),
-              inset 0 1px 0 rgba(255, 255, 255, 0.08),
-              inset 0 -1px 0 rgba(5, 12, 13, 0.28);
-  backdrop-filter: blur(30px) saturate(1.42) brightness(0.94);
-  -webkit-backdrop-filter: blur(30px) saturate(1.42) brightness(0.94);
-}
-body.start-page[data-start-theme="dark"] .start-speed-pop .start-speed-section {
-  border-top-color: rgba(221, 237, 230, 0.10);
-}
-body.start-page[data-start-theme="dark"] .start-speed-pop .start-priority-settings {
-  border-bottom-color: rgba(221, 237, 230, 0.10);
-}
 body.start-page[data-start-theme="dark"] .start-dark-card-settings,
 body.start-page[data-start-theme="dark"] .start-dark-card-settings section + section {
   border-color: rgba(221, 237, 230, 0.10);
@@ -38649,9 +38516,6 @@ body.start-page[data-start-theme="dark"] .start-dark-card-ink-slider {
               inset 0 1px 0 rgba(255, 255, 255, .92);
 }
 body.start-page[data-start-theme="dark"] .start-dark-card-ink-switch button.active { color: #171918; }
-body.start-page[data-start-theme="dark"] .start-speed-pop .start-panel-head {
-  border-bottom-color: rgba(221, 237, 230, 0.10);
-}
 /* 学习页「任务回收站」滑出卡：之前只给外层 panel 上了深色，真正可见的白卡 study-trash-card
    和里面的条目没适配，深色下整块发白。这里补上。 */
 body.start-page[data-start-theme="dark"] .study-trash-card {

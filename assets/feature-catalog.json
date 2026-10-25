@@ -1,5 +1,11 @@
 {
   "version": 1,
+  "workspaces": [
+    { "id": "canvas", "label": ["画布", "Canvas"], "panel": "start-canvas-workspace", "defaultVisible": true },
+    { "id": "notes", "label": ["笔记", "Notes"], "panel": "start-notes-workspace", "defaultVisible": true },
+    { "id": "research", "label": ["研究", "Research"], "panel": "start-research-workspace", "defaultVisible": true },
+    { "id": "career", "label": ["生涯", "Career"], "panel": "start-career-workspace", "defaultVisible": true }
+  ],
   "features": [
     {
       "id": "canvas",
@@ -267,8 +273,6 @@
         "note-table-editor.js",
         "note-workspace.js",
         "note-system.js",
-        "settings-dialog.js",
-        "settings-dialog.css",
         "note-sidebar-settings.js",
         "note-guide.js",
         "note-browser.js",
@@ -427,11 +431,6 @@
       "canvas.library",
       "canvas.review",
       "notes"
-    ],
-    "start-shell.js": [
-      "notes",
-      "research",
-      "career"
     ],
     "font-loader.js": [
       "canvas.editor",

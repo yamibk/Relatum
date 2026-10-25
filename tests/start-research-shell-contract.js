@@ -16,11 +16,10 @@ const app = read('app.py');
 const desktop = read('desktop.py');
 const shell = read('assets/desktop-shell.js');
 
-const workspaceButtons = html.match(/<button type="button" role="tab" data-start-workspace=/g) || [];
-assert.strictEqual(workspaceButtons.length, 4, 'the top bar must keep four workspace tabs');
-assert(html.includes('data-start-workspace="research"')
-  && html.includes('aria-controls="start-research-workspace">研究</button>'),
-  'the Research tab must remain visible');
+const workspaces = JSON.parse(read('assets/feature-catalog.json')).workspaces;
+assert.strictEqual(workspaces.length, 4, 'the catalog registers the four current workspaces');
+assert(workspaces.some(item => item.id === 'research' && item.panel === 'start-research-workspace'), 'Research must be registered');
+assert(html.includes('features.workspaces.filter') && html.includes("button.setAttribute('aria-controls', item.panel)"), 'tabs are generated from the shared catalog');
 assert(/<section class="research-workspace start-workspace-panel" id="start-research-workspace"\s+data-start-workspace-panel="research" aria-label="研究工作区" hidden><\/section>/.test(html),
   'the initial start-page DOM must not contain a Research iframe');
 assert(!/<(?:script|link)\b[^>]+(?:src|href)=["'][^"']*research/i.test(html),
@@ -32,11 +31,11 @@ assert(start.includes("document.createElement('iframe')") && start.includes("fra
 assert(!start.includes('frame.title =')
   && start.includes("frame.setAttribute('aria-label', englishUI() ? 'Research workspace' : '研究工作区')"),
   'the full-page iframe must keep an accessible name without a native title tooltip');
-assert(start.includes("previous === 'research'") && start.includes('await researchWorkspaceApi.suspend()'),
+assert(start.includes('research: { load: loadResearchWorkspace, leave: () => researchWorkspaceApi?.suspend() }') && start.includes('await lifecycle[previous]?.leave?.()'),
   'leaving Research must suspend its active resources');
-assert(start.includes("name === 'research'") && start.includes('await researchWorkspace.activate()'),
+assert(start.includes('lifecycle[name]?.load?.()') && start.includes('await workspace?.activate?.()'),
   'entering Research must activate the loaded workspace');
-assert(start.includes("showWorkspacePanel(fallback, 'research', false)") && start.includes('features.workspaceEnabled(item)'),
+assert(start.includes('return performStartWorkspace(fallback,') && start.includes('visibleWorkspaces().find') && start.includes('features.workspaceEnabled(item)'),
   'a failed Research load must return to an enabled workspace');
 assert(!start.includes('scheduleResearchWorkspaceIdleWarmup'),
   'Research must not gain an idle warmup path');

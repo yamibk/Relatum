@@ -136,10 +136,21 @@ class FeatureProfileTests(unittest.TestCase):
             self.assertFalse(bridge.set_launcher_skip_selection(False)["skipSelection"])
 
     def test_invalid_catalog_dependencies_stop(self):
-        with self.assertRaises(features.ProfileError):
-            features.validate_catalog({"version": 1, "features": [{"id": "a", "parent": "a"}]})
-        with self.assertRaises(features.ProfileError):
-            features.validate_catalog({"version": 1, "features": [{"id": "a", "requires": ["missing"]}]})
+        workspaces = [{"id": "a", "label": ["a", "A"], "panel": "a"}]
+        with self.assertRaisesRegex(features.ProfileError, "形成循环"):
+            features.validate_catalog({"version": 1, "features": [{"id": "a", "parent": "a"}], "workspaces": workspaces})
+        with self.assertRaisesRegex(features.ProfileError, "依赖不存在"):
+            features.validate_catalog({"version": 1, "features": [{"id": "a", "requires": ["missing"]}], "workspaces": workspaces})
+
+    def test_workspace_catalog_bootstrap_and_shared_settings(self):
+        profile = self.only("research")
+        payload = json.loads(profile.bootstrap().split("Object.freeze(", 1)[1].split(");</script>", 1)[0])
+        self.assertEqual(payload["workspaces"], features.WORKSPACES)
+        self.assertEqual(tuple(item["id"] for item in payload["workspaces"]), features.WORKSPACE_IDS)
+        for resource in ("settings-dialog.js", "settings-dialog.css", "settings-order-list.js", "global-settings.js", "global-settings.css", "start-shell.js"):
+            self.assertTrue(profile.resource_allowed(resource), resource)
+        self.assertFalse(profile.resource_allowed("note-workspace.js"))
+        self.assertFalse(profile.write_allowed("/api/note-save"))
 
     def test_editor_only_requires_real_canvas(self):
         profile = self.only("canvas", "canvas.editor")

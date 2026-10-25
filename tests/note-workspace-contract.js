@@ -17,7 +17,7 @@ const css = read('assets/styles.css');
 const server = read('app.py');
 
 for (const workspace of ['canvas', 'notes']) {
-  assert(html.includes(`data-start-workspace="${workspace}"`), `${workspace} workspace switch is missing`);
+  assert(JSON.parse(read('assets/feature-catalog.json')).workspaces.some(item => item.id === workspace), `${workspace} workspace registration is missing`);
   assert(html.includes(`data-start-workspace-panel="${workspace}"`), `${workspace} workspace panel is missing`);
 }
 assert(start.includes('canvas:startWorkspace:v1'), 'last Canvas/Notes workspace must be persisted');

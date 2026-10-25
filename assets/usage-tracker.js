@@ -145,9 +145,6 @@
     document.querySelectorAll('[data-usage-help]').forEach(el => { el.textContent = english() ? 'Record foreground reading and work. Turning a category off preserves its history.' : '记录前台阅读与工作时间。关闭分类后保留已有历史。'; });
   }
   function controls() {
-    const panel = document.querySelector('[data-usage-panel]');
-    const gear = document.querySelector('[data-role="start-speed-pop"]');
-    if (panel && gear && panel.parentElement !== gear) gear.append(panel);
     document.querySelectorAll('[data-usage-settings]').forEach(host => {
       if (host.dataset.ready) return;
       host.dataset.ready = 'true';
@@ -189,7 +186,7 @@
     setTarget(value) { capture(Date.now()); explicit = value; active = []; cursor = 0; sync(); },
     async flush() { capture(Date.now()); await flush(false); return true; },
     waitForIdle() { return this.flush().then(() => true, () => false); },
-    resetSettings(){const now=Date.now();capture(now);for(const category of categories){if(enabledFeature(category)){settings[category]=true;queue.push({type:'setting',category,enabled:true,at:now});}}persist();sync();flush(false).catch(()=>{});},
+    resetSettings(){const now=Date.now();capture(now);for(const category of categories){if(enabledFeature(category)){settings[category]=true;queue.push({type:'setting',category,enabled:true,at:now});}}persist();updateControls();sync();flush(false).catch(()=>{});},
     get pending() { return queue.length; },
     get settings() { return { ...settings }; }
   });

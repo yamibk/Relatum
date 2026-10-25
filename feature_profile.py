@@ -21,7 +21,8 @@ PROFILE_VERSION = 1
 PROFILE_FILENAME = "launcher-profile.json"
 LAUNCHER_SETTINGS_FILENAME = "launcher-settings.json"
 HANDOFF_ARGUMENT = "--launch-profile"
-WORKSPACE_IDS = ("canvas", "notes", "research", "career")
+WORKSPACES = CATALOG["workspaces"]
+WORKSPACE_IDS = tuple(item["id"] for item in WORKSPACES)
 CANVAS_HOME_IDS = tuple(key for key, item in FEATURES.items() if item.get("home") and item.get("parent") == "canvas")
 VOID_TAGS = frozenset("area base br col embed hr img input link meta param source track wbr".split())
 
@@ -35,6 +36,14 @@ def validate_catalog(catalog: dict) -> None:
     by_id = {item["id"]: item for item in items}
     if len(items) != len(by_id) or catalog.get("version") != 1:
         raise ProfileError("功能清单存在重复 ID 或版本错误")
+    workspaces = catalog.get("workspaces", [])
+    if not workspaces or len({item["id"] for item in workspaces}) != len(workspaces):
+        raise ProfileError("工作区清单为空或存在重复 ID")
+    for item in workspaces:
+        if item["id"] not in by_id or not isinstance(item.get("label"), list) or len(item["label"]) != 2 or not item.get("panel"):
+            raise ProfileError("工作区描述无效")
+        if not isinstance(item.get("defaultVisible", False), bool):
+            raise ProfileError("工作区默认可见性无效")
     visited = set()
     def visit(key, chain):
         if key not in by_id or key in chain:
@@ -79,12 +88,12 @@ class LaunchProfile:
 
     @property
     def has_home(self) -> bool:
-        return self.canvas_home or any(self.enabled(key) for key in ("notes", "research", "career"))
+        return self.canvas_home or any(self.enabled(key) for key in WORKSPACE_IDS if key != "canvas")
 
     @property
     def workspaces(self) -> tuple[str, ...]:
         canvas = ("canvas",) if self.canvas_home or self.enabled("canvas.editor") else ()
-        return canvas + tuple(key for key in WORKSPACE_IDS[1:] if self.enabled(key))
+        return canvas + tuple(key for key in WORKSPACE_IDS if key != "canvas" and self.enabled(key))
 
     @property
     def session_key(self) -> str:
@@ -143,7 +152,7 @@ class LaunchProfile:
     def bootstrap(self) -> str:
         features = {key: self.enabled(key) for key in FEATURES}
         views = {item["view"]: key for key, item in FEATURES.items() if "view" in item}
-        return "<script>window.RelatumFeatures=Object.freeze(" + json.dumps({"restricted": self.restricted, "features": features, "views": views, "canvasHome": self.canvas_home}, ensure_ascii=True) + ");</script>"
+        return "<script>window.RelatumFeatures=Object.freeze(" + json.dumps({"restricted": self.restricted, "features": features, "views": views, "canvasHome": self.canvas_home, "workspaces": WORKSPACES}, ensure_ascii=True) + ");</script>"
 
 
 FULL_PROFILE = LaunchProfile({key: True for key in FEATURES})

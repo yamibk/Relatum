@@ -4643,7 +4643,7 @@
     getViewMode() { return viewMode; },
     isViewLocked: sessionLocksView,
   };
-  const initialWarmup = window.RelatumFeatureRuntime?.preloadEnabled === false ? Promise.resolve() : preloadFocusView();
+  const initialWarmup = window.RelatumFeatureRuntime?.preloadEnabled === false || !window.RelatumFeatureRuntime?.visibleWorkspaces().includes('canvas') ? Promise.resolve() : preloadFocusView();
   initialWarmup.finally(() => {
     window.CanvasFocus = canvasFocusApi;
     document.dispatchEvent(new CustomEvent('canvasfocus:ready'));

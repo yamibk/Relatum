@@ -119,8 +119,9 @@
     });
   }
   const START_WORKSPACE_KEY = 'canvas:startWorkspace:v1';
-  const START_WORKSPACE_ORDER = { canvas: 0, notes: 1, research: 2, career: 3 };
-  let activeStartWorkspace = features.workspace(document.body.dataset.startWorkspace);
+  let layout = features.readLayout();
+  const visibleWorkspaces = () => features.visibleWorkspaces(layout);
+  let activeStartWorkspace = features.workspace(document.body.dataset.startWorkspace, layout);
   let workspaceSwitchPromise = Promise.resolve(true);
   let noteWorkspaceLoader = null, researchWorkspaceLoader = null, careerWorkspaceLoader = null;
   let noteWorkspaceForeground = false;
@@ -128,6 +129,7 @@
   let noteWorkspaceWarmupHandle = 0, careerWorkspaceWarmupHandle = 0;
   let noteWorkspaceWarmupScheduled = false, careerWorkspaceWarmupScheduled = false;
   let workspaceTransitionTimer = 0;
+  let layoutSignature = '';
   function englishUI() { return !!(window.RelatumI18n && window.RelatumI18n.language === 'en'); }
   function loadNoteWorkspace(background = false) {
     if (!background) { noteWorkspaceForeground = true; preparation?.wake(); }
@@ -136,6 +138,7 @@
     if (noteWorkspaceLoader) return noteWorkspaceLoader;
     window.RelatumStartupMark?.('notes-load-start');
     const loadScript = async (src, ready) => {
+      if (background && !visibleWorkspaces().includes('notes')) throw new DOMException('Workspace hidden', 'AbortError');
       if (ready()) return Promise.resolve(true);
       if (background && preparation) await preparation.waitForIdle(preparation.signal, () => noteWorkspaceForeground);
       return new Promise((resolve, reject) => {
@@ -159,6 +162,7 @@
       .then(() => loadScript('note-live-editor.js', () => !!window.RelatumNoteLiveEditor))
       .then(() => features.enabled('notes.canvas') ? loadScript('note-canvas-style.js', () => !!window.RelatumNoteCanvasStyle) : true)
       .then(() => loadScript('settings-dialog.js', () => !!window.RelatumSettingsDialog))
+      .then(() => loadScript('settings-order-list.js', () => !!window.RelatumSettingsOrderList))
       .then(() => loadScript('note-sidebar-settings.js', () => !!window.RelatumNoteSidebarSettings))
       .then(() => loadScript('note-workspace.js', () => !!window.CanvasNoteWorkspace))
       .then(() => { window.RelatumStartupMark?.('notes-scripts-ready'); return window.CanvasNoteWorkspace; })
@@ -220,6 +224,11 @@
   }
 
   document.addEventListener('relatum:languagechange', () => {
+    workspaceButtons.forEach(button => {
+      const item = features.workspaces.find(item => item.id === button.dataset.startWorkspace);
+      if (item) button.textContent = item.label[englishUI() ? 1 : 0];
+    });
+    document.querySelector('[data-role="start-workspace-switch"]')?.setAttribute('aria-label', englishUI() ? 'Workspaces' : '工作区');
     if (researchWorkspaceFrame) {
       researchWorkspaceFrame.setAttribute('aria-label', englishUI() ? 'Research workspace' : '研究工作区');
     }
@@ -248,16 +257,17 @@
 
   function scheduleNoteWorkspaceIdleWarmup() {
     if (features.preloadEnabled === false) return;
-    if (!features.enabled('notes') || activeStartWorkspace !== 'canvas' || noteWorkspaceWarmupScheduled || window.CanvasNoteWorkspace) return;
+    if (!visibleWorkspaces().includes('notes') || activeStartWorkspace !== 'canvas' || noteWorkspaceWarmupScheduled || window.CanvasNoteWorkspace) return;
     noteWorkspaceWarmupScheduled = true;
     const warmup = () => {
       noteWorkspaceWarmupHandle = 0;
-      if (activeStartWorkspace !== 'canvas') return;
+      if (activeStartWorkspace !== 'canvas' || !visibleWorkspaces().includes('notes')) { noteWorkspaceWarmupScheduled = false; return; }
       loadNoteWorkspace(!!preparation)
-        .then((workspace) => typeof workspace.preload === 'function' ? workspace.preload() : true)
+        .then((workspace) => visibleWorkspaces().includes('notes') && typeof workspace.preload === 'function' ? workspace.preload() : true)
         .catch(() => { noteWorkspaceWarmupScheduled = false; });
     };
     const queueWarmup = () => {
+      if (!visibleWorkspaces().includes('notes') || activeStartWorkspace !== 'canvas') { noteWorkspaceWarmupScheduled = false; return; }
       if (typeof window.requestIdleCallback === 'function') {
         noteWorkspaceWarmupHandle = window.requestIdleCallback(warmup, { timeout: 2400 });
       } else {
@@ -272,15 +282,17 @@
   // 和快照，避免用户第一次切换到第三工作区时再看到本地读取占位。
   function scheduleCareerWorkspaceIdleWarmup() {
     if (features.preloadEnabled === false) return;
-    if (!features.enabled('career') || careerWorkspaceWarmupScheduled || (window.RelatumCareerReport && window.RelatumCareerReport.report)) return;
+    if (!visibleWorkspaces().includes('career') || activeStartWorkspace === 'none' || careerWorkspaceWarmupScheduled || (window.RelatumCareerReport && window.RelatumCareerReport.report)) return;
     careerWorkspaceWarmupScheduled = true;
     const warmup = () => {
       careerWorkspaceWarmupHandle = 0;
+      if (!visibleWorkspaces().includes('career') || activeStartWorkspace === 'none') { careerWorkspaceWarmupScheduled = false; return; }
       loadCareerWorkspace()
-        .then((workspace) => typeof workspace.preload === 'function' ? workspace.preload() : true)
+        .then((workspace) => visibleWorkspaces().includes('career') && typeof workspace.preload === 'function' ? workspace.preload() : true)
         .catch(() => { careerWorkspaceWarmupScheduled = false; });
     };
     const queueWarmup = () => {
+      if (!visibleWorkspaces().includes('career') || activeStartWorkspace === 'none') { careerWorkspaceWarmupScheduled = false; return; }
       if (typeof window.requestIdleCallback === 'function') {
         careerWorkspaceWarmupHandle = window.requestIdleCallback(warmup, { timeout: 1600 });
       } else {
@@ -302,7 +314,16 @@
         window.RelatumBoot.noteRevealTimer = 0;
       }
     }
+    const visible = visibleWorkspaces();
+    const nav = document.querySelector('[data-role="start-workspace-switch"]');
+    nav.hidden = !visible.length;
+    const ordered = Array.from(nav.querySelectorAll('button[data-start-workspace]')).map(button => button.dataset.startWorkspace).filter(id => visible.includes(id));
+    if (ordered.join('|') !== visible.join('|')) visible.forEach(id => { const button = workspaceButtons.find(item => item.dataset.startWorkspace === id); if (button) nav.append(button); });
+    const signature = JSON.stringify(layout);
+    if (signature !== layoutSignature) { layoutSignature = signature; document.dispatchEvent(new CustomEvent('relatum:workspace-layout', { detail: layout })); }
     workspaceButtons.forEach((button) => {
+      button.hidden = !visible.includes(button.dataset.startWorkspace);
+      button.disabled = button.hidden;
       const active = button.dataset.startWorkspace === name;
       button.classList.toggle('active', active);
       if (button.getAttribute('role') === 'tab') {
@@ -317,26 +338,26 @@
     document.body.classList.remove('start-workspace-turning');
     const nextPanel = workspacePanels.find((panel) => panel.dataset.startWorkspacePanel === name);
     const previousPanel = workspacePanels.find((panel) => panel.dataset.startWorkspacePanel === previous);
-    if (!nextPanel) return;
     workspacePanels.forEach((panel) => {
       panel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
       panel.style.removeProperty('--workspace-layout-shift-y');
       if (panel !== nextPanel && panel !== previousPanel) {
-        panel.hidden = true;
+        panel.hidden = true; panel.inert = true;
       }
     });
+    if (!nextPanel) { workspacePanels.forEach(panel => { panel.hidden = true; panel.inert = true; }); return; }
     nextPanel.hidden = false;
     nextPanel.inert = false;
     if (!animate || !previousPanel || previousPanel === nextPanel
       || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       if (previousPanel && previousPanel !== nextPanel) {
         previousPanel.hidden = true;
-        previousPanel.inert = false;
+        previousPanel.inert = true;
       }
       if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
       return;
     }
-    const forward = START_WORKSPACE_ORDER[name] > START_WORKSPACE_ORDER[previous];
+    const forward = layout.order.indexOf(name) > layout.order.indexOf(previous);
     const directionClass = forward ? 'workspace-forward' : 'workspace-back';
     if (workspaceStage && Number.isFinite(previousStageTop)) {
       const layoutShiftY = previousStageTop - workspaceStage.getBoundingClientRect().top;
@@ -351,7 +372,7 @@
     document.body.classList.add('start-workspace-turning');
     workspaceTransitionTimer = window.setTimeout(() => {
       previousPanel.hidden = true;
-      previousPanel.inert = false;
+      previousPanel.inert = true;
       previousPanel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
       nextPanel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
       previousPanel.style.removeProperty('--workspace-layout-shift-y');
@@ -366,65 +387,37 @@
   // 动画收尾处还会再校准一次，避免过渡结束后出现一帧跳位。
   function syncCanvasWorkspaceSpineAfterReveal() { config.onCanvasReveal(); }
 
-  async function performStartWorkspace(next, options = {}) {
-    if (!features.workspaceEnabled(next)) return false;
-    const name = Object.prototype.hasOwnProperty.call(START_WORKSPACE_ORDER, next) ? next : features.workspace('');
+  // Workspace-specific loading and handoff live here; navigation uses catalog metadata.
+  const lifecycle = {
+    canvas: {},
+    notes: { load: loadNoteWorkspace, leave: () => window.CanvasNoteWorkspace?.deactivate() },
+    research: { load: loadResearchWorkspace, leave: () => researchWorkspaceApi?.suspend() },
+    career: { load: loadCareerWorkspace },
+  };
+  async function performStartWorkspace(name, options = {}, failed = new Set()) {
+    if (name !== 'none' && !visibleWorkspaces().includes(name)) return false;
+    if (name === 'none' && visibleWorkspaces().length && !options.allowEmpty) return false;
     const previous = activeStartWorkspace;
     const previousStageTop = workspaceStage ? workspaceStage.getBoundingClientRect().top : 0;
-    if (name !== previous && previous === 'notes' && window.CanvasNoteWorkspace
-      && typeof window.CanvasNoteWorkspace.deactivate === 'function') {
-      const canLeave = await window.CanvasNoteWorkspace.deactivate();
-      if (canLeave === false) return false;
-    }
-    if (name !== previous && previous === 'research' && researchWorkspaceApi
-      && typeof researchWorkspaceApi.suspend === 'function') {
-      await researchWorkspaceApi.suspend();
-    }
+    if (name !== previous && await lifecycle[previous]?.leave?.() === false) return false;
     activeStartWorkspace = name;
     syncWorkspaceControls(name);
     config.onChange();
     showWorkspacePanel(name, previous, options.animate !== false && name !== previous, previousStageTop);
-    if (options.persist !== false) {
+    if (options.persist !== false && name !== 'none') {
       try { localStorage.setItem(START_WORKSPACE_KEY, name); } catch (e) {}
     }
-    if (name === 'notes') {
-      try {
-        const notesWorkspace = await loadNoteWorkspace();
-        if (activeStartWorkspace === 'notes') await notesWorkspace.activate();
-      } catch (error) {
-        if (activeStartWorkspace === 'notes') {
-          const fallback = ['canvas', 'notes', 'research', 'career'].find(item => item !== 'notes' && features.workspaceEnabled(item));
-          if (fallback) { activeStartWorkspace = fallback; syncWorkspaceControls(fallback); config.onChange(); showWorkspacePanel(fallback, 'notes', false); setStartWorkspace(fallback, { animate: false, persist: false }); }
-          config.notice(englishUI() ? 'Notes unavailable' : '笔记工作区暂时无法打开', error.message || String(error));
-        }
-        return false;
-      }
-    } else if (name === 'research') {
-      try {
-        const researchWorkspace = await loadResearchWorkspace();
-        if (activeStartWorkspace === 'research') await researchWorkspace.activate();
-        else await researchWorkspace.suspend();
-      } catch (error) {
-        if (activeStartWorkspace === 'research') {
-          const fallback = ['canvas', 'notes', 'research', 'career'].find(item => item !== 'research' && features.workspaceEnabled(item));
-          if (fallback) { activeStartWorkspace = fallback; syncWorkspaceControls(fallback); config.onChange(); showWorkspacePanel(fallback, 'research', false); setStartWorkspace(fallback, { animate: false, persist: false }); }
-          config.notice(englishUI() ? 'Research workspace unavailable' : '研究工作区暂时无法打开', error.message || String(error));
-        }
-        return false;
-      }
-    } else if (name === 'career') {
-      try {
-        const careerWorkspace = await loadCareerWorkspace();
-        if (activeStartWorkspace === 'career') await careerWorkspace.activate();
-      } catch (error) {
-        if (activeStartWorkspace === 'career') {
-          const fallback = ['canvas', 'notes', 'research', 'career'].find(item => item !== 'career' && features.workspaceEnabled(item));
-          if (fallback) { activeStartWorkspace = fallback; syncWorkspaceControls(fallback); config.onChange(); showWorkspacePanel(fallback, 'career', false); setStartWorkspace(fallback, { animate: false, persist: false }); }
-          config.notice(englishUI() ? 'Career report unavailable' : '生涯报告暂时无法打开', error.message || String(error));
-        }
-        return false;
-      }
-    } else if (name === 'canvas') {
+    try {
+      const workspace = await lifecycle[name]?.load?.();
+      if (activeStartWorkspace === name) await workspace?.activate?.();
+    } catch (error) {
+      failed.add(name);
+      const descriptor = features.workspaces.find(item => item.id === name);
+      config.notice(englishUI() ? 'Workspace unavailable' : '工作区暂时无法打开', (descriptor?.label[englishUI() ? 1 : 0] || name) + ': ' + (error.message || String(error)));
+      const fallback = visibleWorkspaces().find(item => !failed.has(item) && features.workspaceEnabled(item)) || 'none';
+      return performStartWorkspace(fallback, { ...options, animate: false, allowEmpty: true }, failed);
+    }
+    if (name === 'canvas') {
       scheduleCareerWorkspaceIdleWarmup();
       scheduleNoteWorkspaceIdleWarmup();
     }
@@ -442,11 +435,36 @@
     return workspaceSwitchPromise;
   }
 
+  function applyLayout(value, { reset = false, persist = true } = {}) {
+    const release = preparation?.beginBusy();
+    workspaceSwitchPromise = workspaceSwitchPromise.catch(() => false).then(async () => {
+      const previous = layout;
+      layout = features.normalizeLayout(value);
+      const next = features.workspace(activeStartWorkspace, layout);
+      try {
+        if (next !== activeStartWorkspace && !await performStartWorkspace(next)) { layout = previous; return false; }
+      } catch (error) {
+        layout = previous;
+        config.notice(englishUI() ? 'Could not switch workspace' : '无法切换工作区', error.message || String(error));
+        return false;
+      }
+      syncWorkspaceControls(activeStartWorkspace);
+      if (persist) try {
+        if (reset) localStorage.removeItem(features.layoutKey);
+        else localStorage.setItem(features.layoutKey, JSON.stringify(layout));
+      } catch (_) {}
+      if (!visibleWorkspaces().includes('notes')) { graphPreparation?.abort(); resumeGraphPreparation = false; }
+      scheduleCareerWorkspaceIdleWarmup(); scheduleNoteWorkspaceIdleWarmup();
+      return true;
+    }).finally(() => release?.());
+    return workspaceSwitchPromise;
+  }
+
   workspaceButtons.forEach((button) => {
     button.addEventListener('keydown', (event) => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
-      const reachable = workspaceButtons.filter((item) => !item.disabled);
+      const reachable = visibleWorkspaces().map(id => workspaceButtons.find(item => item.dataset.startWorkspace === id)).filter(item => item && !item.disabled && !item.hidden);
       if (!reachable.length) return;
       const index = reachable.indexOf(button);
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? reachable.length - 1
@@ -471,12 +489,15 @@
   });
   window.RelatumStartWorkspace = {
     get current() { return activeStartWorkspace; },
+    get layout() { return { order: layout.order.slice(), hidden: layout.hidden.slice() }; },
     set: setStartWorkspace,
+    applyLayout,
   };
   let graphPreparation = null, graphPreparationSequence = 0, resumeGraphPreparation = false;
   function scheduleGraphPreparation(event) {
     if (!preparation || preparation.signal.aborted) return;
     graphPreparation?.abort();
+    if (!visibleWorkspaces().includes('notes') || activeStartWorkspace === 'none') { graphPreparationSequence++; graphPreparation = null; resumeGraphPreparation = false; return; }
     if (event?.detail?.cancel) {
       graphPreparationSequence++; graphPreparation = null; resumeGraphPreparation = false; return;
     }
@@ -509,8 +530,7 @@
       resumeGraphPreparation = false; scheduleGraphPreparation();
     }
   });
-  if (activeStartWorkspace === 'notes' || activeStartWorkspace === 'research'
-    || activeStartWorkspace === 'career') {
+  if (lifecycle[activeStartWorkspace]?.load) {
     setStartWorkspace(activeStartWorkspace, { animate: false, persist: false });
   }
   else {

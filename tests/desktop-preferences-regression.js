@@ -26,10 +26,15 @@ function context(seed, values = {}, api = null, parent = null) {
   first.localStorage.setItem('canvas:startTheme', 'light');
   first.localStorage.setItem('research:panSpeed:v1', '180');
   const system = JSON.stringify({ animations: false, prefetch: false, cache: 'small', renderScale: .75 });
+  const layout = JSON.stringify({ order: ['career', 'notes', 'canvas', 'research'], hidden: ['notes', 'canvas', 'research', 'career'] });
+  first.localStorage.setItem('canvas:workspaceLayout:v1', layout);
   first.localStorage.setItem('canvas:noteSystem:v1', system);
   assert(await first.window.RelatumDesktopPreferences.flush());
   assert.equal(persisted['canvas:startTheme'], 'light');
   assert.equal(persisted['canvas:noteSystem:v1'], system);
+  assert.equal(persisted['canvas:workspaceLayout:v1'], layout);
+  const layoutRestored = context({ ...seed, launchId: 'layout-restored', values: { 'canvas:workspaceLayout:v1': layout } }, {}, api);
+  assert.equal(layoutRestored.localStorage.getItem('canvas:workspaceLayout:v1'), layout, 'workspace order and all-hidden selection survive a new desktop origin');
   const systemRestored = context({ ...seed, launchId: 'system-restored', values: { 'canvas:noteSystem:v1': system } }, {}, api);
   assert.equal(systemRestored.localStorage.getItem('canvas:noteSystem:v1'), system, 'system policy survives a new desktop origin');
   const child = context(seed, {}, null, first.window);

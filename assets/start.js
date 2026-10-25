@@ -42,16 +42,12 @@
   const startHelp = document.querySelector('[data-role="start-help"]');
   const startHelpTrigger = document.querySelector('[data-action="start-help-open"]');
   const startThemeToggles = Array.from(document.querySelectorAll('[data-action="start-theme-toggle"]'));
-  const startSpeedControl = document.querySelector('.start-speed-control');
-  const startSpeedTrigger = document.querySelector('[data-action="start-speed-toggle"]');
-  const startSpeedPop = document.querySelector('[data-role="start-speed-pop"]');
   const startSpeedRange = document.querySelector('[data-role="start-speed-range"]');
   const startSpeedValue = document.querySelector('[data-role="start-speed-value"]');
   const spineSpeedRange = document.querySelector('[data-role="spine-speed-range"]');
   const spineSpeedValue = document.querySelector('[data-role="spine-speed-value"]');
   const careerScrollFeelRanges = Array.from(document.querySelectorAll('[data-role="career-scroll-feel-range"]'));
   const careerScrollFeelValues = Array.from(document.querySelectorAll('[data-role="career-scroll-feel-value"]'));
-  const careerScrollFeelReset = document.querySelector('[data-action="career-scroll-feel-reset"]');
   const careerScrollRevealToggle = document.querySelector('[data-role="career-scroll-reveal-toggle"]');
   const notesInertiaRange = document.querySelector('[data-role="notes-inertia-range"]');
   const notesInertiaValue = document.querySelector('[data-role="notes-inertia-value"]');
@@ -121,7 +117,6 @@
   let startBackgroundStyle = 'simple';
   let startThemeButtonTimer = 0;
   let startThemeApplyFrame = 0;
-  let startSpeedCloseTimer = 0;
   const START_SPEED_KEY = 'canvas:startTurnMs';
   const START_SPEED_MIN = 180;
   const START_SPEED_MAX = 500;
@@ -184,7 +179,7 @@
   });
 
   function preloadEditorBackground(background) {
-    if (features.preloadEnabled === false) return;
+    if (features.preloadEnabled === false || !features.visibleWorkspaces(workspaceRuntime.layout).includes('canvas')) return;
     if (!background || typeof background !== 'object') return;
     let source = '';
     if (background.type === 'image' && background.path) {
@@ -660,33 +655,6 @@
     return Math.max(220, Math.round(startTurnSpeed * 1.08));
   }
 
-  function setStartSpeedOpen(open) {
-    if (!startSpeedPop || !startSpeedTrigger) return;
-    if (!open && startSpeedPop.classList.contains('is-closing')) return;
-    window.clearTimeout(startSpeedCloseTimer); startSpeedCloseTimer = 0;
-    startSpeedTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
-    if (open) {
-      startSpeedPop.classList.remove('is-closing');
-      startSpeedPop.hidden = false;
-      startSpeedPop.removeAttribute('inert');
-      return;
-    }
-    startSpeedPop.setAttribute('inert', '');
-    if (startSpeedPop.hidden) return;
-    if (prefersReduced) {
-      startSpeedPop.classList.remove('is-closing');
-      startSpeedPop.hidden = true;
-      return;
-    }
-    startSpeedPop.classList.add('is-closing');
-    startSpeedCloseTimer = window.setTimeout(() => {
-      startSpeedCloseTimer = 0;
-      if (startSpeedTrigger.getAttribute('aria-expanded') === 'true') return;
-      startSpeedPop.hidden = true;
-      startSpeedPop.classList.remove('is-closing');
-    }, 190);
-  }
-
   try { startTurnSpeed = clampStartSpeed(localStorage.getItem(START_SPEED_KEY) || START_SPEED_DEFAULT); } catch (e) {
     startTurnSpeed = START_SPEED_DEFAULT;
   }
@@ -731,23 +699,6 @@
   let librarySearchEnabledInit = false;
   try { librarySearchEnabledInit = localStorage.getItem(LIBRARY_SEARCH_ENABLED_KEY) === '1'; } catch (e) {}
   applyLibrarySearchEnabled(librarySearchEnabledInit, false);
-  if (startSpeedTrigger && startSpeedPop) {
-    startSpeedTrigger.addEventListener('click', (event) => {
-      event.stopPropagation();
-      setStartSpeedOpen(startSpeedPop.hidden || startSpeedPop.classList.contains('is-closing'));
-    });
-    if (startSpeedControl) {
-      startSpeedControl.addEventListener('click', (event) => event.stopPropagation());
-    }
-    document.addEventListener('click', () => setStartSpeedOpen(false));
-    document.addEventListener('keydown', (event) => {
-      if (!startSpeedPop.hidden && event.key === 'Escape') {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        setStartSpeedOpen(false);
-      }
-    });
-  }
   if (startSpeedRange) {
     startSpeedRange.addEventListener('input', () => applyStartSpeed(startSpeedRange.value, true));
   }
@@ -767,12 +718,6 @@
       next.pauseReveal = careerScrollRevealToggle.checked;
       applyCareerScrollFeel(next, true);
     });
-  }
-  if (careerScrollFeelReset) {
-    careerScrollFeelReset.addEventListener('click', () => applyCareerScrollFeel({
-      ...CAREER_SCROLL_FEEL_DEFAULTS,
-      idleMs: CAREER_SCROLL_IDLE_DEFAULT,
-    }, true));
   }
   if (notesInertiaRange) {
     notesInertiaRange.addEventListener('input', () => applyNotesInertia(notesInertiaRange.value, true));
@@ -1107,12 +1052,6 @@
       applyStartBackgroundStyle(button.dataset.backgroundStyle, true);
     });
   });
-  // 齿轮面板顶部「恢复默认」：整面板一键回到出厂偏好（见 resetStartPanelDefaults）。
-  const startPanelReset = document.querySelector('[data-action="start-panel-reset"]');
-  if (startPanelReset) {
-    startPanelReset.addEventListener('click', () => resetStartPanelDefaults());
-  }
-
   startThemeToggles.forEach((button) => {
     button.addEventListener('click', () => {
       const next = startTheme === 'dark' ? 'light' : 'dark';
@@ -1689,7 +1628,6 @@
   const desktopPresetButtons = Array.from(document.querySelectorAll('[data-role="desktop-size-presets"] button'));
   const starmapMotionRanges = Array.from(document.querySelectorAll('[data-role="starmap-motion-range"]'));
   const starmapMotionToggles = Array.from(document.querySelectorAll('[data-role="starmap-motion-toggle"]'));
-  const starmapMotionResets = Array.from(document.querySelectorAll('[data-action="starmap-motion-reset"]'));
   const starmapMotionValues = Array.from(document.querySelectorAll('[data-role="starmap-motion-value"]'));
   const STARMAP_MOTION_KEY = 'canvas:starmapMotion:v1';
   const NOTE_FONT_SCALE_KEY = 'canvas:noteFontScale:v1';
@@ -1828,52 +1766,25 @@
     }, 140);
   }
 
-  // 齿轮面板「恢复默认」：面板内每一项偏好都只有一个 localStorage 键，而且所有读取
-  // 路径都把“缺失键”当作出厂默认值，因此删除这些键就是真正的恢复出厂（不写回默认值）。
-  // 随后把每个控件的勾选/滑条、CSS 变量与运行状态用各自的 apply / 同步函数即时刷回
-  // 默认（persist:false，只同步不写盘），并派发既有事件让已加载的页面运行时跟随。
-  // 绝不 localStorage.clear()：主题、语言、当前分组等独立偏好不受影响。
-  function resetStartPanelDefaults() {
-    [
-      START_BACKGROUND_KEY,               // 主页背景（简洁）
-      STARMAP_MOTION_KEY,                 // 足迹星图动画（含「结束后自动取景」）
-      CALENDAR_COUNTDOWN_KEY,             // 日历倒数日（开）
-      HIDE_SPECIAL_KEY,                   // 隐藏特殊页（关）
-      GOAL_TREE_SIMPLE_KEY,               // 精简目标树编辑（开）
-      GOAL_TREE_ENFORCE_UNLOCK_KEY,       // 强制按解锁顺序（关）
-      TREE_PAGE_ROOT_TITLE_HIDDEN_KEY,    // 隐藏根节点标题（关）
-      TREE_PAGE_ROOT_TITLE_SIZE_KEY,      // 根节点标题字号（25px）
-      DARK_CARD_PRESENTATION_KEY,         // 树状页/学习页深色彩色卡片（底色 15%、强调 100%、白字）
-      LIBRARY_SEARCH_ENABLED_KEY,         // 画布名称搜索（关）
-      START_SPEED_KEY,                    // 翻页速度（210ms）
-      SPINE_SPEED_KEY,                    // 书脊滑块动画时长（447ms）
-      CAREER_SCROLL_FEEL_KEY,             // 生涯滚动手感
-      CAREER_SCROLL_IDLE_KEY,             // 生涯揭示等待（50ms）
-    ].forEach((key) => {
-      try { localStorage.removeItem(key); } catch (e) {}
-    });
-    applyStartBackgroundStyle('simple', false);
-    syncStarmapMotionForm(STARMAP_MOTION_DEFAULTS);
-    clearTimeout(starmapMotionNotifyTimer);
-    starmapMotionNotifyTimer = window.setTimeout(() => {
-      starmapMotionNotifyTimer = 0;
-      window.dispatchEvent(new CustomEvent('canvas:starmap-motion-change', {
-        detail: Object.assign({}, STARMAP_MOTION_DEFAULTS),
-      }));
-    }, 140);
-    applyCalendarCountdownEnabled(true, false);
-    window.RelatumUsage?.resetSettings();
-    applyHideSpecialPages(false, false);
-    applyGoalTreeSimpleMode(true, false);
-    applyGoalTreeUnlockEnforcement(false, false);
-    applyTreePageRootTitleHidden(false, false);
-    applyTreePageRootTitleSize(TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT, false);
-    applyDarkCardPresentation(null, false);
-    applyLibrarySearchEnabled(false, false);
-    applyStartSpeed(START_SPEED_DEFAULT, false);
-    applySpineSpeed(SPINE_SPEED_DEFAULT, false);
-    applyCareerScrollFeel(readCareerScrollFeel(), false);
-  }
+  window.RelatumGlobalSettings.configure({ reset(category) {
+    const remove = (...keys) => keys.forEach(key => { try { localStorage.removeItem(key); } catch (_) {} });
+    if (category === 'appearance') { remove(START_BACKGROUND_KEY); applyStartBackgroundStyle('simple', false); }
+    if (category === 'navigation') {
+      remove(CALENDAR_COUNTDOWN_KEY, HIDE_SPECIAL_KEY, LIBRARY_SEARCH_ENABLED_KEY, START_SPEED_KEY, SPINE_SPEED_KEY);
+      applyCalendarCountdownEnabled(true, false); applyHideSpecialPages(false, false); applyLibrarySearchEnabled(false, false);
+      applyStartSpeed(START_SPEED_DEFAULT, false); applySpineSpeed(SPINE_SPEED_DEFAULT, false);
+    }
+    if (category === 'learning') {
+      remove(GOAL_TREE_SIMPLE_KEY, GOAL_TREE_ENFORCE_UNLOCK_KEY, TREE_PAGE_ROOT_TITLE_HIDDEN_KEY, TREE_PAGE_ROOT_TITLE_SIZE_KEY, DARK_CARD_PRESENTATION_KEY);
+      applyGoalTreeSimpleMode(true, false); applyGoalTreeUnlockEnforcement(false, false);
+      applyTreePageRootTitleHidden(false, false); applyTreePageRootTitleSize(TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT, false); applyDarkCardPresentation(null, false);
+    }
+    if (category === 'starmap') {
+      remove(STARMAP_MOTION_KEY); syncStarmapMotionForm(STARMAP_MOTION_DEFAULTS); clearTimeout(starmapMotionNotifyTimer);
+      starmapMotionNotifyTimer = window.setTimeout(() => { starmapMotionNotifyTimer = 0; window.dispatchEvent(new CustomEvent('canvas:starmap-motion-change', { detail: { ...STARMAP_MOTION_DEFAULTS } })); }, 140);
+    }
+    if (category === 'career') { remove(CAREER_SCROLL_FEEL_KEY, CAREER_SCROLL_IDLE_KEY); applyCareerScrollFeel(readCareerScrollFeel(), false); }
+  } });
 
   function syncDesktopSizeForm(size) {
     if (!desktopSizeForm || !size) return;
@@ -1983,9 +1894,6 @@
       next.finalFitOnConverge = !!toggle.checked;
       saveStarmapMotionSettings(next);
     });
-  });
-  starmapMotionResets.forEach((button) => {
-    button.addEventListener('click', () => saveStarmapMotionSettings(Object.assign({}, STARMAP_MOTION_DEFAULTS)));
   });
   if (desktopSizeForm) {
     desktopSizeForm.addEventListener('submit', (event) => {

@@ -3,33 +3,55 @@
   'use strict';
   const profile = window.RelatumFeatures;
   const enabled = key => !profile || !profile.restricted || profile.features[key] === true;
-  const workspaceEnabled = key => key === 'canvas' ? !profile || profile.canvasHome : enabled(key);
-  const workspace = requested => workspaceEnabled(requested) && ['canvas', 'notes', 'research', 'career'].includes(requested)
-    ? requested : ['canvas', 'notes', 'research', 'career'].find(workspaceEnabled) || '';
+  const workspaces = Object.freeze((profile?.workspaces || []).map(item => Object.freeze({ ...item, label: Object.freeze(item.label.slice()) })));
+  const workspaceIds = workspaces.map(item => item.id);
+  const workspaceEnabled = key => workspaceIds.includes(key) && (key === 'canvas' ? !profile || profile.canvasHome : enabled(key));
+  const layoutKey = 'canvas:workspaceLayout:v1';
+  function normalizeLayout(raw) {
+    const valid = raw && Array.isArray(raw.order) && Array.isArray(raw.hidden);
+    const order = valid ? [...new Set(raw.order.filter(id => workspaceIds.includes(id)))] : [];
+    workspaceIds.forEach(id => { if (!order.includes(id)) order.push(id); });
+    const hidden = order.filter(id => valid && raw.order.includes(id)
+      ? raw.hidden.includes(id) : workspaces.find(item => item.id === id).defaultVisible !== true);
+    return { order, hidden };
+  }
+  function readLayout() {
+    try { return normalizeLayout(JSON.parse(localStorage.getItem(layoutKey))); } catch (_) { return normalizeLayout(null); }
+  }
+  const visibleWorkspaces = (layout = readLayout()) => layout.order.filter(id => workspaceEnabled(id) && !layout.hidden.includes(id));
+  const workspace = (requested, layout = readLayout()) => {
+    const visible = visibleWorkspaces(layout);
+    return visible.includes(requested) ? requested : visible[0] || 'none';
+  };
   const viewEnabled = name => !profile || !profile.restricted || (profile.views[name]
     ? enabled(profile.views[name]) : enabled('canvas.library'));
-  const workspaces = ['canvas', 'notes', 'research', 'career'].filter(workspaceEnabled);
-  window.RelatumFeatureRuntime = Object.freeze({ enabled, workspaceEnabled, workspace, viewEnabled, preloadEnabled: enabled('runtime.preload') });
+  window.RelatumFeatureRuntime = Object.freeze({ enabled, workspaceEnabled, workspace, workspaces, layoutKey, normalizeLayout, readLayout, visibleWorkspaces, viewEnabled, preloadEnabled: enabled('runtime.preload') });
+  // This stylesheet is ready before the body, so hidden/reordered tabs never flash.
+  const navigationStyle = document.createElement('style');
+  function syncWorkspaceStyle(layout = readLayout()) {
+    const visible = visibleWorkspaces(layout), count = visible.length;
+    document.documentElement.style.setProperty('--start-workspace-count', String(Math.max(1, count)));
+    document.documentElement.style.setProperty('--start-workspace-slider-width', count ? 'calc((100% - ' + (count + 5) + 'px) / ' + count + ')' : '0px');
+    navigationStyle.textContent = workspaces.map(item => {
+      const index = visible.indexOf(item.id), selector = '.start-workspace-switch button[data-start-workspace="' + item.id + '"]';
+      return selector + '{order:' + Math.max(0, index) + (index < 0 ? ';display:none!important' : '') + '}'
+        + 'html[data-start-workspace="' + item.id + '"] .start-workspace-slider{transform:translateX(calc(' + Math.max(0, index) * 100 + '% + ' + Math.max(0, index) + 'px))}'
+        + 'html[data-start-workspace="' + item.id + '"] ' + selector + '{color:var(--workspace-active-ink,#fff)}';
+    }).join('') + (count ? '' : '.start-workspace-switch{display:none!important}');
+  }
+  document.head.appendChild(navigationStyle); syncWorkspaceStyle();
+  document.addEventListener('relatum:workspace-layout', event => syncWorkspaceStyle(event.detail));
   if (new URLSearchParams(location.search).get('startupTrace') === '1') {
     window.RelatumStartupMark = name => performance.mark('relatum:' + name);
     window.RelatumStartupMark('document-entry');
   }
   if (!profile || !profile.restricted) return;
-  if (workspaces.length) {
-    document.documentElement.style.setProperty('--start-workspace-count', String(workspaces.length));
-    document.documentElement.style.setProperty('--start-workspace-slider-width', 'calc((100% - ' + (workspaces.length + 5) + 'px) / ' + workspaces.length + ')');
-    const navigationStyle = document.createElement('style');
-    navigationStyle.textContent = workspaces.map((name, index) =>
-      'html body[data-start-workspace="' + name + '"] .start-workspace-slider{transform:translateX(calc(' + index * 100 + '% + ' + index + 'px))}'
-    ).join('');
-    document.head.appendChild(navigationStyle);
-  }
   const selectors = [];
   if (!enabled('canvas.library')) selectors.push('.top-actions', '.canvas-library-head', '[data-role="file-list"]', '[data-role="page-dots"]', '[data-role="trash-entry"]', '[data-action="new"]', '[data-action="import-canvas-file"]', '[data-action="import-canvas-folder"]');
   if (!enabled('editor.ai')) selectors.push('[data-role="ai-toggle"]', '[data-role="ai-panel"]');
   if (!enabled('editor.graph')) selectors.push('[data-action="graph"]');
   if (!enabled('calendar.wallpaper')) selectors.push('[data-countdown-wallpaper]');
-  if (!profile.canvasHome && !enabled('notes') && !enabled('research') && !enabled('career')) selectors.push('.editor-back');
+  if (!workspaces.some(item => workspaceEnabled(item.id))) selectors.push('.editor-back');
   if (selectors.length) {
     const style = document.createElement('style');
     style.textContent = selectors.join(',') + '{display:none!important}';

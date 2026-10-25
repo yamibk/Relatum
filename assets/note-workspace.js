@@ -886,7 +886,9 @@
 
   function initializeSettingsDialog() {
     if (!settingsPop || !window.RelatumSettingsDialog) return;
-    const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = 'settings-dialog.css'; document.head.append(style);
+    if (!document.querySelector('link[href="settings-dialog.css"]')) {
+      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = 'settings-dialog.css'; document.head.append(style);
+    }
     const sections = Array.from(settingsPop.querySelectorAll(':scope > .note-settings-section'));
     const appearance = sections.find(section => section.querySelector('[data-role="note-font-scale"]'));
     const editing = sections.find(section => section.querySelector('[data-role="note-selection-match-highlight"]'));

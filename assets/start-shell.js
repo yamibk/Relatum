@@ -247,9 +247,6 @@
   if (careerScrollRevealToggle) careerScrollRevealToggle.addEventListener('change', () => {
     const next = readCareerScrollFeel(); next.pauseReveal = careerScrollRevealToggle.checked; applyCareerScrollFeel(next, true);
   });
-  const careerReset = document.querySelector('[data-action="career-scroll-feel-reset"]');
-  if (careerReset) careerReset.addEventListener('click', () => applyCareerScrollFeel(CAREER_SCROLL_FEEL_DEFAULTS, true));
-
   const themeButtons = Array.from(document.querySelectorAll('[data-action="start-theme-toggle"]'));
   function theme(value, persist) {
     const next = value === 'dark' ? 'dark' : 'light';
@@ -273,18 +270,6 @@
   }
   background(read('canvas:startBackgroundStyle', 'simple'), false);
   document.querySelectorAll('[data-role="start-background-switch"] button').forEach(button => button.addEventListener('click', () => background(button.dataset.backgroundStyle, true)));
-  const pop = query('start-speed-pop'), toggle = document.querySelector('[data-action="start-speed-toggle"]');
-  if (toggle && pop) {
-    toggle.addEventListener('click', event => { event.stopPropagation(); pop.hidden = !pop.hidden; toggle.setAttribute('aria-expanded', String(!pop.hidden)); });
-    pop.addEventListener('click', event => event.stopPropagation());
-    document.addEventListener('click', () => { pop.hidden = true; toggle.setAttribute('aria-expanded', 'false'); });
-  }
-  const reset = document.querySelector('[data-action="start-panel-reset"]');
-  if (reset) reset.addEventListener('click', () => {
-    ['canvas:startBackgroundStyle',START_SPEED_KEY,SPINE_SPEED_KEY,CAREER_SCROLL_FEEL_KEY,CAREER_SCROLL_IDLE_KEY].forEach(key => localStorage.removeItem(key));
-    background('simple', false); applyStartSpeed(START_SPEED_DEFAULT, false); applySpineSpeed(SPINE_SPEED_DEFAULT, false); applyCareerScrollFeel(CAREER_SCROLL_FEEL_DEFAULTS, false);
-    window.RelatumUsage?.resetSettings();
-  });
   const settings = query('desktop-settings');
   const settingsOpen = document.querySelector('[data-action="desktop-settings-open"]');
   const sizeForm = query('desktop-size-form');
@@ -309,10 +294,15 @@
   if (sizeForm) sizeForm.addEventListener('submit', event => { event.preventDefault(); setSize(sizeForm.elements.width.value, sizeForm.elements.height.value); });
   document.querySelectorAll('[data-role="desktop-size-presets"] button').forEach(button => button.addEventListener('click', () => setSize(button.dataset.width, button.dataset.height)));
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { if (settings) settings.hidden = true; if (pop) pop.hidden = true; }
+    if (event.key === 'Escape') { if (settings) settings.hidden = true; }
   });
   window.RelatumWorkspaceRuntime.create({
     turnSpeed: () => startTurnSpeed, onChange() {}, onCanvasReveal() {},
     notice(title, message) { window.alert(title + '\n' + message); },
   });
+  window.RelatumGlobalSettings.configure({ reset(category) {
+    const remove = (...keys) => keys.forEach(key => { try { localStorage.removeItem(key); } catch (_) {} });
+    if (category === 'appearance') { remove('canvas:startBackgroundStyle'); background('simple', false); }
+    if (category === 'career') { remove(CAREER_SCROLL_FEEL_KEY, CAREER_SCROLL_IDLE_KEY); applyCareerScrollFeel(readCareerScrollFeel(), false); }
+  } });
 })();
