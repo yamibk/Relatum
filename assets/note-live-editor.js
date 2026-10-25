@@ -1673,7 +1673,7 @@
     const labels = {
       unsafe_path: ['仅支持笔记库内相对路径，请将图片放入笔记库后使用相对路径', 'Only relative paths inside the note library are supported'],
       not_found: ['图片不存在，请检查相对路径或图片是否已移动', 'Image not found; check its relative path or whether it was moved'],
-      unsupported_type: ['不支持这种图片格式，请使用 PNG、JPEG、WebP、GIF 或 BMP', 'Unsupported image format; use PNG, JPEG, WebP, GIF or BMP'],
+      unsupported_type: ['不支持这种图片格式，请使用 PNG、JPEG、WebP、GIF、BMP 或静态 SVG', 'Unsupported image format; use PNG, JPEG, WebP, GIF, BMP or static SVG'],
       too_large: ['图片超过文件大小或像素尺寸限制', 'Image exceeds the file size or pixel dimension limit'],
       ambiguous_image: ['图片文件名不唯一，请使用库内完整路径', 'Image name is ambiguous; use a full vault path'],
     };
@@ -5383,12 +5383,12 @@
           },
           dragover(event) {
             const files = Array.from(event.dataTransfer && event.dataTransfer.files || []);
-            if (!files.some((file) => /^image\//i.test(file.type || '') || /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(file.name || ''))) return false;
+            if (!files.some((file) => /^image\//i.test(file.type || '') || /\.(?:png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name || ''))) return false;
             event.preventDefault(); return true;
           },
           drop(event, view) {
             const files = Array.from(event.dataTransfer && event.dataTransfer.files || [])
-              .filter((file) => /^image\//i.test(file.type || '') || /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(file.name || ''));
+              .filter((file) => /^image\//i.test(file.type || '') || /\.(?:png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name || ''));
             if (!files.length) return false;
             event.preventDefault();
             if (!view.state.readOnly && !imageTextController.active) safeOptions.onImageFiles(files);

@@ -26,6 +26,7 @@ from note_canvas_reference import CANVAS_DIRECTORY, canvas_target, references as
 from notes_index import NoteIndex, book_root
 from notes_sync import NoteSync
 from note_search import projection
+from note_svg import MAX_SVG_BYTES, SvgImageError, validate_svg
 
 
 # Keep graph parsing out of ordinary note sessions; names remain patchable in tests.
@@ -65,7 +66,21 @@ NOTE_IMAGE_TYPES = {
     ".webp": "image/webp",
     ".gif": "image/gif",
     ".bmp": "image/bmp",
+    ".svg": "image/svg+xml",
 }
+
+
+def _check_note_image_content(content: bytes, media_type: str) -> None:
+    if media_type == 'image/svg+xml':
+        try:
+            validate_svg(content)
+        except SvgImageError as error:
+            raise NotesError(str(error), status=413 if error.too_large else 400,
+                             code='too_large' if error.too_large else 'invalid_image') from error
+    else:
+        if _sniff_image_media_type(content) != media_type:
+            raise NotesError("图片内容与扩展名不一致", status=400, code="invalid_image")
+        _check_image_dimensions(content)
 
 
 def _sniff_image_media_type(content: bytes) -> str | None:
@@ -1785,16 +1800,14 @@ class NotesStore:
         suffix = Path(original_name).suffix.casefold()
         expected_type = NOTE_IMAGE_TYPES.get(suffix)
         if not expected_type:
-            raise NotesError("只支持 PNG、JPEG、WebP、GIF 或 BMP 图片", status=403, code="unsupported_type")
+            raise NotesError("只支持 PNG、JPEG、WebP、GIF、BMP 或静态 SVG 图片", status=403, code="unsupported_type")
         if media_type and str(media_type).split(";", 1)[0].strip().casefold() != expected_type:
             raise NotesError("图片类型与扩展名不一致")
         if not content:
             raise NotesError("图片为空")
         if len(content) > MAX_NOTE_IMAGE_BYTES:
             raise NotesError("图片过大（上限 40MB）", status=413, code="too_large")
-        if _sniff_image_media_type(content) != expected_type:
-            raise NotesError("图片内容与扩展名不一致", status=400, code="invalid_image")
-        _check_image_dimensions(content)
+        _check_note_image_content(content, expected_type)
         digest = hashlib.sha256(content).hexdigest()[:12]
         safe_stem = re.sub(r"[^\w\-.\u4e00-\u9fff]+", "-", Path(original_name).stem,
                            flags=re.UNICODE).strip("-.") or "image"
@@ -1873,10 +1886,13 @@ class NotesStore:
         if target.stat().st_size > MAX_NOTE_IMAGE_BYTES:
             raise NotesError("图片过大（上限 40MB）", status=413, code="too_large")
         with target.open("rb") as image:
-            header = image.read(32)
-            if _sniff_image_media_type(header) in ("image/jpeg", "image/webp") and _image_dimensions(header) is None:
-                header += image.read(_IMAGE_HEADER_BYTES - len(header))
-            _check_image_dimensions(header)
+            if media_type == 'image/svg+xml':
+                _check_note_image_content(image.read(MAX_SVG_BYTES + 1), media_type)
+            else:
+                header = image.read(32)
+                if _sniff_image_media_type(header) in ("image/jpeg", "image/webp") and _image_dimensions(header) is None:
+                    header += image.read(_IMAGE_HEADER_BYTES - len(header))
+                _check_image_dimensions(header)
         return target, media_type
 
     def resolve_link_target(self, note: object, source: object) -> Path:
@@ -2084,11 +2100,9 @@ class NotesStore:
             claimed = str(media_type or "").split(";", 1)[0].strip().casefold()
             if claimed and claimed != expected:
                 raise NotesError("图片类型与扩展名不一致")
-            if _sniff_image_media_type(content) != expected:
-                raise NotesError("图片内容与扩展名不一致", code="invalid_image")
-            _check_image_dimensions(content)
+            _check_note_image_content(content, expected)
         else:
-            raise NotesError("只支持 Markdown 和栅格图片", status=403, code="unsupported_type")
+            raise NotesError("只支持 Markdown、栅格图片和静态 SVG", status=403, code="unsupported_type")
         target = stage.joinpath(*PurePosixPath(normalized).parts)
         if target.exists():
             raise NotesError("导入会话中存在同名文件", status=409, code="exists")

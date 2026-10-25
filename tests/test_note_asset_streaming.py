@@ -197,6 +197,31 @@ class NoteAssetStreamingTests(unittest.TestCase):
         status, result = self.move(self.note, '中文 目录/已释放.md')
         self.assertEqual(status, 200, result)
 
+    def test_svg_response_headers_also_cover_ranges_and_cache_hits(self):
+        image = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 10"><path d="M0 0h20v10z"/></svg>'
+        uploaded = self.store.upload_image(self.note, 'drawing.svg', image)
+        url = self.asset_url(self.note, uploaded['path'])
+        etag = ''
+        for headers, expected in (({}, 200), ({'Range': 'bytes=0-19'}, 206),
+                                  ({'If-None-Match': None}, 304), ({'Range': 'bytes=99999-'}, 416)):
+            if 'If-None-Match' in headers:
+                headers['If-None-Match'] = etag
+            with self.subTest(status=expected):
+                try:
+                    response = urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=5)
+                except urllib.error.HTTPError as error:
+                    response = error
+                with response:
+                    self.assertEqual(response.status, expected)
+                    self.assertEqual(response.headers['Content-Security-Policy'], "sandbox; default-src 'none'; style-src 'unsafe-inline'")
+                    self.assertEqual(response.headers['X-Content-Type-Options'], 'nosniff')
+                    if expected == 200:
+                        etag = response.headers['ETag']
+                        self.assertEqual(response.headers['Content-Type'], 'image/svg+xml')
+                        self.assertEqual(response.read(), image)
+                    elif expected == 206:
+                        self.assertEqual(response.read(), image[:20])
+
 
 if __name__ == '__main__':
     unittest.main()

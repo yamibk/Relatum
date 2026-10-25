@@ -319,6 +319,52 @@ async function bounded(task, label, timeout = 15000) {
       assert.equal(fs.readFileSync(path.join(root, 'notes', 'Images.md'), 'utf8'), await page.evaluate(() => uploadTest.editor.snapshot().value));
       console.log(type + ': ok');
     }
+    const checkSvgIntake = async () => {
+      await page.evaluate(() => uploadTest.openNote('Images.md'));
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200"><rect width="400" height="200" fill="#78936c"/></svg>';
+      for (const [mode, type, mime] of [['live', 'drop', ''], ['source', 'drop', ''], ['live', 'paste', 'image/svg+xml']]) {
+        await page.evaluate(mode => uploadTest.setViewMode(mode), mode);
+        await reset('# SVG\n\n');
+        await page.evaluate(({ svg, type, mime }) => {
+          const data = new DataTransfer();
+          data.items.add(new File([svg], '矢量 (1).svg', { type: mime }));
+          uploadTest.editor.view.contentDOM.dispatchEvent(type === 'paste'
+            ? new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true })
+            : new DragEvent('drop', { dataTransfer: data, clientX: 500, clientY: 300, bubbles: true, cancelable: true }));
+        }, { svg, type, mime });
+        await bounded(() => page.waitForFunction(() => uploadTest.editor.snapshot().value.includes('.svg)')), mode + ' SVG ' + type);
+        await page.evaluate(() => uploadTest.flushSave());
+        const markdown = fs.readFileSync(path.join(root, 'notes', 'Images.md'), 'utf8');
+        assert.equal(markdown, await page.evaluate(() => uploadTest.editor.snapshot().value));
+        const relative = decodeURIComponent(markdown.split('](')[1].split(')')[0]);
+        assert.equal(fs.readFileSync(path.join(root, 'notes', relative), 'utf8'), svg, 'saved SVG remains a vector file');
+        await page.evaluate(async () => {
+          await uploadTest.openNote('Other.md'); await uploadTest.openNote('Images.md');
+          await uploadTest.setViewMode('live');
+        });
+        await bounded(() => page.waitForFunction(() => [...document.querySelectorAll('.note-live-image-frame img')]
+          .some(image => image.src.includes('.svg') && image.naturalWidth / image.naturalHeight === 2)), 'reopened SVG displays');
+        await page.evaluate(() => uploadTest.setViewMode('reading'));
+        await bounded(() => page.waitForFunction(() => [...document.querySelectorAll('.md-local-image img')]
+          .some(image => image.src.includes('.svg') && image.naturalWidth / image.naturalHeight === 2)), 'reading SVG displays');
+        await page.evaluate(() => uploadTest.setViewMode('live'));
+        console.log(mode + ' SVG ' + type + ', save and reopen: ok');
+      }
+      await reset('# SVG rejected\n\n');
+      await page.evaluate(async () => {
+        await uploadTest.uploadImages([new File(['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'], 'unsafe.svg', { type: 'image/svg+xml' })]);
+      });
+      assert.equal(await page.evaluate(() => uploadTest.editor.snapshot().value), '# SVG rejected\n\n', 'invalid SVG leaves the note intact');
+      await reset('# SVG size\n\n');
+      await page.evaluate(async () => {
+        const file = new File(['small fixture'], 'too-large.SVG', { type: 'image/svg+xml' });
+        Object.defineProperty(file, 'size', { value: 4 * 1024 * 1024 + 1 });
+        await uploadTest.uploadImages([file]);
+      });
+      assert.deepEqual(await page.evaluate(() => [uploadProbe.reads, uploadProbe.uploads, uploadTest.editor.snapshot().value]),
+        [0, 0, '# SVG size\n\n'], 'oversized SVG is rejected before FileReader, Base64 or upload');
+    };
+
     await reset('# Batch\n\n');
     const start = performance.now();
     await bounded(() => page.evaluate(() => uploadTest.uploadImages(imageUploadFiles(40))), '40 image batch', 30000);
@@ -440,6 +486,7 @@ async function bounded(task, label, timeout = 15000) {
       const parsed = MarkdownMini.parseImageBlock(line);
       return !!parsed && parsed.alt === '图 [1](demo).png' && parsed.target.includes('%28');
     }), true);
+    await checkSvgIntake();
     assert.deepEqual(errors, []);
     assert.deepEqual(failures, []);
     console.log('note image upload browser regression: ok');

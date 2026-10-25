@@ -10106,6 +10106,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         opened_file=None,
     ) -> None:
         """Stream a local asset, taking ownership of any already-open file."""
+        def finish_headers():
+            if media_type == "image/svg+xml":
+                # Keep direct navigation to an image URL as restricted as its
+                # normal <img> use, even if an external editor changes the file.
+                self.send_header("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'")
+                self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+
         fh = opened_file
         try:
             if fh is None:
@@ -10127,7 +10135,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_header("Cache-Control", cache_control)
                 self.send_header("Accept-Ranges", "bytes")
                 self.send_header("Content-Length", "0")
-                self.end_headers()
+                finish_headers()
                 return
 
         start = 0
@@ -10140,7 +10148,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(416)
                 self.send_header("Content-Range", f"bytes */{size}")
                 self.send_header("Content-Length", "0")
-                self.end_headers()
+                finish_headers()
                 return
             try:
                 if match.group(1):
@@ -10161,7 +10169,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(416)
                 self.send_header("Content-Range", f"bytes */{size}")
                 self.send_header("Content-Length", "0")
-                self.end_headers()
+                finish_headers()
                 return
 
         length = (end - start + 1) if size else 0
@@ -10175,7 +10183,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if partial:
                 self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
             self.send_header("Cache-Control", cache_control)
-            self.end_headers()
+            finish_headers()
             if length:
                 fh.seek(start)
                 remaining = length

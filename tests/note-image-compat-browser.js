@@ -11,6 +11,12 @@ const repo = path.resolve(__dirname, '..');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-image-compat-'));
 const notes = path.join(root, 'notes');
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200">
+<style>.shape { fill: url(#gradient); }</style>
+<defs><linearGradient id="gradient"><stop stop-color="#78936c"/><stop offset="1" stop-color="#cfaa70"/></linearGradient></defs>
+<rect class="shape" x="1" y="1" width="398" height="198" rx="16"/>
+<text x="30" y="110" font-size="32" fill="white">SVG 矢量图片</text></svg>`;
 const source = [
   '![电路|160](images/电路\\(1\\).png)',
   '前文 ![电路|80](images/电路(1).png) 后文',
@@ -18,6 +24,9 @@ const source = [
   '![编码|160](images/%E7%94%B5%E8%B7%AF%281%29.png)',
   '![Windows|160](images\\plain.png)',
   '![[images/电路(1).png|160]]',
+  '![矢量|160](<images/矢量 (1).svg>)',
+  '行内 ![矢量行内|80](images/vector.svg) 后文',
+  '![[images/vector.svg|160]]',
 ].join('\n\n');
 const harness = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><base href="/">
 <link rel="stylesheet" href="styles.css"><style>body{margin:0}.note-document-pane{height:100vh}.note-live-editor-host{height:95vh}</style>
@@ -43,6 +52,8 @@ window.show=(value,mode='live')=>{
   fs.writeFileSync(path.join(notes, 'Picture.md'), source);
   for (const name of ['电路(1).png', '电路 空格(1).png', 'plain.png']) fs.writeFileSync(path.join(notes, 'images', name), png);
   fs.writeFileSync(path.join(notes, 'other', 'plain.png'), png);
+  for (const name of ['矢量 (1).svg', 'vector.svg']) fs.writeFileSync(path.join(notes, 'images', name), svg);
+  fs.writeFileSync(path.join(notes, 'bad.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>window.svgExecuted=1</script></svg>');
   const oversized = Buffer.from(png); oversized.writeUInt32BE(40000, 16);
   fs.writeFileSync(path.join(notes, 'oversized.png'), oversized);
   const socket = net.createServer();
@@ -78,8 +89,10 @@ window.show=(value,mode='live')=>{
       await page.evaluate(({ source, mode }) => show(source, mode), { source, mode });
       await page.waitForFunction(() => {
         const images = [...document.querySelectorAll('.note-live-image-frame img, .md-local-image img')];
-        return images.length === 6 && images.every(image => image.naturalWidth > 0);
+        return images.length === 9 && images.every(image => image.naturalWidth > 0);
       });
+      assert.equal(await page.evaluate(() => [...document.querySelectorAll('.note-live-image-frame img, .md-local-image img')]
+        .filter(image => image.src.includes('.svg')).every(image => Math.abs(image.naturalWidth / image.naturalHeight - 2) < 0.01)), true, 'viewBox-only SVG keeps its aspect ratio');
       assert.equal(await page.evaluate(() => probes.length), 0, 'successful images must not make diagnostic requests');
       if (mode === 'live') {
         assert.equal(await page.evaluate(() => editor.snapshot().value), source);
@@ -94,7 +107,17 @@ window.show=(value,mode='live')=>{
         assert(resized.includes('(images/电路\\(1\\).png)'), 'resizing preserves the original escaped destination');
         await page.keyboard.press('Control+z');
         assert.equal(await page.evaluate(() => editor.snapshot().value), source, 'one undo restores the original image source');
+        await page.locator('.note-live-image-frame').filter({ has: page.locator('img[alt="矢量"]') }).click({ position: { x: 15, y: 15 } });
+        const svgHandle = await page.locator('.note-live-image-resize-handle').boundingBox();
+        await page.mouse.move(svgHandle.x + svgHandle.width / 2, svgHandle.y + svgHandle.height / 2);
+        await page.mouse.down(); await page.mouse.move(svgHandle.x + 60, svgHandle.y + svgHandle.height / 2, { steps: 4 }); await page.mouse.up();
+        const svgResized = await page.evaluate(() => editor.snapshot().value);
+        assert.notEqual(svgResized, source);
+        assert(svgResized.includes('](<images/矢量 (1).svg>)'), 'SVG resize keeps the vector file and its original path');
+        await page.keyboard.press('Control+z');
+        assert.equal(await page.evaluate(() => editor.snapshot().value), source, 'SVG resize is one undo step');
       }
+      await page.screenshot({ path: path.join(root, `image-svg-${mode}.png`) });
     }
     await page.evaluate(value => show(value, 'source'), source);
     assert.equal(await page.locator('.note-live-image-frame img, .md-local-image img').count(), 0);
@@ -107,7 +130,8 @@ window.show=(value,mode='live')=>{
       assert.equal(await page.locator('[data-error-label]').first().getAttribute('data-error-label'), '仅支持笔记库内相对路径，请将图片放入笔记库后使用相对路径');
       assert.equal(requests.slice(before).filter(value => value.includes('/api/note-asset')).length, 0);
       for (const [markdown, label] of [
-        ['![图](missing.png)', '图片不存在'], ['![图](unsupported.svg)', '不支持这种图片格式'],
+        ['![图](missing.png)', '图片不存在'], ['![图](unsupported.avif)', '不支持这种图片格式'],
+        ['![图](bad.svg)', '图片无法加载'],
         ['![图](oversized.png)', '图片超过'], ['![[plain.png]]', '不唯一'], ['![图](../outside.png)', '仅支持'],
       ]) {
         const count = await page.evaluate(() => probes.length);
@@ -145,7 +169,12 @@ window.show=(value,mode='live')=>{
     await page.setViewportSize({ width: 680, height: 800 });
     await page.waitForFunction(() => document.querySelector('[data-error-label]')?.dataset.errorLabel.startsWith('Image not found'));
     await page.screenshot({ path: path.join(root, 'image-errors-dark-en.png') });
+    await page.evaluate(() => show('![vector|320](images/vector.svg)', 'reading'));
+    await page.waitForFunction(() => document.querySelector('.md-local-image img')?.naturalWidth > 0);
+    await page.screenshot({ path: path.join(root, 'image-svg-dark-en.png') });
     assert.deepEqual(errors, []);
+    assert.equal(await page.evaluate(() => window.svgExecuted), undefined);
+    assert(requests.every(value => !value.startsWith('http') || value.startsWith(url + '/')), 'SVG never loads external resources');
     fs.writeFileSync(path.join(root, 'report.json'), JSON.stringify({ passed: true, requests: requests.length, diagnostics: await page.evaluate(() => probes.length) }, null, 2));
     console.log('note image compatibility browser: ok; report: ' + root);
   } catch (error) {

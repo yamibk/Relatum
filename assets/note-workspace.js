@@ -427,7 +427,7 @@
   const DOCUMENT_CACHE_LIMIT = 24;
   const DOCUMENT_CACHE_BYTES = 16 * 1024 * 1024;
   const BLANK_TAB_PREFIX = 'relatum:blank-tab:';
-  const IMAGE_RE = /\.(png|jpe?g|webp|gif|bmp)$/i;
+  const IMAGE_RE = /\.(png|jpe?g|webp|gif|bmp|svg)$/i;
   const COPY = {
     'zh-CN': {
       loading: '正在读取笔记库…', emptyTree: '还没有笔记', select: '选择一篇笔记', readFailed: '读取笔记失败',
@@ -439,7 +439,7 @@
       refreshed: '笔记库已刷新', copyPath: '复制库内路径', copied: '路径已复制', open: '打开', createHere: '在此新建笔记',
       createFolderHere: '新建子文件夹', noAssets: '当前笔记还没有伴生素材', revealFailed: '无法在资源管理器中显示',
       importFailed: '导入失败', imported: '已导入 {count} 篇笔记', unsupportedSkipped: '已跳过 {count} 个不支持的文件',
-      uploadFailed: '图片保存失败', imageUploadTooLarge: '图片过大（上限 40MB）', linkWarnings: '已移动；{count} 个歧义双链保持原样', ambiguous: '同名笔记不唯一',
+      uploadFailed: '图片保存失败', imageUploadTooLarge: '图片过大（上限 40MB）', svgUploadTooLarge: 'SVG 图片过大（上限 4MiB）', linkWarnings: '已移动；{count} 个歧义双链保持原样', ambiguous: '同名笔记不唯一',
       imageCopyFailed: '复制图片失败，请检查图片是否可读取及剪贴板权限。', imageCopyTooLarge: '图片尺寸过大，无法复制。',
       missing: '尚未创建', noOutgoing: '当前笔记没有出链', noBacklinks: '当前笔记没有反向链接',
       cancel: '取消',
@@ -469,7 +469,7 @@
       refreshed: 'Notes refreshed', copyPath: 'Copy vault path', copied: 'Path copied', open: 'Open', createHere: 'New note here',
       createFolderHere: 'New subfolder', noAssets: 'This note has no companion assets',
       revealFailed: 'Could not show this item in File Explorer', importFailed: 'Import failed', imported: 'Imported {count} notes',
-      unsupportedSkipped: 'Skipped {count} unsupported files', uploadFailed: 'Could not save image', imageUploadTooLarge: 'Image is too large (40MB limit)',
+      unsupportedSkipped: 'Skipped {count} unsupported files', uploadFailed: 'Could not save image', imageUploadTooLarge: 'Image is too large (40MB limit)', svgUploadTooLarge: 'SVG image is too large (4MiB limit)',
       imageCopyFailed: 'Could not copy image. Check that the image is readable and clipboard access is allowed.', imageCopyTooLarge: 'This image is too large to copy.',
       linkWarnings: 'Moved; {count} ambiguous links were unchanged', ambiguous: 'Duplicate note name', missing: 'Not created',
       noOutgoing: 'No outgoing links', noBacklinks: 'No backlinks', cancel: 'Cancel',
@@ -4607,6 +4607,7 @@
     });
   }
   function fileToBase64(file) {
+    if (/\.svg$/i.test(file.name || '') && file.size > 4 * 1024 * 1024) return Promise.reject(new Error(tr('svgUploadTooLarge')));
     if (file.size > 40 * 1024 * 1024) return Promise.reject(new Error(tr('imageUploadTooLarge')));
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
