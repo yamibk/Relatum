@@ -33,7 +33,7 @@
   const NOTES_PAGE_KEY = 'canvas:notesPage:v1';
   const NOTES_PAGE_COLORS_KEY = 'canvas:notesPageColors:v1';
   const NOTES_PAGE_MAX = 99;
-  const NOTES_PAGE_WHEEL_REACH = 120;
+  const NOTES_PAGE_WHEEL_REACH = 160;
   const NOTES_VIEW_MIN = 0.45;
   const NOTES_VIEW_MAX = 2.35;
   const NOTES_ZOOM_EASE = 0.32;    // 滚轮缩放缓动，贴近主画布滚轮手感

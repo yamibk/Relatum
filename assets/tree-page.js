@@ -1445,7 +1445,7 @@
     rail.style.height = newHeight + 'px';
     railFlipTimer = setTimeout(clearRailTransients, 320);
   }
-  var railRevealPx = 120, railOver = false, railVisible = false;
+  var railRevealPx = 160, railOver = false, railVisible = false;
   var railWheelAccum = 0, railWheelTimer = 0, railWheelGestureActive = false;
   var railWheelCommitTimer = 0;
   var railWheelPersistedTreeId = '';
