@@ -91,6 +91,159 @@
     return result;
   }
 
+  // Clipboard-only compatibility. Rendering and existing Markdown keep their
+  // escape semantics; only a complete pair wholly inside the new paste changes.
+  function pastedMathMask(source, inlineOnly) {
+    const blocked = [];
+    const header = !inlineOnly && /^\uFEFF?---\r?\n/.test(source) ? frontmatter(source) : null;
+    if (!inlineOnly && /^\uFEFF?---\r?\n/.test(source)) blocked.push(header || { from: 0, to: source.length });
+    let offset = 0, fence = null, listIndent = 0, listDepth = 0, display = false;
+    if (!inlineOnly) for (const line of source.split('\n')) {
+      const quote = quoteLine(line), raw = quote.text.replace(/\r$/, '');
+      const list = parseListMarker(raw), indent = /^[ \t]*/.exec(raw)[0].length;
+      if (quote.depth !== listDepth || raw.trim() && indent < listIndent && !list) listIndent = 0;
+      listDepth = quote.depth;
+      if (list && !fence) listIndent = raw.length - list.content.length;
+      const text = list && !fence ? list.content : raw.slice(Math.min(indent, listIndent));
+      if (offset >= (header ? header.to : 0)) {
+        if (fence && quote.depth < fence.depth) fence = null;
+        if (fence) {
+          blocked.push({ from: offset, to: offset + line.length });
+          if (isFenceClose(text, fence)) fence = null;
+        } else {
+          const opening = parseFenceLine(text);
+          if (opening) { fence = Object.assign({ depth: quote.depth }, opening); blocked.push({ from: offset, to: offset + line.length }); }
+          else {
+            if (!/^(?: {4}|\t)/.test(text) && text.trimStart().startsWith('\\\\[')) display = true;
+            if ((!display && /^(?: {4}|\t)/.test(text)) || /^[ \t]{0,3}\[[^\]\n]+\]:/.test(text)) blocked.push({ from: offset, to: offset + line.length });
+            if (display && Array.from(text.matchAll(/\\+\]/g)).some(match => match[0].length === 3)) display = false;
+          }
+        }
+      }
+      offset += line.length + 1;
+    }
+    let visible = maskNoteRanges(source, blocked);
+    // Scan inline literals once, including multiline code and unfinished
+    // comments. HTML stays inert; link destinations are never math input.
+    const literals = [];
+    for (let at = 0; at < visible.length;) {
+      if (!'<%`]hHwW'.includes(visible[at])) { at++; continue; }
+      let end = -1;
+      if (visible.startsWith('<!--', at) || visible.startsWith('%%', at)) {
+        const close = visible.startsWith('<!--', at) ? '-->' : '%%';
+        const found = visible.indexOf(close, at + (close === '-->' ? 4 : 2));
+        end = found < 0 ? visible.length : found + close.length;
+      } else if (visible[at] === '`' && !escapedAtSource(visible, at)) {
+        let size = 1; while (visible[at + size] === '`') size++;
+        const marker = '`'.repeat(size); let found = at + size;
+        while ((found = visible.indexOf(marker, found)) >= 0) {
+          if (visible[found - 1] !== '`' && visible[found + size] !== '`') { end = found + size; break; }
+          found += size;
+        }
+        if (end < 0) { at += size; continue; }
+      } else if (visible.startsWith('](', at) && !escapedAtSource(visible, at)) {
+        const found = closingBracket(visible, at + 1, '(', ')');
+        // An unfinished destination is literal through its paragraph.
+        const next = visible.indexOf('\n\n', at);
+        end = found < 0 ? (next < 0 ? visible.length : next) : found + 1;
+      } else if (/^(?:https?:\/\/|www\.)/i.test(visible.slice(at, at + 8)) && !/[\w]/.test(visible[at - 1] || '')) {
+        const tail = /^[^\s<>]+/.exec(visible.slice(at));
+        if (tail) end = at + tail[0].length;
+      } else if (visible[at] === '<' && /^<(?:\/?[A-Za-z]|https?:|mailto:)/i.test(visible.slice(at, at + 16))) {
+        const found = visible.indexOf('>', at + 1);
+        if (found >= 0) end = found + 1;
+      }
+      if (end > at) { literals.push({ from: at, to: end }); at = end; }
+      else at++;
+    }
+    visible = maskNoteRanges(visible, literals);
+    return maskNoteRanges(visible, mathRanges(visible));
+  }
+
+  function pastedMathBody(source) {
+    const removals = new Set();
+    const groupEnd = start => {
+      let depth = 0;
+      for (let at = start; at < source.length; at++) {
+        if (source[at] === '\\') { at++; continue; }
+        if (source[at] === '%') { const next = source.indexOf('\n', at); if (next < 0) return -1; at = next; continue; }
+        if (source[at] === '{') depth++;
+        else if (source[at] === '}' && !--depth) return at;
+      }
+      return -1;
+    };
+    // Only the observed doubled thin-space command; keep real TeX row breaks,
+    // escaped braces/percent/underscores and all other commands byte-for-byte.
+    for (let at = 0; at < source.length;) {
+      if (source[at] === '%' && !escapedAtSource(source, at)) {
+        const end = source.indexOf('\n', at); at = end < 0 ? source.length : end + 1; continue;
+      }
+      if (source[at] !== '\\') { at++; continue; }
+      let end = at + 1; while (source[end] === '\\') end++;
+      if (end - at === 2 && source[end] === ',') removals.add(at);
+      const command = end - at === 1 ? /^[A-Za-z]+/.exec(source.slice(end))?.[0] : '';
+      if (command === 'verb') {
+        const start = end + 4 + (source[end + 4] === '*' ? 1 : 0), marker = source[start];
+        const close = marker && !/\s/.test(marker) ? source.indexOf(marker, start + 1) : -1;
+        if (close >= 0 && !/[\r\n]/.test(source.slice(start, close))) { at = close + 1; continue; }
+      }
+      if (/^(?:text|textrm|texttt|textsf|textnormal|textbf|textit|operatorname)$/.test(command || '')) {
+        let group = end + command.length; while (group < source.length && /\s/.test(source[group])) group++;
+        if (source[group] === '{') { const close = groupEnd(group); if (close >= 0) { at = close + 1; continue; } }
+      }
+      if (end - at === 1 && source.startsWith('underbrace', end) && !/[A-Za-z]/.test(source[end + 10] || '')) {
+        let open = end + 10; while (/\s/.test(source[open] || '') && open < source.length) open++;
+        if (source[open] === '{') {
+          const close = groupEnd(open);
+          if (close >= 0) {
+            let sub = close + 1; while (/\s/.test(source[sub] || '') && sub < source.length) sub++;
+            if (source.startsWith('\\_', sub)) {
+              let group = sub + 2; while (/\s/.test(source[group] || '') && group < source.length) group++;
+              if (source[group] === '{' && groupEnd(group) >= 0) removals.add(sub);
+            }
+          }
+        }
+      }
+      at = end;
+    }
+    return source.split('').filter((char, index) => !removals.has(index)).join('');
+  }
+
+  function normalizePastedMath(value, getContext, inlineOnly) {
+    const text = String(value == null ? '' : value);
+    if (!/\\\\[[(]/.test(text)) return text;
+    const context = typeof getContext === 'function' ? getContext() : getContext;
+    const before = context && context.before || '', after = context && context.after || '';
+    if ((before || after) && pastedMathMask(before + '\u0001' + after, inlineOnly)[before.length] !== '\u0001') return text;
+    const source = before + text + after, visible = pastedMathMask(source, inlineOnly);
+    const changes = []; let open = null;
+    for (const token of visible.matchAll(/\\+[()[\]]/g)) {
+      const mark = token[0], at = token.index, char = mark[mark.length - 1];
+      if (mark.length !== 3) { if (open) open.invalid = true; continue; }
+      if (char === '(' || char === '[') {
+        if (open) { open.invalid = true; open.depth++; }
+        else open = { from: at, char, depth: 1 };
+        continue;
+      }
+      if (!open) continue;
+      if (--open.depth) { open.invalid = true; continue; }
+      const from = open.from, to = at + mark.length, body = source.slice(from + 3, at);
+      const limit = open.char === '(' ? 4096 : 32768;
+      if (!open.invalid && char === (open.char === '(' ? ')' : ']') && from >= before.length && to <= before.length + text.length
+          && to - from <= limit && (open.char !== '(' || !/[\r\n]/.test(body))
+          && body.split('\n').some(line => quoteLine(line).text.trim())
+          && visible.slice(from, to) === source.slice(from, to)) {
+        changes.push({ from: from - before.length, to: to - before.length,
+          insert: '\\' + open.char + pastedMathBody(body) + '\\' + char });
+      }
+      open = null;
+    }
+    if (!changes.length) return text;
+    const parts = []; let cursor = 0;
+    for (const change of changes) { parts.push(text.slice(cursor, change.from), change.insert); cursor = change.to; }
+    parts.push(text.slice(cursor)); return parts.join('');
+  }
+
   function indentWidth(raw) {
     let width = 0;
     const value = String(raw || '');
@@ -1816,6 +1969,7 @@
     frontmatter: frontmatter,
     tagRanges: tagRanges,
     mathRanges: mathRanges,
+    normalizePastedMath: normalizePastedMath,
     quoteLine: quoteLine,
     stripQuote: stripQuote,
     noteBlock: noteBlock,

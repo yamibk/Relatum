@@ -1221,7 +1221,8 @@
     markChanged(editorSnapshot());
   }
 
-  function clipboardLinkMarkdown(text, html) {
+  function clipboardLinkMarkdown(text, html, getContext, inlineOnly) {
+    text = window.MarkdownMini?.normalizePastedMath(text, getContext, inlineOnly) ?? text;
     const address = String(text || '').trim();
     if (!/^https?:\/\/[^\s<>]+$/i.test(address) || !html || html.length > 128 * 1024) return text;
     try {
@@ -1771,8 +1772,16 @@
       if (files.length) { event.preventDefault(); uploadImages(files); return; }
       if (plain || !event.clipboardData) return;
       const text = event.clipboardData.getData('text/plain');
-      const markdown = clipboardLinkMarkdown(text, event.clipboardData.getData('text/html'));
-      if (markdown !== text) { event.preventDefault(); replaceEditorSelection(markdown); }
+      const markdown = clipboardLinkMarkdown(text, event.clipboardData.getData('text/html'), () => ({
+        before: fallbackEditor.value.slice(0, fallbackEditor.selectionStart), after: fallbackEditor.value.slice(fallbackEditor.selectionEnd),
+      }));
+      if (markdown !== text) {
+        event.preventDefault();
+        // Native insertion gives the fallback textarea one undoable paste.
+        let inserted = false;
+        try { inserted = !!document.execCommand?.('insertText', false, markdown); } catch (error) {}
+        if (!inserted) replaceEditorSelection(markdown);
+      }
     });
     fallbackEditor.addEventListener('dragover', (event) => { if (Array.from(event.dataTransfer && event.dataTransfer.files || []).some((file) => /^image\//i.test(file.type || '') || IMAGE_RE.test(file.name || ''))) event.preventDefault(); });
     fallbackEditor.addEventListener('drop', (event) => {
@@ -4194,9 +4203,8 @@
           }
         }
         const rawText = clipboardText == null ? await navigator.clipboard.readText() : clipboardText;
-        const text = name === 'paste' ? clipboardLinkMarkdown(rawText, clipboardHtml) : rawText;
         if (bodyMenuContext !== context) return;
-        if (text) liveEditor.executeCommand(name, context, text);
+        if (rawText) liveEditor.executeCommand(name, context, rawText, clipboardHtml);
       } else liveEditor.executeCommand(name, context);
       if (bodyMenuContext === context) closeContextMenu();
     } catch (error) {

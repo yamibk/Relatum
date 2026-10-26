@@ -444,6 +444,8 @@
       wrap.addEventListener('copy', (event) => this.copy(event, false));
       wrap.addEventListener('cut', (event) => this.copy(event, true));
       wrap.addEventListener('paste', (event) => this.paste(event));
+      wrap.addEventListener('keyup', () => { this.pastePlain = false; });
+      wrap.addEventListener('focusout', () => { this.pastePlain = false; });
       wrap.addEventListener('contextmenu', (event) => { event.stopPropagation(); if (!this.edit?.input.contains(event.target)) event.preventDefault(); });
       // These must never join the parent contenteditable's IME or clipboard chain.
       for (const name of ['beforeinput', 'input', 'compositionstart', 'compositionend', 'keyup', 'focusin', 'focusout']) {
@@ -1046,6 +1048,7 @@
     }
     keydown(event) {
       event.stopPropagation();
+      this.pastePlain = (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'v';
       if (event.key === 'Escape' && (this.gesture || this.reorderIntent)) {
         this.cancelGesture(); this.cancelReorderIntent(); this.suppressClick = true;
         if (!event.isComposing && event.keyCode !== 229 && !this.pending()) event.preventDefault();
@@ -1111,9 +1114,19 @@
       }
     }
     paste(event) {
-      event.stopPropagation(); if (this.pending() || !event.clipboardData) return;
-      const value = event.clipboardData.getData('text/plain');
-      if (!this.selection && (!this.edit || !/[\t\r\n]/.test(value))) return;
+      event.stopPropagation(); const plain = this.pastePlain; this.pastePlain = false;
+      if (this.pending() || !event.clipboardData || event.defaultPrevented) return;
+      const original = event.clipboardData.getData('text/plain'), input = this.edit?.input;
+      const value = plain || !/\\\\[[(]/.test(original) ? original : this.controller.options.clipboardText?.(original, '', () => ({
+        before: input ? input.value.slice(0, input.selectionStart) : '', after: input ? input.value.slice(input.selectionEnd) : '',
+      }), true) ?? original;
+      if (!this.selection && (!this.edit || !/[\t\r\n]/.test(value))) {
+        if (input && value !== original) {
+          event.preventDefault();
+          input.view.dispatch(Object.assign({}, input.view.state.replaceSelection(value), { userEvent: 'input.paste', scrollIntoView: true }));
+        }
+        return;
+      }
       event.preventDefault(); if (!value) return;
       const data = syntax.parseDelimited(value), incoming = matrix(data);
       const s = this.bounds(), edit = this.edit;

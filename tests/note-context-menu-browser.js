@@ -55,6 +55,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await page.waitForFunction(() => window.__noteMenuTest?.state.initialized);
     await page.evaluate(() => __noteMenuTest.openNote('Main.md'));
     const menu = page.locator('[data-role="note-context-menu"]');
+    const content = page.locator('.cm-content:not(.note-table-cell-editor)');
     async function set(value, anchor = 0, head = anchor) {
       await page.evaluate(({ value, anchor, head }) => {
         const editor = __noteMenuTest.editor;
@@ -65,7 +66,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     }
     const value = () => page.evaluate(() => __noteMenuTest.editor.snapshot().value);
     async function openMenu() {
-      await page.locator('.cm-content').press('Shift+F10');
+      await content.press('Shift+F10');
       await menu.waitFor({ state: 'visible' });
     }
     async function command(group, name) {
@@ -77,9 +78,9 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await set('复变函数\n电路\n概率论\n下段', 0, 12);
     await command('paragraph', 'task');
     assert.equal(await value(), '- [ ] 复变函数\n- [ ] 电路\n- [ ] 概率论\n下段');
-    await page.locator('.cm-content').press('Control+z');
+    await content.press('Control+z');
     assert.equal(await value(), '复变函数\n电路\n概率论\n下段', 'one undo restores the whole formatting batch');
-    await page.locator('.cm-content').press('Control+y');
+    await content.press('Control+y');
     assert((await value()).startsWith('- [ ]'));
     await page.evaluate(() => __noteMenuTest.flushSave());
     assert.equal(fs.readFileSync(path.join(root, 'notes', 'Main.md'), 'utf8'), await value());
@@ -117,7 +118,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
       const changed = await value();
       assert(changed.includes('selected'), `${kind} preserves selected words`);
       assert(changed.includes({ table: '| --- | --- |', callout: '> [!note]', rule: '\n---', 'code-block': '```', math: '$$' }[kind]));
-      await page.locator('.cm-content').press('Control+z');
+      await content.press('Control+z');
       assert.equal(await value(), 'selected\nend');
     }
     await set('contains ``` inside', 0, 19);
@@ -167,7 +168,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     });
     assert.equal(imageTransactions, 1, 'a menu paste of multiple images must be one document transaction');
     assert.equal(((await value()).match(/!\[/g) || []).length, 2);
-    await page.locator('.cm-content').press('Control+z');
+    await content.press('Control+z');
     assert.equal(await value(), 'two images');
 
     // Right-click must leave a native composition alone and never open a format menu.
@@ -175,7 +176,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await page.evaluate(() => __noteMenuTest.editor.focus());
     const cdp = await context.newCDPSession(page);
     await cdp.send('Input.imeSetComposition', { text: 'pin', selectionStart: 3, selectionEnd: 3 });
-    await page.locator('.cm-content').dispatchEvent('contextmenu', { clientX: 500, clientY: 200 });
+    await content.dispatchEvent('contextmenu', { clientX: 500, clientY: 200 });
     assert(await menu.isHidden());
     await cdp.send('Input.insertText', { text: '拼' });
     await page.waitForTimeout(100);

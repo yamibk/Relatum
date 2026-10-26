@@ -5375,10 +5375,10 @@
             }
             if (plain || !event.clipboardData || view.state.readOnly || inputPending() || imageTextController.active) return false;
             const text = event.clipboardData.getData('text/plain');
-            const markdown = safeOptions.clipboardText(text, event.clipboardData.getData('text/html'));
-            if (markdown === text) return false;
+            const paste = clipboardSelection(text, event.clipboardData.getData('text/html'));
+            if (!paste.changed) return false;
             event.preventDefault();
-            view.dispatch(Object.assign({}, view.state.replaceSelection(markdown), { userEvent: 'input.paste', scrollIntoView: true }));
+            view.dispatch(Object.assign({}, paste.transaction, { userEvent: 'input.paste', scrollIntoView: true }));
             return true;
           },
           dragover(event) {
@@ -5667,6 +5667,18 @@
     function commandContext() {
       return { doc: view.state.doc, selection: view.state.selection, path: currentPath };
     }
+    function clipboardSelection(text, html) {
+      let changed = false;
+      const transaction = view.state.changeByRange(range => {
+        const markdown = safeOptions.clipboardText(text, html, () => ({
+          before: view.state.doc.sliceString(0, range.from), after: view.state.doc.sliceString(range.to),
+        }));
+        changed = changed || markdown !== text;
+        const insert = view.state.toText(markdown);
+        return { changes: { from: range.from, to: range.to, insert }, range: EditorSelection.cursor(range.from + insert.length) };
+      });
+      return { transaction, changed };
+    }
     function validCommandContext(context) {
       return !destroyed && !inputPending() && !imageTextController.active && (!context
         || (context.doc === view.state.doc && context.path === currentPath && context.selection.eq(view.state.selection)));
@@ -5702,14 +5714,18 @@
       }
       return { enabled: true, checked: false };
     }
-    function executeCommand(name, context, text) {
+    function executeCommand(name, context, text, html) {
       if (!queryCommand(name, context).enabled) return false;
       let done;
       if (name.startsWith('paragraph:')) done = paragraphCommand(view, name.slice(10));
       else if (name.startsWith('insert:')) done = insertBlockCommand(view, name.slice(7), document.documentElement.lang === 'en', text);
       else if (name === 'cut' || name === 'paste' || name === 'paste-plain') {
-        const transaction = view.state.changeByRange((range) => ({ changes: { from: range.from, to: range.to, insert: text || '' },
-          range: EditorSelection.cursor(range.from + (text || '').length) }));
+        // Windows clipboard reads may contain CRLF. Selection offsets must use
+        // the same normalized document text as the inserted ChangeSet.
+        const insert = view.state.toText(text || '');
+        const transaction = name === 'paste' ? clipboardSelection(text || '', html).transaction
+          : view.state.changeByRange((range) => ({ changes: { from: range.from, to: range.to, insert },
+            range: EditorSelection.cursor(range.from + insert.length) }));
         view.dispatch(Object.assign({}, transaction, { userEvent: 'input.note-command', scrollIntoView: true })); done = true;
       } else if (name === 'select-all') { view.dispatch({ selection: EditorSelection.range(0, view.state.doc.length) }); done = true; }
       else if (shortcutRuns[name]) done = shortcutRuns[name](view);
