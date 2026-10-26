@@ -176,7 +176,8 @@ const liveProbe = loadLiveDecorationProbe();
 
 // Compact block boundaries must change layout without absorbing adjacent
 // composition text. Exercise the real StateField and ChangeSet mapping.
-for (const block of ['$$x^2$$', '$$\n\\frac{a}{b}\n$$', '![[fixture.png|240]]', '![diagram.canvas|240x180](canvases/diagram.canvas)', '---', '***', '___']) {
+for (const block of ['$$x^2$$', '$$\n\\frac{a}{b}\n$$', '![[fixture.png|240]]', '![diagram.canvas|240x180](canvases/diagram.canvas)', '---', '***', '___',
+  '```quiz\nQuestion?\n- [ ] No\n- [x] Yes\n```']) {
   const coordinator = {};
   const field = liveProbe.__relatumLiveTest.createBlockField(() => 'compact.md', {}, coordinator, { pending: () => true });
   // A blank line distinguishes --- from a Setext heading underline.

@@ -2,6 +2,21 @@
 (function () {
   'use strict';
   const core = window.RelatumNoteQuizCore; let nextId = 0;
+  const iconPaths = {
+    correct: '<circle cx="12" cy="12" r="9"/><path d="m8 12 2.7 2.7L16 8.5"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="7.5" r=".9" fill="currentColor" stroke="none"/>',
+    reset: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+    edit: '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>',
+  };
+  function makeIcon(kind) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false');
+    svg.classList.add('note-quiz-icon', 'note-quiz-icon-' + kind); svg.innerHTML = iconPaths[kind]; return svg;
+  }
+  function makeAction(kind, label) {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'note-quiz-action note-quiz-' + kind;
+    const caption = document.createElement('span'); caption.textContent = label; button.append(makeIcon(kind), caption); return button;
+  }
   function attach(root, options) {
     let source = '', range = options.range, model = null, disposed = false, paused = false, generation = 0, renderedLanguage = '';
     let radios = [], feedback, icon, reset, edit, mathNodes = [], mathCleanups = [], mathJobs = new WeakSet();
@@ -31,7 +46,6 @@
       const opening = feedback.hidden && result.answered;
       feedback.hidden = !result.answered; reset.hidden = !result.answered;
       root.dataset.quizState = result.answered ? result.correct ? 'correct' : 'incorrect' : 'unanswered';
-      icon.textContent = result.correct ? '✓' : '!';
       icon.setAttribute('aria-label', result.correct ? text('回答正确', 'Correct') : text('回答错误', 'Incorrect'));
       if (opening) typeset(); options.onLayout?.();
     }
@@ -66,16 +80,17 @@
         });
         feedback = document.createElement('div'); feedback.className = 'note-quiz-feedback'; feedback.hidden = true; feedback.setAttribute('aria-live', 'polite');
         icon = document.createElement('span'); icon.className = 'note-quiz-result-icon'; icon.setAttribute('role', 'img');
+        icon.append(makeIcon('correct'), makeIcon('info'));
         const body = document.createElement('div'); body.className = 'note-quiz-feedback-body';
         const answer = document.createElement('div'); answer.className = 'note-quiz-answer';
         const caption = document.createElement('span'); caption.textContent = text('正确答案：', 'Correct answer: '); answer.append(caption); render(answer, model.choices[model.answer]); body.append(answer);
         if (model.explanation) render(body, model.explanation); feedback.append(icon, body);
-        reset = document.createElement('button'); reset.type = 'button'; reset.className = 'note-quiz-reset'; reset.hidden = true; reset.textContent = text('重做', 'Try again');
+        reset = makeAction('reset', text('重做', 'Try again')); reset.hidden = true;
         reset.addEventListener('click', () => { if (!current()) return; options.session.set(options.notePath, currentRange(), model.fingerprint, null); radios[0].focus({ preventScroll: true }); refresh(); });
         root.append(question, group, feedback, reset); refresh();
       }
       if (options.onEdit) {
-        edit = document.createElement('button'); edit.type = 'button'; edit.className = 'note-quiz-edit'; edit.textContent = text('编辑题目', 'Edit question');
+        edit = makeAction('edit', text('编辑题目', 'Edit question'));
         edit.addEventListener('click', () => { if (current()) options.onEdit(); }); root.append(edit);
       }
       typeset(); options.onLayout?.();

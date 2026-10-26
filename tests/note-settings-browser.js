@@ -330,6 +330,26 @@ async function run(browser, mode) {
       await page.evaluate(() => T.setViewMode('reading')); await page.locator('.note-reading-content .note-quiz').waitFor();
       assert.equal(await page.locator('.note-reading-content .note-quiz').getAttribute('data-quiz-state'), 'correct');
       await page.evaluate(() => T.setViewMode('live'));
+      if (mode === 'full') {
+        const at = quizSource.lastIndexOf('\n\n尾段') + 1;
+        const point = await page.evaluate(() => {
+          const lines = Array.from(T.editor.view.contentDOM.children).filter(el => el.classList.contains('cm-line') && !el.textContent);
+          const rect = lines.at(-1).getBoundingClientRect(); return { x: rect.left + 4, y: (rect.top + rect.bottom) / 2 };
+        });
+        await page.mouse.click(point.x, point.y);
+        assert.equal(await page.evaluate(() => T.editor.snapshot().head), at, 'a real quiz-adjacent blank line retains its insertion position');
+        const changed = quizSource.slice(0, at) + '块间输入验收' + quizSource.slice(at);
+        const saveAfter = async (action, expected) => {
+          const response = page.waitForResponse(response => response.url().endsWith('/api/note-save') && response.request().method() === 'POST'
+            && response.request().postDataJSON().path === 'Quiz.md' && response.request().postDataJSON().content === expected);
+          await action(); await page.keyboard.press('Control+s'); await response;
+          assert.equal(fs.readFileSync(path.join(data, 'notes/Quiz.md'), 'utf8'), expected);
+        };
+        await saveAfter(() => page.keyboard.insertText('块间输入验收'), changed);
+        await saveAfter(() => page.keyboard.press('Control+z'), quizSource);
+        await saveAfter(() => page.keyboard.press('Control+y'), changed);
+        await saveAfter(() => page.keyboard.press('Control+z'), quizSource);
+      }
     } else { assert.equal(await page.locator('.note-quiz').count(), 0); }
     assert.equal(fs.readFileSync(path.join(data, 'notes/Quiz.md'), 'utf8'), quizSource, 'answering never writes quiz Markdown');
     await page.evaluate(() => { T.setSideOpen(true); return T.openNote('Main.md'); });

@@ -86,6 +86,7 @@
   const notePathEffect = StateEffect.define();
   const viewportScanEffect = StateEffect.define();
   const viewportParseRequestEffect = StateEffect.define();
+  const quizLayoutEffect = StateEffect.define();
   let nextBlockSpecId = 1;
   let nextTableCellVersion = 1;
   const noteSyntaxContexts = new WeakMap();
@@ -2791,20 +2792,55 @@
   }
 
   class QuizBlockWidget extends RichBlockWidget {
+    constructor(...args) { super(...args); this.layoutHeight = this.coordinator.quizHeights?.get(this.spec.id) ?? -1; }
+    eq(other) { return super.eq(other) && other.layoutHeight === this.layoutHeight; }
+    get estimatedHeight() { return this.layoutHeight; }
     toDOM(view) {
       const wrap = document.createElement('div'); wrap.className = 'note-live-rich-block is-quiz';
       const token = {}; this.token = token;
+      const holder = { widget: this, token, control: null }; wrap.__relatumQuizWidget = holder;
       wrap.innerHTML = quizFence({ language: 'quiz', source: fencedCodeBody(this.spec.renderSource || this.spec.source), from: this.spec.from, to: this.spec.to });
-      const current = () => this.isCurrent(view, wrap, token) && !compositionActive(view);
-      this.quizControl = attachNoteQuiz(wrap, {
+      const current = () => holder.widget.isCurrent(view, wrap, token) && !compositionActive(view);
+      const measurable = () => current() && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1' && !wrap.closest('[hidden]');
+      const onLayout = () => runWhenInputSettled(view, () => {
+        if (!measurable()) return;
+        view.requestMeasure({ key: wrap,
+          read: () => measurable() ? wrap.getBoundingClientRect().height / view.scaleY : 0,
+          write(height) {
+            if (!height || !measurable()) return;
+            // Dispatch after CodeMirror leaves its measurement write phase.
+            Promise.resolve().then(() => {
+              if (!measurable()) return;
+              const widget = holder.widget, heights = widget.coordinator.quizHeights ||= new Map(), previous = heights.get(widget.spec.id);
+              if (previous != null && Math.abs(previous - height) < .5) return;
+              heights.delete(widget.spec.id); heights.set(widget.spec.id, height);
+              while (heights.size > 64) heights.delete(heights.keys().next().value);
+              // Widget DOM mutations are opaque to CodeMirror. A changed height
+              // estimate invalidates its height map even when the editor's
+              // minimum height keeps contentDOM.getBoundingClientRect unchanged.
+              view.dispatch({ effects: quizLayoutEffect.of(widget.spec.id) });
+            });
+          },
+        });
+      });
+      holder.control = attachNoteQuiz(wrap, {
         notePath: this.notePath, range: { from: this.spec.from, to: this.spec.to },
-        getRange: () => { const spec = this.coordinator.spec(view, this.spec.id); return spec && { from: spec.from, to: spec.to }; },
+        getRange: () => { const widget = holder.widget, spec = widget.coordinator.spec(view, widget.spec.id); return spec && { from: spec.from, to: spec.to }; },
         isCurrent: current, whenSettled: () => runWhenInputSettled(view, () => true),
-        onLayout: () => { if (current()) view.requestMeasure(); }, onEdit: () => this.reveal(view), onLink: this.options.onOpenExternal,
+        onLayout, onEdit: () => holder.widget.reveal(view), onLink: this.options.onOpenExternal,
       });
       return wrap;
     }
-    destroy(dom) { this.quizControl?.destroy(); this.quizControl = null; super.destroy(dom); }
+    updateDOM(dom) {
+      const holder = dom.__relatumQuizWidget;
+      if (!holder || !super.eq(holder.widget)) return false;
+      holder.widget = this; this.token = holder.token; return true;
+    }
+    destroy(dom) {
+      const holder = dom.__relatumQuizWidget;
+      if (holder?.widget !== this) return;
+      holder.control?.destroy(); delete dom.__relatumQuizWidget; super.destroy(dom);
+    }
     ignoreEvent() { return true; }
   }
 
@@ -3089,7 +3125,7 @@
     // to deliver native input without a keydown to the selected image text box.
     const imageTextInput = spec.kind === 'image' && spec.from === 0 && spec.to === state.doc.length
       && options.imageTextController?.active;
-    return !imageTextInput && (spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule');
+    return !imageTextInput && (spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz');
   }
 
   function blockAtomicRange(spec, state) {
@@ -3246,12 +3282,14 @@
         const imageTextModeChanged = transaction.effects.some((effect) => effect.is(imageTextProjectionEffect));
         const inputReconciled = inputReconcileRanges !== undefined;
         const selectionChanged = !!transaction.selection;
-        if (!transaction.docChanged && !selectionChanged && focused === value.focused && !notePathChanged && !imageTextModeChanged && !viewportRefreshed && !foldChanged) return value;
+        const quizLayouts = transaction.effects.filter(effect => effect.is(quizLayoutEffect)).map(effect => effect.value);
+        if (!transaction.docChanged && !selectionChanged && focused === value.focused && !notePathChanged && !imageTextModeChanged && !viewportRefreshed && !foldChanged && !quizLayouts.length) return value;
 
         const byId = specs === value.specs ? value.byId : new Map(specs.map((spec) => [spec.id, spec]));
         const activeIds = activeBlockIds(specs, transaction.state, focused, false);
         const selectedImageIds = selectedBlockImageIds(specs, transaction.state);
         const refresh = new Set();
+        quizLayouts.forEach(id => { if (byId.get(id)?.kind === 'quiz') refresh.add(id); });
         if (foldChanged) specs.forEach(spec => refresh.add(spec.id));
         if (selectionChanged || focused !== value.focused) {
           // Only entering/leaving a header can change its block projection.
@@ -5631,6 +5669,7 @@
       coordinator.epoch += 1;
       coordinator.folds.clear(); coordinator.foldPositions.clear(); coordinator.records = [];
       coordinator.mermaidHeights?.clear();
+      coordinator.quizHeights?.clear();
       imageTextController.setActive(false);
       if (pendingSourceMode !== null) { sourceMode = pendingSourceMode; pendingSourceMode = null; }
       if (pendingShortcutBindings !== null) {
