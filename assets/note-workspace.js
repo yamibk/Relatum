@@ -591,7 +591,8 @@
       hint.className = 'note-settings-hint'; list.className = 'note-notebook-settings-list';
       notebookSettingsPanel.append(hint, list);
     }
-    notebookSettingsPanel.firstChild.textContent = notebookCopy('visibilityHint');
+    const hint = notebookCopy('visibilityHint');
+    if (notebookSettingsPanel.firstChild.textContent !== hint) notebookSettingsPanel.firstChild.textContent = hint;
     const list = notebookSettingsPanel.lastChild, roots = notebookRoots(), paths = new Set(roots.map(entry => entry.path));
     notebookSettingsRows.forEach((row, path) => { if (!paths.has(path)) { row.remove(); notebookSettingsRows.delete(path); } });
     let anchor = list.firstChild;
@@ -604,13 +605,17 @@
         row.append(input, notebookIcon(entry.path), name); notebookSettingsRows.set(entry.path, row);
       }
       const input = row.firstChild;
-      input.checked = notebookVisibilityPending?.[entry.path] ?? (state.notebookVisible[entry.path] !== false);
-      input.disabled = notebookVisibilityBusy || !state.notebookSettingsLoaded;
-      row.querySelector('.note-notebook-icon').dataset.color = state.notebookColors[entry.path] || 'gray';
-      row.lastChild.textContent = entry.name;
+      const checked = notebookVisibilityPending?.[entry.path] ?? (state.notebookVisible[entry.path] !== false);
+      const disabled = notebookVisibilityBusy || !state.notebookSettingsLoaded;
+      if (input.checked !== checked) input.checked = checked;
+      if (input.disabled !== disabled) input.disabled = disabled;
+      const icon = row.querySelector('.note-notebook-icon'), color = state.notebookColors[entry.path] || 'gray';
+      if (icon.dataset.color !== color) icon.dataset.color = color;
+      if (row.lastChild.textContent !== entry.name) row.lastChild.textContent = entry.name;
       if (row !== anchor) list.insertBefore(row, anchor); else anchor = anchor.nextSibling;
     });
-    list.setAttribute('aria-busy', String(notebookVisibilityBusy));
+    const busy = String(notebookVisibilityBusy);
+    if (list.getAttribute('aria-busy') !== busy) list.setAttribute('aria-busy', busy);
   }
   async function commitNotebookVisibility(visible) {
     if (notebookVisibilityBusy || !state.notebookSettingsLoaded || noteMovePromise || state.recycleRunning || state.renamePath) {

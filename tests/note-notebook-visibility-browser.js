@@ -140,7 +140,56 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     await openSettings(); await change(empty, false); await closeSettings();
     fs.rmdirSync(path.join(data, 'notes', empty)); await page.evaluate(() => T.refreshTree(false)); await page.evaluate(() => T.flushNotebookSettings());
     assert.equal(settings().visible[empty], undefined);
+    // A long settings page must stay visually stable while persistence is pending.
+    for (let i = 0; i < 12; i++) fs.mkdirSync(path.join(data, 'notes/CustomNotebook/Flicker' + String(i).padStart(2, '0')));
+    await page.evaluate(() => T.refreshTree(false));
     await openSettings();
+    const stablePath = 'CustomNotebook/Flicker08';
+    for (const motion of ['reduce', 'no-preference']) for (const theme of ['light', 'dark']) {
+      await page.emulateMedia({ reducedMotion: motion });
+      await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
+      await page.waitForFunction(() => !document.querySelector('#note-settings-dialog').getAnimations({ subtree: true }).some(animation => animation.playState === 'running'));
+      await checkbox(stablePath).scrollIntoViewIfNeeded(); await checkbox(stablePath).focus();
+      await page.evaluate(() => {
+        const panel = document.querySelector('.relatum-settings-page[data-settings-category="notebooks"]');
+        const scroll = panel.closest('.relatum-settings-scroll');
+        window.stableSettings = { panel, scroll, top: scroll.scrollTop,
+          rows: [...panel.querySelectorAll('.note-notebook-setting')], nodes: [...panel.querySelectorAll('*')],
+          texts: [...panel.querySelectorAll('.note-notebook-setting > span')].map(span => span.firstChild), mutations: [] };
+        stableSettings.observer = new MutationObserver(records => stableSettings.mutations.push(...records));
+        stableSettings.observer.observe(panel, { childList: true, subtree: true });
+      });
+      assert(await page.evaluate(() => stableSettings.top > 0), 'the fixture exercises a scrolled settings page');
+      let finish;
+      const pending = new Promise(resolve => { finish = resolve; });
+      const hold = async route => { if (route.request().postDataJSON()?.visible) await pending; await route.continue(); };
+      await page.route('**/api/note-notebooks-settings', hold);
+      const stable = () => page.evaluate(() => {
+        const sample = stableSettings;
+        return { opacity: sample.rows.map(row => getComputedStyle(row).opacity),
+          sameNodes: sample.nodes.every((node, index) => node === sample.panel.querySelectorAll('*')[index]),
+          sameText: sample.texts.every((node, index) => node === sample.rows[index].lastChild.firstChild),
+          mutations: sample.mutations.length, top: sample.scroll.scrollTop, expectedTop: sample.top };
+      });
+      const assertStable = async phase => {
+        const sample = await stable();
+        assert(sample.opacity.every(opacity => opacity === '1'), phase + ': saving never dims the notebook list');
+        assert(sample.sameNodes && sample.sameText && sample.mutations === 0, phase + ': unchanged settings DOM and text nodes stay attached');
+        assert(Math.abs(sample.top - sample.expectedTop) < .5, phase + ': settings scroll position stays unchanged');
+      };
+      try {
+        await checkbox(stablePath).click();
+        await page.waitForFunction(() => document.querySelector('.note-notebook-settings-list').getAttribute('aria-busy') === 'true');
+        await assertStable(motion + '/' + theme + '/pending');
+        finish();
+        await page.waitForFunction(() => document.querySelector('.note-notebook-settings-list').getAttribute('aria-busy') === 'false');
+        await assertStable(motion + '/' + theme + '/saved');
+        assert.equal(await checkbox(stablePath).evaluate(input => document.activeElement === input), true, 'saving keeps keyboard focus without scrolling');
+      } finally {
+        finish(); await page.unroute('**/api/note-notebooks-settings', hold);
+        await page.evaluate(() => stableSettings.observer.disconnect());
+      }
+    }
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await dialog.locator('[data-settings-search]').fill('隐藏');
     await dialog.locator('.relatum-settings-result').filter({ has: page.locator('span').filter({ hasText: /^笔记本$/ }) }).click();
