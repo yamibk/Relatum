@@ -328,6 +328,8 @@
         getNotebooks: () => notebookRoots().map(entry => ({ path: entry.path, name: entry.name })), getIndexState: () => state.indexState,
         beforeBrowse, showResults: showBrowserResults, openNote: openSearchNote,
         onPopoverOpen: () => closeWorkspacePopovers(),
+        onCanvasContextMenu: openCanvasContextMenu,
+        closeCanvasContextMenu: () => { if (contextMenu?.dataset.source === 'browser-canvas') closeContextMenu({ instant: true }); },
         canvasEnabled, revealCanvas: (path) => post('/api/notes-canvas/reveal', { path }), showError: (message) => showToast(message, 'error'),
       });
       return noteBrowser;
@@ -4093,19 +4095,29 @@
     return BODY_COMMAND_LABELS[kind][language() === 'en' ? 1 : 0];
   }
   function openCanvasContextMenu(payload) {
-    if (!canvasEnabled() || !state.active || !state.current || state.viewMode !== 'live') return;
+    if (!canvasEnabled() || !noteWorkspaceVisible()) return;
+    if (payload.browser ? !payload.isCurrent() : !state.current || state.viewMode !== 'live') return;
     // Events originating in an embedded canvas do not bubble to this document.
     if (contextOpen) { closeContextMenu(); return; }
     closeContextMenu({ instant: true });
-    const explorer = contextButton(tr('canvasExplorer'), () => revealCanvas(payload.adapter));
-    explorer.disabled = !payload.adapter?.session;
-    showContext([contextButton(tr('rename'), () => renameCanvas(payload.adapter)), explorer, separator(),
-      mediaRecycleButton(null, liveEditor?.commandContext(), payload.adapter)], payload.x, payload.y, 'canvas');
+    const documentState = state.current, session = payload.adapter?.session;
+    const context = liveEditor?.commandContext();
+    const target = { path: payload.browser ? payload.path : session?.path, session,
+      isCurrent: payload.browser ? payload.isCurrent : () => noteWorkspaceVisible() && state.current === documentState
+        && state.viewMode === 'live' && payload.adapter.frame.isConnected && payload.adapter.session === session
+        && liveEditor?.commandContext().doc === context?.doc };
+    const rename = contextButton(tr('rename'), () => { if (target.isCurrent()) renameCanvas(target); });
+    const explorer = contextButton(tr('canvasExplorer'), () => { if (target.isCurrent()) revealCanvas(target); });
+    const recycle = payload.browser ? contextButton(tr('recycle'), () => recycleCanvasFile(target), true)
+      : mediaRecycleButton(null, context, payload.adapter);
+    const disabled = payload.browser ? !payload.exists : !session;
+    [rename, explorer, recycle].forEach(button => { button.disabled ||= disabled || !!noteMovePromise; });
+    showContext([rename, explorer, separator(), recycle], payload.x, payload.y, payload.browser ? 'browser-canvas' : 'canvas');
+    if (payload.keyboard) menuButtons(contextMenu)[0]?.focus({ preventScroll: true });
   }
-  async function revealCanvas(adapter) {
-    const session = adapter?.session;
-    if (!session) return;
-    try { await post('/api/notes-canvas/reveal', { path: session.path }); }
+  async function revealCanvas(target) {
+    if (!target.path) return;
+    try { await post('/api/notes-canvas/reveal', { path: target.path }); }
     catch (error) { showToast(error.message || tr('revealFailed'), 'error'); }
   }
   function closeNoteModal() { activeNoteModal?.cancel(false); }
@@ -4172,21 +4184,28 @@
       dialog.append(input, actions); return input;
     });
   }
-  async function renameCanvas(adapter) {
-    const session = adapter?.session;
-    if (!session || noteMovePromise) return;
-    const name = await canvasNameInput(baseName(session.path));
-    if (!name) return;
+  async function renameCanvas(target) {
+    if (target?.session && !target.path) {
+      const adapter = target, documentState = state.current;
+      target = { path: adapter.session.path, session: adapter.session,
+        isCurrent: () => noteWorkspaceVisible() && state.current === documentState && adapter.frame.isConnected };
+    }
+    if (!target?.path || noteMovePromise || !target.isCurrent()) return;
+    const name = await canvasNameInput(baseName(target.path));
+    if (!name || !target.isCurrent()) return;
     const operation = (async () => {
       if (editorInputPending()) await whenEditorInputSettled();
-      if (!(await flushCanvases())) return false;
+      if (!(await flushCanvases()) || !target.isCurrent()) return false;
       stopExternalSync(); stopDocumentPrefetch(); state.externalSeq++; state.refreshSeq++;
       setNoteMoveInputLocked(true);
       if (!(await flushSave(state.current, true))) return false;
       for (const cached of state.documentCache.values()) if (cached !== state.current && hasPendingEdits(cached) && !(await flushSave(cached, true))) return false;
-      const source = session.path;
-      const result = await post('/api/notes-canvas/rename', { path: source, name, revision: session.revision });
-      window.RelatumNoteCanvas.renameSession(source, result);
+      if (!target.isCurrent()) return false;
+      const source = target.path;
+      const file = target.session || await request('/api/notes-canvas/read?path=' + encodeURIComponent(source));
+      if (!target.isCurrent()) return false;
+      const result = await post('/api/notes-canvas/rename', { path: source, name, revision: file.revision });
+      window.RelatumNoteCanvas?.renameSession(source, result);
       // Project every history branch even when the current note has no reference:
       // its redo branch may still contain an inserted canvas.
       if (liveEditor && state.current) {
@@ -4206,6 +4225,31 @@
     catch (error) { showToast(error.message || tr('moveFailed'), 'error'); return false; }
     finally {
       if (noteMovePromise === operation) { noteMovePromise = null; setNoteMoveInputLocked(false); scheduleExternalSync(); scheduleDocumentPrefetch(); }
+    }
+  }
+  async function recycleCanvasFile(target) {
+    if (noteMovePromise || state.assetCleanupBusy || state.imageTextBusy || state.recycleRunning || !target.isCurrent()) return false;
+    state.assetCleanupBusy = true;
+    stopExternalSync(); stopDocumentPrefetch(); clearTimeout(state.saveTimer); clearTimeout(state.retryTimer);
+    const operation = (async () => {
+      await whenEditorInputSettled();
+      if (!target.isCurrent()) return false;
+      root.inert = true; setNoteMoveInputLocked(true);
+      await state.externalSyncChain;
+      if (!(await flushSave(state.current, true)) || !target.isCurrent()) return false;
+      const result = await post('/api/notes-canvas/trash-file', { path: target.path });
+      await window.RelatumNoteCanvas?.removeSession(result.path, { missing: true });
+      noteBrowser?.invalidate();
+      showToast(tr('recycled'));
+      return true;
+    })();
+    noteMovePromise = operation; noteMovePaths = null;
+    try { return await operation; }
+    catch (error) { showToast(error.message || tr('recycle'), 'error'); return false; }
+    finally {
+      root.inert = false; state.assetCleanupBusy = false;
+      if (noteMovePromise === operation) { noteMovePromise = null; setNoteMoveInputLocked(false); }
+      scheduleExternalSync(); scheduleDocumentPrefetch();
     }
   }
   function fitBodyMenu(menu, x, y) {

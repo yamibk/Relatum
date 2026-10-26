@@ -127,5 +127,72 @@ class NoteMediaTrashTests(unittest.TestCase):
         self.assertFalse(disabled.api_allowed('/api/notes-canvas/trash', write=True))
 
 
+class NoteCanvasFileTrashApiTests(unittest.TestCase):
+    def setUp(self):
+        import app
+        from tests.usage_v2_test_support import IsolatedUsage
+        self.app = app
+        self.fixture = self.enterContext(IsolatedUsage())
+        self.root = self.fixture.notes
+        (self.root / 'canvases').mkdir()
+        self.canvas = self.root / 'canvases/A.canvas'
+        self.canvas.write_bytes(b'broken JSON is still a recyclable file')
+        self.source = b'\xef\xbb\xbf![A](canvases/A.canvas)\r\n'
+        for name in ('A.md', 'B.md'):
+            (self.root / name).write_bytes(self.source)
+        self.recycled = self.fixture.root / 'recycled'
+        self.recycled.mkdir()
+        self.recycle = self.enterContext(mock.patch.object(app, '_move_paths_to_recycle_bin',
+            side_effect=lambda targets: [shutil.move(path, self.recycled / path.name) for path in targets]))
+
+    def request(self, path='canvases/A.canvas'):
+        return self.fixture.request('/api/notes-canvas/trash-file', {'path': path})
+
+    def test_file_and_companion_without_reading_or_rewriting_notes(self):
+        companion = self.canvas.with_suffix('.assets')
+        companion.mkdir()
+        (companion / 'asset.txt').write_text('asset')
+        with mock.patch.object(self.app.NOTES_STORE, '_read_note_bytes', side_effect=AssertionError('must not read Markdown')):
+            self.assertEqual(self.request(), (200, {'ok': True, 'path': 'canvases/A.canvas'}))
+        self.recycle.assert_called_once_with([self.canvas, companion])
+        self.assertFalse(self.canvas.exists())
+        self.assertTrue((self.recycled / 'A.assets/asset.txt').exists())
+        for name in ('A.md', 'B.md'):
+            self.assertEqual((self.root / name).read_bytes(), self.source)
+
+    def test_recycle_failure_preserves_files_and_markdown(self):
+        self.recycle.side_effect = OSError('recycle denied')
+        status, result = self.request()
+        self.assertEqual(status, 500)
+        self.assertIn('recycle denied', result['error'])
+        self.assertTrue(self.canvas.exists())
+        self.assertEqual((self.root / 'A.md').read_bytes(), self.source)
+
+    def test_unsafe_and_missing_paths_never_recycle(self):
+        for path in ('../outside.canvas', '/canvases/A.canvas', 'canvases/nested/A.canvas', 'A.md', 'canvases/missing.canvas'):
+            with self.subTest(path=path):
+                self.assertIn(self.request(path)[0], (403, 404))
+        from notes_library import _is_reparse
+        with mock.patch('notes_library._is_reparse', side_effect=lambda path: Path(path) == self.canvas or _is_reparse(path)):
+            self.assertEqual(self.request()[0], 403)
+        self.canvas.with_suffix('.assets').write_text('not a directory')
+        self.assertEqual(self.request()[0], 403)
+        self.recycle.assert_not_called()
+
+    def test_direct_read_and_legacy_reference_read(self):
+        self.canvas.write_text('{"version":2,"nodes":[],"edges":[]}')
+        direct = self.fixture.request('/api/notes-canvas/read?path=canvases/A.canvas')
+        legacy = self.fixture.request('/api/notes-canvas/read?note=A.md&src=canvases/A.canvas')
+        self.assertEqual(direct, legacy)
+        self.assertEqual(direct[0], 200)
+        self.assertEqual(self.fixture.request('/api/notes-canvas/read?path=../outside.canvas')[0], 403)
+
+    def test_feature_disabled_blocks_read_and_recycle(self):
+        self.fixture.server.launch_profile = LaunchProfile({'notes.canvas': False}, restricted=True)
+        self.assertEqual(self.request()[0], 403)
+        self.assertEqual(self.fixture.request('/api/notes-canvas/read?path=canvases/A.canvas')[0], 403)
+        self.recycle.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

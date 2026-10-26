@@ -9897,6 +9897,7 @@ NOTES_POST_ROUTES = {
     "/api/notes-canvas/save",
     "/api/notes-canvas/rename",
     "/api/notes-canvas/trash",
+    "/api/notes-canvas/trash-file",
     "/api/notes-canvas/reveal",
     "/api/note-notebooks-settings",
     "/api/note-cleanup-unused-images",
@@ -10306,7 +10307,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 query = urllib.parse.parse_qs(parsed.query)
                 with NOTES_MUTATION_LOCK:
                     store = NoteCanvasStore(NOTES_STORE)
-                    relative = store.resolve(query.get("note", [""])[0], query.get("src", [""])[0])
+                    relative = query['path'][0] if 'path' in query else store.resolve(query.get("note", [""])[0], query.get("src", [""])[0])
                     return self._send_json(200, store.read(relative))
             except NotesError as err:
                 return self._send_notes_error(err)
@@ -10680,6 +10681,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 elif path == "/api/notes-canvas/trash":
                     result = NOTES_STORE.trash_media(body.get('note'), body.get('noteRevision'), body.get('path'),
                         _recycle_note_media, kind='canvas', canvas_revision=body.get('revision'))
+                elif path == "/api/notes-canvas/trash-file":
+                    targets = store.trash_targets(body.get('path'))
+                    _recycle_note_media(targets)
+                    result = {'ok': True, 'path': targets[0].relative_to(NOTES_STORE.root).as_posix()}
                 else:
                     return self._send_json(404, {"error": "未知画布操作"})
                 if path == "/api/notes-canvas/create":
@@ -10690,6 +10695,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     _usage_remap("move", "embedded", body["path"], result["path"], Path(result["path"]).name)
                 elif path == "/api/notes-canvas/trash":
                     _usage_remap('remove', 'embedded', result['target'])
+                elif path == "/api/notes-canvas/trash-file":
+                    _usage_remap('remove', 'embedded', result['path'])
                 return self._send_json(200, result)
             except NotesError as err:
                 return self._send_notes_error(err)

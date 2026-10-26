@@ -189,6 +189,16 @@ class NoteCanvasStore:
             raise NotesError("画布文件不存在", status=404, code="not_found")
         return path
 
+    def trash_targets(self, relative: object) -> list[Path]:
+        path = self.reveal_target(relative)
+        targets = [path]
+        companion = path.with_suffix('.assets')
+        if companion.exists():
+            if not companion.is_dir() or _is_reparse(companion):
+                raise NotesError('伴生素材目录不安全', status=403, code='unsafe_path')
+            targets.append(companion)
+        return targets
+
     def resolve(self, note: object, source: object) -> str:
         note = self.notes.normalize_path(note)
         self.notes._absolute(note)

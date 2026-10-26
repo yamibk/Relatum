@@ -143,10 +143,18 @@
     releaseUnused() { window.RelatumNoteCanvasSessions?.releaseUnused(); },
     async releaseNote(note) { await Promise.all([...mounts].filter(m => m.options.note === note).map(m => m.destroy())); window.RelatumNoteCanvasSessions?.releaseNote(note); },
     renameSession(source, result) { window.RelatumNoteCanvasSessions?.rename(source, result); remapViews(source.toLowerCase(), result.path.toLowerCase(), false); },
-    async removeSession(path) {
+    async removeSession(path, options) {
       const key = path.toLowerCase(), S = window.RelatumNoteCanvasSessions;
       S?.discard(path);
-      await Promise.all([...mounts].filter(m => (m.session?.path || S?.target(m.options.note, m.options.parsed.target))?.toLowerCase() === key).map(m => m.destroy()));
+      await Promise.all([...mounts].filter(m => (m.session?.path || S?.target(m.options.note, m.options.parsed.target))?.toLowerCase() === key).map(async m => {
+        await m.destroy();
+        if (options?.missing && m.frame.isConnected) {
+          m.frame.querySelector('.is-unavailable')?.remove();
+          const message = document.createElement('div'); message.className = 'note-canvas-viewport is-unavailable';
+          message.textContent = document.documentElement.lang === 'en' ? 'Canvas file not found' : '画布文件不存在';
+          m.frame.appendChild(message); m.options.measure?.();
+        }
+      }));
       Object.keys(views).forEach(value => { try { if (JSON.parse(value)[1] === key) delete views[value]; } catch (_) {} });
       persist(); selectionChanged();
     },

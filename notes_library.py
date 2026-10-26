@@ -2110,13 +2110,7 @@ class NotesStore:
         if not refs:
             raise NotesError('当前笔记已没有该文件的有效嵌入，请重新选择', status=409, code='selection_changed')
 
-        targets = [target]
-        if kind == 'canvas':
-            companion = target.with_suffix('.assets')
-            if companion.exists():
-                if not companion.is_dir() or _is_reparse(companion):
-                    raise NotesError('伴生素材目录不安全', status=403, code='unsafe_path')
-                targets.append(companion)
+        targets = store.trash_targets(source) if kind == 'canvas' else [target]
         refs.sort(key=lambda ref: ref['from'])
         pieces, changes, position, utf16 = [], [], 0, 0
         for ref in refs:

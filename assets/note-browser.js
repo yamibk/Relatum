@@ -604,6 +604,7 @@
       else if (active) { renderNavigation(); loadNavigation(); }
     }
     function cancelReferenceRequests() {
+      ctx.closeCanvasContextMenu?.();
       referenceEpoch++;
       canvasReferences.forEach(state => { if (state.loading) dirty = true; state.sequence++; state.loading = false; });
     }
@@ -667,6 +668,7 @@
         if (!state.open) { state.sequence++; state.loading = false; }
         else if (!state.loaded || state.signature !== canvasSignature) loadReferences(canvas.path, state, host, true);
       }, 'note-browser-result note-browser-canvas-heading');
+      row.dataset.noteBrowserPath = canvas.path;
       row.setAttribute('aria-expanded', String(state.open));
       if (ctx.icon) row.appendChild(ctx.icon('chevron-right', 'note-browser-canvas-chevron'));
       const title = document.createElement('strong'); title.textContent = canvas.name;
@@ -681,6 +683,18 @@
       }, 'note-browser-canvas-reveal'); reveal.disabled = !canvas.exists;
       const host = document.createElement('div'); host.className = 'note-browser-references'; host.hidden = !state.open;
       host.id = 'note-browser-references-' + (++referenceHostId); row.setAttribute('aria-controls', host.id);
+      const contextMenu = (event, keyboard) => {
+        if (host.contains(event.target) || !canvasInteractive() || !ctx.onCanvasContextMenu) return;
+        event.preventDefault(); event.stopPropagation();
+        const page = pageSequence, rect = row.getBoundingClientRect();
+        ctx.onCanvasContextMenu({ browser: true, path: canvas.path, exists: canvas.exists, keyboard,
+          x: keyboard ? rect.left : event.clientX, y: keyboard ? rect.bottom : event.clientY,
+          isCurrent: () => canvasInteractive() && page === pageSequence && wrapper.isConnected });
+      };
+      wrapper.addEventListener('contextmenu', event => contextMenu(event, false));
+      wrapper.addEventListener('keydown', event => {
+        if (!event.isComposing && (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10')) contextMenu(event, true);
+      });
       wrapper.append(row, reveal, host); renderReferences(canvas.path, state, host);
       if (state.open && (!state.loaded || state.signature !== canvasSignature)) {
         // The row must be attached before requesting its references.
