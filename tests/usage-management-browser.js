@@ -29,6 +29,7 @@ async function main() {
     await page.evaluate(() => RelatumGlobalSettings.open({ category: 'usage' }));
     const manager = page.locator('[data-usage-management]'); await manager.waitFor();
     await manager.getByRole('button', { name: '归档已删除笔记的统计', exact: true }).click();
+    await manager.locator('.usage-archive-details > summary').click();
     await page.waitForSelector('[data-archive-group="deleted"]');
     assert.equal(await manager.locator('[data-archive-group="deleted"] input').count(), 40, 'candidate DOM is paginated');
     assert.equal(await manager.locator('[data-archive-group="missing"] input:checked').count(), 0, 'external missing paths default unchecked');

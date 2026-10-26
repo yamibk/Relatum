@@ -779,6 +779,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 ### 生涯与统一使用统计
 
+- 归档预览仅将笔记名单默认收起，使用原生 details/summary 和左侧 `>` SVG，展开旋转 90°、150ms CSS 过渡，低动态立即完成；数量、日期、时长、说明及操作始终显示，折叠不改变选择。同一预览按 token 保留翻页、语言切换及从确认返回后的展开状态，新预览默认收起，不新增偏好。“确认归档”悬停保持原背景、文字、边框，保留键盘焦点和按下反馈。
+
 - 全局设置“使用统计”下方提供数据管理，`assets/usage-management.js` 首次进入分类才加载，不预加载笔记/生涯，不轮询。`usage_management.py` 管理笔记归档预览、复核、事务及在线备份。明确删除默认选择，软件外旧路径缺失单列且默认不选；不可读目录/权限/链接/已恢复路径排除。预览 10 分钟、每组 40 项分页，提交前冲刷当前队列、服务端再核验，仅处理所选身份；响应丢失可用原请求幂等重试。匿名时段继续按并集合并，事件按日/种类聚合，保留总时长、每日/分类/小时分布、活跃日期、操作数及年度活跃项目数；生涯排名下单列累计归档篇数和范围内时长。归档不是默认设置恢复，不触碰 Markdown 或附件，不自动归档/备份，不承诺立即缩小磁盘文件。
 - SQLite 账本增加 `archive_items/archive_routes/archive_years/archive_requests` 及 `meta.archiveRevision/archiveSalt/archiveReportPending`；只保留防重试/项目计数所需匿名身份、加盐路径摘要和数值，删除原名称、明文路径映射、指纹和逐篇明细。迟到时段按摘要及时间边界归入匿名组，同路径恢复/重建使用新身份。快照增加 `history.archiveRevision/archivedNotes`；旧 v2 缺省为 0。归档立即使旧报告失效，已有报告自动重生成；读取和发布均核对版本，旧生成不能写回明细，失败可在生涯重试。进入/还原检查版本，同源窗口用纯版本键 `canvas:usageArchiveRevision:v1` 通知，不唤醒未加载宿主。
 - 管理接口为 GET `/api/usage/management`、POST `/api/usage/archive-preview`、POST `/api/usage/archive-notes`（`{token,ids}`，笔记禁用返回 403）；GET `/api/usage/backup` 下载 ZIP，桌面 POST 同路径使用原生“另存为”并沿用原子复制，等待选择器不持业务锁。SQLite 在线备份包含已提交 WAL 页，ZIP 只含统计库、有效报告（若有）及恢复说明，不含正文/附件，临时副本随请求清理。备份包含全部分类开关及私有定位信息；退出全部窗口后恢复，步骤见 `docs/usage-v2-data.md`。专项验证为 `tests.test_usage_management` 和 `tests/usage-management-browser.js`，均仅使用全新临时数据及合成内容。

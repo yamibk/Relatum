@@ -78,10 +78,20 @@ export function createUsageManagement(host, { notesEnabled }) {
     return tr(`已选择 ${rows.length} 篇 · 逐篇时长合计 ${duration(rows.reduce((sum,row) => sum+row.seconds,0))}`, `${rows.length} selected · sum of individual times ${duration(rows.reduce((sum,row) => sum+row.seconds,0))}`) + (first ? ` · ${first} — ${last}` : '');
   }
   function renderPreview() {
+    const previousDetails = previewHost.querySelector('.usage-archive-details');
+    const expanded = previousDetails?.dataset.previewToken === preview.token && previousDetails.open;
     previewHost.replaceChildren(); previewHost.hidden = false; confirmHost.hidden = true;
     previewHost.append(el('h4', '', tr('归档预览', 'Archive preview')),
       el('p', '', tr('归档后无法直接恢复逐篇记录，可先导出备份。重叠时段仍只计一次，合计不等同于总使用时长。', 'Individual history cannot be restored directly after archiving; you can export a backup first. Overlapping intervals still count once, so individual sums may differ from total usage.')));
     if (!preview.candidates.length) { previewHost.append(el('p', '', tr('没有可归档的笔记。仍存在或无法安全核验的路径不会列入候选。', 'No notes are eligible. Existing paths and paths that cannot be safely checked are excluded.'))); return; }
+    const details = el('details', 'usage-archive-details'), toggle = el('summary');
+    details.dataset.previewToken = preview.token; details.open = !!expanded;
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('aria-hidden', 'true'); icon.setAttribute('focusable', 'false');
+    const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    arrow.setAttribute('d', 'm9 5 7 7-7 7'); icon.append(arrow);
+    toggle.append(icon, el('span', '', tr(`笔记明细（共 ${preview.candidates.length} 篇）`, `Note details (${preview.candidates.length} notes)`)));
+    details.append(toggle); previewHost.append(details);
     for (const kind of ['deleted', 'missing']) {
       const rows = preview.candidates.filter(row => row.kind === kind);
       if (!rows.length) continue;
@@ -111,7 +121,7 @@ export function createUsageManagement(host, { notesEnabled }) {
         prev.disabled = !page; next.disabled = (page+1)*40 >= rows.length;
         nav.append(prev, el('span', '', `${page+1} / ${Math.ceil(rows.length/40)}`), next); group.append(nav);
       }
-      previewHost.append(group);
+      details.append(group);
     }
     const totals = el('p', 'usage-archive-selection'); totals.dataset.archiveSelection = '';
     const proceed = button(tr('归档所选笔记…', 'Archive selected notes…'), () => { confirming = true; renderConfirmation(); }); proceed.dataset.archiveReview = '';
