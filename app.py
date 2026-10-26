@@ -48,6 +48,7 @@ from notes_library import MAX_NOTE_BYTES, MAX_NOTE_IMAGE_BYTES, NotesError, Note
 from research_store import ResearchConflictError, ResearchStoreError, ResearchWorkspaceStore
 from feature_profile import FEATURES, FULL_PROFILE, LaunchProfile, ProfileError, render_html
 from usage_store import UsageStore, CATEGORIES
+from usage_management import UsageManagement, ManagementError
 from career_report import CareerReports, read_json as _usage_read_json, scan_canvases as _usage_scan_canvases
 
 # 桌面打包版把内置资源放在运行时资源目录。便携版用户数据留在 EXE
@@ -8359,6 +8360,18 @@ def load_career_report() -> dict:
     return career_reports().read()
 
 
+_USAGE_MANAGEMENT = None
+
+
+def usage_management():
+    global _USAGE_MANAGEMENT
+    with _USAGE_INSTANCE_LOCK:
+        store = usage_store()
+        if _USAGE_MANAGEMENT is None or _USAGE_MANAGEMENT.usage is not store:
+            _USAGE_MANAGEMENT = UsageManagement(store, NOTES_STORE, career_reports(), NOTES_MUTATION_LOCK)
+        return _USAGE_MANAGEMENT
+
+
 def generate_career_report() -> dict:
     return career_reports().generate()
 
@@ -8557,6 +8570,22 @@ def pick_save_png(default_name: str) -> str | None:
         "}\n"
     )
     return _run_picker(script, "无法打开 PNG 保存窗口")
+
+
+def pick_usage_backup() -> str | None:
+    name = 'Relatum-usage-' + datetime.now().strftime('%Y%m%d-%H%M%S') + '.zip'
+    return _run_picker(
+        "Add-Type -AssemblyName System.Windows.Forms\n"
+        "[System.Windows.Forms.Application]::EnableVisualStyles()\n"
+        "$dialog = New-Object System.Windows.Forms.SaveFileDialog\n"
+        "$dialog.Title = 'Relatum usage backup'\n"
+        "$dialog.Filter = 'ZIP (*.zip)|*.zip'\n"
+        "$dialog.DefaultExt = 'zip'\n$dialog.AddExtension = $true\n"
+        "$dialog.FileName = '" + name + "'\n"
+        "try { if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {\n"
+        "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)\n"
+        "[Console]::Write($dialog.FileName)\n} } finally { $dialog.Dispose() }\n",
+        '无法打开统计备份保存窗口')
 
 
 def pick_background_image() -> str | None:
@@ -9812,6 +9841,9 @@ POST_WITHOUT_DATA_LOCK = {
     "/api/review-import-preview",
     "/api/review-import",
     "/api/usage/batch",
+    "/api/usage/archive-preview",
+    "/api/usage/archive-notes",
+    "/api/usage/backup",
     "/api/career/generate",
     "/api/file-stats",
     "/api/ai-chat",
@@ -10117,9 +10149,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         *,
         cache_control: str = "no-store",
         opened_file=None,
+        download_name=None,
     ) -> None:
         """Stream a local asset, taking ownership of any already-open file."""
         def finish_headers():
+            if download_name:
+                self.send_header('Content-Disposition', 'attachment; filename="' + download_name + '"')
             if media_type == "image/svg+xml":
                 # Keep direct navigation to an image URL as restricted as its
                 # normal <img> use, even if an external editor changes the file.
@@ -10367,6 +10402,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json(200, usage_store().state())
             except (OSError, sqlite3.Error):
                 return self._send_json(503, {"error": "统计暂不可用，请重试"})
+        if parsed.path == '/api/usage/management':
+            try:
+                return self._send_json(200, usage_management().overview())
+            except (OSError, sqlite3.Error):
+                return self._send_json(503, {'error': '统计暂不可用，请重试', 'code': 'usage-unavailable'})
+        if parsed.path == '/api/usage/backup':
+            try:
+                with usage_management().backup() as backup:
+                    return self._send_local_file(backup, 'application/zip', '导出统计备份失败',
+                        download_name='Relatum-usage-' + datetime.now().strftime('%Y%m%d-%H%M%S') + '.zip')
+            except (OSError, sqlite3.Error):
+                return self._send_json(503, {'error': '导出统计备份失败，请重试', 'code': 'backup-failed'})
         if parsed.path.startswith("/api/career/jobs/"):
             try:
                 return self._send_json(200, career_reports().job(parsed.path.rsplit("/", 1)[-1]))
@@ -10546,6 +10593,34 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except (OSError, ValueError):
             before = None
         self._usage_operation = (path, body, source, before)
+        if path == '/api/usage/backup':
+            try:
+                picked = pick_usage_backup()
+                if not picked:
+                    return self._send_json(200, {'cancelled': True})
+                target = Path(picked).with_suffix('.zip')
+                with usage_management().backup() as backup:
+                    _atomic_copy_file(backup, target)
+                return self._send_json(200, {'ok': True})
+            except (OSError, sqlite3.Error):
+                return self._send_json(503, {'error': '导出统计备份失败，请重试', 'code': 'backup-failed'})
+        if path in ('/api/usage/archive-preview', '/api/usage/archive-notes'):
+            if not self.launch_profile.enabled('notes'):
+                return self._send_json(403, {'error': '本次启动未启用笔记', 'code': 'feature-disabled'})
+            try:
+                if path.endswith('archive-preview'):
+                    return self._send_json(200, usage_management().preview())
+                with _cross_process_mutation_lock():
+                    result = usage_management().archive(body.get('token'), body.get('ids'))
+                try:
+                    result['job'] = career_reports().after_archive()
+                except (OSError, sqlite3.Error, RuntimeError):
+                    result['reportPending'] = True
+                return self._send_json(200, result)
+            except ManagementError as error:
+                return self._send_json(error.status, {'error': '归档候选已变化或预览已过期，请重新预览', 'code': error.code})
+            except (OSError, sqlite3.Error):
+                return self._send_json(503, {'error': '统计归档暂不可用，请重试', 'code': 'usage-unavailable'})
         if path == "/api/usage/batch":
             try:
                 intervals = body.get("intervals", [])

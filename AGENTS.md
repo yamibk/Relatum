@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-10-26（启动首帧与画布/日常页面显隐；保留全局设置、笔记和画布既有边界）。
+> 最后按源码校准：2026-10-26（启动首帧与画布/日常页面显隐、已删除笔记统计归档与备份；保留全局设置、笔记和画布既有边界）。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -522,7 +522,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - 速记/跨页便签/专注/每日任务：`/api/notes`、`/api/start-sticky-notes`、`/api/focus`、`/api/daily`
 - 日历、记账与倒数日：`/api/calendar`、`/api/ledger`、`/api/countdown`；记账 GET 不带参数，一次返回整本账本快照 `{version, revision, highestPage, pageUnits, entries}`，流水按日期/创建时间倒序，页面/月份/累计汇总与当页单位由前端精确模型本地派生。
 - 模板：`/api/templates`
-- 生涯报告：`GET /api/career/report` 只读 v2 快照；`GET /api/career/jobs/{id}` 读进度；`GET /api/usage/state` 返回分类开关、可用分类、起点和采集生效区间。
+- 生涯报告：`GET /api/career/report` 只读 v2 快照；`GET /api/career/jobs/{id}` 读进度；`GET /api/usage/state` 返回分类开关、可用分类、起点和采集生效区间。`GET /api/usage/management` 读笔记明细/归档数量及归档版本，`GET /api/usage/backup` 在线备份统计库并下载 ZIP。
 - 画布和资源读取：`/api/load`、`/api/background-image`、`/api/canvas-asset`、`/api/canvas-annotation`、`/api/node-annotations`、`/api/background-preference`
 - 内部画布内容导入：`/api/canvas-import-library` 只列出最近索引中有效的顶层 `canvases/*.canvas`，`/api/canvas-import-source` 通过不透明文件 ID 读取并预检来源；双屏右侧打开使用 `/api/canvas-dual-open` 一次返回同一安全来源的 `data`、路径、标题和 revision，并拒绝当前画布；这些接口都不接受客户端来源路径，也不刷新来源最近时间或视口
 
@@ -530,7 +530,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 - 笔记浏览查询：`POST /api/note-query` 统一 `search/recent/tags/paths`，请求含关键词、范围、标签、修改时间、排序及游标；返回 `items/total/hasMore/cursor/generation/index`，全文追加 UTF-16 高亮与源码范围。每页最多 50；游标绑定查询/版本，变化返回 `409/query_changed`。只读查询保留路径沙箱，退出文件/全局写锁；`POST /api/note-index-activity` 交接可见状态。完整协议见 `docs/notes-sqlite-search.md`。
 
-- 生涯报告：`POST /api/career/generate` 返回后台任务，重复请求复用正在运行的任务。生成前冲刷采集队列，库存读取不占业务保存锁；成功原子替换，失败保留旧 v2。每个来源独立标明未读取数量，不能显示成零。
+- 生涯报告：`POST /api/career/generate` 返回后台任务，重复请求复用正在运行的任务。生成前冲刷采集队列，库存读取不占业务保存锁；成功原子替换，失败保留版本有效的旧 v2。每个来源独立标明未读取数量，不能显示成零。`POST /api/usage/archive-preview` 预览已删除/旧路径缺失笔记，`POST /api/usage/archive-notes` 按 `{token,ids}` 复核归档，保留数值并使旧快照失效；桌面 `POST /api/usage/backup` 用原生“另存为”导出 ZIP。
 - Markdown 笔记库：`/api/note-create`、`/api/note-save`、`/api/note-move`、`/api/note-trash`、`/api/note-upload-image`、`/api/note-import-begin|upload|commit|abort`、`/api/note-reveal`、`/api/note-reveal-assets`。`note-trash` 只校验库内精确目标并交给 Windows 系统回收站；`note-reveal` 接受空路径打开根目录，文件路径会在 Explorer 中被选中；图片定位使用 `{kind:"image",path:所属笔记路径,target:图片原引用,imageSyntax:"markdown"或"wiki"}`，语法缺省为 Markdown，复用 `resolve_image` 的库内路径、重解析点、格式、缺失及重名检查，未知 kind 返回 400。
 - 画布文件：`/api/new`、`/api/open`、`/api/pick`、`/api/save`、`/api/remove`、`/api/rename`、`/api/clean-assets`
 - 分组/收藏/排序与画布库维护：`/api/group-create`、`/api/group-rename`、`/api/group-delete`、`/api/file-set-group`、`/api/favorite-toggle`、`/api/groups-reorder`、`/api/reorder-files`、`/api/file-stats`、`/api/recent-sync`
@@ -778,6 +778,10 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - 子电路定义/实例、无环嵌套、状态隔离、修订固定/手动升级、从选区封装和 M5.4 选区整体复制已完成；图分析和动作节点仍未实现。分层 CPU 公开交互验收也已完成：4 位 CPU 的 ROM/Core r1→r2、旧实例固定、升级清空状态、Probe 顺序及 25 Core/1,006 递归展开节点均通过，实测见 `docs/research-cpu-evaluation-2026-09-21.md`。651 次公开操作表明重复配置、拖线和端口命名存在摩擦；选区复制现可复用节点配置与内部连线，下一步用同一 CPU 工作流量化改善，再决定是否设计跨页剪贴板。1,000 个同步主动 Clock 的真实 Edge 分片验收也已完成：同刻批次保持原子，计算按 256 源分片，连续投影按帧限量刷新后 RAF 中位/P95 为 16.7/17 ms；仍记录一次 55 ms Long Task，详见 `docs/research-time-slicing-evaluation-2026-09-21.md`，当前不引入 WebGL。显式 Graph Snapshot/节点引用延期到出现具体分析场景后，分析节点仍禁止偷偷依赖整页。契约验证在既有命令外增加 `node tests/research-model-regression.js` 与 `node tests/research-subcircuits-regression.js`；真实浏览器验收为 `node tests/research-circuit-browser.js <本地服务 URL>`、`node tests/research-subcircuits-browser.js <本地服务 URL>`、`node tests/research-cpu-browser.js <本地服务 URL> [report.json]` 与 `node tests/research-time-slicing-browser.js <本地服务 URL> [report.json]`，都必须拦截研究读写，不接触真实研究数据。
 
 ### 生涯与统一使用统计
+
+- 全局设置“使用统计”下方提供数据管理，`assets/usage-management.js` 首次进入分类才加载，不预加载笔记/生涯，不轮询。`usage_management.py` 管理笔记归档预览、复核、事务及在线备份。明确删除默认选择，软件外旧路径缺失单列且默认不选；不可读目录/权限/链接/已恢复路径排除。预览 10 分钟、每组 40 项分页，提交前冲刷当前队列、服务端再核验，仅处理所选身份；响应丢失可用原请求幂等重试。匿名时段继续按并集合并，事件按日/种类聚合，保留总时长、每日/分类/小时分布、活跃日期、操作数及年度活跃项目数；生涯排名下单列累计归档篇数和范围内时长。归档不是默认设置恢复，不触碰 Markdown 或附件，不自动归档/备份，不承诺立即缩小磁盘文件。
+- SQLite 账本增加 `archive_items/archive_routes/archive_years/archive_requests` 及 `meta.archiveRevision/archiveSalt/archiveReportPending`；只保留防重试/项目计数所需匿名身份、加盐路径摘要和数值，删除原名称、明文路径映射、指纹和逐篇明细。迟到时段按摘要及时间边界归入匿名组，同路径恢复/重建使用新身份。快照增加 `history.archiveRevision/archivedNotes`；旧 v2 缺省为 0。归档立即使旧报告失效，已有报告自动重生成；读取和发布均核对版本，旧生成不能写回明细，失败可在生涯重试。进入/还原检查版本，同源窗口用纯版本键 `canvas:usageArchiveRevision:v1` 通知，不唤醒未加载宿主。
+- 管理接口为 GET `/api/usage/management`、POST `/api/usage/archive-preview`、POST `/api/usage/archive-notes`（`{token,ids}`，笔记禁用返回 403）；GET `/api/usage/backup` 下载 ZIP，桌面 POST 同路径使用原生“另存为”并沿用原子复制，等待选择器不持业务锁。SQLite 在线备份包含已提交 WAL 页，ZIP 只含统计库、有效报告（若有）及恢复说明，不含正文/附件，临时副本随请求清理。备份包含全部分类开关及私有定位信息；退出全部窗口后恢复，步骤见 `docs/usage-v2-data.md`。专项验证为 `tests.test_usage_management` 和 `tests/usage-management-browser.js`，均仅使用全新临时数据及合成内容。
 
 - 重启恢复或打开生涯时，快照和样式就绪后播放一次 600ms 的纯透明度淡入，覆盖报告与空报告入口；生涯不使用工作区横向滑入。低动态模式立即显示，隐藏、离场及重新渲染取消旧入场动画，不增加持续 RAF。
 - 点击生成或重新生成立即进入纯底色空白，将滚动位置归零，暂停图表、数字、滚动调度和观察器；等待后台任务完成并读到新快照后，从顶部以同一 600ms 淡入显示新报告，数字仍在淡入开始 200ms 后累计。等待时报告滚动区 inert、无可见进度条，保留根 aria-busy；切页、隐藏或最小化不重建旧图表，返回继续原任务轮询。生成失败恢复原报告和原阅读锚点并显示错误，不清除旧快照。统一生成按钮状态避免重复提交。

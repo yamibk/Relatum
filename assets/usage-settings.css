@@ -4,3 +4,24 @@
 .start-usage-settings .start-setting-row { display:flex;justify-content:space-between;gap:18px;align-items:center;padding:7px 0;font-size:12px;cursor:pointer; }
 .start-usage-settings input { accent-color:var(--text);width:15px;height:15px; }
 .start-usage-settings [hidden] { display:none!important; }
+.global-settings-dialog .usage-management { margin-top:28px; padding-top:24px; border-top:1px solid var(--settings-selected); color:var(--settings-text); }
+.global-settings-dialog .usage-management h4 { margin:0 0 12px; font-size:15px; font-weight:650; }
+.global-settings-dialog .usage-management h5 { margin:0 0 10px; font-size:13px; }
+.global-settings-dialog .usage-management p { font-size:12px; line-height:1.7; color:var(--settings-muted); opacity:1; }
+.usage-management-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:12px 0; }
+.global-settings-dialog .usage-management button { border:1px solid var(--settings-selected); border-radius:9px; background:var(--settings-card); color:var(--settings-text); padding:9px 13px; font:inherit; font-size:12px; cursor:pointer; }
+.global-settings-dialog .usage-management button:hover { background:var(--settings-selected); }
+.global-settings-dialog .usage-management button:active { transform:translateY(1px); }
+.global-settings-dialog .usage-management button:focus-visible { outline:2px solid var(--settings-text); outline-offset:3px; }
+.global-settings-dialog .usage-management button:disabled { opacity:.45; cursor:default; transform:none; }
+.usage-archive-preview, .usage-archive-confirm { margin-top:20px; padding:18px; border-radius:14px; background:var(--settings-card); }
+.usage-archive-confirm h4:focus { outline:none; }
+.usage-archive-group { margin:20px 0; }
+.usage-archive-list { display:grid; gap:3px; }
+.usage-archive-row { display:flex; gap:12px; align-items:center; padding:10px 0; min-width:0; cursor:pointer; }
+.usage-archive-row > input { flex:none; }
+.usage-archive-row > span { display:grid; gap:5px; min-width:0; }
+.usage-archive-row > span > span { overflow-wrap:anywhere; font-size:13px; }
+.usage-archive-row small { color:var(--settings-muted); font-size:11px; line-height:1.6; }
+.global-settings-dialog .usage-management-status:empty { display:none; }
+.global-settings-dialog .usage-archive-confirm [data-archive-confirm] { background:var(--settings-text); color:var(--settings-bg); border-color:var(--settings-text); }

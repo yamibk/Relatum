@@ -284,6 +284,17 @@ class CareerReports:
     def read(self):
         try:
             raw = read_json(self.path)
+            revision = self.usage.archive_revision()
+            raw_history = raw.get('history') if isinstance(raw, dict) else None
+            report_revision = raw_history.get('archiveRevision', 0) if isinstance(raw_history, dict) else 0
+            if (revision or report_revision) and report_revision != revision:
+                with self.usage.connection() as conn:
+                    pending = bool(conn.execute("SELECT 1 FROM meta WHERE key='archiveReportPending'").fetchone())
+                with self._lock:
+                    job = dict(self._jobs[self._running]) if self._running else None
+                return {'version': 2, 'exists': False, 'report': None, 'job': job,
+                        'error': '归档完成，生涯报告待重新生成' if pending else None,
+                        'code': 'archive-report-pending' if pending else None}
             if isinstance(raw, dict) and raw.get('version') == 2:
                 history, inventory = raw.get('history'), raw.get('inventory')
                 if (not isinstance(history, dict) or not isinstance(inventory, dict)
@@ -293,9 +304,24 @@ class CareerReports:
                     or not isinstance(history.get('since'), (int,float)) or not isinstance(history.get('cutoff'), (int,float))):
                     raise ValueError('Invalid v2 snapshot')
                 return {'version': 2, 'exists': True, 'report': raw}
-        except (OSError, ValueError):
+        except (OSError, ValueError, sqlite3.Error):
             return {'version': 2, 'exists': False, 'error': '新报告无法读取，请重新生成'}
         return {'version': 2, 'exists': False, 'report': None}
+
+    def after_archive(self):
+        # The persisted revision makes stale reports unreadable even if the
+        # process exits between the SQLite commit and report cleanup.
+        with self.usage.connection(write=True) as conn:
+            pending = conn.execute("SELECT 1 FROM meta WHERE key='archiveReportPending'").fetchone()
+            if self.path.exists():
+                try:
+                    raw = read_json(self.path)
+                    history = raw.get('history') if isinstance(raw, dict) else None
+                    if not isinstance(history, dict) or history.get('archiveRevision', 0) != self.usage._state(conn)['archiveRevision']:
+                        self.path.unlink()
+                except (OSError, ValueError):
+                    pass  # Revision validation still prevents stale reads.
+        return self.generate() if pending else None
 
     def job(self, identity):
         with self._lock:
@@ -360,14 +386,31 @@ class CareerReports:
     def _run(self, identity):
         started = time.perf_counter()
         try:
-            report = self.build(lambda value, stage: self._progress(identity, value, stage))
-            self.atomic_json(self.path, report)
+            for attempt in range(3):
+                report = self.build(lambda value, stage: self._progress(identity, value, stage))
+                # A write transaction also coordinates separate local services;
+                # no content scans run while holding this publication barrier.
+                with self.usage.connection(write=True) as conn:
+                    if report['history'].get('archiveRevision', 0) != self.usage._state(conn)['archiveRevision']:
+                        continue
+                    self.atomic_json(self.path, report)
+                    conn.execute("DELETE FROM meta WHERE key='archiveReportPending'")
+                    break
+            else:
+                raise RuntimeError('Usage archive changed during generation')
             with self._lock:
                 self._jobs[identity].update(status='complete', progress=100, stage='complete',
                                            elapsedMs=round((time.perf_counter()-started)*1000))
         except Exception as error:
+            try:
+                with self.usage.connection() as conn:
+                    archived = bool(conn.execute("SELECT 1 FROM meta WHERE key='archiveReportPending'").fetchone())
+            except (OSError, sqlite3.Error):
+                archived = False
             with self._lock:
-                self._jobs[identity].update(status='error', error=f'生成失败（{type(error).__name__}），原报告已保留')
+                self._jobs[identity].update(status='error',
+                    code='archive-report-pending' if archived else 'generation-failed',
+                    error=f'归档完成，生涯报告生成失败（{type(error).__name__}），请重新生成' if archived else f'生成失败（{type(error).__name__}），原报告已保留')
         finally:
             with self._lock:
                 self._running = None

@@ -9,7 +9,16 @@
   const language = () => window.RelatumI18n?.language || 'zh-CN';
   const text = (zh, en) => language() === 'en' ? en : zh;
   const panels = new Map(), categories = [];
-  let adapter = null, orderList = null, dialog = null;
+  let adapter = null, orderList = null, dialog = null, usageManager = null, usageLoading = null, usageActive = false;
+  function usageVisibility(active) {
+    usageActive = active;
+    if (!active) { usageManager?.suspend(); return; }
+    if (usageManager) { usageManager.activate(); return; }
+    if (!usageLoading) usageLoading = import('./usage-management.js').then(module => {
+      usageManager = module.createUsageManagement(usage, { notesEnabled: features.enabled('notes') });
+      if (usageActive) usageManager.activate();
+    }).catch(() => { usageLoading = null; if (usageActive) dialog?.setStatus(text('统计管理未能加载，请重新打开后重试。', 'Could not load usage management. Reopen to retry.')); });
+  }
   const pageLists = new Map(), pageSections = new Map(), pageAvailability = new Map();
   const definitions = [
     ['appearance', ['外观', 'Appearance'], '<rect x="3" y="3" width="18" height="14" rx="2"/><path d="M3 21h18"/>', 'theme background 主题 背景'],
@@ -19,12 +28,12 @@
     ['learning', ['学习与树状', 'Learning & trees'], '<path d="M12 3v7M5 10h14M5 10v6m14-6v6"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/>', 'study tree unlock title color 学习 树状 解锁 标题 彩色'],
     ['starmap', ['星图', 'Star map'], '<circle cx="5" cy="5" r="2"/><circle cx="19" cy="7" r="2"/><circle cx="12" cy="19" r="2"/><path d="m7 5 10 2M6 7l5 10m7-8-5 8"/>', 'graph animation physics fit 动画 生长 阻尼 取景'],
     ['career', ['生涯', 'Career'], '<path d="M4 3v17h17M8 15l4-5 4 2 5-7"/>', 'career scroll inertia reveal 生涯 滚动 惯性 揭示'],
-    ['usage', ['使用统计', 'Usage statistics'], '<path d="M5 21V11m7 10V3m7 18V7"/>', 'usage statistics tracking time 统计 记录 时间'],
+    ['usage', ['使用统计', 'Usage statistics'], '<path d="M5 21V11m7 10V3m7 18V7"/>', 'usage statistics tracking time archive backup data 统计 记录 时间 归档 备份 数据管理'],
     ['system', ['系统', 'System'], '<path d="M4 4h16v12H4zM8 20h8m-4-4v4"/>', 'system desktop launcher startup selection 系统 启动器 启动 弹窗 选择'],
   ];
   definitions.forEach(([id, label, iconMarkup, keywords]) => {
     const panel = document.createElement('section'); panels.set(id, panel);
-    categories.push({ id, label, iconMarkup, keywords, panel, reset: id === 'system' ? null : () => resetCategory(id) });
+    categories.push({ id, label, iconMarkup, keywords, panel, searchMode: id === 'usage' ? 'category' : undefined, reset: id === 'system' ? null : () => resetCategory(id) });
   });
   function take(selector, category, enabled = true) {
     source.querySelectorAll(selector).forEach(element => {
@@ -103,9 +112,10 @@
         await resetCategory('workspaces');
         for (const category of activeCategories) if (category.id !== 'workspaces' && category.id !== 'system') await resetCategory(category.id);
       },
-      onCategoryChange(id) { if (id !== 'workspaces') orderList?.suspend(); if (id !== 'navigation') pageLists.forEach(list => list.suspend()); },
+      onCategoryChange(id) { usageVisibility(id === 'usage'); if (id !== 'workspaces') orderList?.suspend(); if (id !== 'navigation') pageLists.forEach(list => list.suspend()); },
+      onKeyDown(event) { return usageActive && usageManager?.onKeyDown(event); },
       onOpen() { trigger.setAttribute('aria-expanded', 'true'); orderList?.sync(); pageLists.forEach(list => list.sync()); },
-      onClose() { trigger.setAttribute('aria-expanded', 'false'); orderList?.suspend(); pageLists.forEach(list => list.suspend()); },
+      onClose() { usageVisibility(false); trigger.setAttribute('aria-expanded', 'false'); orderList?.suspend(); pageLists.forEach(list => list.suspend()); },
     });
     dialog.dialog.classList.add('global-settings-dialog'); ensureOrderList(); ensurePageLists(); translate();
     return dialog;

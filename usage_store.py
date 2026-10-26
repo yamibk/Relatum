@@ -19,6 +19,7 @@ from pathlib import Path
 CATEGORIES = ("notes", "canvas", "embedded", "research", "study", "tree",
               "quicknotes", "review", "checkin")
 WORKSPACES = {"notes": "notes", "embedded": "notes", "research": "research"}
+ARCHIVED_NOTES = 'archive:notes'
 
 
 def merged(spans):
@@ -81,6 +82,7 @@ class UsageStore:
                         CREATE TABLE IF NOT EXISTS aliases(
                             category TEXT NOT NULL,locator TEXT NOT NULL,entity TEXT NOT NULL,
                             PRIMARY KEY(category,locator));
+                        CREATE INDEX IF NOT EXISTS aliases_entity ON aliases(entity);
                         CREATE TABLE IF NOT EXISTS policies(
                             category TEXT NOT NULL,at INTEGER NOT NULL,enabled INTEGER NOT NULL,
                             PRIMARY KEY(category,at));
@@ -96,6 +98,14 @@ class UsageStore:
                             category TEXT NOT NULL,entity TEXT NOT NULL,kind TEXT NOT NULL,
                             count INTEGER NOT NULL DEFAULT 1);
                         CREATE INDEX IF NOT EXISTS events_date ON events(day,category,entity);
+                        CREATE INDEX IF NOT EXISTS events_entity ON events(entity,day,kind);
+                        CREATE TABLE IF NOT EXISTS archive_items(id TEXT PRIMARY KEY,at INTEGER NOT NULL);
+                        CREATE TABLE IF NOT EXISTS archive_routes(hash TEXT NOT NULL,until INTEGER NOT NULL,
+                            identity TEXT NOT NULL,PRIMARY KEY(hash,until,identity));
+                        CREATE TABLE IF NOT EXISTS archive_years(identity TEXT NOT NULL,year TEXT NOT NULL,
+                            PRIMARY KEY(identity,year));
+                        CREATE TABLE IF NOT EXISTS archive_requests(id TEXT PRIMARY KEY,digest TEXT NOT NULL,
+                            count INTEGER NOT NULL,revision INTEGER NOT NULL);
                     """)
                     now = self.clock()
                     conn.execute("INSERT OR IGNORE INTO meta VALUES('since',?)", (str(now),))
@@ -210,9 +220,53 @@ class UsageStore:
         settings = {category: True for category in CATEGORIES}
         for row in rows:
             settings[row[0]] = bool(row[2])
+        revision = conn.execute("SELECT value FROM meta WHERE key='archiveRevision'").fetchone()
         return {"version": 2, "since": int(conn.execute("SELECT value FROM meta WHERE key='since'").fetchone()[0]),
+                "archiveRevision": int(revision[0]) if revision else 0,
                 "settings": settings, "available": {c: bool(self.enabled(c)) for c in CATEGORIES},
                 "coverage": [dict(row) for row in rows]}
+
+    def archive_revision(self):
+        with self.connection() as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key='archiveRevision'").fetchone()
+            return int(row[0]) if row else 0
+
+    @staticmethod
+    def _route_hash(conn, locator):
+        salt = conn.execute("SELECT value FROM meta WHERE key='archiveSalt'").fetchone()
+        return hashlib.sha256((salt[0] + '\0' + locator.casefold()).encode('utf-8')).hexdigest() if salt else ''
+
+    def remember_route(self, conn, locator, identity, until):
+        conn.execute("INSERT OR IGNORE INTO meta VALUES('archiveSalt',?)", (uuid.uuid4().hex,))
+        conn.execute('INSERT OR IGNORE INTO archive_routes VALUES(?,?,?)', (self._route_hash(conn, locator), until, identity))
+
+    @staticmethod
+    def _span(conn, day, category, entity, start, end):
+        overlaps = conn.execute("SELECT rowid,start,end FROM spans WHERE day=? AND category=? AND entity=? AND end>=? AND start<=?",
+                                (day, category, entity, start, end)).fetchall()
+        if overlaps:
+            start = min(start, min(row[1] for row in overlaps))
+            end = max(end, max(row[2] for row in overlaps))
+            conn.executemany("DELETE FROM spans WHERE rowid=?", ((row[0],) for row in overlaps))
+        conn.execute("INSERT INTO spans VALUES(?,?,?,?,?)", (day, category, entity, start, end))
+
+    def _interval_targets(self, conn, category, locator, name, start, end):
+        # Only digests survive archiving. Timestamp boundaries keep an old
+        # queued interval separate from a newly created file at the same path.
+        routes = conn.execute("SELECT r.until,r.identity,a.id IS NOT NULL FROM archive_routes r "
+                              "LEFT JOIN archive_items a ON a.id=r.identity LEFT JOIN entities e ON e.id=r.identity "
+                              "WHERE r.hash=? AND r.until>? AND (a.id IS NOT NULL OR e.id IS NOT NULL) ORDER BY r.until",
+                              (self._route_hash(conn, locator), start)).fetchall() if category == 'notes' and locator else []
+        cursor = start
+        for until, identity, archived in routes:
+            stop = min(end, until)
+            if stop > cursor:
+                yield ARCHIVED_NOTES if archived else identity, identity if archived else None, cursor, stop
+                cursor = stop
+            if cursor >= end:
+                return
+        if cursor < end:
+            yield self._entity(conn, category, locator, name) if locator else '', None, cursor, end
 
     @staticmethod
     def _allowed(conn, category, start, end):
@@ -287,16 +341,12 @@ class UsageStore:
                 conn.execute("INSERT INTO receipts VALUES(?,?)", (identifier, digest))
                 # A queue captured by an enabled workspace may be retried by
                 # a later, trimmed launch. Its original policy still applies.
-                entity = self._entity(conn, category, locator, name) if locator else ''
                 for a, b in self._allowed(conn, category, max(start, since), end):
-                    for day, x, y in day_parts(a, b):
-                        overlaps = conn.execute("SELECT rowid,start,end FROM spans WHERE day=? AND category=? AND entity=? AND end>=? AND start<=?",
-                                                (day, category, entity, x, y)).fetchall()
-                        if overlaps:
-                            x = min(x, min(row[1] for row in overlaps))
-                            y = max(y, max(row[2] for row in overlaps))
-                            conn.executemany("DELETE FROM spans WHERE rowid=?", ((row[0],) for row in overlaps))
-                        conn.execute("INSERT INTO spans VALUES(?,?,?,?,?)", (day, category, entity, x, y))
+                    for entity, archived, x, y in self._interval_targets(conn, category, locator, name, a, b):
+                        for day, left, right in day_parts(x, y):
+                            self._span(conn, day, category, entity, left, right)
+                            if archived:
+                                conn.execute("INSERT OR IGNORE INTO archive_years VALUES(?,?)", (archived, day[:4]))
                 accepted += 1
             return {"accepted": accepted, **self._state(conn)}
 
@@ -306,6 +356,12 @@ class UsageStore:
         now = self.clock()
         with self.connection(write=True) as conn:
             if kind == 'created' and locator:
+                if category == 'notes':
+                    alias = conn.execute('SELECT entity FROM aliases WHERE category=? AND locator=?', (category, str(locator))).fetchone()
+                    if alias:
+                        # Keep only a salted temporal route when creation takes
+                        # ownership of a previously used address.
+                        self.remember_route(conn, str(locator), alias[0], now)
                 conn.execute("DELETE FROM aliases WHERE category=? AND locator=?", (category, str(locator)))
             entity = self._entity(conn, category, str(locator), str(name)) if locator else ''
             if fingerprint is not None and entity:
@@ -329,6 +385,8 @@ class UsageStore:
             entities = [dict(row) for row in conn.execute("SELECT * FROM entities")]
             spans = [dict(row) for row in conn.execute("SELECT * FROM spans WHERE start<? ORDER BY day,start", (cutoff,))]
             events = [dict(row) for row in conn.execute("SELECT * FROM events WHERE at<=? ORDER BY at", (cutoff,))]
+            archived = {'count': conn.execute('SELECT count(*) FROM archive_items').fetchone()[0],
+                        'yearProjects': dict(conn.execute('SELECT year,count(*) FROM archive_years GROUP BY year'))}
         days, targets, hours = {}, {}, {}
         for span in spans:
             day = span['day']
@@ -355,7 +413,7 @@ class UsageStore:
         if not private:
             entities = [{k: row[k] for k in ('id', 'category', 'name', 'deleted')} for row in entities]
             events = [{k: row[k] for k in ('id', 'day', 'category', 'entity', 'kind', 'count')} for row in events]
-        return {**state, "cutoff": cutoff, "days": sorted(days.values(), key=lambda d: d['date']),
+        return {**state, "archivedNotes": archived, "cutoff": cutoff, "days": sorted(days.values(), key=lambda d: d['date']),
                 "entities": entities, "events": events,
                 "entityDays": [{"date": d, "id": i, "category": c, "seconds": sum(b-a for a,b in merged(v))/1000}
                                for (d,i,c),v in targets.items()],
@@ -400,4 +458,5 @@ class UsageStore:
         return {'totalSec': sum(values.values()), 'yearSec': sum(selected.values()),
                 'monthSec': sum(v for d,v in values.items() if d.startswith(today.strftime('%Y-%m'))),
                 'streak': streak, 'longestStreak': longest, 'activeDays': len(selected),
-                'activeProjects': len({r['id'] for r in snapshot['entityDays'] if r['date'].startswith(str(year)+'-')})}
+                'activeProjects': len({r['id'] for r in snapshot['entityDays'] if r['id'] != ARCHIVED_NOTES and r['date'].startswith(str(year)+'-')})
+                                  + snapshot['archivedNotes']['yearProjects'].get(str(year), 0)}

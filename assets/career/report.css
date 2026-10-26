@@ -647,3 +647,4 @@ body.start-page[data-start-theme="dark"] .career-panel.is-dark .career-bar-track
   .career-generate, .career-regenerate { transition: none !important; }
 }
 .career-demo-label { color: var(--career-muted); font-size: 14px; }
+.career-archived-notes { margin-top:18px; padding-top:14px; border-top:1px solid var(--career-line); color:var(--career-muted); font-size:13px; line-height:1.6; }

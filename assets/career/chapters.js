@@ -83,7 +83,10 @@ export function buildReport(report, context, actions) {
   const notes=chapter('notes','02',tr('笔记','Notes'),`${stockLabel} · ${number(inventory.notes.count)} ${tr('篇','notes')} · ${number(inventory.notes.wordCount)} ${tr('字词','words')} · ${number(inventory.notes.linkCount)} ${tr('关系','links')}`);
   card(notes,'notebooks',tr('笔记本字数','Words by notebook'),tr('面积表示字词数量。','Area represents word count.'),{type:'treemap',inventory:true,unit:tr('字词','Words'),rows:inventory.notes.books.map(b=>({name:b.name,value:b.words}))});
   card(notes,'lengths',tr('篇幅分布','Note length distribution'),tr('按正文可见字词统计，包含图片文字。','Visible words, including image text.'),{type:'distribution',inventory:true,unit:tr('篇','Notes'),rows:inventory.notes.lengths.map((value,i)=>({name:['<100','100–499','500–999','1k–<2k','2k–<5k','≥5k'][i],value}))});
-  card(notes,'note-use',tr('常用笔记','Most used notes'),tr('当前筛选范围内的前台使用时长。','Foreground time within the selected range.'),{type:'rank',unit:'seconds',rows:data.rankings('notes')});
+  const noteUse=card(notes,'note-use',tr('常用笔记','Most used notes'),tr('当前筛选范围内的前台使用时长。','Foreground time within the selected range.'),{type:'rank',unit:'seconds',rows:data.rankings('notes')});
+  const archivedSummary=el('p','career-archived-notes');noteUse.append(archivedSummary);
+  function updateArchivedSummary(){const value=data.archivedNotes;archivedSummary.hidden=!value?.count;archivedSummary.textContent=value?.count?tr(`已归档笔记 · 累计 ${number(value.count)} 篇 · 当前范围 ${metricDuration(value.seconds)(value.seconds)}`,`Archived notes · ${number(value.count)} in total · ${metricDuration(value.seconds)(value.seconds)} in this range`):'';}
+  updateArchivedSummary();
   card(notes,'note-size',tr('笔记字数排名','Notes by word count'),stockLabel,{type:'rank',inventory:true,unit:tr('字词','Words'),rows:prepared.inventoryRows.noteSize});
   card(notes,'note-network',tr('笔记关系','Note links'),tr('同一笔记本内的双链和 Markdown 链接。','Wiki and Markdown links within each notebook.'),{type:'graph',inventory:true,network:inventory.notes.network},true);
 
@@ -136,6 +139,7 @@ export function buildReport(report, context, actions) {
     if(previousFilter.mode!=='custom'){from.value=filter.start||data.start;to.value=filter.end||data.end;}
     if(data===previousData)return [];
     rangeCaption();
+    updateArchivedSummary();
     [data.seconds,data.activeDays,data.longest].forEach((value,i)=>{
       const node=changingMetrics[i],format=i===0?metricDuration(value):metricNumber;
       if(node.dataset.careerNumber===String(value))return;

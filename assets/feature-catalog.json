@@ -498,6 +498,17 @@
       "canvas.review",
       "notes.ai"
     ],
+    "usage-management.js": [
+      "notes",
+      "research",
+      "canvas.editor",
+      "canvas.library",
+      "canvas.study",
+      "canvas.tree",
+      "canvas.quicknotes",
+      "canvas.review",
+      "daily.tasks"
+    ],
     "usage-tracker.js": [
       "notes",
       "research",

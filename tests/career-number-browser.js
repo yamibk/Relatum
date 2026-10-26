@@ -21,6 +21,7 @@ async function main(){
       const url=new URL(route.request().url());
       if(url.pathname==='/')return route.fulfill({contentType:'text/html',body:html});
       if(url.pathname==='/api/career/report')return route.fulfill({json:{exists:true,report}});
+      if(url.pathname==='/api/usage/management')return route.fulfill({json:{archiveRevision:report.history.archiveRevision||0}});
       if(url.pathname==='/api/career/generate'){report.inventory.notes.wordCount++;return route.fulfill({json:{id:'test',status:'complete'}});}
       const file=path.join(root,url.pathname.startsWith('/assets/')?url.pathname.slice(1):'assets/'+url.pathname.slice(1));
       return route.fulfill({contentType:file.endsWith('.css')?'text/css':'text/javascript',body:fs.readFileSync(file,'utf8')});

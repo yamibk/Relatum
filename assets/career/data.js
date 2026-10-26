@@ -123,7 +123,8 @@ export function select(report, filter) {
   function rankings(category) {
     return ranks.get(category)||[];
   }
-  prepared.selection={ start, end, days, seconds, activeDays: active.length, longest, entityDays, events, hours, totals, entities, rankings, monthly,weekdays,hourTotals,eventKinds,eventCategories,eventDays:[...eventDays.values()].sort((a,b)=>a.date.localeCompare(b.date)),
+  const archivedNotes={count:history.archivedNotes?.count||0,seconds:totals.get('archive:notes')||0};
+  prepared.selection={ start, end, days, seconds, activeDays: active.length, longest, entityDays, events, hours, totals, entities, rankings, archivedNotes,monthly,weekdays,hourTotals,eventKinds,eventCategories,eventDays:[...eventDays.values()].sort((a,b)=>a.date.localeCompare(b.date)),
            hasHistory: !!history.days.length, since: history.since, coverage: history.coverage, collection };
   return prepared.selection;
 }

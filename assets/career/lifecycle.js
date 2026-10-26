@@ -188,14 +188,31 @@ export function createCareer(onReport) {
     if(saved)restore(saved);
   }
   async function preload() {
-    if(!initialized)initialized=(async()=>{const version=reportVersion,result=await request('/api/career/report');if(version!==reportVersion)return report;report=result.exists?result.report:null;if(result.error)message(true,result.error);onReport(report);return report;})().catch(error=>{initialized=null;throw error;});
+    if(!initialized)initialized=(async()=>{const version=reportVersion,result=await request('/api/career/report');if(version!==reportVersion)return report;report=result.exists?result.report:null;if(result.job)job=result.job;if(result.error)message(true,result.code==='archive-report-pending'?tr('归档完成，生涯报告待重新生成', 'Archiving is complete. Regenerate the career report.'):result.error);onReport(report);return report;})().catch(error=>{initialized=null;throw error;});
     return initialized;
   }
+  function invalidateArchive(value={}) {
+    if(report && Number(value.archiveRevision||0)<=Number(report.history.archiveRevision||0))return;
+    stop();reportVersion++;initialized=null;report=null;onReport(null);host.replaceChildren();host.hidden=true;charts=[];view=null;
+    context.data=null;context.graphViews.clear();context.presented.clear();context.countedNumbers.clear();context.detailsState.clear();
+    job=value.job||null;generating=false;generationState=null;root.classList.remove('is-generating');root.removeAttribute('aria-busy');scroll.inert=false;
+    syncEntry();
+    if(visible())activate().catch(error=>message(true,error.message));
+  }
+  async function checkArchive() {
+    const version=reportVersion;
+    try{const state=await request('/api/usage/management');if(version===reportVersion&&report&&state.archiveRevision>Number(report.history.archiveRevision||0)){invalidateArchive(state);return true;}}catch(_){}
+    return false;
+  }
+  document.addEventListener('relatum:usage-archived',event=>invalidateArchive(event.detail));
+  window.addEventListener('storage',event=>{if(event.key==='canvas:usageArchiveRevision:v1')invalidateArchive({archiveRevision:Number(event.newValue)});});
   async function activate() {
     active=true;const own=++sequence;
     entrance?.cancel();entrance=null;scroll.style.opacity='0';
+    if(await checkArchive())return;
     await styles();await preload();
     if(!visible()||own!==sequence)return;
+    if(job&&!report&&!generationState)beginGeneration();
     if(generationState){syncEntry();scroll.scrollTop=0;scroll.style.removeProperty('opacity');if(job)poll(job);return;}
     numberStartAt=Infinity;
     syncEntry();if(report){if(!host.childElementCount)render(false);else if(renderLanguage!==en())render(true);else{syncTheme();observe();}}
@@ -225,7 +242,7 @@ export function createCareer(onReport) {
           report=result.report;reportVersion++;onReport(report);initialized=Promise.resolve(report);job=null;
           endGeneration();numberStartAt=Infinity;render(false,true);message(false,'');fadeContent();return;
         }
-        if(current.status==='error')throw new Error(current.error);
+        if(current.status==='error')throw new Error(current.code==='archive-report-pending'?tr('归档完成，生涯报告待重新生成','Archiving is complete. Regenerate the career report.'):current.error);
         progress(current);await waiting(500,controller.signal);
         const next=await request('/api/career/jobs/'+initial.id,{signal:controller.signal});
         if(controller.signal.aborted||!visible())return;
@@ -251,7 +268,7 @@ export function createCareer(onReport) {
     renderTheme=document.body.dataset.startTheme;context.tooltip?.hide();
     for(const runtime of mounted.values())runtime.refreshTheme?.();
   }
-  function resume(){if(!visible())return;if(generationState){syncEntry();if(job)poll(job);return;}if(report&&renderLanguage!==en())render(true);else{syncTheme();observe();}if(job)poll(job);}
+  function resume(){if(!visible())return;if(!report&&!initialized){activate().catch(error=>message(true,error.message));return;}checkArchive();if(generationState){syncEntry();if(job)poll(job);return;}if(report&&renderLanguage!==en())render(true);else{syncTheme();observe();}if(job)poll(job);}
   document.addEventListener('relatum:start-workspacechange',event=>{active=event.detail.workspace==='career';if(!active){if(root.hidden)stop();else if(!suspended)pause();}else resume();});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();else resume();});
   window.addEventListener('canvasdesktop:visibility',()=>{if(!visible())stop();else resume();});
