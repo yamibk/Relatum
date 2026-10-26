@@ -4030,10 +4030,12 @@
   }
   function scheduleTreePagePreload() {
     if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
+    if (window.RelatumPageLayout?.canPreload('canvas', 'tree') === false) return;
     if (treePagePreloadHandle || studyCache || studyPrefetchPromise) return;
     var warmTreePage = function () {
       treePagePreloadHandle = 0;
       treePagePreloadUsesIdle = false;
+      if (window.RelatumPageLayout?.canPreload('canvas', 'tree') === false) return;
       prefetchStudyData().catch(function () {});
     };
     treePagePreloadUsesIdle = typeof window.requestIdleCallback === 'function';
@@ -4041,6 +4043,10 @@
       ? window.requestIdleCallback(warmTreePage, { timeout: 1500 })
       : window.setTimeout(warmTreePage, 600);
   }
+  document.addEventListener('relatum:page-layout', function (event) {
+    if (event.detail.workspace !== 'canvas') return;
+    if (window.RelatumPageLayout.canPreload('canvas', 'tree')) scheduleTreePagePreload(); else cancelTreePagePreload();
+  });
   function loadTreePageForOpen(epoch, requestId, taskId, requestedTreeId, allowRetry) {
     ensureTreePageData().then(function (json) {
       if (epoch !== treeEpoch) return;
@@ -5441,6 +5447,12 @@
     if (open) flushViewSave();
   });
   window.CanvasTreePage = {
+    beforeLeave: function () {
+      if (editingFreeItemId) commitFreeItemEdit();
+      if (progressPointEdit) finishProgressPointEdit(true);
+      flushProgressPointNames();
+      return flushFreeItemCommands();
+    },
     activate: function () { if (!open) openRoute(); },
     deactivate: function () { if (open) closeRoute(false); },
     open: function (taskId, trigger, treeId) { openRoute(trigger, taskId, treeId); },

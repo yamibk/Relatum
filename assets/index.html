@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Relatum</title>
+  <script src="start-page-layout.js"></script>
   <!-- 起步页主题必须早于外部 CSS 与正文首帧恢复，否则从深色画布返回时会短暂露出
        浏览器 / WebView 的默认白底。start.js 加载后仍会按同一偏好完整初始化主题。 -->
   <script>
@@ -223,14 +224,6 @@
             </label>
             <label class="start-setting-toggle">
               <span>
-                <strong>隐藏特殊页</strong>
-                <small>收起复习/活跃/速记/树状/学习，只留最近·收藏·分组</small>
-              </span>
-              <input type="checkbox" data-role="hide-special-toggle">
-              <i aria-hidden="true"></i>
-            </label>
-            <label class="start-setting-toggle">
-              <span>
                 <strong>精简目标树编辑</strong>
                 <small>隐藏高级解锁编辑，已有路线与解锁关系不受影响</small>
               </span>
@@ -356,12 +349,12 @@
               <i aria-hidden="true"></i>
             </label>
           </div>
+          <div class="start-usage-settings" data-usage-panel>
+            <h3 data-usage-heading>使用统计</h3>
+            <p data-usage-help>记录前台阅读与工作时间。关闭分类后保留已有历史。</p>
+            <div data-usage-settings></div>
+          </div>
         </div>
-      </div>
-      <div class="start-usage-settings" data-usage-panel>
-        <h3 data-usage-heading>使用统计</h3>
-        <p data-usage-help>记录前台阅读与工作时间。关闭分类后保留已有历史。</p>
-        <div data-usage-settings></div>
       </div>
       <nav class="start-workspace-switch" data-role="start-workspace-switch"
         role="tablist" aria-label="工作区" data-i18n-managed="true">
@@ -1780,7 +1773,6 @@
   <script src="usage-tracker.js" defer></script>
   <script src="settings-dialog.js" defer></script>
   <script src="settings-order-list.js" defer></script>
-  <script src="start-page-layout.js" defer></script>
   <script src="daily-loader.js" defer></script>
   <script src="global-settings.js" defer></script>
   <script src="start-workspace-runtime.js" defer></script>

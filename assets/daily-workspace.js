@@ -35,7 +35,7 @@
     nav.classList.toggle('daily-nav-no-motion', instant);
     const track = slider.firstElementChild;
     const x = button.offsetLeft, y = button.offsetTop;
-    const buttons = [...nav.querySelectorAll('button')];
+    const buttons = [...nav.querySelectorAll('button:not([hidden])')];
     // Read local coordinates: workspace entrance transforms must not scale them.
     const boxes = buttons.map(item => ({ x: item.offsetLeft, y: item.offsetTop, w: item.offsetWidth, h: item.offsetHeight }));
     slider.style.width = button.offsetWidth + 'px'; slider.style.height = button.offsetHeight + 'px';
@@ -66,7 +66,15 @@
     const nav = element.querySelector('.daily-navigation'); if (!nav) return;
     const focused = nav.contains(document.activeElement) ? document.activeElement : null;
     const buttons = new Map([...nav.querySelectorAll('button')].map(button => [button.dataset.dailyPage, button]));
-    available().forEach(id => nav.append(buttons.get(id)));
+    const order = available();
+    pageLayout.items('daily', { includeHidden: true }).forEach(({ id }) => {
+      const button = buttons.get(id); if (!button) return;
+      button.hidden = !order.includes(id); button.disabled = button.hidden; nav.append(button);
+    });
+    nav.hidden = !order.length;
+    const track = nav.querySelector('.daily-nav-slider-track');
+    if (track.children.length !== order.length) track.replaceChildren(...order.map(() => document.createElement('span')));
+    if (!current) nav.querySelector('.daily-nav-slider').classList.remove('show');
     if (focused && document.activeElement !== focused) focused.focus({ preventScroll: true });
     queueSlider(true);
   }
@@ -110,13 +118,13 @@
   function cancelWarmup() { warmup?.abort(); warmup = null; }
   function prepare() {
     cancelWarmup();
-    if (!visible() || features.preloadEnabled === false) return;
+    if (!visible() || !current || features.preloadEnabled === false) return;
     const controller = warmup = new AbortController(), version = dataVersion;
     (async () => {
       for (const [feature, path] of [['tasks', '/api/daily'], ['focus', '/api/focus']]) {
-        if (!features.enabled('daily.' + feature) || current === feature || prepared.has(path)) continue;
+        if (!available().includes(feature) || current === feature || prepared.has(path)) continue;
         await window.RelatumWorkspaceRuntime.preparation().waitForIdle(controller.signal);
-        if (!visible() || version !== dataVersion) return;
+        if (!visible() || !available().includes(feature) || version !== dataVersion) return;
         const json = await read(path, { signal: controller.signal });
         if (!controller.signal.aborted && visible() && version === dataVersion) prepared.set(path, json);
       }
@@ -125,7 +133,7 @@
   function makeShell() {
     if (element.firstElementChild) return;
     const nav = document.createElement('nav'); nav.className = 'daily-navigation'; nav.setAttribute('aria-label', text(['日常页面', 'Daily pages']));
-    for (const id of available()) {
+    for (const { id } of pageLayout.items('daily', { includeHidden: true })) {
       const button = document.createElement('button'); button.type = 'button'; button.dataset.dailyPage = id;
       button.textContent = text(pages[id].label); button.addEventListener('click', () => navigate(id)); nav.append(button);
     }
@@ -136,7 +144,7 @@
       const horizontal = matchMedia('(max-width: 700px)').matches;
       const previousKey = horizontal ? 'ArrowLeft' : 'ArrowUp', nextKey = horizontal ? 'ArrowRight' : 'ArrowDown';
       if (![previousKey, nextKey, 'Home', 'End'].includes(event.key)) return;
-      const buttons = [...nav.querySelectorAll('button')], index = buttons.indexOf(event.target);
+      const buttons = [...nav.querySelectorAll('button:not([hidden])')], index = buttons.indexOf(event.target);
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
         : (index + (event.key === nextKey ? 1 : -1) + buttons.length) % buttons.length;
       event.preventDefault(); buttons[next]?.focus(); if (buttons[next]) navigate(buttons[next].dataset.dailyPage);
@@ -160,6 +168,7 @@
     const stage = document.createElement('div'); stage.className = 'daily-stage'; element.append(nav, stage);
     navResize = new ResizeObserver(() => queueSlider(true)); navResize.observe(nav);
     nav.querySelectorAll('button').forEach(button => navResize.observe(button));
+    orderNavigation();
   }
   async function mount(id, expected) {
     if (instances.has(id)) return instances.get(id);
@@ -188,7 +197,10 @@
         if (detail.view === 'focus') navigate('focus', detail);
         else document.dispatchEvent(new CustomEvent('daily:navigate-canvas', { detail }));
       },
-      async bindTask(task) { const service = await window.RelatumDailyLoader.focus(); if (service.bindTask(task.id, task.name, 'daily')) navigate('focus'); },
+      async bindTask(task) {
+        if (!available().includes('focus')) { hiddenPageNotice(); return; }
+        const service = await window.RelatumDailyLoader.focus(); if (service.bindTask(task.id, task.name, 'daily')) navigate('focus');
+      },
       openSource(source) {
         if (!features.enabled('canvas.editor') || !source.canvasPath || !source.rootId) return;
         location.href = 'editor.html?file=' + encodeURIComponent(source.canvasPath) + '&taskRoot=' + encodeURIComponent(source.rootId) + (source.nodeId ? '&node=' + encodeURIComponent(source.nodeId) : '');
@@ -215,7 +227,10 @@
     document.dispatchEvent(new CustomEvent('daily:hostchange', { detail: {} }));
   }
   function navigate(id, params = {}) {
-    if (!active || !available().includes(id)) return Promise.resolve(false);
+    if (!active || !available().includes(id)) {
+      if (pages[id] && !available().includes(id)) hiddenPageNotice();
+      return Promise.resolve(false);
+    }
     const expected = ++sequence;
     sliderTarget = id; queueSlider();
     navigation = navigation.catch(() => false).then(async () => {
@@ -228,25 +243,7 @@
       try { entry = await mount(id, expected); }
       catch (error) { if (error.name !== 'AbortError') notice(error); return false; }
       if (!active || expected !== sequence) return false;
-      deactivatePage(); current = id;
-      instances.forEach((item, page) => { item.root.hidden = page !== id; item.root.inert = page !== id; item.root.setAttribute('aria-hidden', String(page !== id)); });
-      element.querySelectorAll('[data-daily-page]').forEach(button => { const selected = button.dataset.dailyPage === id; button.classList.toggle('active', selected); button.setAttribute('aria-current', selected ? 'page' : 'false'); });
-      entry.front = true; entry.controller = new AbortController(); entry.root.scrollTop = entry.state.scrollTop || 0;
-      try { localStorage.setItem('daily:page:v1', id); } catch (_) {}
-      const isCurrent = () => active && expected === sequence && current === id && entry.front;
-      Promise.resolve().then(() => {
-        if (!isCurrent()) return;
-        entry.scopes.forEach(scope => scope.stop());
-        return entry.api.activate?.();
-      }).then(async () => {
-        if (!isCurrent()) return;
-        const scroller = entry.root.querySelector('.focus-daily-scroll');
-        if (scroller) scroller.scrollTop = entry.state.innerScrollTop || 0;
-        if (params.day) await entry.api.showDay?.(params.day, params.sessionId);
-        if (isCurrent() && visible()) prepare();
-      }).catch(error => { if (isCurrent() && error.name !== 'AbortError') notice(error); });
-      document.dispatchEvent(new CustomEvent('daily:pagechange', { detail: { page: id } }));
-      document.dispatchEvent(new CustomEvent('daily:hostchange', { detail: { scope: id === 'ledger' ? 'calendar' : id, root: entry.root } }));
+      showPage(id, entry, expected, params);
       return true;
     });
     navigation = navigation.catch(error => { if (expected === sequence) notice(error); return false; }).then(ok => {
@@ -255,6 +252,58 @@
     });
     return navigation;
   }
+  function showPage(id, entry, expected, params = {}) {
+    deactivatePage(); current = id; sliderTarget = id;
+    instances.forEach((item, page) => { item.root.hidden = page !== id; item.root.inert = page !== id; item.root.setAttribute('aria-hidden', String(page !== id)); });
+    element.querySelectorAll('[data-daily-page]').forEach(button => { const selected = button.dataset.dailyPage === id; button.classList.toggle('active', selected); button.setAttribute('aria-current', selected ? 'page' : 'false'); });
+    if (!entry) {
+      stopSlider();
+      element.querySelector('.daily-nav-slider')?.classList.remove('show');
+      document.dispatchEvent(new CustomEvent('daily:pagechange', { detail: { page: '' } }));
+      return;
+    }
+    entry.front = true; entry.controller = new AbortController(); entry.root.scrollTop = entry.state.scrollTop || 0;
+    try { localStorage.setItem('daily:page:v1', id); } catch (_) {}
+    const isCurrent = () => active && expected === sequence && current === id && entry.front;
+    Promise.resolve().then(() => {
+      if (!isCurrent()) return;
+      entry.scopes.forEach(scope => scope.stop());
+      return entry.api.activate?.();
+    }).then(async () => {
+      if (!isCurrent()) return;
+      const scroller = entry.root.querySelector('.focus-daily-scroll');
+      if (scroller) scroller.scrollTop = entry.state.innerScrollTop || 0;
+      if (params.day) await entry.api.showDay?.(params.day, params.sessionId);
+      if (isCurrent() && visible()) prepare();
+    }).catch(error => { if (isCurrent() && error.name !== 'AbortError') notice(error); });
+    document.dispatchEvent(new CustomEvent('daily:pagechange', { detail: { page: id } }));
+    document.dispatchEvent(new CustomEvent('daily:hostchange', { detail: { scope: id === 'ledger' ? 'calendar' : id, root: entry.root } }));
+    queueSlider();
+  }
+  function hiddenPageNotice() { notice(text(['此页面已隐藏，请在全局设置 → 导航中开启。', 'This page is hidden. Enable it in Settings → Navigation.'])); }
+  pageLayout.configure('daily', (next, commit) => {
+    const expected = ++sequence;
+    cancelWarmup();
+    navigation = navigation.catch(() => false).then(async () => {
+      if (expected !== sequence) return false;
+      const order = pageLayout.items('daily', { value: next }).map(item => item.id);
+      const target = order.includes(current) ? current : order[0] || '';
+      if (target === current) return commit();
+      if (!await beforeLeave() || expected !== sequence) return false;
+      let entry = null;
+      if (target && visible()) {
+        try { entry = await mount(target, expected); }
+        catch (error) { if (error.name !== 'AbortError') notice(error); return false; }
+      }
+      if (expected !== sequence || !commit()) return false;
+      showPage(entry ? target : '', entry, expected);
+      return true;
+    }).catch(error => { notice(error); return false; }).then(ok => {
+      if (expected === sequence) { sliderTarget = current; queueSlider(true); }
+      return ok;
+    });
+    return navigation;
+  });
   function notice(error) {
     window.RelatumDailyLoader.toast(typeof error === 'string' ? error : error.message);
   }
@@ -270,11 +319,16 @@
     await css('daily-workspace.css'); makeShell();
     let requested; try { requested = localStorage.getItem('daily:page:v1'); } catch (_) {}
     const query = new URLSearchParams(location.search);
-    if (query.get('workspace') === 'daily' && available().includes(query.get('view'))) {
-      requested = query.get('view'); query.delete('workspace'); query.delete('view');
+    if (query.get('workspace') === 'daily' && query.has('view')) {
+      const target = query.get('view');
+      if (available().includes(target)) requested = target;
+      else if (pages[target]) hiddenPageNotice();
+      query.delete('workspace'); query.delete('view');
       history.replaceState(null, '', location.pathname + (query.size ? '?' + query : ''));
     }
-    return navigate(available().includes(requested) ? requested : available()[0]);
+    const target = available().includes(requested) ? requested : available()[0];
+    if (!target) { showPage('', null, sequence); return true; }
+    return navigate(target);
   }
   async function leave() {
     if (!await beforeLeave()) return false;
@@ -287,6 +341,7 @@
     const entry = instances.get(current);
     if (!visible()) { stopSlider(); if (entry) entry.front = false; entry?.api.deactivate?.(); entry?.controller?.abort(); }
     else if (entry) { queueSlider(true); entry.front = true; entry.controller = new AbortController(); entry.api.activate?.(); prepare(); }
+    else if (available().length) navigate(available()[0]);
   }
   document.addEventListener('canvas:data-changed', changed);
   document.addEventListener('visibilitychange', visibility);
@@ -297,7 +352,10 @@
     element.querySelector('.daily-navigation')?.setAttribute('aria-label', text(['日常页面', 'Daily pages']));
     element.querySelectorAll('[data-daily-page]').forEach(button => { button.textContent = text(pages[button.dataset.dailyPage].label); }); queueSlider(true);
   });
-  document.addEventListener('relatum:page-layout', event => { if (event.detail.workspace === 'daily') orderNavigation(); });
+  document.addEventListener('relatum:page-layout', event => {
+    if (event.detail.workspace !== 'daily') return;
+    cancelWarmup(); prepared.clear(); orderNavigation();
+  });
   reducedMotion.addEventListener('change', () => { stopSlider(); queueSlider(true); });
   window.RelatumDailyWorkspace = Object.freeze({ activate, leave, navigate, release,
     afterLeave() { clearTimeout(releaseTimer); releaseTimer = setTimeout(release, 0); }, get current() { return current; } });

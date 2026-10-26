@@ -896,7 +896,7 @@
     try {
       const selected = year || cadenceYear;
       const json = await api('/api/study-activity' + (selected ? '?year=' + encodeURIComponent(selected) : ''));
-      if (seq !== cadenceLoadSeq) return false;
+      if (seq !== cadenceLoadSeq || window.RelatumPageLayout?.isVisible('canvas', 'cadence') === false) return false;
       cadenceYear = String(json.year || '');
       activityPayload = json;
       activityDays = json.days || {};
@@ -936,10 +936,12 @@
 
   function scheduleActivityPreload() {
     if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
+    if (window.RelatumPageLayout?.canPreload('canvas', 'cadence') === false) return;
     if (activityPreloadHandle || activityLoadPromise || (activityPayload && !activityDirty)) return;
     const warmActivity = () => {
       activityPreloadHandle = 0;
       activityPreloadUsesIdle = false;
+      if (window.RelatumPageLayout?.canPreload('canvas', 'cadence') === false) return;
       ensureActivityReady().catch(() => undefined);
     };
     activityPreloadUsesIdle = typeof window.requestIdleCallback === 'function';
@@ -947,6 +949,10 @@
       ? window.requestIdleCallback(warmActivity, { timeout: 1500 })
       : window.setTimeout(warmActivity, 600);
   }
+  document.addEventListener('relatum:page-layout', event => {
+    if (event.detail.workspace !== 'canvas') return;
+    if (window.RelatumPageLayout.canPreload('canvas', 'cadence')) scheduleActivityPreload(); else cancelActivityPreload();
+  });
 
   function cancelCadenceVisibleSync() {
     if (!cadenceVisibleSyncFrame) return;

@@ -888,10 +888,12 @@
   // 空闲时只缓存卡池 JSON；真正进入复习页后再生成卡片并按需加载公式运行时。
   function schedulePreload() {
     if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
+    if (window.RelatumPageLayout?.canPreload('canvas', 'review') === false) return;
     if (preloadHandle || preloadPromise || loaded) return;
     const warm = () => {
       preloadHandle = 0;
       preloadUsesIdle = false;
+      if (window.RelatumPageLayout?.canPreload('canvas', 'review') === false) return;
       preloadPromise = readJson('/api/review-pool').catch(() => null);
     };
     preloadUsesIdle = typeof window.requestIdleCallback === 'function';
@@ -899,6 +901,10 @@
       ? window.requestIdleCallback(warm, { timeout: 1500 })
       : window.setTimeout(warm, 600);
   }
+  document.addEventListener('relatum:page-layout', event => {
+    if (event.detail.workspace !== 'canvas') return;
+    if (window.RelatumPageLayout.canPreload('canvas', 'review')) schedulePreload(); else cancelPreload();
+  });
 
   async function mark(rating) {
     if (!current || feedback || marking || pendingRating || loading || reviewMode === 'free') return;

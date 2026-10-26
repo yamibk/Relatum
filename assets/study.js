@@ -806,6 +806,7 @@
     });
   }
   window.StudyView = {
+    beforeLeave: flushStudyMutations,
     toggleMode: toggleViewMode,
     activate: activateStudyView,
     finalizeExitMotion: function () { finalizeStudyEntranceExit(false); },
@@ -3372,6 +3373,7 @@
     if (studyLoaded) return true;
     try {
       const json = await api('/api/study');
+      if (window.RelatumPageLayout?.canPreload('canvas', 'study') === false) return false;
       applyStudyPayload(json);
       studyLoaded = true;
       window._relatumStudyData = json;
@@ -3383,10 +3385,12 @@
 
   function scheduleStudyPreload() {
     if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
+    if (window.RelatumPageLayout?.canPreload('canvas', 'study') === false) return;
     if (studyPreloadHandle || studyLoaded) return;
     const warm = () => {
       studyPreloadHandle = 0;
       studyPreloadUsesIdle = false;
+      if (window.RelatumPageLayout?.canPreload('canvas', 'study') === false) return;
       preloadStudy().catch(() => undefined);
     };
     studyPreloadUsesIdle = typeof window.requestIdleCallback === 'function';
@@ -3394,6 +3398,14 @@
       ? window.requestIdleCallback(warm, { timeout: 1500 })
       : window.setTimeout(warm, 600);
   }
+  document.addEventListener('relatum:page-layout', function (event) {
+    if (event.detail.workspace !== 'canvas') return;
+    if (window.RelatumPageLayout.canPreload('canvas', 'study')) scheduleStudyPreload();
+    else {
+      if (studyPreloadUsesIdle) window.cancelIdleCallback?.(studyPreloadHandle); else clearTimeout(studyPreloadHandle);
+      studyPreloadHandle = 0; studyPreloadUsesIdle = false;
+    }
+  });
 
   scheduleStudyPreload();
   function invalidateActivity() { if (window.StudyActivity) window.StudyActivity.reload(); }

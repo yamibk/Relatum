@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const VIEWS = new Set(['library', 'review', 'calendar', 'cadence', 'notes', 'tree', 'study', 'focus']);
+  const VIEWS = new Set(['none', 'library', 'review', 'calendar', 'cadence', 'notes', 'tree', 'study', 'focus']);
 
   function routeOf(value) {
     if (!value || !VIEWS.has(value.view)) return null;
@@ -52,12 +52,16 @@
       if (controller) controller.abort();
     }
 
-    function createRequest(route, options) {
+    function settle(entry, ok) { entry?.waiters?.splice(0).forEach(resolve => resolve(ok)); }
+
+    function createRequest(route, options, transfer = false) {
       clearTimer();
+      const previous = pending;
       const previousController = requestController;
       const controller = new AbortController();
       const id = ++version;
-      const entry = { id, route, options, phase: 'waiting', context: null };
+      const entry = { id, route, options, phase: 'waiting', context: null, waiters: transfer ? previous?.waiters || [] : [] };
+      if (!transfer) settle(previous, false);
       entry.context = { id, options, signal: controller.signal, isCurrent: () => isCurrent(id) };
       requestController = controller;
       desired = route;
@@ -75,6 +79,7 @@
       if (destroyed) return;
       clearTimer();
       const cancelledVersion = ++version;
+      settle(pending, false);
       pending = null;
       desired = current;
       abortRequest();
@@ -89,6 +94,7 @@
 
     function fail(entry, error, previous) {
       if (destroyed || version !== entry.id) return;
+      settle(entry, false);
       clearTimer();
       const failureVersion = ++version;
       pending = null;
@@ -114,6 +120,7 @@
         fail(entry, error, previous);
         return;
       }
+      settle(entry, true);
     }
 
     function prepared(entry) {
@@ -129,7 +136,7 @@
       entry.phase = 'preparing';
       let result;
       try {
-        if (typeof settings.enabled === 'function' && !settings.enabled(entry.route)) {
+        if (typeof settings.enabled === 'function' && !settings.enabled(entry.route, entry.options)) {
           cancel();
           return;
         }
@@ -164,7 +171,7 @@
       const opts = Object.assign({}, options);
       const hasAction = !!opts.action || opts.forceTimer === true || typeof opts.afterActivate === 'function';
       try {
-        if (typeof settings.enabled === 'function' && !settings.enabled(route)) return version;
+        if (typeof settings.enabled === 'function' && !settings.enabled(route, opts)) return version;
       } catch (error) { report(error); return version; }
       if (pending && sameRoute(desired, route) && !hasAction) {
         if (opts.immediate && !pending.options.immediate) {
@@ -192,7 +199,7 @@
       clearTimer();
       if (composing && pending && pending.phase !== 'waiting') {
         // Preparation may have faded an editable page. Abort it while retaining the latest intent.
-        createRequest(pending.route, pending.options);
+        createRequest(pending.route, pending.options, true);
       }
       // Even an immediate request waits for the compositionend event and final input handlers.
       if (!composing && pending) schedule(pending, true);
@@ -210,6 +217,7 @@
       clearTimer();
       destroyed = true;
       version += 1;
+      settle(pending, false);
       pending = null;
       desired = current;
       composing = false;
@@ -218,6 +226,13 @@
 
     return {
       request, cancel, resume, setComposing, isCurrent, destroy,
+      requestAsync(value, options) {
+        const route = routeOf(value);
+        if (!route) return Promise.resolve(false);
+        const id = request(route, options);
+        if (pending?.id === id && sameRoute(pending.route, route)) return new Promise(resolve => pending.waiters.push(resolve));
+        return Promise.resolve(!!route && sameRoute(current, route) && !pending);
+      },
       getState() { return { current, desired, version, pending: !!pending }; },
     };
   }

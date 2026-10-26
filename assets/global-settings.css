@@ -45,3 +45,8 @@ html[data-start-workspace="none"] body.start-page { height: 100vh; overflow: hid
 html[data-start-workspace="none"] :is(.start-sky, .start-workspace-stage, .top-actions, .desktop-settings-trigger, .start-workspace-switch) { display: none !important; }
 html[data-start-workspace="none"] body.start-page { background: #fbfbfa; }
 html[data-start-theme="dark"][data-start-workspace="none"] body.start-page { background: #111213; }
+html[data-canvas-pages-empty="1"] #start-canvas-workspace,
+html[data-daily-pages-empty="1"] #start-daily-workspace > :is(.daily-navigation, .daily-stage),
+html[data-start-workspace="canvas"][data-canvas-pages-empty="1"] :is(.top-actions, .desktop-settings-trigger, .start-sky),
+html[data-start-workspace="daily"][data-daily-pages-empty="1"] :is(.desktop-settings-trigger, .start-sky) { display: none !important; }
+.left-spine [data-page-hidden="1"], .daily-navigation[hidden], .daily-navigation button[hidden] { display: none !important; }

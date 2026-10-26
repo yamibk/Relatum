@@ -252,6 +252,27 @@ async function run() {
     assert.equal(f.nav.getState().current.groupId, 'a', 'caller mutation cannot retarget a queued route');
     assert.equal(Object.isFrozen(f.nav.getState().current), true);
   }
+  {
+    const late = deferred(), f = fixture({ prepare: () => late.promise });
+    const changed = f.nav.requestAsync({ view: 'none' }, { immediate: true });
+    late.resolve(); await microtasks();
+    assert.equal(await changed, true);
+    assert.equal(f.nav.getState().current.view, 'none');
+    const cancelled = f.nav.requestAsync({ view: 'review' }); f.nav.cancel();
+    assert.equal(await cancelled, false, 'a cancelled layout handoff always settles');
+  }
+  {
+    const f = fixture({ commit() { throw Error('storage unavailable'); } });
+    assert.equal(await f.nav.requestAsync({ view: 'none' }, { immediate: true }), false);
+    assert.equal(f.nav.getState().current.view, 'library', 'failed visibility commit restores the current route');
+  }
+  {
+    const late = deferred(), f = fixture({ prepare: () => late.promise });
+    const changed = f.nav.requestAsync({ view: 'study' }, { immediate: true });
+    f.nav.setComposing(true); late.resolve(); await microtasks();
+    f.nav.setComposing(false); f.scheduler.tick(0); await microtasks();
+    assert.equal(await changed, true, 'composition transfers layout completion to the replacement request');
+  }
   console.log('start navigation regression passed');
 }
 

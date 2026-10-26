@@ -2463,7 +2463,8 @@
         history = state.history;
         redoStack = state.redoStack;
         cancelNoteInertia(false);
-        if (pageUsable() || (preload && !document.hidden && document.body.dataset.startWorkspace === 'canvas')) renderAll();
+        if (pageUsable() || (preload && window.RelatumPageLayout?.canPreload('canvas', 'notes') !== false
+          && !document.hidden && document.body.dataset.startWorkspace === 'canvas')) renderAll();
         if (searchInput) refreshSearchVisuals();
         return true;
       })
@@ -2794,10 +2795,12 @@
   // 起步页稳定后在隐藏状态读取并构建速记墙；真正翻入页面时只需校准连线几何。
   function schedulePreload() {
     if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
+    if (window.RelatumPageLayout?.canPreload('canvas', 'notes') === false) return;
     if (preloadHandle || loaded || loading) return;
     const warm = () => {
       preloadHandle = 0;
       preloadUsesIdle = false;
+      if (window.RelatumPageLayout?.canPreload('canvas', 'notes') === false) return;
       load(true).catch(() => undefined);
     };
     preloadUsesIdle = typeof window.requestIdleCallback === 'function';
@@ -2805,6 +2808,10 @@
       ? window.requestIdleCallback(warm, { timeout: 1500 })
       : window.setTimeout(warm, 600);
   }
+  document.addEventListener('relatum:page-layout', event => {
+    if (event.detail.workspace !== 'canvas') return;
+    if (window.RelatumPageLayout.canPreload('canvas', 'notes')) schedulePreload(); else cancelPreload();
+  });
 
   // ── 当前页归档（长按速记图标触发）──
   // 有名字的便签搬进「学习归档」，无名的丢弃；只清空当前页。
@@ -2894,6 +2901,12 @@
   }
 
   window.CanvasNotes = {
+    async beforeLeave() {
+      await finishNoteEdit(true);
+      await flushSave();
+      await Promise.all([...pageStates.values()].filter(state => state.loaded && state.dirty).map(savePage));
+      return true;
+    },
     activate() {
       cancelPreload();
       const ready = loaded ? Promise.resolve(true) : load();

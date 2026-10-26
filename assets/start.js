@@ -26,6 +26,7 @@
   let spineView = null;
   let navigationExitPreview = null;
   let navigationComposing = false;
+  let pageLayoutChanging = false;
   let startPageHidden = false;
   let spineDotsOrder = '';
   const fileList = document.querySelector('[data-role="file-list"]');
@@ -63,7 +64,6 @@
   const notesConsoleShortcutsToggle = document.querySelector('[data-role="notes-console-shortcuts-toggle"]');
   const notesConsoleHelpPanel = document.querySelector('[data-role="notes-console-help-panel"]');
 
-  const hideSpecialToggle = document.querySelector('[data-role="hide-special-toggle"]');
   const goalTreeSimpleToggle = document.querySelector('[data-role="goal-tree-simple-toggle"]');
   const goalTreeUnlockToggle = document.querySelector('[data-role="goal-tree-unlock-toggle"]');
   const treePageRootTitleToggle = document.querySelector('[data-role="tree-page-root-title-toggle"]');
@@ -85,6 +85,8 @@
   let fileBuckets = new Map();
   let recentRefreshSeq = 0;
   let libraryLoaded = false;
+  let libraryReadSettled = false;
+  let firstCanvasReady = false;
   let fileStatsRequestSeq = 0;
   const fileStatsCache = new Map();
   let fileStatsObserver = null;
@@ -104,7 +106,6 @@
   let pendingDeleteIndex = -1; // 右方向键：待确认删除（再按一次右键执行）
   const trashingPaths = new Set(); // 防止右键菜单与键盘对同一画布重复提交
   function isView(name) { return navigation?.getState().current.view === name; }
-  let specialPagesHidden = false; // 「隐藏特殊页」开启：五个功能页既不显示也不可翻入
   const FAVORITES_PAGE = '__favorites__';
   const INBOX_PAGE = '__inbox__';
   const LARGE_LIST_THRESHOLD = 80;
@@ -146,7 +147,6 @@
   const NOTES_CONSOLE_HOTSPOT_WIDTH = 48;
   const NOTES_CONSOLE_HOTSPOT_HEIGHT = 72;
 
-  const HIDE_SPECIAL_KEY = 'canvas:hideSpecialPages';
   const GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
   const GOAL_TREE_ENFORCE_UNLOCK_KEY = 'canvas:goalTreeEnforceUnlock:v1';
   const TREE_PAGE_ROOT_TITLE_HIDDEN_KEY = 'canvas:treePageRootTitleHidden:v1';
@@ -422,22 +422,6 @@
   // Recording preferences are owned by the unified usage service.
 
 
-  // 「隐藏特殊页」：开启后书脊只剩普通书页（最近 / 收藏 / 自定义分组）的圆点，
-  // 五个功能页（复习/活跃/速记/树状/学习）的入口被 CSS 收起，滚轮翻页也跳过它们。
-  function applyHideSpecialPages(hidden, persist) {
-    specialPagesHidden = !!hidden && features.enabled('canvas.library');
-    if (hideSpecialToggle) hideSpecialToggle.checked = specialPagesHidden;
-    document.body.dataset.hideSpecial = specialPagesHidden ? '1' : '0';
-    if (persist) {
-      try { localStorage.setItem(HIDE_SPECIAL_KEY, specialPagesHidden ? '1' : '0'); } catch (e) {}
-    }
-    // 若开启时正停在某张特殊页，立刻退回「最近」，避免卡在已被隐藏、又翻不动的页面上。
-    if (specialPagesHidden && navigation && navigation.getState().desired.view !== 'library') {
-      navigateTo('');
-    }
-    spineView?.invalidate({ animate: false });
-  }
-
   function applyGoalTreeSimpleMode(simple, persist) {
     const active = simple !== false;
     if (goalTreeSimpleToggle) goalTreeSimpleToggle.checked = active;
@@ -663,9 +647,6 @@
 
 
 
-  let hideSpecialInit = false;  // 默认关闭：出厂即显示特殊页，只有显式存过 '1' 才隐藏
-  try { hideSpecialInit = localStorage.getItem(HIDE_SPECIAL_KEY) === '1'; } catch (e) {}
-  applyHideSpecialPages(hideSpecialInit, false);
   let goalTreeSimpleInit = true;
   try { goalTreeSimpleInit = localStorage.getItem(GOAL_TREE_SIMPLE_KEY) !== '0'; } catch (e) {}
   applyGoalTreeSimpleMode(goalTreeSimpleInit, false);
@@ -955,11 +936,6 @@
   })();
 
   // Category switches are rendered by usage-tracker.js.
-  if (hideSpecialToggle) {
-    hideSpecialToggle.addEventListener('change', () => {
-      applyHideSpecialPages(hideSpecialToggle.checked, true);
-    });
-  }
   if (goalTreeSimpleToggle) {
     goalTreeSimpleToggle.addEventListener('change', () => {
       applyGoalTreeSimpleMode(goalTreeSimpleToggle.checked, true);
@@ -1779,8 +1755,8 @@
     const remove = (...keys) => keys.forEach(key => { try { localStorage.removeItem(key); } catch (_) {} });
     if (category === 'appearance') { remove(START_BACKGROUND_KEY); applyStartBackgroundStyle('simple', false); }
     if (category === 'navigation') {
-      remove(HIDE_SPECIAL_KEY, LIBRARY_SEARCH_ENABLED_KEY, START_SPEED_KEY, SPINE_SPEED_KEY);
-      applyHideSpecialPages(false, false); applyLibrarySearchEnabled(false, false);
+      remove(LIBRARY_SEARCH_ENABLED_KEY, START_SPEED_KEY, SPINE_SPEED_KEY);
+      applyLibrarySearchEnabled(false, false);
       applyStartSpeed(START_SPEED_DEFAULT, false); applySpineSpeed(SPINE_SPEED_DEFAULT, false);
     }
     if (category === 'learning') {
@@ -2055,7 +2031,8 @@
   }
 
   function showView(name) {
-    if (!features.viewEnabled(name)) return;
+    if (name !== 'none' && !features.viewEnabled(name)) return;
+    if (name !== 'none' && navigation && !pageLayout.isVisible('canvas', pageLayout.routeId(navigation.getState().current))) return;
     // 'cadence'（活跃热力图页）与 'study' 共用同一套书页舞台布局壳，只用 cadence-active 切换浮层，
     // 这样 [data-start-state="study"] 那批布局 CSS 仍然生效，无需为 cadence 再写一套。
     const previous = bookView ? (bookView.dataset.viewName || '') : '';
@@ -2090,6 +2067,7 @@
       window.CanvasTreePage.deactivate();
     }
     syncStartViewLifecycle(name, previous);
+    if (!firstCanvasReady && name !== 'loading') { firstCanvasReady = true; window.RelatumStartupMark?.('canvas-ready'); }
   }
 
   function syncActiveSpineOrb(options) {
@@ -2239,6 +2217,7 @@
   }
 
   function requestSpecialView(view, active, options) {
+    if (active && !pageLayout.isVisible('canvas', view)) { hiddenPageNotice(); return; }
     // A repeat click is a command on the mounted page, not a transient page
     // to skip. Preserve every such command outside composition handoff.
     const opts = active && isView(view) && options?.action
@@ -2396,7 +2375,7 @@
 
   function waitForLibraryPageExit(route, ctx) {
     const previous = navigation.getState().current;
-    if (!bookPage || ctx.options.action === 'refresh' || previous.view !== 'library' || previous.groupId === route.groupId
+    if (!bookPage || bookView.hidden || ctx.options.action === 'refresh' || previous.view !== 'library' || previous.groupId === route.groupId
       || !bookView?.dataset.viewName || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return undefined;
     const forward = typeof ctx.options.forward === 'boolean' ? ctx.options.forward
       : pageIndexOf(route.groupId) >= pageIndexOf(previous.groupId);
@@ -2489,15 +2468,15 @@
   }
 
   navigation = window.RelatumStartNavigation.create({
-    initialRoute: { view: 'library', groupId: activeGroup },
-    enabled: route => route.view === 'library' ? features.enabled('canvas.library')
-      : !!navigationModules[route.view] && !specialPagesHidden && features.viewEnabled(route.view),
+    initialRoute: { view: 'none' },
+    enabled: (route, options) => route.view === 'none' || pageLayout.isVisible('canvas', pageLayout.routeId(route), options?.pageLayout),
     visible: navigationVisible,
     feedback: route => updateNavigationFeedback(route),
     prepare(route, ctx) {
-      return route.view === 'library' ? waitForLibraryPageExit(route, ctx) : waitForNavigationModule(route, ctx);
+      return route.view === 'none' ? undefined : route.view === 'library' ? waitForLibraryPageExit(route, ctx) : waitForNavigationModule(route, ctx);
     },
     commit(route, previous, ctx) {
+      if (ctx.options.commitLayout && !ctx.options.commitLayout()) throw new Error(englishUI() ? 'Could not save page visibility.' : '无法保存页面显示设置。');
       const api = navigationModules[route.view]?.();
       const same = route.view === previous.view && (route.view !== 'library' || route.groupId === previous.groupId);
       if (same && ctx.options.action !== 'refresh' && bookView?.dataset.viewName) {
@@ -2525,6 +2504,9 @@
         commitNavigationExitPreview();
         if (bookStage) bookStage.scrollTop = 0;
         animateLibraryPageEntrance(ctx);
+      } else if (route.view === 'none') {
+        showView('none');
+        commitNavigationExitPreview();
       } else {
         if (route.view === 'cadence') stageCadenceEntrance();
 
@@ -2973,6 +2955,10 @@
   function renderDots() {
     const focused = dots.contains(document.activeElement) ? document.activeElement : null;
     const pages = pageLayout.items('canvas'), orderKey = JSON.stringify(pages.map(item => item.id));
+    for (const [view, action] of [['review', 'review'], ['cadence', 'cadence'], ['notes', 'notes'], ['tree', 'tree-page'], ['study', 'study']]) {
+      const button = spineEl.querySelector('[data-action="' + action + '-view"]');
+      if (button) button.dataset.pageHidden = pageLayout.isVisible('canvas', view) ? '0' : '1';
+    }
     let layoutChanged = spineDotsOrder !== orderKey;
     spineDotsOrder = orderKey;
     const existing = new Map(Array.from(dots.querySelectorAll(':scope > .page-dot:not(.dot-add)'))
@@ -4320,14 +4306,16 @@
 
   async function moveGroupBy(groupId, delta) {
     const previous = pageLayout.layout('canvas');
-    const ids = previous.order.filter(id => id.startsWith('group:'));
-    const index = ids.indexOf('group:' + groupId);
+    const visibleIds = pageLayout.items('canvas').filter(item => item.groupId !== undefined).map(item => item.id);
+    const index = visibleIds.indexOf('group:' + groupId);
     const next = index + delta;
-    if (index < 0 || next < 0 || next >= ids.length) return;
-    [ids[index], ids[next]] = [ids[next], ids[index]];
+    if (index < 0 || next < 0 || next >= visibleIds.length) return;
+    [visibleIds[index], visibleIds[next]] = [visibleIds[next], visibleIds[index]];
+    const visibleSet = new Set(visibleIds);
     let cursor = 0;
-    const order = previous.order.map(id => id.startsWith('group:') ? ids[cursor++] : id);
-    if (!pageLayout.apply('canvas', { order })) return;
+    const order = previous.order.map(id => visibleSet.has(id) ? visibleIds[cursor++] : id);
+    const ids = order.filter(id => id.startsWith('group:'));
+    if (!await pageLayout.apply('canvas', { ...previous, order })) return;
     try {
       const response = await fetch('/api/groups-reorder', {
         method: 'POST',
@@ -4341,7 +4329,7 @@
       pageLayout.setGroups(lastGroups);
     } catch (err) {
       // Do not roll back a newer order submitted while this request was pending.
-      if (JSON.stringify(pageLayout.layout('canvas').order) === JSON.stringify(order)) pageLayout.apply('canvas', previous);
+      if (JSON.stringify(pageLayout.layout('canvas')) === JSON.stringify({ ...previous, order })) await pageLayout.apply('canvas', previous);
       await refresh();
     }
   }
@@ -4649,6 +4637,7 @@
 
 
   document.addEventListener('daily:navigate-canvas', async event => {
+    if (event.detail?.view && !pageLayout.isVisible('canvas', event.detail.view)) { hiddenPageNotice(); return; }
     if (event.detail?.view === 'cadence' && await workspaceRuntime.set('canvas')) setCadenceActive(true);
   });
 
@@ -4672,6 +4661,7 @@
   // 翻到某页（带整页横滑 + 淡入淡出；方向由页序或 forwardHint 指定）
   function navigateTo(gid, forwardHint) {
     if (!features.enabled('canvas.library')) return;
+    if (!pageLayout.isVisible('canvas', pageLayout.routeId({ view: 'library', groupId: gid }))) { hiddenPageNotice(); return; }
     return navigation?.request({ view: 'library', groupId: gid }, { forward: forwardHint });
   }
 
@@ -4680,24 +4670,50 @@
     review: setReviewActive, cadence: setCadenceActive,
     notes: setNotesActive, tree: setTreePageActive, study: setStudyActive,
   };
-  function availableSpecialPages() {
-    return specialPagesHidden ? [] : pageLayout.items('canvas').map(item => item.id).filter(id => pageActivators[id]);
+  function hiddenPageNotice() { showToast(englishUI() ? 'This page is hidden. Enable it in Settings → Navigation.' : '此页面已隐藏，请在全局设置 → 导航中开启。'); }
+  function canvasTarget(value = pageLayout.layout('canvas'), preferred) {
+    const id = preferred && pageLayout.routeId(preferred);
+    if (id && pageLayout.isVisible('canvas', id, value)) return preferred;
+    return pageLayout.route(pageLayout.items('canvas', { value })[0]?.id || 'none');
   }
+  pageLayout.configure('canvas', async (next, commit) => {
+    if (!initialPageOpened) return commit();
+    const state = navigation.getState(), target = canvasTarget(next, state.current);
+    if (!navigationVisible()) {
+      if (!commit()) return false;
+      if (pageLayout.routeId(target) !== pageLayout.routeId(state.current)) { navigation.cancel(); showView('none'); }
+      return true;
+    }
+    if (pageLayout.routeId(target) === pageLayout.routeId(state.current)) return commit();
+    pageLayoutChanging = true;
+    try {
+      document.activeElement?.blur();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (navigationComposing) return false;
+      if (await navigationModules[state.current.view]?.()?.beforeLeave?.() === false) return false;
+      return await navigation.requestAsync(target, { immediate: true, action: 'layout', pageLayout: next, commitLayout: commit });
+    } finally { pageLayoutChanging = false; queueMicrotask(reconcilePageVisibility); }
+  });
   let initialPageOpened = false;
   function openInitialPage() {
     if (initialPageOpened || !navigationVisible()) return;
-    initialPageOpened = true;
     const requested = features.viewEnabled(initialView) && pageActivators[initialView] ? initialView : '';
-    const target = (!specialPagesHidden && requested) || (!features.enabled('canvas.library') ? availableSpecialPages()[0] : '');
-    if (!target) return;
+    // Group identities are authoritative only after the directory response. In
+    // particular, a saved group may not exist in an order-only legacy preference.
+    if (features.enabled('canvas.library') && !libraryReadSettled
+      && (!requested || !pageLayout.isVisible('canvas', requested))) return;
+    const target = canvasTarget(undefined, requested ? { view: requested } : { view: 'library', groupId: activeGroup });
+    if (target.view === 'library' && !libraryReadSettled) return;
+    initialPageOpened = true;
+    if (target.view === 'none') showView('none');
     // Readiness belongs to the same versioned request as the initial route.
-    navigation.request({ view: target }, { immediate: true });
+    navigation.request(target, { immediate: true });
     if (initialView) {
       try { history.replaceState(null, '', 'index.html'); } catch (e) {}
     }
   }
   function flipBy(delta) {
-    const order = pageLayout.items('canvas').map(item => pageLayout.route(item.id)).filter(route => route.view === 'library' || !specialPagesHidden);
+    const order = pageLayout.items('canvas').map(item => pageLayout.route(item.id));
     if (!order.length) return;
     const desired = navigation.getState().desired;
     let current = order.findIndex(item => pageLayout.routeId(item) === pageLayout.routeId(desired));
@@ -4711,7 +4727,14 @@
   // 两套滚动系统：
   //  · 鼠标在「书页内容区」→ 浏览器原生滚动该组的画布文件（不翻页）
   //  · 鼠标在「左侧书脊附近」→ 滚轮翻页，到首尾停止
-  document.addEventListener('relatum:page-layout', event => { if (event.detail.workspace === 'canvas') renderDots(); });
+  function reconcilePageVisibility() {
+    if (pageLayoutChanging || !navigationVisible() || !initialPageOpened) return;
+    const state = navigation.getState(), target = canvasTarget(undefined, state.current);
+    if (!pageLayout.isVisible('canvas', pageLayout.routeId(state.desired))) navigation.cancel();
+    const reveal = !state.pending && target.view !== 'none' && bookView.dataset.viewName === 'none';
+    if (reveal || pageLayout.routeId(target) !== pageLayout.routeId(state.current)) navigation.request(target, { immediate: true, action: reveal ? 'refresh' : undefined });
+  }
+  document.addEventListener('relatum:page-layout', event => { if (event.detail.workspace === 'canvas') { renderDots(); reconcilePageVisibility(); } });
   renderDots();
   spineView = window.RelatumStartSpine.create({
     spine: spineEl, bookView, dots, getTarget: getNavigationTarget,
@@ -4746,6 +4769,7 @@
     if (navigationVisible()) {
       navigation.resume();
       openInitialPage();
+      reconcilePageVisibility();
     } else {
       navigation.cancel();
       cancelNavigationPageMotion();
@@ -4815,6 +4839,7 @@
       lastFiles = (json && json.files) || [];
       if (Array.isArray(json?.groups)) { lastGroups = json.groups; pageLayout.setGroups(lastGroups); }
       libraryLoaded = true;
+      libraryReadSettled = true;
       recentLimit = Number.isFinite(Number(json && json.recentLimit))
         ? Math.max(1, Number(json.recentLimit)) : 30;
       fileStatsRequestSeq += 1;
@@ -4824,6 +4849,7 @@
       openInitialPage();
       return true;
     } catch (err) {
+      if (requestId === recentRefreshSeq) { libraryReadSettled = true; openInitialPage(); }
       if (requestId === recentRefreshSeq && isView('library')) showView(listViewName());
       return false;
     }

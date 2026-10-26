@@ -30,6 +30,10 @@
   }
   async function open(page, params) {
     if (!window.RelatumFeatureRuntime.visibleWorkspaces().includes('daily')) return false;
+    if (!window.RelatumPageLayout.isVisible('daily', page)) {
+      toast(window.RelatumI18n?.language === 'en' ? 'This page is hidden. Enable it in Settings → Navigation.' : '此页面已隐藏，请在全局设置 → 导航中开启。');
+      return false;
+    }
     if (!await window.RelatumStartWorkspace.set('daily')) return false;
     return (await load()).navigate(page, params);
   }

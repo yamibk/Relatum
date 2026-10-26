@@ -7,13 +7,13 @@ const repo = path.resolve(__dirname, '..'), catalog = JSON.parse(fs.readFileSync
 const artifacts = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-page-navigation-'));
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const frames = page => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-async function fixture(browser, mode) {
+async function fixture(browser, mode, { navigate = true } = {}) {
   const root = fs.mkdtempSync(path.join(artifacts, mode + '-'));
   const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
   const selected = mode === 'daily' ? ['daily', 'daily.tasks', 'daily.calendar', 'daily.focus', 'daily.ledger']
     : mode === 'special' ? ['canvas', 'canvas.review', 'canvas.study'] : null;
-  const choices = Object.fromEntries(catalog.features.map(item => [item.id, selected ? selected.includes(item.id) : item.id !== 'runtime.preload']));
+  const choices = Object.fromEntries(catalog.features.map(item => [item.id, selected ? selected.includes(item.id) : mode === 'visibility' || item.id !== 'runtime.preload']));
   const server = spawn(process.env.RELATUM_PYTHON || 'python', ['-B', 'app.py', '--no-browser', '--port', String(port), '--launch-profile', JSON.stringify({ version: 1, features: choices })],
     { cwd: repo, env: { ...process.env, RELATUM_DATA_ROOT: root }, windowsHide: true });
   let logs = ''; server.stdout.on('data', chunk => logs += chunk); server.stderr.on('data', chunk => logs += chunk);
@@ -23,7 +23,7 @@ async function fixture(browser, mode) {
   const base = 'http://127.0.0.1:' + port;
   try {
     for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/api/runtime')).ok) break; } catch (_) {} await pause(100); }
-    await page.goto(base); await page.waitForFunction(() => !!window.RelatumStartWorkspace);
+    if (navigate) { await page.goto(base); await page.waitForFunction(() => !!window.RelatumStartWorkspace); }
   } catch (error) { server.kill(); await context.close(); throw new Error(error.message + '\n' + logs); }
   return { page, context, server, base, errors, requests, root };
 }
@@ -46,7 +46,7 @@ async function fullChecks(browser) {
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:pageOrder:v1')), null);
     const dialog = await openNavigation(page), canvas = dialog.locator('[data-role="canvas-page-order-list"]'), daily = dialog.locator('[data-role="daily-page-order-list"]');
     assert.equal(await dialog.locator('nav [data-settings-category="navigation"]').textContent(), '导航');
-    assert.equal(await canvas.locator('input').count(), 0); assert.equal(await daily.locator('input').count(), 0);
+    assert.equal(await canvas.locator('input[type="checkbox"]').count(), 10); assert.equal(await daily.locator('input[type="checkbox"]').count(), 4);
     assert(!f.requests.some(url => /daily-workspace\.js|daily-(tasks|focus|calendar|ledger)\.(js|css|html)$/.test(url)), 'navigation settings do not load Daily pages');
     await page.evaluate(() => { window.__recentButton = document.querySelector('.page-dot[data-group-id=""]'); window.__bookRoot = document.querySelector('[data-role="book-stage"]'); });
     await moveRow(page, canvas, 'group:g0', 'Home');
@@ -217,8 +217,140 @@ async function restrictedChecks(browser, mode) {
     assert.deepEqual(f.errors, []); console.log(mode + ': feature filtering, reordered startup and shell settings passed');
   } finally { await f.context.close(); f.server.kill(); }
 }
+async function visibilityChecks(browser) {
+  const f = await fixture(browser, 'visibility', { navigate: false }), { page } = f;
+  let groups = [{ id: 'a', name: 'A' }, { id: 'h', name: 'Hidden' }, { id: 'b', name: 'B' }];
+  try {
+    let releaseDirectory, directoryArrived;
+    const directoryStarted = new Promise(resolve => directoryArrived = resolve), directoryGate = new Promise(resolve => releaseDirectory = resolve);
+    await page.route('**/api/recent', async route => { directoryArrived(); await directoryGate; await route.fulfill({ json: { files: [], groups } }); });
+    let releaseStyle, styleArrived;
+    const styleStarted = new Promise(resolve => styleArrived = resolve), styleGate = new Promise(resolve => releaseStyle = resolve);
+    await page.route('**/global-settings.css', async route => { styleArrived(); await styleGate; await route.continue(); });
+    let releaseActivity, activityArrived, activityReads = 0;
+    const activityStarted = new Promise(resolve => activityArrived = resolve), activityGate = new Promise(resolve => releaseActivity = resolve);
+    await page.route('**/api/study-activity*', async route => { if (++activityReads === 1) { activityArrived(); await activityGate; } await route.continue(); });
+    let releaseSettings, settingsArrived;
+    const arrived = new Promise(resolve => settingsArrived = resolve), gate = new Promise(resolve => releaseSettings = resolve);
+    await page.route('**/global-settings.js', async route => { settingsArrived(); await gate; await route.continue(); });
+    await page.goto(f.base, { waitUntil: 'commit' }); await styleStarted;
+    assert(await page.evaluate(() => { const panel = document.querySelector('[data-usage-panel]'); return !panel || !panel.getClientRects().length; }), 'delayed styles cannot expose settings');
+    releaseStyle(); await arrived;
+    await page.waitForSelector('.brand');
+    assert(await page.locator('[data-usage-panel]').evaluate(node => !!node.closest('[hidden]') && !node.getClientRects().length), 'settings are hidden before deferred scripts execute');
+    assert.equal(await page.evaluate(() => !!window.RelatumGlobalSettings), false);
+    await page.screenshot({ path: path.join(artifacts, 'startup-settings-pending.png') });
+    releaseSettings(); await page.waitForFunction(() => !!window.RelatumGlobalSettings);
+    await page.unroute('**/global-settings.js'); await directoryStarted;
+    assert(await page.locator('.loading-state').isVisible(), 'directory delay keeps the normal loading state');
+    await page.evaluate(() => RelatumPageLayout.apply('canvas', { ...RelatumPageLayout.layout('canvas'), order: ['review', 'recent'] }));
+    assert(await page.locator('.loading-state').isVisible(), 'reordering while the directory loads does not replace the initial page');
+    releaseDirectory(); await page.waitForSelector('.page-dot[data-group-id="a"]');
+    await activityStarted;
+    await page.evaluate(() => RelatumPageLayout.apply('canvas', { ...RelatumPageLayout.layout('canvas'), hidden: ['cadence'] }));
+    const oldActivity = page.waitForResponse(response => response.url().includes('/api/study-activity'));
+    releaseActivity(); await oldActivity; await frames(page);
+    assert.equal(await page.evaluate(() => StudyActivity.isReady()), false, 'a hidden late preload cannot become a ready unrendered page');
+    await page.evaluate(() => RelatumPageLayout.apply('canvas', { ...RelatumPageLayout.layout('canvas'), hidden: [] }));
+    assert.equal(await page.evaluate(() => StudyActivity.awaitReady()), true);
+    assert(await page.locator('[data-role="study-cadence"]').evaluate(node => !!node.childElementCount));
+    assert(activityReads >= 2); await page.unroute('**/api/study-activity*');
+    const dialog = await openNavigation(page), canvas = dialog.locator('[data-role="canvas-page-order-list"]');
+    const toggle = id => canvas.locator('[data-sidebar-page="' + id + '"] input[type="checkbox"]');
+    assert.equal(await dialog.locator('[data-role="hide-special-toggle"]').count(), 0);
+    await page.route('**/api/groups-reorder', route => route.fulfill({ json: { ok: true } }));
+    await page.evaluate(() => RelatumPageLayout.apply('canvas', { order: ['recent', 'group:a', 'group:h', 'group:b'], hidden: ['group:h'] }));
+    await page.evaluate(() => RelatumGlobalSettings.close({ instant: true }));
+    await page.locator('.page-dot[data-group-id="a"]').click({ button: 'right' });
+    await page.locator('[data-role="context-menu"]').getByText('向下移动', { exact: true }).click();
+    await page.waitForFunction(() => RelatumPageLayout.layout('canvas').order[1] === 'group:b');
+    assert.deepEqual(await page.evaluate(() => RelatumPageLayout.layout('canvas').order.filter(id => id.startsWith('group:'))), ['group:b', 'group:h', 'group:a']);
+    assert.equal(await page.evaluate(() => RelatumPageLayout.isVisible('canvas', 'group:h')), false, 'group actions preserve hidden slots');
+    await openNavigation(page);
+    await page.evaluate(() => RelatumPageLayout.apply('canvas', { ...RelatumPageLayout.layout('canvas'), order: ['recent', 'favorites', 'inbox', 'group:a', 'group:b'] }));
+    await toggle('recent').uncheck();
+    await page.waitForSelector('.page-dot[data-group-id="__favorites__"].active');
+    assert.equal(await toggle('recent').isChecked(), false); assert.equal(await page.locator('.page-dot[data-group-id=""]').count(), 0);
+    await toggle('group:a').uncheck();
+    await page.waitForFunction(() => RelatumPageLayout.layout('canvas').hidden.includes('group:a'));
+    assert.equal(await page.locator('.page-dot[data-group-id="a"]').count(), 0);
+    assert.equal(await canvas.locator('[data-sidebar-page="group:a"]').count(), 1, 'hidden groups remain configurable');
+    assert.equal(await page.evaluate(async () => {
+      const before = JSON.stringify(RelatumPageLayout.layout('canvas')), set = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) { if (key === 'canvas:pageOrder:v1') throw Error('quota'); return set.call(this, key, value); };
+      try { return !await RelatumPageLayout.apply('canvas', { ...RelatumPageLayout.layout('canvas'), hidden: ['favorites'] }) && before === JSON.stringify(RelatumPageLayout.layout('canvas')); }
+      finally { Storage.prototype.setItem = set; }
+    }), true, 'write failure preserves both route and visibility');
+    assert(await page.locator('.page-dot[data-group-id="__favorites__"].active').count());
+    await page.evaluate(() => RelatumPageLayout.apply('canvas', { ...RelatumPageLayout.layout('canvas'), hidden: RelatumPageLayout.layout('canvas').order }));
+    assert.equal(await page.locator('#start-canvas-workspace').isVisible(), false);
+    assert.equal(await page.locator('.top-actions').isVisible(), false);
+    assert(await dialog.isVisible());
+    await toggle('favorites').check(); await page.waitForSelector('.page-dot[data-group-id="__favorites__"].active');
+    assert(await page.locator('#start-canvas-workspace').isVisible());
+    await page.screenshot({ path: path.join(artifacts, 'visibility-light.png') });
+    groups = [{ id: 'a', name: '改名 A' }, { id: 'b', name: 'B' }, { id: 'c', name: '新增 C' }];
+    await page.reload(); await page.waitForSelector('.page-dot[data-group-id="c"]'); await openNavigation(page);
+    assert.equal(await toggle('group:a').isChecked(), false);
+    assert((await canvas.locator('[data-sidebar-page="group:a"]').textContent()).includes('改名 A'));
+    assert.equal(await toggle('group:c').isChecked(), true);
+    groups = groups.filter(group => group.id !== 'a');
+    await page.reload(); await page.waitForSelector('.page-dot[data-group-id="c"]');
+    assert.equal(await page.evaluate(() => RelatumPageLayout.layout('canvas').hidden.includes('group:a')), false);
+    // Legacy preferences are read without a startup write, then merged on an explicit change.
+    const legacy = await page.evaluate(() => { const raw = JSON.stringify({ order: RelatumPageLayout.layout('canvas').order }); localStorage.setItem('canvas:pageOrder:v1', raw); localStorage.setItem('canvas:hideSpecialPages', '1'); return raw; });
+    await page.reload(); await page.waitForFunction(() => !!window.RelatumGlobalSettings);
+    assert.equal(await page.evaluate(() => localStorage.getItem('canvas:pageOrder:v1')), legacy);
+    assert.equal(await page.locator('[data-action="review-view"]').isVisible(), false);
+    await page.evaluate(() => RelatumPageLayout.apply('canvas', RelatumPageLayout.layout('canvas')));
+    assert.equal(await page.evaluate(() => localStorage.getItem('canvas:hideSpecialPages')), null);
+    await page.locator('.page-dot[data-group-id="__favorites__"]').click(); await page.waitForSelector('.page-dot[data-group-id="__favorites__"].active');
+    await page.evaluate(async () => {
+      const value = RelatumStartWorkspace.layout; value.hidden = []; await RelatumStartWorkspace.applyLayout(value);
+      await RelatumStartWorkspace.set('daily');
+    });
+    await page.waitForSelector('.daily-page-tasks:not([hidden])');
+    await page.evaluate(async () => {
+      await RelatumPageLayout.apply('canvas', { ...RelatumPageLayout.layout('canvas'), hidden: ['favorites'] });
+      await RelatumStartWorkspace.set('canvas');
+    });
+    await page.waitForSelector('.page-dot[data-group-id=""].active');
+    assert.equal(await page.locator('.page-dot[data-group-id="__favorites__"]').count(), 0, 'hiding the inactive Canvas page reconciles before it reappears');
+    await page.evaluate(() => RelatumStartWorkspace.set('daily'));
+    await page.waitForSelector('.daily-page-tasks:not([hidden])');
+    await page.evaluate(() => RelatumPageLayout.apply('daily', { ...RelatumPageLayout.layout('daily'), hidden: ['tasks'] }));
+    await page.waitForSelector('.daily-page-calendar:not([hidden])');
+    assert.equal(await page.locator('[data-daily-page="tasks"]').isVisible(), false);
+    await page.evaluate(() => RelatumPageLayout.apply('daily', { ...RelatumPageLayout.layout('daily'), hidden: RelatumPageLayout.layout('daily').order }));
+    assert.equal(await page.evaluate(() => RelatumDailyWorkspace.current), '');
+    assert.equal(await page.locator('.daily-navigation').isVisible(), false);
+    assert.equal(await page.locator('.daily-page:visible').count(), 0);
+    const opened = await page.evaluate(() => RelatumDailyLoader.open('calendar')); assert.equal(opened, false);
+    await openNavigation(page);
+    await page.locator('[data-role="daily-page-order-list"] [data-sidebar-page="focus"] input').check();
+    await page.waitForSelector('.daily-page-focus:not([hidden])');
+    assert.equal(await page.locator('.daily-navigation button:visible').count(), 1);
+    await page.goto(f.base + '/?workspace=daily&view=calendar');
+    await page.waitForSelector('.daily-page-focus:not([hidden])');
+    assert.equal(new URL(page.url()).searchParams.has('view'), false, 'hidden deep links are consumed without opening the page');
+    await openNavigation(page);
+    await page.evaluate(() => { document.documentElement.dataset.startTheme = document.body.dataset.startTheme = 'dark'; RelatumI18n.setLanguage('en'); });
+    await page.setViewportSize({ width: 640, height: 740 }); await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.screenshot({ path: path.join(artifacts, 'visibility-dark-narrow.png') });
+    await page.evaluate(async () => { await RelatumPageLayout.apply('daily', { ...RelatumPageLayout.layout('daily'), hidden: RelatumPageLayout.layout('daily').order }); await RelatumStartWorkspace.set('canvas'); await RelatumPageLayout.apply('canvas', { ...RelatumPageLayout.layout('canvas'), hidden: RelatumPageLayout.layout('canvas').order }); });
+    f.requests.length = 0; await page.reload(); await page.waitForFunction(() => !!window.RelatumGlobalSettings); await pause(1000);
+    assert.equal(await page.locator('#start-canvas-workspace').isVisible(), false);
+    assert.equal(await page.locator('.loading-state').isVisible(), false);
+    assert.equal(await page.locator('.start-sky').isVisible(), false);
+    assert(!f.requests.some(url => /^\/api\/(review-pool|notes|study|study-activity|tree-page)$/.test(url)), 'hidden Canvas pages do not preload their data');
+    assert.equal(await page.evaluate(() => RelatumDailyLoader.open('tasks')), false);
+    assert.equal(await page.evaluate(() => RelatumStartWorkspace.current), 'canvas', 'hidden shortcuts do not switch workspaces');
+    assert.deepEqual(f.errors, []);
+    console.log('Visibility: first frame, controls, current fallback, all hidden/reopen, legacy, groups, failure, shortcuts and resource gates passed');
+  } finally { await f.context.close(); f.server.kill(); }
+}
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.RELATUM_EDGE_PATH, headless: true });
-  try { await fullChecks(browser); await restrictedChecks(browser, 'daily'); await restrictedChecks(browser, 'special'); }
+  try { await fullChecks(browser); await restrictedChecks(browser, 'daily'); await restrictedChecks(browser, 'special'); await visibilityChecks(browser); }
   finally { await browser.close(); console.log('Artifacts: ' + artifacts); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

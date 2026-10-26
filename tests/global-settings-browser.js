@@ -22,7 +22,7 @@ async function run(browser, mode) {
   page.on('pageerror', error => errors.push(error.message)); page.on('request', request => requests.push(new URL(request.url()).pathname));
   const dialog = page.locator('#global-settings-dialog');
   const category = id => dialog.locator('nav [data-settings-category="' + id + '"]');
-  const input = id => dialog.locator('[data-sidebar-visible="' + id + '"]');
+  const input = id => dialog.locator('[data-role="workspace-layout-list"] [data-sidebar-visible="' + id + '"]');
   const layout = () => page.evaluate(() => RelatumStartWorkspace.layout);
   const current = () => page.evaluate(() => RelatumStartWorkspace.current);
   const check = async (id, checked) => { await input(id).setChecked(checked); await page.waitForFunction(id => !document.querySelector('#global-settings-dialog [data-sidebar-visible="' + id + '"]').disabled, id); };
@@ -144,7 +144,7 @@ async function run(browser, mode) {
       : ['appearance', 'workspaces', ...(mode === 'library' ? ['navigation'] : []), ...(['career', 'mixed'].includes(mode) ? ['career'] : []), ...(mode === 'career' ? [] : ['usage'])]);
     const bounds = await dialog.boundingBox(); assert.equal(Math.round(bounds.width), 1200); assert.equal(Math.round(bounds.height), 820);
     await category('workspaces').click();
-    assert.deepEqual(await dialog.locator('[data-sidebar-visible]').evaluateAll(nodes => nodes.map(node => node.dataset.sidebarVisible)), available);
+    assert.deepEqual(await dialog.locator('[data-role="workspace-layout-list"] [data-sidebar-visible]').evaluateAll(nodes => nodes.map(node => node.dataset.sidebarVisible)), available);
     if (mode === 'full') {
       for (const id of ['appearance', 'navigation', 'learning', 'starmap', 'career', 'usage']) {
         await category(id).click(); await page.screenshot({ path: path.join(artifacts, 'category-' + id + '.png') });
