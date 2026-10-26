@@ -589,6 +589,14 @@
     if (!notebookSettingsPanel.firstChild) {
       const hint = document.createElement('p'), list = document.createElement('div');
       hint.className = 'note-settings-hint'; list.className = 'note-notebook-settings-list';
+      const blockPendingActivation = event => {
+        if (!notebookVisibilityBusy || !event.target.closest('.note-notebook-setting')) return;
+        if ((event.type === 'keydown' || event.type === 'keyup') && ![' ', 'Enter'].includes(event.key)) return;
+        // Keep the native checkbox appearance and focus stable while saving.
+        // Prevent activation before a second click/key can toggle its value.
+        event.preventDefault(); event.stopPropagation();
+      };
+      ['click', 'keydown', 'keyup'].forEach(type => list.addEventListener(type, blockPendingActivation, { capture: true }));
       notebookSettingsPanel.append(hint, list);
     }
     const hint = notebookCopy('visibilityHint');
@@ -606,9 +614,11 @@
       }
       const input = row.firstChild;
       const checked = notebookVisibilityPending?.[entry.path] ?? (state.notebookVisible[entry.path] !== false);
-      const disabled = notebookVisibilityBusy || !state.notebookSettingsLoaded;
+      const disabled = !state.notebookSettingsLoaded;
       if (input.checked !== checked) input.checked = checked;
       if (input.disabled !== disabled) input.disabled = disabled;
+      const unavailable = String(notebookVisibilityBusy || disabled);
+      if (input.getAttribute('aria-disabled') !== unavailable) input.setAttribute('aria-disabled', unavailable);
       const icon = row.querySelector('.note-notebook-icon'), color = state.notebookColors[entry.path] || 'gray';
       if (icon.dataset.color !== color) icon.dataset.color = color;
       if (row.lastChild.textContent !== entry.name) row.lastChild.textContent = entry.name;

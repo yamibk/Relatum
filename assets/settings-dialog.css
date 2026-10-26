@@ -59,7 +59,7 @@
 .relatum-settings-page .note-notebook-setting { cursor: pointer; min-width: 0; }
 .note-notebook-setting > span { overflow-wrap: anywhere; font-size: 13px; }
 .note-notebook-setting .note-notebook-icon { stroke: none; }
-.note-notebook-setting:has(input:disabled) { cursor: wait; }
+.note-notebook-setting:has(input[aria-disabled="true"]) { cursor: wait; }
 .relatum-settings-page .note-settings-hint, .relatum-settings-page .note-graph-preload-hint, .relatum-settings-page > p { color: var(--settings-muted); font-size: 12px; line-height: 1.7; margin: 12px 3px 24px; }
 .relatum-settings-page .note-library-settings-head { display: none; }
 .relatum-settings-page .note-library-sort-options, .relatum-settings-page .note-library-name-options { display: grid; gap: 5px; margin-bottom: 24px; padding: 8px; border-radius: 14px; background: var(--settings-card); }

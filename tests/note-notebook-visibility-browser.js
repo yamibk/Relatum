@@ -38,7 +38,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     };
     const openSettings = async () => { await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'notebooks' })); await dialog.waitFor(); };
     const closeSettings = async () => { await dialog.locator('[data-settings-action="close"]').click(); await dialog.waitFor({ state: 'hidden' }); };
-    const change = async (value, checked) => { if (await checkbox(value).isChecked() !== checked) await checkbox(value).click(); await page.waitForFunction(() => !document.querySelector('.note-notebook-settings-list input:disabled')); };
+    const change = async (value, checked) => { if (await checkbox(value).isChecked() !== checked) await checkbox(value).click(); await page.waitForFunction(() => document.querySelector('.note-notebook-settings-list').getAttribute('aria-busy') === 'false'); };
     const reset = async all => { await dialog.locator(`[data-settings-action="reset-${all ? 'all' : 'category'}"]`).click(); await dialog.locator('[data-settings-action="accept-reset"]').click(); await page.waitForFunction(() => !Object.keys(T.state.notebookVisible).length); };
     await fetch(url + '/api/notes-tree?notebookSettings=1');
     assert.equal(fs.existsSync(settingsFile), false, 'reading old/default preferences never creates a settings file');
@@ -113,12 +113,27 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(await checkbox(empty).isChecked(), true); assert.equal(rejected, 1);
     await page.evaluate(() => T.flushNotebookSettings()); await delay(450); assert.equal(rejected, 1, 'failed visibility is never queued for a later retry');
     await page.unroute('**/api/note-notebooks-settings', fail);
-    let release; const gate = new Promise(resolve => { release = resolve; });
-    const delayed = async route => { if (route.request().postDataJSON()?.visible) await gate; await route.continue(); };
+    let release, visibilityRequests = 0; const gate = new Promise(resolve => { release = resolve; });
+    const delayed = async route => { if (route.request().postDataJSON()?.visible) { visibilityRequests++; await gate; } await route.continue(); };
     await page.route('**/api/note-notebooks-settings', delayed);
-    await checkbox(empty).uncheck(); await page.waitForFunction(() => !!document.querySelector('.note-notebook-settings-list input:disabled'));
+    await checkbox(empty).uncheck(); await page.waitForFunction(() => document.querySelector('.note-notebook-settings-list').getAttribute('aria-busy') === 'true');
     assert.equal(await notebook(empty).count(), 1, 'the list changes only after successful persistence');
-    assert.equal(await dialog.locator('.note-notebook-setting input:not(:disabled)').count(), 0);
+    assert.equal(await dialog.locator('.note-notebook-setting input:disabled').count(), 0, 'saving never toggles native disabled painting for the checkbox column');
+    assert.equal(await dialog.locator('.note-notebook-setting input[aria-disabled="true"]').count(), 3);
+    await page.evaluate(() => {
+      window.pendingChanges = 0; window.countPendingChange = () => pendingChanges++;
+      document.querySelector('.note-notebook-settings-list').addEventListener('change', countPendingChange);
+      const rows = [...document.querySelectorAll('.note-notebook-setting')];
+      // Exercise native checkbox activation, label forwarding and keyboard activation.
+      rows[1].firstChild.click(); rows[2].lastChild.click();
+    });
+    await checkbox(empty).focus(); await page.keyboard.press('Space'); await page.keyboard.press('Enter');
+    await page.keyboard.press('Tab');
+    assert.equal(await checkbox(physics).evaluate(input => document.activeElement === input), true, 'pending controls remain reachable with Tab');
+    await page.keyboard.press('Space'); await page.keyboard.press('Shift+Tab');
+    assert.equal(await checkbox(empty).isChecked(), false); assert.equal(await checkbox(physics).isChecked(), false);
+    assert.equal(await page.evaluate(() => { document.querySelector('.note-notebook-settings-list').removeEventListener('change', countPendingChange); return pendingChanges; }), 0, 'pending activations are canceled before native change events');
+    assert.equal(visibilityRequests, 1, 'pending mouse, label and keyboard activations never submit again');
     release(); await page.waitForFunction(path => T.state.notebookVisible[path] === false, empty);
     await page.unroute('**/api/note-notebooks-settings', delayed);
     await reset(true); assert.deepEqual(settings().visible, {}); assert.equal(settings().colors[physics], 'red');
@@ -145,19 +160,25 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     await page.evaluate(() => T.refreshTree(false));
     await openSettings();
     const stablePath = 'CustomNotebook/Flicker08';
+    await change('CustomNotebook/Flicker06', false);
     for (const motion of ['reduce', 'no-preference']) for (const theme of ['light', 'dark']) {
       await page.emulateMedia({ reducedMotion: motion });
       await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
       await page.waitForFunction(() => !document.querySelector('#note-settings-dialog').getAnimations({ subtree: true }).some(animation => animation.playState === 'running'));
       await checkbox(stablePath).scrollIntoViewIfNeeded(); await checkbox(stablePath).focus();
+      await page.mouse.move(200, 80);
+      const quietInputs = [checkbox('CustomNotebook/Flicker06'), checkbox('CustomNotebook/Flicker07')];
+      const quietPixels = await Promise.all(quietInputs.map(input => input.screenshot()));
       await page.evaluate(() => {
         const panel = document.querySelector('.relatum-settings-page[data-settings-category="notebooks"]');
         const scroll = panel.closest('.relatum-settings-scroll');
         window.stableSettings = { panel, scroll, top: scroll.scrollTop,
           rows: [...panel.querySelectorAll('.note-notebook-setting')], nodes: [...panel.querySelectorAll('*')],
-          texts: [...panel.querySelectorAll('.note-notebook-setting > span')].map(span => span.firstChild), mutations: [] };
+          texts: [...panel.querySelectorAll('.note-notebook-setting > span')].map(span => span.firstChild), mutations: [], disabledChanges: [] };
         stableSettings.observer = new MutationObserver(records => stableSettings.mutations.push(...records));
         stableSettings.observer.observe(panel, { childList: true, subtree: true });
+        stableSettings.controls = new MutationObserver(records => stableSettings.disabledChanges.push(...records));
+        stableSettings.controls.observe(panel, { attributes: true, attributeFilter: ['disabled'], subtree: true });
       });
       assert(await page.evaluate(() => stableSettings.top > 0), 'the fixture exercises a scrolled settings page');
       let finish;
@@ -169,13 +190,16 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
         return { opacity: sample.rows.map(row => getComputedStyle(row).opacity),
           sameNodes: sample.nodes.every((node, index) => node === sample.panel.querySelectorAll('*')[index]),
           sameText: sample.texts.every((node, index) => node === sample.rows[index].lastChild.firstChild),
-          mutations: sample.mutations.length, top: sample.scroll.scrollTop, expectedTop: sample.top };
+          mutations: sample.mutations.length, disabledChanges: sample.disabledChanges.length,
+          nativeDisabled: sample.rows.some(row => row.firstChild.disabled), top: sample.scroll.scrollTop, expectedTop: sample.top };
       });
       const assertStable = async phase => {
         const sample = await stable();
         assert(sample.opacity.every(opacity => opacity === '1'), phase + ': saving never dims the notebook list');
         assert(sample.sameNodes && sample.sameText && sample.mutations === 0, phase + ': unchanged settings DOM and text nodes stay attached');
+        assert(!sample.nativeDisabled && sample.disabledChanges === 0, phase + ': native enabled/disabled state never changes');
         assert(Math.abs(sample.top - sample.expectedTop) < .5, phase + ': settings scroll position stays unchanged');
+        for (let i = 0; i < quietInputs.length; i++) assert(quietPixels[i].equals(await quietInputs[i].screenshot()), phase + ': untouched checked and unchecked controls keep identical pixels');
       };
       try {
         await checkbox(stablePath).click();
@@ -187,7 +211,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
         assert.equal(await checkbox(stablePath).evaluate(input => document.activeElement === input), true, 'saving keeps keyboard focus without scrolling');
       } finally {
         finish(); await page.unroute('**/api/note-notebooks-settings', hold);
-        await page.evaluate(() => stableSettings.observer.disconnect());
+        await page.evaluate(() => { stableSettings.observer.disconnect(); stableSettings.controls.disconnect(); });
       }
     }
     await page.emulateMedia({ reducedMotion: 'no-preference' });
