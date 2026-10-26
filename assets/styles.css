@@ -2373,6 +2373,9 @@ body:not([data-start-theme="dark"]) .note-canvas-settings input[type="range"]:no
 .note-side-toolbar [hidden] { display: none; }
 .note-notebook-actions [data-note-action="new-notebook"] { font-size: 21px; font-weight: 400; }
 .note-notebook-tree { padding: 4px 8px 20px; }
+.note-notebooks-empty { padding: 12px 24px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.note-notebooks-empty[hidden] { display: none; }
+.note-notebooks-empty button { color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: transparent; padding: 7px 12px; font: inherit; cursor: pointer; }
 .note-notebook-root > .note-tree-row { min-height: 40px; margin-block: 2px; }
 .note-notebook-root > .note-tree-row { grid-template-columns: 22px 19px minmax(0, 1fr); }
 .note-notebook-root > .note-tree-row > .note-tree-toggle { position: relative; }

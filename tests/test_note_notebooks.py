@@ -226,6 +226,99 @@ class NotebookTests(unittest.TestCase):
                 self.store.update_notebook_settings(patch)
         self.assertFalse(self.settings_path.exists())
 
+    def test_visibility_legacy_defaults_and_invalid_stored_values_do_not_write(self):
+        relative = self.notebook()
+        self.settings_path.parent.mkdir(exist_ok=True)
+        for visibility in (None, [], {relative: False, "": False, "ordinary": False,
+                                      "CustomNotebook": False, "../escape": False,
+                                      "CustomNotebook/Visible": True, "CustomNotebook/Bad": 0}):
+            with self.subTest(visibility=visibility):
+                raw = {"version": 1, "colors": {relative: "blue"}, "ui": {}}
+                if visibility is not None:
+                    raw["visible"] = visibility
+                original = json.dumps(raw)
+                self.settings_path.write_text(original, encoding="utf-8")
+                reloaded = NotesStore(self.store.root)
+                self.addCleanup(reloaded.close)
+                settings = reloaded.notebook_settings()
+                self.assertEqual(settings["visible"], {relative: False, "": False} if isinstance(visibility, dict) else {})
+                self.assertEqual(settings["colors"], {relative: "blue"})
+                self.assertEqual(self.settings_path.read_text(encoding="utf-8"), original)
+
+    def test_visibility_roundtrip_sparse_restore_and_independent_settings(self):
+        relative = self.notebook()
+        before = self.store.update_notebook_settings({"colors": {relative: "green"},
+            "ui": {"selectedRoot": relative, "expanded": ["", relative]}})
+        hidden = self.store.update_notebook_settings({"visible": {relative: False, "": False}})
+        self.assertEqual(hidden["visible"], {relative: False, "": False})
+        self.assertEqual(hidden["colors"], before["colors"])
+        self.assertEqual(hidden["ui"], before["ui"])
+        reloaded = NotesStore(self.store.root)
+        self.addCleanup(reloaded.close)
+        self.assertEqual(reloaded.notebook_settings(), hidden)
+        with mock.patch.object(self.store, "atomic_text", side_effect=AssertionError("unchanged write")):
+            self.assertEqual(self.store.update_notebook_settings({"visible": {relative: False}}), hidden)
+        restored = self.store.update_notebook_settings({"visible": {relative: True, "": True}})
+        self.assertEqual(restored["visible"], {})
+        self.assertEqual(restored["colors"], before["colors"])
+        self.assertEqual(restored["ui"], before["ui"])
+
+    def test_invalid_visibility_patch_does_not_write(self):
+        relative = self.notebook()
+        for patch in ({"visible": []}, {"visible": None}, {"visible": {"../escape": False}},
+                      {"visible": {"CustomNotebook": False}}, {"visible": {"ordinary": False}},
+                      {"visible": {relative + "/sub": False}}, {"visible": {relative: None}},
+                      {"visible": {relative: "false"}}, {"visible": {relative: 0}},
+                      {"visible": {relative: False, "CustomNotebook/Missing": False}}):
+            with self.subTest(patch=patch), self.assertRaises(NotesError):
+                self.store.update_notebook_settings(patch)
+        self.assertEqual(self.store.notebook_settings()["visible"], {})
+        self.assertFalse(self.settings_path.exists())
+
+    def test_failed_visibility_write_preserves_previous_config(self):
+        relative = self.notebook()
+        before = self.store.update_notebook_settings({"colors": {relative: "red"}, "visible": {relative: False}})
+        original = self.settings_path.read_bytes()
+        with mock.patch.object(self.store, "atomic_text", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            self.store.update_notebook_settings({"visible": {relative: True}})
+        self.assertEqual(self.store.notebook_settings(), before)
+        self.assertEqual(self.settings_path.read_bytes(), original)
+
+    def test_restore_visibility_can_clear_a_missing_notebook(self):
+        relative = self.notebook()
+        self.store.update_notebook_settings({"visible": {relative: False}})
+        (self.store.root / relative).rmdir()
+        self.assertEqual(self.store.update_notebook_settings({"visible": {relative: True}})["visible"], {})
+        self.assertFalse((self.store.root / relative).exists())
+
+    def test_visibility_cleanup_preserves_unreadable_and_existing_notebooks(self):
+        relative = self.notebook()
+        before = self.store.update_notebook_settings({"colors": {relative: "yellow"},
+            "visible": {relative: False, "": False}, "ui": {"expanded": [relative]}})
+        self.assertEqual(self.store.update_notebook_settings({"pruneMissing": [relative]})["visible"], before["visible"])
+        original = Path.stat
+        def inaccessible(target, *args, **kwargs):
+            if target == self.store.root / relative:
+                raise PermissionError("temporarily inaccessible")
+            return original(target, *args, **kwargs)
+        with mock.patch.object(Path, "stat", inaccessible):
+            self.assertEqual(self.store.update_notebook_settings({"pruneMissing": [relative]})["visible"], before["visible"])
+        (self.store.root / relative).rmdir()
+        pruned = self.store.update_notebook_settings({"pruneMissing": [relative]})
+        self.assertEqual(pruned["visible"], {"": False})
+        self.assertEqual(pruned["colors"], {})
+        self.assertEqual(pruned["ui"]["expanded"], [])
+
+    def test_visibility_path_remap_preserves_hidden_color(self):
+        source = self.notebook()
+        self.store.update_notebook_settings({"colors": {source: "purple"}, "visible": {source: False}})
+        destination = "CustomNotebook/Renamed"
+        self.store.move(source, destination)
+        updated = self.store.update_notebook_settings({"colors": {destination: "purple"},
+            "visible": {destination: False}, "pruneMissing": [source]})
+        self.assertEqual(updated["visible"], {destination: False})
+        self.assertEqual(updated["colors"], {destination: "purple"})
+
     def test_canvas_sidebar_mode_roundtrip(self):
         saved = self.store.update_notebook_settings({"ui": {"mode": "canvas", "open": True}})
         self.assertEqual(saved["ui"]["mode"], "canvas")

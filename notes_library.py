@@ -577,7 +577,7 @@ class NotesStore:
 
     @staticmethod
     def _default_notebook_settings() -> dict:
-        return {"version": 1, "colors": {}, "ui": {
+        return {"version": 1, "colors": {}, "visible": {}, "ui": {
             "open": False, "mode": "notebooks", "selectedRoot": "", "expanded": [],
         }}
 
@@ -608,6 +608,15 @@ class NotesStore:
                                 value["colors"][relative] = color
                         except (NotesError, TypeError):
                             continue
+                    visibility = raw.get("visible")
+                    if isinstance(visibility, dict):
+                        for path, visible in visibility.items():
+                            try:
+                                relative = self._notebook_setting_path(path, root_only=path != "")
+                                if visible is False:
+                                    value["visible"][relative] = False
+                            except (NotesError, TypeError):
+                                continue
                     self._merge_notebook_ui(value["ui"], raw.get("ui"), strict=False)
                     self._notebook_settings_needs_write = isinstance(raw.get("ui"), dict) and raw["ui"].get("mode") == "history"
             except (OSError, ValueError, TypeError, AttributeError):
@@ -658,6 +667,20 @@ class NotesStore:
                     if not self._absolute(relative).is_dir():
                         raise NotesError("笔记本不存在", status=404, code="not_found")
                     value["colors"][relative] = color
+        if "visible" in patch:
+            visibility = patch["visible"]
+            if not isinstance(visibility, dict):
+                raise NotesError("笔记本显隐配置无效")
+            for path, visible in visibility.items():
+                relative = self._notebook_setting_path(path, root_only=path != "")
+                if not isinstance(visible, bool):
+                    raise NotesError("笔记本显隐值必须是布尔值")
+                if visible:
+                    value["visible"].pop(relative, None)
+                else:
+                    if not self._absolute(relative, allow_root=True).is_dir():
+                        raise NotesError("笔记本不存在", status=404, code="not_found")
+                    value["visible"][relative] = False
         if "ui" in patch:
             self._merge_notebook_ui(value["ui"], patch["ui"], strict=True)
         # 前端只传入同一轮成功文件树中缺失的路径；逐个确认不存在，
@@ -694,6 +717,7 @@ class NotesStore:
             if absent:
                 pruned.append(relative)
                 value["colors"].pop(relative, None)
+                value["visible"].pop(relative, None)
                 value["ui"]["expanded"] = [path for path in value["ui"]["expanded"]
                                             if path != relative and not path.startswith(relative + "/")]
                 if value["ui"]["selectedRoot"] == relative:

@@ -55,6 +55,11 @@
 .relatum-settings-page .note-settings-font small { color: var(--settings-muted); font-size: 10px; }
 .relatum-settings-page .note-settings-toggle, .relatum-settings-page .note-graph-preload-setting { display: flex; align-items: center; gap: 12px; padding: 18px 20px; margin: 0; border-radius: 14px; background: var(--settings-card); color: var(--settings-text); }
 .relatum-settings-page input[type="checkbox"], .relatum-settings-page input[type="radio"] { accent-color: var(--settings-text); width: 16px; height: 16px; flex: none; }
+.note-notebook-settings-list { display: grid; gap: 8px; }
+.relatum-settings-page .note-notebook-setting { cursor: pointer; min-width: 0; }
+.note-notebook-setting > span { overflow-wrap: anywhere; font-size: 13px; }
+.note-notebook-setting .note-notebook-icon { stroke: none; }
+.note-notebook-setting:has(input:disabled) { cursor: wait; opacity: .65; }
 .relatum-settings-page .note-settings-hint, .relatum-settings-page .note-graph-preload-hint, .relatum-settings-page > p { color: var(--settings-muted); font-size: 12px; line-height: 1.7; margin: 12px 3px 24px; }
 .relatum-settings-page .note-library-settings-head { display: none; }
 .relatum-settings-page .note-library-sort-options, .relatum-settings-page .note-library-name-options { display: grid; gap: 5px; margin-bottom: 24px; padding: 8px; border-radius: 14px; background: var(--settings-card); }

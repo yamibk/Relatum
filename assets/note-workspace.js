@@ -21,6 +21,9 @@
   const NOTEBOOK_CONTAINER = 'CustomNotebook';
   const NOTEBOOK_COLORS = ['gray', 'blue', 'cyan', 'green', 'yellow', 'orange', 'red', 'purple'];
   let notebookSettingsTimer = 0, notebookSettingsChain = Promise.resolve(true), notebookSettingsPending = {};
+  let notebookVisibilityBusy = false, notebookSettingsPanel = null, notebookEmptyHint = null;
+  let notebookVisibilityPending = null;
+  const notebookSettingsRows = new Map();
   const tabsEl = $('[data-role="note-tabs"]');
   const tabBar = $('.note-tab-bar');
   const tabActions = $('.note-tab-actions');
@@ -492,7 +495,7 @@
   };
   const state = {
     active: false, initialized: false, treeRendered: false, entries: [], current: null, selectedFolder: '', selectedPath: '', rootTargeted: false, expanded: new Set(), sideMode: 'notebooks',
-    notebookRoot: '', notebookExpanded: new Set(), notebookColors: {}, notebookSettingsLoaded: false, notebookTreeDirty: true, notebookPruning: new Map(),
+    notebookRoot: '', notebookExpanded: new Set(), notebookColors: {}, notebookVisible: {}, notebookSettingsLoaded: false, notebookTreeDirty: true, notebookPruning: new Map(),
     editGeneration: 0, saveTimer: 0, retryTimer: 0, saveChain: Promise.resolve(true), saveRunning: false,
     openSeq: 0, refreshSeq: 0, externalSeq: 0, linksSeq: 0, linksRefreshTimer: 0, linksRefreshSuspended: false, draggedPath: '', renamePath: '', renameOriginal: '',
     importRunning: false, renameError: '', renameDraft: null, renameCommitPromise: null, lastMoveError: '',
@@ -556,6 +559,9 @@
       gray: ['灰色', 'Gray'], blue: ['蓝色', 'Blue'], cyan: ['青色', 'Cyan'], green: ['绿色', 'Green'],
       yellow: ['黄色', 'Yellow'], orange: ['橙色', 'Orange'], red: ['红色', 'Red'], purple: ['紫色', 'Purple'],
       settingsFailed: ['笔记本配置保存失败', 'Could not save notebook settings'],
+      hide: ['隐藏笔记本', 'Hide notebook'], manage: ['管理笔记本', 'Manage notebooks'],
+      allHidden: ['所有笔记本均已隐藏，可在笔记设置中恢复显示。', 'All notebooks are hidden. Restore them in Note settings.'],
+      visibilityHint: ['勾选要在右侧列表显示的笔记本。隐藏不影响当前目录、已打开的笔记、搜索和链接。', 'Choose which notebooks appear in the right sidebar. Hiding keeps the current folder, open notes, search and links available.'],
     };
     return (labels[key] || [key, key])[language() === 'en' ? 1 : 0];
   }
@@ -577,6 +583,60 @@
       ...(container?.children || []).filter((entry) => entry.kind === 'folder').slice().sort((a, b) => compareTreeNames(a.name, b.name))
         .map((entry) => ({ ...entry, notebook: true }))];
   }
+  function visibleNotebookRoots() { return notebookRoots().filter(entry => state.notebookVisible[entry.path] !== false); }
+  function renderNotebookSettings() {
+    if (!notebookSettingsPanel || !settingsDialog?.isOpen || aiSettingsCategory !== 'notebooks') return;
+    if (!notebookSettingsPanel.firstChild) {
+      const hint = document.createElement('p'), list = document.createElement('div');
+      hint.className = 'note-settings-hint'; list.className = 'note-notebook-settings-list';
+      notebookSettingsPanel.append(hint, list);
+    }
+    notebookSettingsPanel.firstChild.textContent = notebookCopy('visibilityHint');
+    const list = notebookSettingsPanel.lastChild, roots = notebookRoots(), paths = new Set(roots.map(entry => entry.path));
+    notebookSettingsRows.forEach((row, path) => { if (!paths.has(path)) { row.remove(); notebookSettingsRows.delete(path); } });
+    let anchor = list.firstChild;
+    roots.forEach(entry => {
+      let row = notebookSettingsRows.get(entry.path);
+      if (!row) {
+        row = document.createElement('label'); row.className = 'note-settings-toggle note-notebook-setting'; row.dataset.notebookPath = entry.path;
+        const input = document.createElement('input'), name = document.createElement('span'), path = entry.path; input.type = 'checkbox';
+        input.addEventListener('change', () => { commitNotebookVisibility({ [path]: input.checked }); });
+        row.append(input, notebookIcon(entry.path), name); notebookSettingsRows.set(entry.path, row);
+      }
+      const input = row.firstChild;
+      input.checked = notebookVisibilityPending?.[entry.path] ?? (state.notebookVisible[entry.path] !== false);
+      input.disabled = notebookVisibilityBusy || !state.notebookSettingsLoaded;
+      row.querySelector('.note-notebook-icon').dataset.color = state.notebookColors[entry.path] || 'gray';
+      row.lastChild.textContent = entry.name;
+      if (row !== anchor) list.insertBefore(row, anchor); else anchor = anchor.nextSibling;
+    });
+    list.setAttribute('aria-busy', String(notebookVisibilityBusy));
+  }
+  async function commitNotebookVisibility(visible) {
+    if (notebookVisibilityBusy || !state.notebookSettingsLoaded || noteMovePromise || state.recycleRunning || state.renamePath) {
+      renderNotebookSettings(); return false;
+    }
+    const changes = Object.fromEntries(Object.entries(visible).filter(([path, value]) => (state.notebookVisible[path] !== false) !== value));
+    if (!Object.keys(changes).length) { renderNotebookSettings(); return true; }
+    const focused = notebookSettingsPanel?.contains(document.activeElement) ? document.activeElement : null;
+    notebookVisibilityBusy = true; notebookVisibilityPending = changes; renderNotebookSettings();
+    // Visibility is acknowledged before changing the list. Failed user actions
+    // never enter the retry buffer used by colors and structural path remaps.
+    flushNotebookSettings();
+    const operation = notebookSettingsChain.catch(() => false).then(() => sendNotebookSettings({ visible: changes }, false, false));
+    notebookSettingsChain = operation;
+    try { return await operation; }
+    finally {
+      notebookVisibilityBusy = false; notebookVisibilityPending = null; renderNotebookSettings();
+      if (focused?.isConnected && settingsDialog?.isOpen && aiSettingsCategory === 'notebooks'
+          && (document.activeElement === document.body || document.activeElement === settingsDialog.dialog)) focused.focus({ preventScroll: true });
+    }
+  }
+  async function resetNotebookVisibility() {
+    if (!(await commitNotebookVisibility(Object.fromEntries(Object.keys(state.notebookVisible).map(path => [path, true]))))) {
+      throw new Error(notebookCopy('settingsFailed'));
+    }
+  }
   function notebookUi() {
     return { open: graphSidebar ? graphSidebar.open : root.classList.contains('links-overlay-open'),
       mode: graphSidebar ? graphSidebar.mode : state.sideMode, selectedRoot: state.notebookRoot, expanded: Array.from(state.notebookExpanded) };
@@ -585,6 +645,7 @@
     if (!state.notebookSettingsLoaded) return;
     if (patch.ui) notebookSettingsPending.ui = { ...(notebookSettingsPending.ui || {}), ...patch.ui };
     if (patch.colors) notebookSettingsPending.colors = { ...(notebookSettingsPending.colors || {}), ...patch.colors };
+    if (patch.visible) notebookSettingsPending.visible = { ...(notebookSettingsPending.visible || {}), ...patch.visible };
     if (patch.pruneMissing) notebookSettingsPending.pruneMissing = Array.from(new Set([...(notebookSettingsPending.pruneMissing || []), ...patch.pruneMissing]));
     clearTimeout(notebookSettingsTimer);
     notebookSettingsTimer = setTimeout(flushNotebookSettings, 350);
@@ -593,37 +654,50 @@
     clearTimeout(notebookSettingsTimer); notebookSettingsTimer = 0;
     if (!Object.keys(notebookSettingsPending).length) return notebookSettingsChain;
     const patch = notebookSettingsPending; notebookSettingsPending = {};
-    const send = async () => {
-      // 颜色点击后目录可能被外部删除；不让失效颜色阻塞后续状态保存/清理。
-      if (patch.colors) {
-        Object.keys(patch.colors).forEach((path) => { if (findEntry(path)?.kind !== 'folder') delete patch.colors[path]; });
-        if (!Object.keys(patch.colors).length) delete patch.colors;
+    notebookSettingsChain = notebookSettingsChain.catch(() => false).then(() => sendNotebookSettings(patch, keepalive));
+    return notebookSettingsChain;
+  }
+  async function sendNotebookSettings(patch, keepalive, retry = true) {
+    // 颜色点击后目录可能被外部删除；不让失效颜色阻塞后续状态保存/清理。
+    if (patch.colors) {
+      Object.keys(patch.colors).forEach((path) => { if (findEntry(path)?.kind !== 'folder') delete patch.colors[path]; });
+      if (!Object.keys(patch.colors).length) delete patch.colors;
+    }
+    if (retry && patch.visible) {
+      Object.keys(patch.visible).forEach(path => { if (path && findEntry(path)?.kind !== 'folder') delete patch.visible[path]; });
+      if (!Object.keys(patch.visible).length) delete patch.visible;
+    }
+    try {
+      const response = await fetch('/api/note-notebooks-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch), keepalive: keepalive === true });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || notebookCopy('settingsFailed'));
+      (result.prunedPaths || []).forEach((path) => {
+        delete state.notebookColors[path]; delete state.notebookVisible[path]; state.notebookPruning.delete(path);
+        state.notebookExpanded.forEach((expanded) => { if (expanded === path || expanded.startsWith(path + '/')) state.notebookExpanded.delete(expanded); });
+      });
+      if (patch.visible) {
+        Object.entries(patch.visible).forEach(([path, visible]) => { if (visible) delete state.notebookVisible[path]; else state.notebookVisible[path] = false; });
+        state.notebookTreeDirty = true; renderNotebookTree();
       }
-      try {
-        const response = await fetch('/api/note-notebooks-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch), keepalive: keepalive === true });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || notebookCopy('settingsFailed'));
-        (result.prunedPaths || []).forEach((path) => {
-          delete state.notebookColors[path]; state.notebookPruning.delete(path);
-          state.notebookExpanded.forEach((expanded) => { if (expanded === path || expanded.startsWith(path + '/')) state.notebookExpanded.delete(expanded); });
-        });
-        updateNotebookExpandButton();
-        return true;
-      } catch (error) {
-        // 保留较新的操作，失败配置不阻断正文保存，也不启动额外重试计时器。
+      renderNotebookSettings();
+      updateNotebookExpandButton();
+      return true;
+    } catch (error) {
+      // 保留较新的操作，失败配置不阻断正文保存，也不启动额外重试计时器。
+      if (retry) {
         if (patch.ui) notebookSettingsPending.ui = { ...patch.ui, ...(notebookSettingsPending.ui || {}) };
         if (patch.colors) notebookSettingsPending.colors = { ...patch.colors, ...(notebookSettingsPending.colors || {}) };
+        if (patch.visible) notebookSettingsPending.visible = { ...patch.visible, ...(notebookSettingsPending.visible || {}) };
         if (patch.pruneMissing) notebookSettingsPending.pruneMissing = Array.from(new Set([...patch.pruneMissing, ...(notebookSettingsPending.pruneMissing || [])]));
-        if (patch.ui || patch.colors) showToast(error.message || notebookCopy('settingsFailed'), 'error');
-        return false;
       }
-    };
-    notebookSettingsChain = notebookSettingsChain.catch(() => false).then(send);
-    return notebookSettingsChain;
+      if (patch.ui || patch.colors || patch.visible) showToast(error.message || notebookCopy('settingsFailed'), 'error');
+      return false;
+    }
   }
   function restoreNotebookSettings(settings) {
     const ui = settings?.ui || {};
     state.notebookColors = settings?.colors || {};
+    state.notebookVisible = settings?.visible || {};
     state.notebookRoot = ui.selectedRoot === null ? null : typeof ui.selectedRoot === 'string' ? ui.selectedRoot : '';
     state.selectedFolder = state.notebookRoot; state.rootTargeted = true;
     state.notebookExpanded = new Set(Array.isArray(ui.expanded) ? ui.expanded : []);
@@ -634,7 +708,7 @@
   }
   function reconcileNotebooks() {
     const roots = new Set(notebookRoots().map((entry) => entry.path));
-    const missing = new Set(Object.keys(state.notebookColors).filter((path) => !roots.has(path)));
+    const missing = new Set([...Object.keys(state.notebookColors), ...Object.keys(state.notebookVisible)].filter((path) => !roots.has(path)));
     state.notebookExpanded.forEach((path) => { if (path && !findEntry(path)) missing.add(path); });
     const selectedMissing = !!state.notebookRoot && !roots.has(state.notebookRoot);
     if (selectedMissing) {
@@ -703,13 +777,16 @@
   function updateNotebookExpandButton() {
     const button = $('[data-note-action="toggle-all-notebooks"]');
     if (!button) return;
-    const any = state.notebookExpanded.size > 0;
+    const visible = new Set(visibleNotebookRoots().map(entry => entry.path));
+    const any = Array.from(state.notebookExpanded).some(path => visible.has(notebookRootForPath(path)));
+    button.disabled = !visible.size;
     button.dataset.allExpanded = String(any); button.setAttribute('aria-pressed', String(any));
     button.title = tr(any ? 'collapseAll' : 'expandAll'); button.setAttribute('aria-label', button.title);
   }
   function toggleAllNotebooks() {
-    if (state.notebookExpanded.size) state.notebookExpanded.clear();
-    else state.notebookExpanded = new Set(flattenEntries(notebookRoots(), []).filter((entry) => entry.kind === 'folder').map((entry) => entry.path));
+    const paths = flattenEntries(visibleNotebookRoots(), []).filter(entry => entry.kind === 'folder').map(entry => entry.path);
+    const collapse = paths.some(path => state.notebookExpanded.has(path));
+    paths.forEach(path => { if (collapse) state.notebookExpanded.delete(path); else state.notebookExpanded.add(path); });
     queueNotebookSettings({ ui: notebookUi() }); state.notebookTreeDirty = true; renderNotebookTree();
   }
 
@@ -896,6 +973,7 @@
     const graph = sections.find(section => section.querySelector('[data-role="note-graph-preload"]'));
     if (graph) graph.prepend(appearance.querySelector('[data-role="note-graph-spacing"]')?.closest('label'));
     const guide = document.createElement('section'); guide.dataset.i18nManaged = 'true';
+    notebookSettingsPanel = document.createElement('section'); notebookSettingsPanel.dataset.i18nManaged = 'true';
     const defaultsHost = document.createElement('section'); defaultsHost.className = 'note-canvas-settings'; defaultsHost.dataset.i18nManaged = 'true';
     const sidebar = document.createElement('section'); sidebar.dataset.i18nManaged = 'true';
     const sidebarHint = document.createElement('p'), sidebarRows = document.createElement('div');
@@ -952,13 +1030,14 @@
         { id: 'ai-chat', label: ['AI对话', 'AI chat'], icon: 'note-icon-ai-chat', panel: aiChatHost, layout: 'fill', searchMode: 'category', keywords: 'AI 对话 聊天 消息 图片 chat conversation message image' },
       ] : []),
       ...(graphEnabled() && graph ? [{ id: 'graph', label: ['图谱', 'Graph'], icon: 'note-icon-graph', panel: graph, keywords: 'spacing 间距', reset: () => { pref?.resetGraphSpacing?.(); syncNoteSettingsFontScale(); } }] : []),
-      ...(canvasEnabled() ? [{ id: 'canvas', label: ['内嵌画布', 'Embedded canvas'], icon: 'note-icon-panel-right-frame', panel: defaultsHost, keywords: '默认 样式 节点 连线 default node edge styles', reset: resetCanvas }] : []),
+      ...(canvasEnabled() ? [{ id: 'canvas', label: ['内嵌画布', 'Embedded canvas'], icon: 'note-icon-wallpaper', panel: defaultsHost, keywords: '默认 样式 节点 连线 default node edge styles', reset: resetCanvas }] : []),
       { id: 'shortcuts', label: ['快捷键', 'Shortcuts'], icon: 'note-icon-code-xml', panel: shortcuts, keywords: '键盘 keyboard bindings', reset: () => { stopShortcutRecording(true); if (NOTE_SHORTCUTS) state.shortcutBindings = NOTE_SHORTCUTS.reset(); applyShortcutBindings(); renderNoteShortcutSettings(); } },
       { id: 'system', label: ['系统', 'System'], icon: 'note-icon-settings', panel: systemSettings.panel, keywords: '性能 内存 动画 预读 预加载 缓存 清理 清晰度 启动 performance memory animation prefetch preload cache clear resolution startup', reset: () => { noteSystem.reset(); pref?.resetGraphPreload?.(); } },
+      { id: 'notebooks', label: ['笔记本', 'Notebooks'], icon: 'note-icon-notebook-filled', panel: notebookSettingsPanel, searchMode: 'category', keywords: '显示 隐藏 恢复 visibility hidden show restore notebooks', reset: resetNotebookVisibility },
     ];
     settingsDialog = window.RelatumSettingsDialog.create({ content: settingsPop, categories, language,
       onSearch(query) { if (aiEnabled() && !aiSettingsHost.querySelector('[data-ai-field]') && /deepseek|api|模型|预设|提示词|思考|强度|温度|连接|接口|地址|流式|输出|超时|token|top.?p|model|preset|prompt|temperature|stream|timeout|effort|base.?url|\bkey\b|\bai\b/.test(query)) return ensureAI().then(ai => ai.prepareSettings()); },
-      async resetAll() { resetNoteSettings(); noteSystem.reset(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); if (canvasEnabled()) resetCanvas(); await resetAI(); },
+      async resetAll() { await resetNotebookVisibility(); resetNoteSettings(); noteSystem.reset(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); if (canvasEnabled()) resetCanvas(); await resetAI(); },
       onOpen() {
         state.settingsOpen = true; aiDialogReturning = false;
         settingsTrigger.setAttribute('aria-expanded', 'true'); libraryTrigger.setAttribute('aria-expanded', 'true'); renderAI();
@@ -980,6 +1059,7 @@
       },
       onCategoryChange(category) {
         aiSettingsCategory = category; aiDialogReturning = false;
+        if (category === 'notebooks') renderNotebookSettings();
         systemSettings.setActive(category === 'system' && !!settingsDialog?.isOpen && noteWorkspaceVisible());
         stopShortcutRecording(true); canvasStylePanel?.suspend(); sidePreferences.suspend();
         if (category === 'ai') ensureAI().then(ai => { if (settingsDialog?.isOpen && aiSettingsCategory === 'ai' && noteWorkspaceVisible()) ai.settings(); }).catch(error => showToast(error.message, 'error'));
@@ -998,7 +1078,7 @@
     settingsTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     libraryTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     if (canvasEnabled()) canvasStylePanel = window.RelatumNoteCanvasStyle?.initPanel(canvasSettingsContent, () => pref?.resetCanvasNodeScale?.(), { defaultsHost });
-    document.addEventListener('relatum:languagechange', () => { translateGuideOptions(); translateSidebar(); systemSettings.refresh(); aiController?.setLanguage(); settingsDialog.setLanguage(); });
+    document.addEventListener('relatum:languagechange', () => { translateGuideOptions(); translateSidebar(); systemSettings.refresh(); renderNotebookSettings(); aiController?.setLanguage(); settingsDialog.setLanguage(); });
   }
 
   function resetNoteSettings() {
@@ -2787,7 +2867,7 @@
     rewriteEntryPaths(extracted, source, destination); target.push(extracted); naturalSort(target); return true;
   }
 
-  function beginInlineRename(path) { const entry = findEntry(path); if (!entry || !path || isNotebookContainer(path)) return; selectNotebook(notebookRootForPath(path)); state.renamePath = path; state.renameOriginal = entry.kind === 'note' ? noteTitle(path) : entry.name; state.renameDraft = state.renameOriginal; state.renameError = ''; renderTree(); }
+  function beginInlineRename(path) { const entry = findEntry(path); if (!entry || !path || isNotebookContainer(path) || notebookVisibilityBusy && isNotebookRoot(path)) return; selectNotebook(notebookRootForPath(path)); state.renamePath = path; state.renameOriginal = entry.kind === 'note' ? noteTitle(path) : entry.name; state.renameDraft = state.renameOriginal; state.renameError = ''; renderTree(); }
   function commitInlineRename(entry, input, cancel) {
     if (state.renameCommitPromise) return state.renameCommitPromise;
     if (!entry || state.renamePath !== entry.path) return Promise.resolve(!state.renamePath);
@@ -2829,10 +2909,23 @@
     if (parent !== null && !state.treePagination?.[parent]) loadDirectory(parent);
   }
   function renderNotebookTree() {
+    renderNotebookSettings();
     if (!notebookTreeEl || !root.classList.contains('links-overlay-open') || effectiveSideMode() !== 'notebooks') return;
+    const roots = visibleNotebookRoots();
+    notebookTreeEl.hidden = !roots.length;
     if (state.notebookTreeDirty) {
-      renderTreeInto(notebookTreeEl, notebookRoots(), state.notebookExpanded, true);
+      renderTreeInto(notebookTreeEl, roots, state.notebookExpanded, true);
       state.notebookTreeDirty = false;
+    }
+    if (!roots.length && !notebookEmptyHint) {
+      notebookEmptyHint = document.createElement('div'); notebookEmptyHint.className = 'note-notebooks-empty';
+      const hint = document.createElement('p'), button = document.createElement('button'); button.type = 'button';
+      button.addEventListener('click', event => { event.stopPropagation(); setNoteSettingsOpen(true, { category: 'notebooks', trigger: button }); });
+      notebookEmptyHint.append(hint, button); notebookTreeEl.after(notebookEmptyHint);
+    }
+    if (notebookEmptyHint) {
+      notebookEmptyHint.hidden = !!roots.length;
+      notebookEmptyHint.firstChild.textContent = notebookCopy('allHidden'); notebookEmptyHint.lastChild.textContent = notebookCopy('manage');
     }
     updateNotebookSelection(); updateNotebookExpandButton();
   }
@@ -3753,6 +3846,11 @@
       const color = state.notebookColors[source]; delete state.notebookColors[source]; state.notebookColors[destination] = color;
       queueNotebookSettings({ colors: { [destination]: color }, pruneMissing: [source] });
     }
+    if (Object.prototype.hasOwnProperty.call(state.notebookVisible, source)) {
+      delete state.notebookVisible[source]; state.notebookVisible[destination] = false;
+      queueNotebookSettings({ visible: { [destination]: false }, pruneMissing: [source] });
+      state.notebookTreeDirty = true; renderNotebookTree();
+    }
     queueNotebookSettings({ ui: notebookUi() });
     remapViewStates(source, destination); if (state.current) try { localStorage.setItem(ACTIVE_PATH_KEY, state.current.path); } catch (error) {} if (result.warnings && result.warnings.length) showToast(tr('linkWarnings', { count: result.warnings.length }), 'warning'); return true;
   }
@@ -3823,6 +3921,7 @@
   async function recycleEntry(entry) {
     if (noteMovePromise) await waitForNoteMove();
     if (!entry || state.recycleRunning) return;
+    if (notebookVisibilityBusy && isNotebookRoot(entry.path)) return;
     state.recycleRunning = true;
     stopExternalSync();
     state.externalSeq += 1;
@@ -4340,7 +4439,9 @@
 
   function openNotebookContext(entry, x, y) {
     closeContextMenu({ instant: true });
-    if (!entry.path) return;
+    const hide = contextButton(notebookCopy('hide'), () => commitNotebookVisibility({ [entry.path]: false }));
+    hide.disabled = notebookVisibilityBusy;
+    if (!entry.path) { showContext([contextButton(tr('openExplorer'), () => reveal('', false)), hide], x, y); return; }
     const colors = document.createElement('div'); colors.className = 'note-notebook-colors';
     colors.setAttribute('role', 'group'); colors.setAttribute('aria-label', language() === 'en' ? 'Notebook color' : '笔记本颜色');
     NOTEBOOK_COLORS.forEach((color) => {
@@ -4357,7 +4458,7 @@
       colors.appendChild(button);
     });
     showContext([colors, separator(), contextButton(tr('rename'), () => beginInlineRename(entry.path)),
-      contextButton(tr('openExplorer'), () => reveal(entry.path, false)), contextButton(tr('recycle'), () => recycleEntry(entry), true)], x, y);
+      contextButton(tr('openExplorer'), () => reveal(entry.path, false)), hide, contextButton(tr('recycle'), () => recycleEntry(entry), true)], x, y);
   }
   let notebookCreateRunning = false;
   async function createNotebook() {

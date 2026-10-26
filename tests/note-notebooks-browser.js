@@ -356,7 +356,8 @@ async function freePort() {
     await screenshot('notebooks-dark');
     await page.evaluate(() => { document.body.dataset.startTheme = 'light'; document.body.dataset.startBackground = 'simple'; });
     await rootRow('').click({ button: 'right' });
-    assert.equal(await page.locator('[data-role="note-context-menu"]').isVisible(), false, 'default notes has no delete menu');
+    assert.deepEqual(await page.locator('[data-role="note-context-menu"] > button').allTextContents(), ['在资源管理器中打开', '隐藏笔记本'], 'default notes has reveal/hide but no rename or delete');
+    await page.keyboard.press('Escape');
 
     await clickNotebookBlank('right');
     await blankMenu.locator('button').first().click();
