@@ -85,7 +85,11 @@ export function buildReport(report, context, actions) {
   card(notes,'lengths',tr('篇幅分布','Note length distribution'),tr('按正文可见字词统计，包含图片文字。','Visible words, including image text.'),{type:'distribution',inventory:true,unit:tr('篇','Notes'),rows:inventory.notes.lengths.map((value,i)=>({name:['<100','100–499','500–999','1k–<2k','2k–<5k','≥5k'][i],value}))});
   const noteUse=card(notes,'note-use',tr('常用笔记','Most used notes'),tr('当前筛选范围内的前台使用时长。','Foreground time within the selected range.'),{type:'rank',unit:'seconds',rows:data.rankings('notes')});
   const archivedSummary=el('p','career-archived-notes');noteUse.append(archivedSummary);
-  function updateArchivedSummary(){const value=data.archivedNotes;archivedSummary.hidden=!value?.count;archivedSummary.textContent=value?.count?tr(`已归档笔记 · 累计 ${number(value.count)} 篇 · 当前范围 ${metricDuration(value.seconds)(value.seconds)}`,`Archived notes · ${number(value.count)} in total · ${metricDuration(value.seconds)(value.seconds)} in this range`):'';}
+  function updateArchivedSummary(){
+    const value=data.archivedNotes,selectedDates=context.filter.mode!=='all';
+    archivedSummary.hidden=!value?.count;
+    archivedSummary.textContent=value?.count?tr(`已归档笔记 · 累计 ${number(value.count)} 篇 · 已归档的笔记总时长 ${metricDuration(value.seconds)(value.seconds)}${selectedDates?'（所选日期）':''}`,`Archived notes · ${number(value.count)} in total · Total archived note time ${metricDuration(value.seconds)(value.seconds)}${selectedDates?' (selected dates)':''}`):'';
+  }
   updateArchivedSummary();
   card(notes,'note-size',tr('笔记字数排名','Notes by word count'),stockLabel,{type:'rank',inventory:true,unit:tr('字词','Words'),rows:prepared.inventoryRows.noteSize});
   card(notes,'note-network',tr('笔记关系','Note links'),tr('同一笔记本内的双链和 Markdown 链接。','Wiki and Markdown links within each notebook.'),{type:'graph',inventory:true,network:inventory.notes.network},true);
