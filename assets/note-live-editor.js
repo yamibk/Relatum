@@ -333,6 +333,150 @@
 
   const canvasEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.canvas');
   const mermaidEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid');
+  const quizEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.quiz');
+  let quizLoader = null, quizSession = null;
+  const quizBindings = new Set();
+  function quizLifecycle() { quizBindings.forEach(binding => binding.sync()); }
+  function quizInputSettled() { quizBindings.forEach(binding => binding.settled()); }
+  function watchQuizLifecycle(add) {
+    const method = add ? 'addEventListener' : 'removeEventListener';
+    document[method]('visibilitychange', quizLifecycle);
+    document[method]('relatum:start-workspacechange', quizLifecycle);
+    document[method]('relatum:languagechange', quizLifecycle);
+    document[method]('compositionstart', quizLifecycle);
+    document[method]('compositionend', quizInputSettled);
+    window[method]('canvasdesktop:visibility', quizLifecycle);
+    window[method]('pagehide', quizPageHide); window[method]('pageshow', quizPageShow);
+  }
+  function quizPageHide() { quizBindings.forEach(binding => binding.page(false)); }
+  function quizPageShow() { quizBindings.forEach(binding => binding.page(true)); }
+  function loadQuiz() {
+    if (!quizEnabled()) return Promise.reject(new Error('Quiz disabled'));
+    if (!quizLoader) {
+      const own = document.querySelector('script[src*="note-live-editor.js"]')?.src || new URL('note-live-editor.js', document.baseURI).href;
+      const asset = (name, style) => new Promise((resolve, reject) => {
+        const element = document.createElement(style ? 'link' : 'script');
+        if (style) { element.rel = 'stylesheet'; element.href = new URL(name, own).href; }
+        else element.src = new URL(name, own).href;
+        element.dataset.noteQuizAsset = name;
+        const timer = setTimeout(() => finish(new Error('Quiz resource timed out')), 10000);
+        function finish(error) { clearTimeout(timer); element.onload = element.onerror = null; if (error) { element.remove(); reject(error); } else resolve(); }
+        element.onload = () => finish(); element.onerror = () => finish(new Error('Quiz resource unavailable')); document.head.append(element);
+      });
+      quizLoader = Promise.all([
+        document.querySelector('link[data-note-quiz-asset="note-quiz.css"]') ? Promise.resolve() : asset('note-quiz.css', true),
+        (window.RelatumNoteQuizCore ? Promise.resolve() : asset('note-quiz-core.js')).then(() => window.RelatumNoteQuiz ? undefined : asset('note-quiz.js')),
+      ]).then(() => {
+        if (!window.RelatumNoteQuizCore || !window.RelatumNoteQuiz) throw new Error('Quiz module did not initialize');
+        quizSession ||= window.RelatumNoteQuizCore.createSession(); return window.RelatumNoteQuiz;
+      }).catch(error => { quizLoader = null; throw error; });
+    }
+    return quizLoader;
+  }
+  function quizFence(block) {
+    if (!quizEnabled() || block.language !== 'quiz') return null;
+    if (block.source.length > RICH_BLOCK_LIMIT || block.source.split('\n').some(line => line.length > MAX_RICH_LINE)) return null;
+    const escape = window.MarkdownMini.escapeHtml;
+    return '<div class="note-quiz-carrier" style="min-height:96px" data-quiz-from="' + block.from + '" data-quiz-to="' + block.to + '">'
+      + '<template class="note-quiz-raw">' + escape(block.source) + '</template><pre class="note-quiz-fallback" hidden>'
+      + escape('```quiz\n' + block.source + '\n```') + '</pre></div>';
+  }
+  function attachNoteQuiz(root, options) {
+    const entries = new Map(); let disposed = false, pageActive = true, isolatedSession = null, observer = null, mutation = null;
+    const foreground = () => !disposed && pageActive && root.isConnected && quizEnabled() && !root.closest('[hidden]')
+      && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
+      && (!root.closest('.note-workspace') || document.body.dataset.startWorkspace === 'notes') && options.isCurrent();
+    const visible = element => { const box = element.getBoundingClientRect(); return box.width > 0 && box.height > 0 && box.bottom > 0 && box.top < innerHeight; };
+    async function typeset(node, current, onLayout) {
+      if (!current()) return () => {};
+      await options.whenSettled?.();
+      if (!current()) return () => {};
+      const math = await ensureMathJax();
+      if (!current()) return () => {};
+      await math.typesetPromise([node]);
+      const cleanup = () => { try { math.typesetClear?.([node]); } catch (_) {} };
+      if (!current()) cleanup(); else onLayout();
+      return cleanup;
+    }
+    async function start(entry) {
+      if (!entry || entry.control || entry.loading || entry.failed || !foreground() || !visible(entry.element)) return;
+      entry.loading = true;
+      try {
+        await options.whenSettled?.();
+        if (!foreground() || !visible(entry.element)) return;
+        const runtime = await loadQuiz();
+        if (!foreground() || !entries.has(entry.element) || !visible(entry.element)) return;
+        const session = options.isolated ? isolatedSession ||= window.RelatumNoteQuizCore.createSession() : quizSession;
+        entry.element.style.removeProperty('min-height');
+        entry.control = runtime.attach(entry.element, {
+          source: entry.source, range: entry.range, getRange: options.getRange, notePath: options.notePath || '', session,
+          language: () => document.documentElement.lang,
+          renderText: source => window.MarkdownMini.renderLabelResult(source, { links: true }),
+          typesetMath: (node, current, layout) => typeset(node, current, layout).catch(() => () => {}),
+          isCurrent: () => foreground() && !entry.element.closest('[hidden]'), onLayout: options.onLayout, onEdit: options.onEdit, onLink: options.onLink,
+        });
+        entry.language = document.documentElement.lang;
+        observer?.unobserve(entry.element);
+      } catch (_) {
+        if (!foreground()) return;
+        entry.failed = true;
+        const fallback = entry.element.querySelector('.note-quiz-fallback'); if (fallback) fallback.hidden = false;
+        entry.element.style.removeProperty('min-height');
+        const button = document.createElement('button'); button.type = 'button'; button.dataset.noteQuizRetry = 'true';
+        button.textContent = document.documentElement.lang.startsWith('en') ? 'Quiz unavailable. Retry' : '选择题暂未加载，点击重试';
+        button.addEventListener('mousedown', event => { event.preventDefault(); event.stopPropagation(); });
+        button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); entry.failed = false; button.remove(); start(entry); });
+        entry.element.append(button); options.onLayout?.();
+      } finally { entry.loading = false; }
+    }
+    const binding = {
+      sync() {
+        if (disposed) return;
+        const active = foreground();
+        entries.forEach(entry => {
+          if (entry.control) {
+            if (!active || entry.element.closest('[hidden]')) entry.control.suspend();
+            else {
+              entry.control.resume();
+              if (entry.language !== document.documentElement.lang) { entry.language = document.documentElement.lang; entry.control.update(entry.source, entry.range); }
+            }
+          } else if (active) start(entry);
+        });
+      },
+      page(active) { pageActive = active; binding.sync(); },
+      settled() { Promise.resolve(options.whenSettled?.()).then(() => binding.sync()).catch(() => {}); },
+    };
+    Promise.resolve().then(() => {
+      if (disposed) return;
+      observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(changes => {
+        changes.forEach(change => { if (change.isIntersecting) start(entries.get(change.target)); });
+      }) : null;
+      const carriers = root.matches('.note-quiz-carrier') ? [root] : Array.from(root.querySelectorAll('.note-quiz-carrier'));
+      carriers.forEach((element, index) => {
+        const entry = { element, source: element.querySelector('.note-quiz-raw')?.content.textContent || '',
+          range: options.range || (options.isolated ? { from: index, to: index + 1 } : { from: Number(element.dataset.quizFrom), to: Number(element.dataset.quizTo) }), control: null, loading: false, failed: false };
+        entries.set(element, entry); observer?.observe(element);
+      });
+      if (!entries.size) return;
+      if (!quizBindings.size) watchQuizLifecycle(true); quizBindings.add(binding);
+      mutation = new MutationObserver(() => binding.sync());
+      for (let parent = root.parentElement; parent; parent = parent.parentElement) mutation.observe(parent, { attributes: true, attributeFilter: ['hidden', 'data-start-workspace'] });
+      binding.sync();
+    });
+    return { sync: binding.sync, destroy() {
+      if (disposed) return; disposed = true; observer?.disconnect(); mutation?.disconnect();
+      entries.forEach(entry => {
+        entry.control?.destroy();
+        if (entry.element.isConnected) {
+          const raw = document.createElement('template'); raw.className = 'note-quiz-raw'; raw.content.textContent = entry.source;
+          const fallback = document.createElement('pre'); fallback.className = 'note-quiz-fallback'; fallback.hidden = true; fallback.textContent = '```quiz\n' + entry.source + '\n```';
+          entry.element.style.minHeight = '96px';
+          entry.element.classList.remove('note-quiz', 'has-quiz-edit'); entry.element.removeAttribute('data-quiz-state'); entry.element.replaceChildren(raw, fallback);
+        }
+      }); entries.clear(); isolatedSession?.clear();
+      quizBindings.delete(binding); if (!quizBindings.size) watchQuizLifecycle(false);
+    } };
+  }
   let noteMermaidPromise = null;
   function loadNoteMermaid() {
     if (!mermaidEnabled()) return Promise.reject(new Error('Mermaid disabled'));
@@ -796,7 +940,7 @@
           const quote = window.MarkdownMini.quoteLine(firstLine.text);
           const opener = fenceStart(quote.text);
           if (!opener) return false;
-          const kind = opener.language === 'derive' ? 'derive' : mermaidEnabled() && MERMAID_LANGS.has(opener.language) ? 'mermaid' : '';
+          const kind = opener.language === 'quiz' && quizEnabled() ? 'quiz' : opener.language === 'derive' ? 'derive' : mermaidEnabled() && MERMAID_LANGS.has(opener.language) ? 'mermaid' : '';
           const limit = kind === 'mermaid' ? MERMAID_LIMIT : RICH_BLOCK_LIMIT;
           if (!kind || node.to - firstLine.from > limit || !isFenceEnd(window.MarkdownMini.stripQuote(lastLine.text, quote.depth), opener)) return false;
           if (!rangeHasLongLine(doc, node.from, node.to)) {
@@ -2332,6 +2476,7 @@
     releaseImageFailures(host);
     host.__relatumReadingMermaid?.destroy();
     delete host.__relatumReadingMermaid;
+    host.__relatumReadingQuiz?.destroy(); delete host.__relatumReadingQuiz;
     if (host.__relatumReadingCode) host.__relatumReadingCode.destroy();
     delete host.__relatumReadingCode;
     host.querySelectorAll('[data-canvas-source]').forEach(frame => frame.__noteCanvas?.destroy());
@@ -2357,6 +2502,7 @@
     const imageTextSizer = createImageTextSizer();
     host.__relatumImageTextSizer = imageTextSizer;
     const original = window.MarkdownMini.structure.normalizeSource(source);
+    quizSession?.enterDocument(notePath, original);
     const canvasRefs = canvasEnabled() ? window.MarkdownMini.canvasReferences(original) : [];
     let renderedSource = original;
     canvasRefs.slice().reverse().forEach((ref, index) => {
@@ -2384,7 +2530,7 @@
       return position - shift;
     };
     const readingSyntax = window.MarkdownMini.noteSyntax.scan(renderedSource);
-    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteSourcePosition, noteContext: readingSyntax });
+    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteSourcePosition, noteContext: readingSyntax, renderFence: quizFence });
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
@@ -2417,7 +2563,7 @@
       let collapsed = session ? session.get(position, block.dataset.fold === '-') : block.dataset.fold === '-';
       const refresh = () => { if (body) body.hidden = collapsed; button.setAttribute('aria-expanded', String(!collapsed)); button.setAttribute('aria-label', collapsed ? 'Expand callout' : 'Collapse callout'); };
       refresh();
-      button.addEventListener('click', () => { collapsed = !collapsed; if (session) session.set(position, collapsed); refresh(); });
+      button.addEventListener('click', () => { collapsed = !collapsed; if (session) session.set(position, collapsed); refresh(); host.__relatumReadingQuiz?.sync(); });
     });
     // Notes present every table row as data, including the first Markdown row.
     content.querySelectorAll('table th').forEach((header) => {
@@ -2457,6 +2603,9 @@
     host.replaceChildren(content);
     host.classList.toggle('is-failed', !!result.error);
     const current = () => host.dataset.noteReadingEpoch === epoch && content.isConnected;
+    if (content.querySelector('.note-quiz-carrier')) host.__relatumReadingQuiz = attachNoteQuiz(content, {
+      notePath, isCurrent: current, onLink: safeOptions.onOpenExternal,
+    });
     host.__relatumReadingCode = prepareReadingCode(content, current);
     if (result.features && result.features.mermaid && mermaidEnabled()) {
       window.RelatumNoteMermaid?.reserve?.(content, { mode: 'reading' });
@@ -2489,7 +2638,7 @@
         return from + Math.min(offset, closer);
       }
     }
-    if (spec && (spec.kind === 'mermaid' || spec.kind === 'derive')) {
+    if (spec && (spec.kind === 'mermaid' || spec.kind === 'derive' || spec.kind === 'quiz')) {
       const newline = source.indexOf('\n');
       if (newline >= 0) return from + newline + 1 + window.MarkdownMini.quoteLine(source.slice(newline + 1).split('\n', 1)[0]).prefix.length;
     }
@@ -2639,6 +2788,24 @@
     }
     destroy(dom) { this.token = null; releaseImageFailures(dom); this.mermaidControl?.destroy(); this.mermaidControl = null; if (this.imageCleanup) this.imageCleanup(); this.imageCleanup = null; if (dom && (this.spec.kind === 'math' || dom.dataset.noteMath) && typeof window.MathJax?.typesetClear === 'function') window.MathJax.typesetClear([dom]); }
     ignoreEvent() { return false; }
+  }
+
+  class QuizBlockWidget extends RichBlockWidget {
+    toDOM(view) {
+      const wrap = document.createElement('div'); wrap.className = 'note-live-rich-block is-quiz';
+      const token = {}; this.token = token;
+      wrap.innerHTML = quizFence({ language: 'quiz', source: fencedCodeBody(this.spec.renderSource || this.spec.source), from: this.spec.from, to: this.spec.to });
+      const current = () => this.isCurrent(view, wrap, token) && !compositionActive(view);
+      this.quizControl = attachNoteQuiz(wrap, {
+        notePath: this.notePath, range: { from: this.spec.from, to: this.spec.to },
+        getRange: () => { const spec = this.coordinator.spec(view, this.spec.id); return spec && { from: spec.from, to: spec.to }; },
+        isCurrent: current, whenSettled: () => runWhenInputSettled(view, () => true),
+        onLayout: () => { if (current()) view.requestMeasure(); }, onEdit: () => this.reveal(view), onLink: this.options.onOpenExternal,
+      });
+      return wrap;
+    }
+    destroy(dom) { this.quizControl?.destroy(); this.quizControl = null; super.destroy(dom); }
+    ignoreEvent() { return true; }
   }
 
   class CalloutTitleWidget extends WidgetType {
@@ -2910,6 +3077,7 @@
   }
 
   function blockWidget(spec, path, options, coordinator, selected) {
+    if (spec.kind === 'quiz') return new QuizBlockWidget(spec, path, options, coordinator, selected);
     if (spec.kind === 'canvas') return new CanvasBlockWidget(spec, path, options, coordinator, selected);
     return spec.kind === 'table' && options.tableController && spec.tableModel
       ? options.tableController.widget(spec, path, coordinator)
@@ -3511,9 +3679,9 @@
       });
       protectedRanges.forEach((range) => {
         if (/^(?:FencedCode|CodeBlock|IndentedCode)$/.test(range.kind)) {
-          // A projected diagram already owns the entire fence. Decorating its
+          // A projected diagram or quiz owns the entire fence. Decorating its
           // hidden first line leaves an empty code-colored stripe above it.
-          if (blockSpecs.some(spec => spec.kind === 'mermaid' && blockIsProjected(spec, blockValue.activeIds)
+          if (blockSpecs.some(spec => (spec.kind === 'mermaid' || spec.kind === 'quiz') && blockIsProjected(spec, blockValue.activeIds)
               && spec.from <= range.from && spec.to >= range.to)) return;
           const blockFirst = view.state.doc.lineAt(range.from).number;
           const blockLast = view.state.doc.lineAt(Math.max(range.from, range.to - 1)).number;
@@ -4224,7 +4392,7 @@
     const metadata = documentFrontmatter(state.doc);
     if (metadata && position >= metadata.from && position <= metadata.to) return true;
     const line = state.doc.lineAt(position);
-    return scanBlockSpecs(state, line.from, line.to, []).some(spec => spec.from <= position && spec.to >= position && /^(?:math|mermaid|derive|canvas|image|table)$/.test(spec.kind));
+    return scanBlockSpecs(state, line.from, line.to, []).some(spec => spec.from <= position && spec.to >= position && /^(?:math|mermaid|derive|quiz|canvas|image|table)$/.test(spec.kind));
   }
   function noteTab(view, backward) {
     if (compositionActive(view) || view.state.readOnly) return true;
@@ -4425,9 +4593,16 @@
     let noteSyntaxRevision = 0, tableSyntaxRevision = 0;
     let pastePlain = false;
     let serializedDoc = null, serializedValue = '';
+    let quizRememberedDocument = null, quizRememberedPath = '';
     function serializedDocument(doc) {
       if (serializedDoc !== doc) { serializedDoc = doc; serializedValue = doc.toString(); }
       return serializedValue;
+    }
+    function rememberQuizDocument() {
+      if (quizSession && (quizRememberedDocument !== view.state.doc || quizRememberedPath !== currentPath)) {
+        quizSession.rememberDocument(currentPath, serializedDocument(view.state.doc));
+        quizRememberedDocument = view.state.doc; quizRememberedPath = currentPath;
+      }
     }
     const coordinator = { epoch: 1, field: null, folds: new Map(), foldPositions: new Map(), records: [], spec() { return null; } };
     const imageTextSizer = createImageTextSizer();
@@ -5201,6 +5376,10 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (update.docChanged && quizSession) {
+            const ranges = []; update.changes.iterChangedRanges((from, to) => ranges.push({ from, to }));
+            quizSession.map(currentPath, (position, assoc) => update.changes.mapPos(position, assoc), ranges);
+          }
           if (update.docChanged && imageInsertions.size) {
             for (const target of imageInsertions) {
               const empty = target.from === target.to;
@@ -5442,6 +5621,10 @@
         return;
       }
       pendingDocumentState = null;
+      if (quizSession) {
+        rememberQuizDocument();
+        quizSession.enterDocument(String(documentState?.notePath || ''), String(documentState?.value || ''));
+      }
       const seq = ++documentSetSeq;
       const scrollSeq = ++scrollRestoreSeq;
       if (tableController) tableController.close();
@@ -5508,6 +5691,7 @@
     async function rewriteCanvasHistory(renamed, path, value) {
       if (inputPending()) await whenInputSettled();
       const oldPath = currentPath, original = view.state, scroll = view.scrollDOM.scrollTop;
+      if (path && path !== oldPath) quizSession?.remap(oldPath, path);
       const move = (state, command) => {
         let next = state;
         const success = command({ state, dispatch(transaction) { next = transaction.state; } });
@@ -5544,6 +5728,11 @@
       if (typeof value === 'string' && rebuilt.doc.toString() !== value) {
         rebuilt = rebuilt.update({ changes: minimalChanges(rebuilt.doc.toString(), value), annotations: Transaction.addToHistory.of(false) }).state;
       }
+      if (quizSession) {
+        const changes = original.changes(pathRewriteChanges(rebuilt.doc.toString())), ranges = [];
+        changes.iterChangedRanges((from, to) => ranges.push({ from, to }));
+        quizSession.map(currentPath, (position, assoc) => changes.mapPos(position, assoc), ranges);
+      }
       coordinator.epoch++; suppressChanges = true;
       try { view.setState(rebuilt); } finally { suppressChanges = false; }
       inputSession.reset(view); view.__relatumInputSession = inputSession;
@@ -5570,6 +5759,7 @@
       if (next !== currentPath && canvasHistoryPresent) {
         await rewriteCanvasHistory({}, next, value); return;
       }
+      quizSession?.remap(currentPath, next);
       const changes = typeof value === 'string' ? pathRewriteChanges(value) : [];
       const scroll = view.scrollDOM.scrollTop;
       currentPath = next;
@@ -5661,6 +5851,7 @@
     }
 
     function snapshot() {
+      rememberQuizDocument();
       return inputSession.snapshot(view);
     }
 
@@ -5926,5 +6117,7 @@
     richBlockEditPosition,
   };
   window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath };
+  Object.assign(window.RelatumNoteLiveEditor, { quizFence, attachQuiz: attachNoteQuiz,
+    remapQuiz(source, destination) { quizSession?.remap(source, destination); } });
   window.RelatumNoteLiveEditor.releaseReadingDocument = releaseReadingDocument;
 })();

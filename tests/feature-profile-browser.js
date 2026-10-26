@@ -24,6 +24,9 @@ const cases = [
   ['notes-mermaid', only(['notes', 'notes.mermaid', 'runtime.preload'])],
   ['notes-mermaid-mixed-off', only(['notes', 'canvas', 'canvas.quicknotes', 'runtime.preload'])],
   ['notes-mermaid-parent-off', only(['canvas', 'canvas.quicknotes', 'notes.mermaid'])],
+  ['notes-quiz', only(['notes', 'notes.quiz', 'runtime.preload'])],
+  ['notes-quiz-off', only(['notes', 'runtime.preload'])],
+  ['notes-quiz-parent-off', only(['canvas', 'canvas.quicknotes', 'notes.quiz'])],
   ['research', only(['research'])],
   ['career', only(['career'])],
   ['notes-career', only(['notes', 'career'])],
@@ -42,10 +45,11 @@ const cases = [
       fs.mkdirSync(path.join(root, 'canvases'));
       const canvas = path.join(root, 'canvases', 'test.canvas');
       fs.writeFileSync(canvas, JSON.stringify({ nodes: [], edges: [] }));
-      const noteFixture = (!choices || choices.notes) && ['full', 'notes', 'notes-mermaid', 'notes-mermaid-mixed-off'].includes(name);
+      const quizFixture = ['notes-quiz', 'notes-quiz-off'].includes(name);
+      const noteFixture = (!choices || choices.notes) && (quizFixture || ['full', 'notes', 'notes-mermaid', 'notes-mermaid-mixed-off'].includes(name));
       if (noteFixture) {
         fs.mkdirSync(path.join(root, 'notes'));
-        fs.writeFileSync(path.join(root, 'notes', 'Diagram.md'), '# 图表\n\n```mermaid\nflowchart LR\n A[开始] --> B[完成]\n```\n\n正文', 'utf8');
+        fs.writeFileSync(path.join(root, 'notes', 'Diagram.md'), quizFixture ? '# 选择题\n\n```quiz\n哪项正确？\n- [ ] 错误\n- [x] 正确\n```\n\n正文' : '# 图表\n\n```mermaid\nflowchart LR\n A[开始] --> B[完成]\n```\n\n正文', 'utf8');
       }
       if (name === 'career') {
         fs.mkdirSync(path.join(root, 'notes'));
@@ -108,7 +112,10 @@ const cases = [
         await sleep(2400); // includes the existing idle prewarm jobs
         if (noteFixture) {
           await page.waitForSelector('.note-live-editor-host .cm-editor');
-          if (enabled('notes.mermaid')) await page.waitForSelector('.note-live-rich-block.is-mermaid [data-note-mermaid-rendered] svg');
+          if (quizFixture) {
+            if (enabled('notes.quiz')) { await page.waitForSelector('.note-live-rich-block.is-quiz .note-quiz'); await page.locator('.note-quiz [data-quiz-option="1"]').click(); assert.equal(await page.locator('.note-quiz').getAttribute('data-quiz-state'), 'correct'); }
+            else { assert.equal(await page.locator('.note-quiz').count(), 0); assert(!requests.some(url => url.includes('note-quiz')), 'disabled quizzes stay cold'); }
+          } else if (enabled('notes.mermaid')) await page.waitForSelector('.note-live-rich-block.is-mermaid [data-note-mermaid-rendered] svg');
           else {
             assert.equal(await page.locator('.note-live-rich-block.is-mermaid').count(), 0, name + ': disabled blocks remain code');
             assert(!requests.some(url => url.includes('note-mermaid') || url.includes('vendor/pele/')), name + ': disabled note resources');

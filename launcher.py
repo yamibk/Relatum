@@ -32,6 +32,7 @@ FEATURE_TEXT_EN = {
     "notes.graph": ("Note graph", "Notebook relationship graph. Disabling this skips graph scripts, data and the rendering engine."),
     "notes.ai": ("Note AI", "Independent chat, prompt presets and local conversation history. Disabling this skips AI resources, configuration and service access."),
     "notes.mermaid": ("Mermaid diagrams", "Mermaid diagrams in notes, using the offline Pele engine. When disabled, code remains visible without loading dedicated scripts, styles or the engine."),
+    "notes.quiz": ("Note quizzes", "Interactive single-choice questions in notes. When disabled, source remains visible without loading quiz scripts or styles."),
     "notes.canvas": ("Embedded note canvases", "Canvas blocks inside notes. When disabled, references remain visible without loading the engine or canvas files."),
     "research": ("Research workspace", "Research canvases, subcircuits and simulation."),
     "career": ("Career workspace", "Local saved usage reports. Reports are not preloaded when disabled."),

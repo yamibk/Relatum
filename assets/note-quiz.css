@@ -1,0 +1,25 @@
+.note-quiz{position:relative;color:inherit;font:inherit;padding:16px 0;margin:8px 0;isolation:isolate}
+.note-quiz .note-quiz-question{margin-bottom:10px}
+.note-quiz.has-quiz-edit .note-quiz-question{padding-right:84px}
+.note-quiz .note-quiz-text{min-width:0;overflow-wrap:anywhere;line-height:1.6}
+.note-quiz .note-quiz-options{display:flex;flex-direction:column;gap:4px}
+.note-quiz .note-quiz-option{display:flex;align-items:flex-start;gap:10px;padding:5px 0;cursor:pointer}
+.note-quiz .note-quiz-option input{appearance:none;color:inherit;flex:0 0 18px;width:18px;height:18px;margin:4px 0 0;border:1px solid var(--text-secondary,#888);border-radius:50%;background:transparent;cursor:pointer}
+.note-quiz .note-quiz-option input:checked{border:5px solid currentColor;background:var(--bg,#fff)}
+.note-quiz .note-quiz-option input:focus-visible,.note-quiz button:focus-visible{outline:2px solid currentColor;outline-offset:3px}
+.note-quiz .note-quiz-feedback{display:flex;align-items:flex-start;gap:9px;margin-top:12px;font-size:.92em}
+.note-quiz .note-quiz-result-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 16px;width:16px;height:16px;border:1.5px solid currentColor;border-radius:50%;font-size:12px;font-weight:700;line-height:1;margin-top:5px;color:#9b773c}
+.note-quiz[data-quiz-state="correct"] .note-quiz-result-icon{color:#379168}
+.note-quiz .note-quiz-answer>.note-quiz-text{display:inline}
+.note-quiz .note-quiz-feedback-body>.note-quiz-text{margin-top:3px}
+.note-quiz button{font:inherit;font-size:12px;color:var(--text-secondary,#777);border:0;background:transparent;border-radius:5px;padding:4px 7px;cursor:pointer}
+.note-quiz button:hover{color:inherit;background:rgba(128,128,128,.1)}
+.note-quiz .note-quiz-reset{margin-top:5px;margin-left:18px}
+.note-quiz .note-quiz-edit{position:absolute;right:0;top:13px;opacity:0;transition:opacity 120ms}
+.note-quiz:hover>.note-quiz-edit,.note-quiz:focus-within>.note-quiz-edit{opacity:1}
+.note-quiz .note-quiz-source{white-space:pre-wrap;font-family:var(--font-mono,monospace);font-size:.85em;margin:0}
+.note-quiz .note-quiz-error{display:block;margin-top:8px;color:var(--text-secondary,#777)}
+.note-quiz [hidden]{display:none!important}
+.note-quiz mjx-container{max-width:100%;overflow-x:auto;overflow-y:hidden}
+@media(prefers-reduced-motion:reduce){.note-quiz .note-quiz-edit{transition:none}}
+html[data-note-reduced-motion="1"] .note-quiz .note-quiz-edit{transition:none}

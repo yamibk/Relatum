@@ -1121,7 +1121,8 @@
         output.push(lines[i]);
         continue;
       }
-      codes.push({ lang: fence.language, code: lines.slice(i + 1, close).map((line) => stripQuote(line, quote.depth)).join('\n') });
+      codes.push({ lang: fence.language, code: lines.slice(i + 1, close).map((line) => stripQuote(line, quote.depth)).join('\n'),
+        line: i, endLine: close, endColumn: lines[close].length });
       output.push(quote.prefix + '\x00CODE' + (codes.length - 1) + '\x00');
       for (let pad = i + 1; pad <= close; pad++) output.push(quote.prefix);
       i = close;
@@ -1133,6 +1134,11 @@
     return html.replace(/\x00CODE(\d+)\x00/g, function (_, idx) {
       const b = codes[+idx];
       if (!b) return '';
+      if (typeof options?.renderFence === 'function' && Number.isInteger(b.line)) {
+        const custom = options.renderFence({ language: b.lang, source: b.code,
+          from: options.fencePosition(b.line, 0), to: options.fencePosition(b.endLine, b.endColumn) });
+        if (typeof custom === 'string') return custom;
+      }
       if (b.lang === 'derive') return renderDerive(b.code);   // 推导链围栏
       // Mermaid 围栏只产出安全的源码容器；统一渲染器负责补全简写、排队和错误展示。
       // template 让源码随批注净快照保存但不进入正文字符偏移；pre 是渲染器启动前的可见兜底。
@@ -1268,10 +1274,14 @@
     });
     return { protected: s, links: links };
   }
-  function restoreLinks(html, links) {
+  function restoreLinks(html, links, options) {
     if (links.length === 0) return html;
     return html.replace(/\x00LINK(\d+)\x00/g, function (_, idx) {
       const link = links[+idx];
+      if (options?.safe) {
+        const unsafe = /[\x00-\x20]/.test(link.target) || /^[a-z][a-z\d+.-]*:/i.test(link.target) && !/^(?:https?:|mailto:)/i.test(link.target);
+        return unsafe ? escapeHtml(link.text) : '<a href="' + escapeHtml(link.target) + '">' + escapeHtml(link.text) + '</a>';
+      }
       const isUrl = /^(?:https?:\/\/|mailto:)/i.test(link.target);
       const icon = isUrl ? LINK_ICON_URL : LINK_ICON_FILE;
       return '<a class="node-link" data-kind="' + (isUrl ? 'url' : 'file') + '"'
@@ -1807,7 +1817,17 @@
       html = restoreLocalImages(html, imageGuard.images);
       html = restoreEscapes(html, escapeGuard.chars);
       html = restoreInlineCode(html, inlineCodeGuard.codes);
-      html = restoreCode(html, codeGuard.codes, opts);
+      let fencePosition;
+      if (typeof opts.renderFence === 'function' && codeGuard.codes.some(block => Number.isInteger(block.line))) {
+        let offset = 0;
+        const offsets = source.split('\n').map(line => { const from = offset; offset += line.length + 1; return from; });
+        const base = header ? source.slice(0, header.to).split('\n').length - 1 : 0;
+        fencePosition = (line, column) => {
+          const value = offsets[base + line] + column;
+          return typeof opts.noteSourcePosition === 'function' ? opts.noteSourcePosition(value) : value;
+        };
+      }
+      html = restoreCode(html, codeGuard.codes, fencePosition ? Object.assign({}, opts, { fencePosition }) : opts);
       if (noteGuard) {
         html = html.replace(/<p(?: data-ln="\d+")?>(\x00NSYN(\d+)\x00)<\/p>/g,
           (whole, token, index) => noteGuard.values[+index].startsWith('<nav') ? token : whole);
@@ -1848,13 +1868,14 @@
     return renderResult(src, options).html;
   }
 
-  // Short labels share the safe inline grammar, but never create links, images,
-  // block structures or diagrams. Protect code and math before styling text.
-  function renderLabelResult(src) {
+  // Short labels share safe inline grammar. Links are an explicit opt-in;
+  // images, block structures and diagrams never start here.
+  function renderLabelResult(src, options) {
     const source = normalizeSource(src);
     try {
       const code = protectInlineCode(source);
-      const math = protectMath(code.protected, false);
+      const links = options?.links ? protectLinks(code.protected) : { protected: code.protected, links: [] };
+      const math = protectMath(links.protected, false);
       const escapes = protectEscapes(math.protected);
       let html = renderInlineSafe(escapes.protected).replace(/\n/g, '<br>');
       html = restoreMath(html, math.maths);
@@ -1863,6 +1884,7 @@
       html = html.replace(/<br>(?=<div class="md-math-block">)/g, '').replace(/(<\/div>)<br>/g, '$1');
       html = restoreEscapes(html, escapes.chars);
       html = restoreInlineCode(html, code.codes);
+      html = restoreLinks(html, links.links, { safe: true });
       return { html: html, features: { math: math.maths.length > 0, mermaid: false }, error: false };
     } catch (error) {
       return { html: escapeHtml(source).replace(/\n/g, '<br>'),

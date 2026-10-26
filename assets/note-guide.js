@@ -19,11 +19,12 @@
   function create(options) {
     const { host } = options, positions = new Map();
     host.dataset.i18nManaged = 'true';
-    let topic = '', renderedLanguage = '', active = false, sequence = 0, diagrams = null, feedbackTimer = 0;
+    let topic = '', renderedLanguage = '', active = false, sequence = 0, diagrams = null, quizzes = null, feedbackTimer = 0;
     const english = () => options.language() === 'en';
     const text = (zh, en) => english() ? en : zh;
     const current = () => active && options.isCurrent();
     const mermaidEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid');
+    const quizEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.quiz');
     function heading(zh, en) { const title = document.createElement('h3'); title.textContent = text(zh, en); host.append(title); }
     function example(source, preview = source, detail = '', image = false) {
       const item = document.createElement('div'); item.className = 'note-guide-example';
@@ -31,7 +32,7 @@
         const content = document.createElement('div'); content.className = 'node-text'; content.dataset.noteGuidePreview = 'true';
         if (image) {
           content.innerHTML = '<svg viewBox="0 0 260 90" role="img" aria-label="' + text('图片示例', 'Image example') + '" style="width:100%;border-radius:9px;background:rgba(128,128,128,.08)"><path d="m0 90 80-60 50 40 45-30 85 50" fill="currentColor" opacity=".16"/><circle cx="204" cy="23" r="10" fill="currentColor" opacity=".25"/></svg>';
-        } else content.innerHTML = window.MarkdownMini.renderResult(preview, { noteBlocks: true, noteSyntax: true, localImages: true, mermaid: mermaidEnabled() }).html;
+        } else content.innerHTML = window.MarkdownMini.renderResult(preview, { noteBlocks: true, noteSyntax: true, localImages: true, mermaid: mermaidEnabled(), renderFence: options.quizFence }).html;
         item.append(content);
       }
       if (detail) { const small = document.createElement('small'); small.textContent = detail; item.append(small); }
@@ -138,21 +139,34 @@
         retry.addEventListener('click', () => { retry.remove(); attachDiagrams(); }); host.prepend(retry);
       }
     }
-    function suspend() { active = false; sequence++; clearTimeout(feedbackTimer); diagrams?.destroy(); diagrams = null; }
+    function quiz() {
+      const intro = document.createElement('p'); intro.textContent = text('在 quiz 围栏中填写题干和选项。[x] 声明唯一正确答案，与普通任务列表不同：作答不会修改 Markdown。选择后显示答案和解析，可改选或重做。', 'Write a question and options inside a quiz fence. [x] declares the single correct answer. Unlike a task list, answering does not edit Markdown. Choose an option to see the answer and explanation, then change your answer or try again.'); host.append(intro);
+      if (!quizEnabled()) { const notice = document.createElement('p'); notice.dataset.guideQuizDisabled = 'true'; notice.textContent = text('本次启动未启用选择题，仍可查看和复制源码。', 'Quizzes are disabled for this session. You can still read and copy the source.'); host.append(notice); }
+      const samples = [
+        ['基本单选题', 'Single choice', text('以下哪个数是偶数？\n\n- [ ] 3\n- [x] 4\n- [ ] 5\n\n---\n4 可以被 2 整除。', 'Which number is even?\n\n- [ ] 3\n- [x] 4\n- [ ] 5\n\n---\n4 is divisible by 2.')],
+        ['公式与解析', 'Math and explanations', text('电压为 $12\\,V$、电阻为 $2\\,k\\Omega$ 时，电流是多少？\n\n- [ ] 0 mA\n- [x] 6 mA\n- [ ] 12 mA\n\n---\n由 $I=U/R=12/2000=0.006\\,A$ 得到。', 'With $12\\,V$ across a $2\\,k\\Omega$ resistor, what is the current?\n\n- [ ] 0 mA\n- [x] 6 mA\n- [ ] 12 mA\n\n---\n$I=U/R=12/2000=0.006\\,A$.')],
+      ];
+      samples.forEach(([zh, en, body]) => { heading(zh, en); const source = '```quiz\n' + body + '\n```'; example(source, quizEnabled() ? source : null); });
+    }
+    function attachQuizzes() {
+      if (!current() || topic !== 'quiz' || !quizEnabled() || quizzes || !options.attachQuiz) return;
+      quizzes = options.attachQuiz(host, { isolated: true, notePath: 'guide:quiz', isCurrent: () => current() && topic === 'quiz', whenSettled: options.whenSettled });
+    }
+    function suspend() { active = false; sequence++; clearTimeout(feedbackTimer); diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; }
     function show(next) {
       active = true;
       const lang = options.language();
       if (topic !== next || renderedLanguage !== lang) {
         if (topic) positions.set(topic, host.scrollTop);
-        sequence++; diagrams?.destroy(); diagrams = null; clearTimeout(feedbackTimer);
+        sequence++; diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; clearTimeout(feedbackTimer);
         topic = next; renderedLanguage = lang; host.replaceChildren(); host.dataset.language = lang; host.dataset.guideTopic = topic;
         const head = document.createElement('header'); head.className = 'note-guide-topic-head';
-        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid' }[topic];
+        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: text('选择题', 'Quiz') }[topic];
         const settings = document.createElement('button'); settings.type = 'button'; settings.dataset.noteAction = 'guide-settings'; settings.textContent = text('切换内容', 'Change topic'); head.append(title, settings); host.append(head);
-        if (topic === 'markdown') markdown(); else if (topic === 'mermaid') mermaid(); else callouts();
+        if (topic === 'markdown') markdown(); else if (topic === 'mermaid') mermaid(); else if (topic === 'quiz') quiz(); else callouts();
         host.scrollTop = positions.get(topic) || 0;
       }
-      attachDiagrams();
+      attachDiagrams(); attachQuizzes();
     }
     function onClick(event) {
       // A tutorial never opens links or creates missing wiki-linked notes.

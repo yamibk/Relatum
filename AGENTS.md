@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-10-26（笔记本显隐、设置中的笔记本管理与内嵌画布图标；保留启动首帧、统计归档、备份及各工作区既有边界）。
+> 最后按源码校准：2026-10-26（笔记交互选择题与引导、笔记本显隐及设置；保留启动首帧、统计归档、备份及各工作区既有边界）。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -80,7 +80,9 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 `assets/note-sidebar-settings.js` 保留笔记侧栏策略与 `canvas:noteSidebarPages:v1` 的完整 `order/hidden`，拖动/勾选交互委托公共 `assets/settings-order-list.js`，全局工作区列表共用它但使用独立异步提交。笔记默认笔记本、大纲、画布、引导、链接、AI 全开。呈现时按功能开关过滤；拖拽只在原可用槽位中合并，禁用项的位置和勾选状态保留。手柄采用 6px 起拖阈值，捕获与键盘焦点留在固定列表，行变位用 180ms 有限动画；指针按帧合并，释放先处理最终坐标。Escape、捕获丢失、取消、失焦、关闭分类/弹窗、隐藏和低动态切换立即撤销未提交顺序并释放资源。支持上下按钮与手柄方向键/Home/End，不清正文选区。隐藏当前页回退到第一项，全部隐藏收起侧栏，左侧原库设置齿轮继续可用；重新勾选不主动打开。图谱仍只提供笔记本侧栏，隐藏笔记本时同步隐藏图谱入口。
 
-引导首次可见才加载 `assets/note-guide.js`，共用 Callout 目录，并提供 Markdown 常用语法及八类 Mermaid 小图的效果/源码/复制。`canvas:noteGuideTopic:v1` 保存 `callout/markdown/mermaid` 三选一，缺失/无效值用 Callout，启动不写默认；各主题滚动仅保留本次会话。Mermaid 复用笔记离线适配器，仅可见主题的视口附近示例启动渲染；切主题、收侧栏、隐藏及最小化释放任务和交互，禁用时只保留说明与可复制源码。教程链接不导航或创建笔记，图片为本地图形示意，公式组合只展示源码。模块和验证细节见 `docs/note-settings-2026-10-23.md`。
+引导首次可见才加载 `assets/note-guide.js`，共用 Callout 目录，并提供 Markdown 常用语法、八类 Mermaid 小图及选择题的效果/源码/复制。`canvas:noteGuideTopic:v1` 保存 `callout/markdown/mermaid/quiz` 四选一，缺失/无效值用 Callout，启动不写默认；各主题滚动仅保留本次会话。选择题紧接 Mermaid，包含基本题与公式题，复用题块控制器但使用独立临时答题状态。Mermaid 复用笔记离线适配器，仅可见主题的视口附近示例启动渲染；切主题、收侧栏、隐藏及最小化释放任务和交互，禁用时只保留说明与可复制源码。教程链接不导航或创建笔记，图片为本地图形示意，Callout 中的公式组合只展示源码。模块和验证细节见 `docs/note-settings-2026-10-23.md` 与 `docs/note-quiz-2026-10-26.md`。
+
+笔记选择题由默认启用的独立子功能 `notes.quiz` 控制。三个专属资源为 `assets/note-quiz-core.js`（纯解析、判分和有界会话）、`assets/note-quiz.js`（独立 DOM 控制器）和 `assets/note-quiz.css`；禁用时显示普通源码且静态资源仍受功能权限限制。闭合的 `quiz` 围栏内先写题干，再逐行写至少两个 `- [ ]`/`- [x]` 选项，恰好一个 `[x]` 声明正确答案；选项后的独立 `---` 引出可选解析。作答不修改 Markdown、保存或历史；未答只显示题干与选项，作答后固定显示正确答案及解析，只随对错切换图标，可改选或重做。实时预览在悬停/聚焦时提供编辑入口，阅读和实时预览共享会话；状态按路径与题块范围映射，题内编辑或外部正文替换清除旧答案，路径移动跟随现有映射，最多 2048 条且刷新/重启清空。纯源码及普通笔记不加载专属资源，实际可见题块才挂载；公式通过已有 MathJax 按需排版。`MarkdownMini.renderResult` 的可选 `renderFence` 回调只由笔记宿主显式传入，返回 null 沿用原代码；题内使用 `renderLabelResult(source,{links:true})` 的安全链接、强调、代码及公式，不启动图片、表格或图表运行时。隐藏、最小化和 pagehide 暂停题块任务，销毁清理观察器、事件和公式记录。接口与验证见 `docs/note-quiz-2026-10-26.md`。
 
 设置弹窗交互采用 120–180ms 的有限动效：分类内容/标题轻移淡入，搜索只在进入结果时过渡，导航/选项/按钮/聚焦与恢复反馈使用局部颜色及按下反馈；搜索输入框聚焦时不绘制内部矩形描边，保留外层圆角容器的柔和焦点反馈，鼠标与键盘聚焦一致。快捷键录制只有一次反馈和静态状态，不沿用旧循环呼吸。弹窗及重置确认反向开合从当前显示状态接续，关闭确认立即 inert，旧收尾核对动画身份。每个表面最多一个 Web Animation，完成/取消释放；尺寸变化、失焦、语言和低动态切换提交最终状态，隐藏/最小化/离场取消全部。控件按下先完成内容位移，避免颜色弹层和滑块使用动画中几何；无尺寸动画、常驻合成提示、JS RAF 循环或新偏好。`node tests/note-settings-browser.js --motion` 覆盖六种功能组合下的真实中间帧、快速反转、连续搜索、录制无循环、低动态/API 回退、宽窄/深浅及闲置零 RAF，报告只写临时目录。
 
@@ -1051,6 +1053,8 @@ AI 设置使用独立星芒 SVG，按当前对话预设、连接、生成参数�
 - 构建先核对 Python/依赖版本、真实模块导入和 `pip check`，再执行 `scripts/check-note-sqlite.py`，在内存数据库验证 SQLite ≥3.43、FTS5 trigram、contentless-delete 和短字符查询，不读写用户索引。检查脚本按自身路径导入 `note_search.py`，不要改回 PowerShell 内嵌 `python -c`。维护 BAT 只调用 Windows PowerShell 5.1，不判断环境或解析源码；新手使用准备、离线修复、检查、打包及打开日志五个双击入口，步骤见 `Relatum-维护工具/打包新手说明.md`。成功输出包含 `Note SQLite/FTS5 preflight` 和 `Build complete`。
 
 ## 11. 验证清单
+
+笔记选择题运行 `node tests/note-quiz-core-regression.js` 与 `node tests/note-quiz-browser.js`，覆盖语法、引用/Callout、frontmatter 位置、重复题块、判分/重做/键盘、正文与历史不变、状态映射/外部替换、公式、资源按需/禁用/重试、迟到加载、最小化/pagehide、刷新、百题可见挂载及闲置零 RAF。再运行 `node tests/note-settings-browser.js`（七种功能组合，含 no-quiz）、`node tests/feature-profile-browser.js notes-quiz notes-quiz-off notes-quiz-parent-off`、`python -B -m unittest tests.test_feature_profile tests.test_launcher_native`，验证引导复制/恢复/记忆、真实 Markdown 字节与保存请求不变，以及启动器父子开关和静态资源权限。继续回归 Markdown、实时编辑器、输入、公式和 Mermaid；浏览器沿用已有三项宿主变量，Python 单测设置隔离 `RELATUM_DATA_ROOT`，截图与报告只写临时目录，不重新打包。
 
 全局设置与工作区展示先运行 `node tests/workspace-layout-regression.js`、`node tests/global-settings-browser.js`、`python -m unittest tests.test_feature_profile tests.test_desktop_preferences` 和 `node tests/desktop-preferences-regression.js`。浏览器沿用 `RELATUM_PLAYWRIGHT/RELATUM_PYTHON/RELATUM_EDGE_PATH`，覆盖完整、笔记、研究、生涯、画布库和混合模式，以及开预热的全隐藏冷启动；真实拖动与取消、保存成功/失败回滚、加载失败/重试、连续提交、首帧空白、中英文/深浅/窄窗、动效反转和闲置零 RAF。截图与报告只在临时目录。继续运行笔记设置六组合与 `--motion`、笔记侧栏、功能裁剪、工作区契约和桌面窗口回归；不重新打包。
 

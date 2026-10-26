@@ -257,6 +257,20 @@ class FeatureProfileTests(unittest.TestCase):
         self.assertEqual(profile.session_key, self.only('notes').session_key)
         self.assertEqual(profile.payload()['version'], 1)
 
+    def test_note_quiz_resources_defaults_and_independence(self):
+        legacy = features.LaunchProfile.decode('{"version":1,"features":{"notes":true}}')
+        self.assertTrue(legacy.enabled('notes.quiz'))
+        for keys in (('notes',), ('notes', 'notes.quiz'), ('notes.quiz',),
+                     ('notes', 'notes.graph', 'notes.mermaid', 'notes.canvas'), ('canvas', 'canvas.editor')):
+            profile = self.only(*keys)
+            for resource in ('note-quiz-core.js', 'note-quiz.js', 'note-quiz.css'):
+                self.assertEqual(profile.resource_allowed(resource), 'notes' in keys and 'notes.quiz' in keys)
+        profile = self.only('notes', 'notes.quiz')
+        self.assertEqual(profile.session_key, self.only('notes').session_key)
+        self.assertFalse(profile.enabled('notes.graph'))
+        self.assertFalse(profile.enabled('notes.mermaid'))
+        self.assertFalse(profile.enabled('notes.canvas'))
+
     def test_tree_and_study_share_goal_tree_model(self):
         source = (features.RESOURCE_ROOT / "assets" / "index.html").read_text(encoding="utf8")
         for name, keys in (("tree", ("canvas", "canvas.tree")), ("study", ("canvas", "canvas.study")), ("neither", ("notes",))):

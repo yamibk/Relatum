@@ -147,9 +147,11 @@ async function run(browser, mode) {
   fs.mkdirSync(path.join(data, 'notes'), { recursive: true }); fs.mkdirSync(path.join(data, 'data'));
   const note = '# Settings fixture\n\n文字 文字\n\n' + Array.from({ length: 70 }, (_, i) => 'Paragraph ' + i + ' with text.\n').join('\n');
   fs.writeFileSync(path.join(data, 'notes/Main.md'), note);
+  const quizSource = '# Quiz\n\n```quiz\n哪个数是偶数？\n- [ ] 3\n- [x] 4\n- [ ] 5\n---\n4 可被 2 整除。\n```\n\n尾段';
+  fs.writeFileSync(path.join(data, 'notes/Quiz.md'), quizSource);
   fs.writeFileSync(path.join(data, 'data/note-notebooks.json'), JSON.stringify({ version: 1, colors: {}, ui: { open: true, mode: 'guide', selectedRoot: '', expanded: [] } }));
   const catalog = JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json')));
-  const enabled = ['notes', ...(!['no-graph', 'minimal'].includes(mode) ? ['notes.graph'] : []), ...(!['no-canvas', 'minimal'].includes(mode) ? ['notes.canvas'] : []), ...(!['no-mermaid', 'minimal'].includes(mode) ? ['notes.mermaid'] : [])];
+  const enabled = ['notes', ...(!['no-graph', 'minimal'].includes(mode) ? ['notes.graph'] : []), ...(!['no-canvas', 'minimal'].includes(mode) ? ['notes.canvas'] : []), ...(!['no-mermaid', 'minimal'].includes(mode) ? ['notes.mermaid'] : []), ...(!['no-quiz', 'minimal'].includes(mode) ? ['notes.quiz'] : [])];
   const profile = mode === 'full' ? [] : ['--launch-profile', JSON.stringify({ version: 1, features: Object.fromEntries(catalog.features.map(f => [f.id, enabled.includes(f.id)])) })];
   const number = await port(), url = 'http://127.0.0.1:' + number;
   let logs = '';
@@ -297,9 +299,40 @@ async function run(browser, mode) {
       assert.equal(await page.locator('[data-guide-mermaid-disabled]').count(), 1);
       assert(!requests.some(url => /note-mermaid|vendor\/pele/.test(url)), 'disabled Mermaid never requests its runtime');
     }
-    await button.click(); await category('guide').click(); await dialog.locator('input[value="markdown"]').check(); await close();
+    await button.click(); await category('guide').click(); await dialog.locator('input[value="quiz"]').check(); await close();
+    assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteGuideTopic:v1')), 'quiz');
+    const quizGuide = page.locator('[data-role="note-guide"][data-guide-topic="quiz"]');
+    await quizGuide.locator('.note-guide-copy').first().click();
+    await page.waitForFunction(async () => (await navigator.clipboard.readText()).replace(/\r\n/g, '\n').startsWith('```quiz\n'));
+    if (enabled.includes('notes.quiz') || mode === 'full') {
+      const example = quizGuide.locator('.note-quiz').first(); await example.waitFor(); await example.locator('[data-quiz-option="1"]').click();
+      assert.equal(await example.getAttribute('data-quiz-state'), 'correct');
+      await page.evaluate(() => T.setSideOpen(false)); await page.evaluate(() => T.setSideOpen(true)); await example.waitFor();
+    } else {
+      assert.equal(await quizGuide.locator('[data-guide-quiz-disabled]').count(), 1); assert(!requests.some(url => /note-quiz/.test(url)));
+    }
+    await button.click(); await category('guide').click();
+    await dialog.locator('[data-settings-action="reset-category"]').click(); await dialog.locator('[data-settings-action="accept-reset"]').click();
+    assert(await dialog.locator('input[value="callout"]').isChecked());
+    await dialog.locator('input[value="markdown"]').check(); await close();
     assert.equal(await page.locator('[data-role="note-guide"]').evaluate(node => node.scrollTop), 300, 'topic scroll restores');
     await page.locator('[data-note-action="toggle-library-settings"]').click(); assert.equal(await category('files').getAttribute('aria-current'), 'page'); await close();
+    await page.evaluate(() => { T.setSideOpen(false); return T.openNote('Quiz.md'); });
+    if (enabled.includes('notes.quiz') || mode === 'full') {
+      const liveQuiz = page.locator('.note-live-editor-host .note-quiz'); await liveQuiz.waitFor();
+      const saved = await page.evaluate(() => { window.quizDoc = T.editor.view.state.doc; return T.state.current.editGeneration; });
+      const saveRequests = requests.filter(url => url.includes('/api/note-save')).length;
+      await liveQuiz.locator('[data-quiz-option="0"]').click(); await liveQuiz.locator('[data-quiz-option="1"]').click();
+      if (mode === 'full') await page.screenshot({ path: path.join(artifacts, 'full-quiz-live.png') });
+      await pause(450);
+      assert(await page.evaluate(() => T.editor.view.state.doc === quizDoc)); assert.equal(await page.evaluate(() => T.state.current.editGeneration), saved);
+      assert.equal(requests.filter(url => url.includes('/api/note-save')).length, saveRequests);
+      await page.evaluate(() => T.setViewMode('reading')); await page.locator('.note-reading-content .note-quiz').waitFor();
+      assert.equal(await page.locator('.note-reading-content .note-quiz').getAttribute('data-quiz-state'), 'correct');
+      await page.evaluate(() => T.setViewMode('live'));
+    } else { assert.equal(await page.locator('.note-quiz').count(), 0); }
+    assert.equal(fs.readFileSync(path.join(data, 'notes/Quiz.md'), 'utf8'), quizSource, 'answering never writes quiz Markdown');
+    await page.evaluate(() => { T.setSideOpen(true); return T.openNote('Main.md'); });
     await page.reload({ waitUntil: 'domcontentloaded' }); await page.waitForFunction(() => window.T?.state.current?.path === 'Main.md' && T.state.active && !T.state.openingPath);
     await button.click(); await category('guide').click(); assert(await dialog.locator('input[value="markdown"]').isChecked(), 'topic preference survives reload');
     await dialog.locator('[data-settings-action="reset-all"]').click(); await dialog.locator('[data-settings-action="accept-reset"]').click();
@@ -319,6 +352,6 @@ async function run(browser, mode) {
 }
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
-  try { for (const mode of process.argv.includes('--smoke') ? ['full'] : ['full', 'notes-only', 'no-graph', 'no-canvas', 'no-mermaid', 'minimal']) await run(browser, mode); }
+  try { for (const mode of process.argv.includes('--smoke') ? ['full'] : ['full', 'notes-only', 'no-graph', 'no-canvas', 'no-mermaid', 'no-quiz', 'minimal']) await run(browser, mode); }
   finally { await browser.close(); console.log('Artifacts: ' + artifacts); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,0 +1,51 @@
+'use strict';
+const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+global.window = global;
+for (const file of ['note-quiz-core.js', 'markdown.js']) vm.runInThisContext(fs.readFileSync(path.join(__dirname, '../assets', file), 'utf8'), { filename: file });
+const core = RelatumNoteQuizCore;
+const body = '题干 **文字** $x$\n第二行\n\n- [ ] 错误\n- [X] 正确 `code`\n\n---\n解析第一行\n第二行';
+const parsed = core.parse(body); assert(parsed.valid); assert.equal(parsed.model.answer, 1);
+assert.equal(parsed.model.explanation, '解析第一行\n第二行'); assert(core.parse(body.replace(/\n/g, '\r\n')).valid);
+assert.deepEqual(core.evaluate(parsed.model, 1), { answered: true, correct: true });
+assert.deepEqual(core.evaluate(parsed.model, 0), { answered: true, correct: false });
+for (const selected of [null, undefined, -1, 2, '1', NaN]) assert.equal(core.evaluate(parsed.model, selected).answered, false);
+for (const invalid of ['', '- [ ] a\n- [x] b', 'Q\n- [ ] a', 'Q\n- [ ] a\n- [ ] b', 'Q\n- [x] a\n- [x] b',
+  'Q\n- [x] \n- [ ] b', 'Q\n- [x] a\nextra line\n- [ ] b', 'x'.repeat(core.MAX_LINE + 1), ('x\n').repeat(core.MAX_SOURCE)]) assert.equal(core.parse(invalid).valid, false);
+assert(core.parse('Q\n- [x] a\n- [ ] b').valid);
+const fenced = '```quiz\n' + body + '\n```';
+for (const prefix of ['', '# Heading\n\n', '---\ntitle: Test\n---\n\n# Heading\n\n']) {
+  const source = prefix + fenced, descriptors = [];
+  const headingFrom = source.indexOf('# Heading');
+  const rendered = MarkdownMini.renderResult(source, { noteBlocks: true, noteTags: true, noteHeadings: headingFrom < 0 ? [] : [{ from: headingFrom, to: headingFrom + 9, level: 1, text: 'Heading' }],
+    renderFence: value => { descriptors.push(value); return '<section>quiz</section>'; } });
+  assert(rendered.html.includes('<section>quiz</section>')); assert.equal(descriptors.length, 1);
+  assert.equal(descriptors[0].from, prefix.length); assert.equal(descriptors[0].to, source.length); assert.equal(descriptors[0].source, body);
+}
+const quoted = '> [!note]\n>\n' + fenced.split('\n').map(line => '> ' + line).join('\n');
+let quoteBody;
+MarkdownMini.renderResult(quoted, { noteBlocks: true, renderFence: value => { quoteBody = value; return '<section>quiz</section>'; } });
+assert.equal(quoteBody.source, body); assert.equal(quoteBody.from, quoted.indexOf('> ```'));
+let unfinished = 0;
+MarkdownMini.renderResult('```quiz\nQ\n- [x] a\n- [ ] b', { noteBlocks: true, renderFence: () => { unfinished++; return ''; } }); assert.equal(unfinished, 0);
+assert(MarkdownMini.renderResult(fenced).html.includes('md-code'));
+assert(MarkdownMini.renderResult(fenced, { renderFence: () => null }).html.includes('md-code'));
+const inline = MarkdownMini.renderLabelResult('**bold** `code` $x$ [link](https://example.com) ![pic](a.png) <script>x</script>', { links: true });
+assert(inline.html.includes('<strong>bold</strong>')); assert(inline.features.math); assert(inline.html.includes('href="https://example.com"'));
+assert(!inline.html.includes('<img')); assert(!inline.html.includes('<script'));
+assert(!MarkdownMini.renderLabelResult('[x](https://example.com)').html.includes('<a '));
+assert(!MarkdownMini.renderLabelResult('[bad](javascript:alert(1))', { links: true }).html.includes('href="javascript:'));
+const session = core.createSession(), one = { from: 10, to: 30 }, two = { from: 40, to: 60 }, signature = parsed.model.fingerprint;
+session.set('note.md', one, signature, 1); session.set('note.md', two, signature, 0); session.set('other.md', one, signature, 0);
+assert.equal(session.get('note.md', one, signature), 1); assert.equal(session.get('note.md', two, signature), 0);
+session.map('note.md', position => position + 5, [{ from: 0, to: 0 }]);
+assert.equal(session.get('note.md', { from: 15, to: 35 }, signature), 1);
+session.map('note.md', position => position, [{ from: 16, to: 17 }]);
+assert.equal(session.get('note.md', { from: 15, to: 35 }, signature), null);
+assert.equal(session.get('note.md', { from: 45, to: 65 }, signature), 0);
+session.remap('note.md', 'folder/moved.md'); assert.equal(session.get('folder/moved.md', { from: 45, to: 65 }, signature), 0);
+session.enterDocument('folder/moved.md', 'old'); session.enterDocument('folder/moved.md', 'external'); assert.equal(session.get('folder/moved.md', { from: 45, to: 65 }, signature), null);
+session.set('other.md', one, signature, null); assert.equal(session.get('other.md', one, signature), null);
+for (let i = 0; i < 2050; i++) session.set('many.md', { from: i * 2, to: i * 2 + 1 }, signature, 1);
+assert.equal(session.size, 2048); assert.equal(session.get('many.md', { from: 0, to: 1 }, signature), null);
+session.clear(); assert.equal(session.size, 0);
+console.log('note quiz core regression: ok');

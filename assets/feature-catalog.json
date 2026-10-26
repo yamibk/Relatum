@@ -380,6 +380,18 @@
       "default": true
     },
     {
+      "id": "notes.quiz",
+      "parent": "notes",
+      "label": "笔记选择题",
+      "description": "笔记中的交互单选题；关闭后保留源码，不加载选择题专属脚本或样式。",
+      "scripts": [
+        "note-quiz-core.js",
+        "note-quiz.js",
+        "note-quiz.css"
+      ],
+      "default": true
+    },
+    {
       "id": "notes.canvas",
       "parent": "notes",
       "label": "笔记内嵌画布",
