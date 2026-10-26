@@ -191,7 +191,7 @@ async function run(browser, mode) {
     await page.evaluate(() => { window.savedView = T.editor.view; window.savedDoc = T.editor.view.state.doc; window.savedGeneration = T.state.editGeneration; });
     await button.click(); await dialog.waitFor();
     assert(await dialog.evaluate(node => node.matches(':modal') && !node.closest('.start-workspace-stage')), 'dialog uses the top layer outside workspace transforms');
-    const categoryCount = 8 + Number(enabled.includes('notes.graph') || mode === 'full')
+    const categoryCount = 9 + Number(enabled.includes('notes.graph') || mode === 'full')
       + Number(enabled.includes('notes.canvas') || mode === 'full') + (mode === 'full' ? 2 : 0);
     assert.equal(await dialog.locator('nav button').count(), categoryCount);
     if (enabled.includes('notes.canvas') || mode === 'full') assert.equal(await category('canvas').locator('use').getAttribute('href'), '#note-icon-wallpaper');

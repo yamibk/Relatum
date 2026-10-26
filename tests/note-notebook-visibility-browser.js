@@ -85,7 +85,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(await notebook(physics).count(), 0, 'following a link does not unhide the notebook');
     await openSettings();
     const categories = await dialog.locator('nav button').evaluateAll(items => items.map(item => item.dataset.settingsCategory));
-    assert.equal(categories.at(-2), 'system'); assert.equal(categories.at(-1), 'notebooks');
+    assert.deepEqual(categories.slice(-3), ['system', 'notebooks', 'extensions']);
     assert.deepEqual(await dialog.locator('.note-notebook-setting').evaluateAll(items => items.map(item => item.dataset.notebookPath)), ['', empty, physics]);
     assert.equal(await checkbox(physics).isChecked(), false);
     await checkbox(physics).focus(); await page.keyboard.press('Space');

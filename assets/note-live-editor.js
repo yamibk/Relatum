@@ -5133,6 +5133,8 @@
     const editorLabelCompartment = new Compartment();
     const shortcutCompartment = new Compartment();
     const selectionMatchHighlightCompartment = new Compartment();
+    const extensionCompartment = new Compartment();
+    let extensionHost = null;
     const shortcutRegistry = window.RelatumNoteShortcuts || null;
     const fallbackShortcutDefaults = Object.freeze({
       save: ['Mod-s'], bold: ['Mod-b'], italic: ['Mod-i'], strike: [], highlight: [], link: ['Mod-k'],
@@ -5364,6 +5366,7 @@
         selectionMatchHighlightCompartment.of(selectionMatchHighlight ? highlightSelectionMatches() : []),
         markdownCompartment.of(markdownExtensions()),
         noteSyntaxField,
+        extensionCompartment.of(extensionHost ? extensionHost.configuration() : []),
         codeHighlighting,
         livePreviewCompartment.of(livePreviewExtensions()),
         Prec.highest(imageTextInputHandlers),
@@ -5641,6 +5644,34 @@
     host.classList.toggle('is-source-mode', sourceMode);
     syncImageSelectionClass(view);
 
+    extensionHost = window.RelatumNoteExtensions?.attachEditor({ CM, view, active: options.extensionsActive !== false,
+      isCurrent: () => !destroyed, inputPending, acceptsInput: () => !imageTextController.active,
+      configure: extensions => view.dispatch({ effects: extensionCompartment.reconfigure(extensions) }),
+      whenSettled: whenInputSettled, mathAt: extensionMathAt });
+
+    function extensionMathAt(state, from, to) {
+      const line = state.doc.lineAt(from);
+      if (line.length > MAX_RICH_LINE || to > line.to) return null;
+      const tree = syntaxTree(state);
+      if (tree.length < to) return null;
+      const protectedRanges = lineProtectedRanges(state, line.from, line.to);
+      if (insideRange(protectedRanges, from, to)) return null;
+      const metadata = documentFrontmatter(state.doc);
+      if (metadata && from < metadata.to) return null;
+      const comments = scanSourceComments(state.doc, line.from, line.to, protectedRanges);
+      if (insideRange(comments, from, to)) return null;
+      const find = (source, offset) => {
+        const math = window.MarkdownMini.mathRanges(source).find(range => range.to - range.from <= (range.display ? BLOCK_MATH_LIMIT : INLINE_MATH_LIMIT)
+          && offset + range.from + range.open.length <= from && offset + range.to - range.close.length >= to);
+        return math ? { from: offset + math.from + math.open.length, to: offset + math.to - math.close.length } : null;
+      };
+      const inline = find(line.text, line.from);
+      if (inline) return inline;
+      const existing = state.field(blockField, false)?.specs.find(spec => spec.kind === 'math' && spec.from <= from && spec.to >= to);
+      const block = existing || scanBlockSpecs(state, line.from, line.to, [], tree).find(spec => spec.kind === 'math' && spec.from <= from && spec.to >= to);
+      return block ? find(block.source, block.from) : null;
+    }
+
     function setDocument(documentState) {
       for (const target of imageInsertions) target.valid = false;
       imageInsertions.clear();
@@ -5691,6 +5722,7 @@
       finally { suppressChanges = false; }
       view.__relatumInputSession = inputSession;
       inputSession.reset(view);
+      extensionHost?.documentChanged();
       host.classList.toggle('is-source-mode', sourceMode);
       syncImageSelectionClass(view);
       if (view.hasFocus) view.dispatch({ effects: focusEffect.of(true) });
@@ -6110,6 +6142,7 @@
 
     return {
       setDocument, setNotePath, setSourceMode, setShortcutBindings, setSelectionMatchHighlight, setImageTextMode, imageTextCommand, snapshot, replaceSelection, revealPosition,
+      setExtensionsActive(active) { extensionHost?.setActive(active); },
       calloutSession: {
         get(position, fallback) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); return spec ? calloutCollapsed(spec, coordinator) : coordinator.foldPositions.has(position) ? coordinator.foldPositions.get(position) : fallback; },
         set(position, collapsed) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); coordinator.foldPositions.set(spec ? spec.from : position, collapsed); if (spec) view.dispatch({ effects: calloutFoldEffect.of({ id: spec.id, collapsed }) }); },
@@ -6121,6 +6154,7 @@
       focus() { view.focus(); },
       destroy() {
         destroyed = true;
+        extensionHost?.destroy();
         imageInsertions.clear();
         pendingSelectionMatchHighlight = null;
         serializedDoc = null; serializedValue = '';

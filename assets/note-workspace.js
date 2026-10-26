@@ -1035,6 +1035,10 @@
       } });
     const resetGuide = () => { try { localStorage.removeItem(GUIDE_TOPIC_KEY); } catch (_) {} applyGuideTopic('callout', false); };
     const resetCanvas = () => { try { localStorage.removeItem('canvas:noteCanvasDefaults:v1'); } catch (_) {} pref?.resetCanvasNodeScale?.(); canvasStylePanel?.refresh(); };
+    const extensionSettings = window.RelatumNoteExtensionSettings.createPanel({ language });
+    if (!document.querySelector('link[href="note-extensions.css"]')) {
+      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = 'note-extensions.css'; document.head.append(style);
+    }
     const categories = [
       { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-laptop-minimal', panel: appearance, keywords: '字体 font size image text scale', reset: () => { pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
       { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮', reset: () => { try { localStorage.removeItem(SELECTION_MATCH_HIGHLIGHT_KEY); } catch (_) {} applySelectionMatchHighlight(false, false); } },
@@ -1050,10 +1054,11 @@
       { id: 'shortcuts', label: ['快捷键', 'Shortcuts'], icon: 'note-icon-code-xml', panel: shortcuts, keywords: '键盘 keyboard bindings', reset: () => { stopShortcutRecording(true); if (NOTE_SHORTCUTS) state.shortcutBindings = NOTE_SHORTCUTS.reset(); applyShortcutBindings(); renderNoteShortcutSettings(); } },
       { id: 'system', label: ['系统', 'System'], icon: 'note-icon-settings', panel: systemSettings.panel, keywords: '性能 内存 动画 预读 预加载 缓存 清理 清晰度 启动 performance memory animation prefetch preload cache clear resolution startup', reset: () => { noteSystem.reset(); pref?.resetGraphPreload?.(); } },
       { id: 'notebooks', label: ['笔记本', 'Notebooks'], icon: 'note-icon-notebook-filled', panel: notebookSettingsPanel, searchMode: 'category', keywords: '显示 隐藏 恢复 visibility hidden show restore notebooks', reset: resetNotebookVisibility },
+      { id: 'extensions', label: ['扩展', 'Extensions'], icon: 'note-icon-puzzle', panel: extensionSettings.panel, keywords: '插件 公式 latex snippets plugin 扩展 extension', reset: () => window.RelatumNoteExtensions.reset() },
     ];
     settingsDialog = window.RelatumSettingsDialog.create({ content: settingsPop, categories, language,
-      onSearch(query) { if (aiEnabled() && !aiSettingsHost.querySelector('[data-ai-field]') && /deepseek|api|模型|预设|提示词|思考|强度|温度|连接|接口|地址|流式|输出|超时|token|top.?p|model|preset|prompt|temperature|stream|timeout|effort|base.?url|\bkey\b|\bai\b/.test(query)) return ensureAI().then(ai => ai.prepareSettings()); },
-      async resetAll() { await resetNotebookVisibility(); resetNoteSettings(); noteSystem.reset(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); if (canvasEnabled()) resetCanvas(); await resetAI(); },
+      onSearch(query) { extensionSettings.prepareSearch(query); if (aiEnabled() && !aiSettingsHost.querySelector('[data-ai-field]') && /deepseek|api|模型|预设|提示词|思考|强度|温度|连接|接口|地址|流式|输出|超时|token|top.?p|model|preset|prompt|temperature|stream|timeout|effort|base.?url|\bkey\b|\bai\b/.test(query)) return ensureAI().then(ai => ai.prepareSettings()); },
+      async resetAll() { await resetNotebookVisibility(); resetNoteSettings(); noteSystem.reset(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); window.RelatumNoteExtensions.reset(); if (canvasEnabled()) resetCanvas(); await resetAI(); },
       onOpen() {
         state.settingsOpen = true; aiDialogReturning = false;
         settingsTrigger.setAttribute('aria-expanded', 'true'); libraryTrigger.setAttribute('aria-expanded', 'true'); renderAI();
@@ -1094,7 +1099,7 @@
     settingsTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     libraryTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     if (canvasEnabled()) canvasStylePanel = window.RelatumNoteCanvasStyle?.initPanel(canvasSettingsContent, () => pref?.resetCanvasNodeScale?.(), { defaultsHost });
-    document.addEventListener('relatum:languagechange', () => { translateGuideOptions(); translateSidebar(); systemSettings.refresh(); renderNotebookSettings(); aiController?.setLanguage(); settingsDialog.setLanguage(); });
+    document.addEventListener('relatum:languagechange', () => { translateGuideOptions(); translateSidebar(); systemSettings.refresh(); extensionSettings.refresh(); renderNotebookSettings(); aiController?.setLanguage(); settingsDialog.setLanguage(); });
   }
 
   function resetNoteSettings() {
@@ -1801,6 +1806,7 @@
         liveEditor = window.RelatumNoteLiveEditor.create(editorHost, {
           value: '', notePath: '', sourceMode: state.viewMode === 'source', shortcutBindings: state.shortcutBindings,
           selectionMatchHighlight: state.selectionMatchHighlight,
+          extensionsActive: false,
           onDocChanged: (meta) => markChanged(meta),
           onSaveRequest: () => flushSave(),
           onOpenWiki: (target) => openWikiFromEditor(target),
@@ -3484,10 +3490,15 @@
     editorHost.hidden = !hasNote || !liveEditor || state.viewMode === 'reading';
     fallbackEditor.hidden = !hasNote || state.viewMode === 'reading' || !!liveEditor;
     if (readingHost) readingHost.hidden = !hasNote || state.viewMode !== 'reading';
+    syncEditorExtensions();
     updateViewToggle();
     updateImageTextTools();
     syncOutline();
     document.dispatchEvent(new Event('relatum:usage-target'));
+  }
+  function syncEditorExtensions() {
+    liveEditor?.setExtensionsActive(noteWorkspaceVisible() && !!state.current && state.viewMode !== 'reading'
+      && !graphPresentation && !browserResultsActive());
   }
   function setDocumentSwitchPending(active) {
     root.classList.toggle('note-document-switch-pending', !!active);
@@ -4933,6 +4944,7 @@
     state.linksRefreshSuspended = false;
     const wasInitialized = state.initialized;
     state.active = true;
+    syncEditorExtensions();
     indexActivity(noteWorkspaceVisible());
     if (noteBrowser && noteWorkspaceVisible()) noteBrowser.resume();
     state.externalSyncUnchanged = 0;
@@ -4971,6 +4983,7 @@
     if (noteBrowser) noteBrowser.suspend({ keepView: true });
     closeNoteModal(); wikiOpenTask = null;
     state.active = false;
+    syncEditorExtensions();
     renderGuide();
     renderAI();
     indexActivity(false);
@@ -4983,6 +4996,7 @@
   // Retain the outgoing page until the workspace's slide finishes, then release
   // the reading DOM. Rapidly switching back must not clear the newly active page.
   new MutationObserver(() => {
+    syncEditorExtensions();
     syncOutline();
     renderGuide();
     renderAI();
@@ -5306,6 +5320,7 @@
   document.addEventListener('relatum:languagechange', closeContextMenu);
   window.addEventListener('focus', () => { if (noteWorkspaceVisible()) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); } });
   function syncNotePageVisibility() {
+    syncEditorExtensions();
     const visible = notePageVisible();
     if (visible === notePageWasVisible) return;
     notePageWasVisible = visible;

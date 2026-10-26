@@ -171,6 +171,9 @@
       .then(() => loadScript('settings-dialog.js', () => !!window.RelatumSettingsDialog))
       .then(() => loadScript('settings-order-list.js', () => !!window.RelatumSettingsOrderList))
       .then(() => loadScript('note-sidebar-settings.js', () => !!window.RelatumNoteSidebarSettings))
+      .then(() => loadScript('note-extensions.js', () => !!window.RelatumNoteExtensions))
+      .then(() => loadScript('note-extensions/catalog.js', () => !!window.RelatumNoteExtensions?.read('latex-input')))
+      .then(() => loadScript('note-extensions-settings.js', () => !!window.RelatumNoteExtensionSettings))
       .then(() => loadScript('note-workspace.js', () => !!window.CanvasNoteWorkspace))
       .then(() => { window.RelatumStartupMark?.('notes-scripts-ready'); return window.CanvasNoteWorkspace; })
       .catch(error => { noteWorkspaceLoader = null; throw error; });
