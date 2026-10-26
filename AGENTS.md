@@ -196,7 +196,9 @@ Windows 使用目录变化通知，启动、重新进入、还原、主动刷新
 
 “浏览笔记”的“画布 / Canvas”归 `notes.canvas`，列出 `notes/canvases/` 文件及有效引用指向的缺失文件，名称自然排序、50 项分页，筛选全部/未引用/缺失。引用数由共享 SQLite `refs` 按笔记去重，保留实际目标大小写和已有独立内嵌语法，不读取画布 JSON、不加载引擎、不创建资源目录。点击展开引用笔记，打开/返回保留筛选、展开、页数和滚动；缺失文件禁用 reveal。无法读取笔记返回 `statistics_incomplete`，不能宣称零引用；可见结果接入原外部检查周期，无变化不重建 DOM，离场/隐藏丢弃迟到结果。验证用 `tests.test_note_canvas_browser` 和 `tests/note-canvas-browser-discovery.js`，覆盖三种外壳、分页返回、筛选、错误恢复、保存失败、外部变化、迟到响应、深色英文窄窗。
 
-实时预览中，内嵌画布整体的右键菜单提供“重命名”和“在系统资源管理器中打开”，后者通过 POST `/api/notes-canvas/reveal` 的 `{path}` 定位并选中对应文件；仅允许画布资源目录内的已有 `.canvas` 文件，复用路径沙箱和重解析点检查，失败显示提示。画布尚未取得文件会话时定位入口禁用。画布菜单打开后，在画布、菜单或周围区域再次右键只关闭菜单并吞掉该次右键事件，下一次右键正常打开；左键外部点击及 Esc 沿用原关闭行为。
+实时预览中，内嵌画布整体的右键菜单提供“重命名”“在系统资源管理器中打开”和红色“移到系统回收站”。定位通过 POST `/api/notes-canvas/reveal` 的 `{path}` 选中对应文件；仅允许画布资源目录内的已有 `.canvas` 文件，复用路径沙箱和重解析点检查，失败显示提示。画布尚未取得文件会话时定位与回收入口禁用。画布菜单打开后，在画布、菜单或周围区域再次右键只关闭菜单并吞掉该次右键事件，下一次右键正常打开；左键外部点击及 Esc 沿用原关闭行为。
+
+实时预览及阅读图片菜单同样提供“移到系统回收站”，不额外确认。`notes_library.py` 的 `trash_media()` 复用既有有效语法和路径识别，清除当前 Markdown 中指向同一实际文件的全部嵌入及所属图片文字元数据，保留代码、注释、真实换行和其他笔记；不扫描其他笔记正文或提示共享引用。画布及安全的同名 `.assets` 目录一起回收，图片只回收文件本体。后端在笔记及跨进程写锁下核对修订，先原子保存正文再复用 Windows 回收站调用，回收失败恢复原字节；活动图片读取先交接临时快照。前端等待候选与保存，锁定操作身份，以一次 CodeMirror 删除事务保留正文历史，撤销仅恢复语法；画布成功回收后释放对应实例、会话、未完成读取及延迟保存，旧会话不得复活文件。验证用 `python -B -m unittest tests.test_note_media_trash tests.test_note_trash` 和 `node tests/note-media-trash-browser.js`，后者沿用三个浏览器宿主变量、单个隔离页面及回收替身，不触碰真实数据或系统回收站，不跑全量回归或打包。
 
 内嵌引擎提供双击新建/编辑、节点拖动、框选、Shift 多选、Alt＋左键有向连线、双击连线文字、删除与撤销/重做；画布内部无工具栏。节点和框选在超过 4px 移动阈值后才捕获指针，双击按节点、连线、空白的优先级命中，不能把节点双击重定向成新建。点击激活后滚轮缩放，空格＋左键平移，点击正文退出；未激活的滚轮由笔记接管。文字输入使用原生 textarea，中文候选结束后两帧交接；正文自动保存不能结束节点输入或取消连线，离场、模式切换、改名与关闭则等待输入和画布保存，失败保留草稿并拒绝离场。相同文件共用模型、50 步文件历史和 350ms 串行保存；各处引用尺寸独立，角柄等比例缩放当前构图并写入该处 Markdown。各引用视角以笔记路径、画布路径及引用序号保存在 `canvas:noteCanvasViews:v1`（最多 256 项），移动/改名映射。
 
@@ -546,6 +548,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 - 生涯报告：`POST /api/career/generate` 返回后台任务，重复请求复用正在运行的任务。生成前冲刷采集队列，库存读取不占业务保存锁；成功原子替换，失败保留版本有效的旧 v2。每个来源独立标明未读取数量，不能显示成零。`POST /api/usage/archive-preview` 预览已删除/旧路径缺失笔记，`POST /api/usage/archive-notes` 按 `{token,ids}` 复核归档，保留数值并使旧快照失效；桌面 `POST /api/usage/backup` 用原生“另存为”导出 ZIP。
 - Markdown 笔记库：`/api/note-create`、`/api/note-save`、`/api/note-move`、`/api/note-trash`、`/api/note-upload-image`、`/api/note-import-begin|upload|commit|abort`、`/api/note-reveal`、`/api/note-reveal-assets`。`note-trash` 只校验库内精确目标并交给 Windows 系统回收站；`note-reveal` 接受空路径打开根目录，文件路径会在 Explorer 中被选中；图片定位使用 `{kind:"image",path:所属笔记路径,target:图片原引用,imageSyntax:"markdown"或"wiki"}`，语法缺省为 Markdown，复用 `resolve_image` 的库内路径、重解析点、格式、缺失及重名检查，未知 kind 返回 400。
+- 笔记媒体回收：`/api/note-image-trash` 接受 `{path,revision,target,imageSyntax?}`，`/api/notes-canvas/trash` 接受 `{note,noteRevision,path,revision}`（后两项为画布路径与修订）；返回当前笔记的 `{path,content,revision,changes,target}`，`changes` 是 LF/UTF-16 的删除区间，`target` 为已回收文件的库内路径。两者沿用笔记写锁及功能开关，修订不符或已无有效嵌入拒绝操作，只更新当前 Markdown。
 - 画布文件：`/api/new`、`/api/open`、`/api/pick`、`/api/save`、`/api/remove`、`/api/rename`、`/api/clean-assets`
 - 分组/收藏/排序与画布库维护：`/api/group-create`、`/api/group-rename`、`/api/group-delete`、`/api/file-set-group`、`/api/favorite-toggle`、`/api/groups-reorder`、`/api/reorder-files`、`/api/file-stats`、`/api/recent-sync`
 - 回收站：`/api/trash`、`/api/trash-list`、`/api/trash-empty`、`/api/restore`

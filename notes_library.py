@@ -2058,6 +2058,98 @@ class NotesStore:
             raise NotesError("只能显示笔记或普通文件夹", status=403, code="unsupported_type")
         return target
 
+    def trash_media(self, note: object, expected_revision: object, source: object, recycle,
+                    *, kind: str, syntax: str = 'markdown', canvas_revision: object = None) -> dict:
+        """Recycle a file and remove only this note's live embeds. Caller holds mutation locks."""
+        from note_graph import _protected_source
+
+        normalized = self.normalize_path(note)
+        note_path = self._absolute(normalized)
+        raw = self._read_note_bytes(note_path)
+        if expected_revision != _revision(raw):
+            raise NotesError('笔记已在外部修改，请重试', status=409, code='revision_conflict')
+        text = self._decode_note(raw)
+        if kind == 'canvas':
+            from note_canvases import NoteCanvasStore
+            store = NoteCanvasStore(self)
+            current = store.read(source)
+            if canvas_revision != current['revision']:
+                raise NotesError('画布已被其他程序修改，请重试', status=409, code='revision_conflict')
+            target = store.reveal_target(source)
+            refs = [ref for ref in canvas_references(text)
+                    if (canvas_target(normalized, ref['target']) or '').casefold() == current['path'].casefold()]
+        elif kind == 'image':
+            target, _ = self.resolve_image(normalized, source, syntax=syntax)
+            # The existing graph scanner masks protected syntax without changing offsets.
+            visible = _protected_source(text)
+            candidates = [dict(ref, syntax='markdown') for ref in _markdown_image_references(visible)]
+            candidates.extend({'from': match.start(), 'to': match.end(), 'target': match[1].split('|', 1)[0].strip(),
+                               'syntax': 'wiki'} for match in re.finditer(r'(?<!\\)!\[\[([^\]\n]+)\]\]', visible))
+            resolved, refs = {}, []
+            for ref in candidates:
+                key = (ref['target'], ref['syntax'])
+                if key not in resolved:
+                    try:
+                        matches = self._image_candidates(normalized, *key)
+                        resolved[key] = len(matches) == 1 and matches[0] == target
+                    except (NotesError, OSError):
+                        resolved[key] = False
+                if not resolved[key]:
+                    continue
+                ref = dict(ref)
+                start = text.rfind('\n', 0, ref['from']) + 1
+                end = text.find('\n', ref['to'])
+                end = len(text) if end < 0 else end
+                tail = text[ref['to']:end].rstrip('\r')
+                metadata = _IMAGE_TEXT_ANY_RE.fullmatch(tail.rstrip(' \t'))
+                if not text[start:ref['from']].strip() and metadata:
+                    ref['to'] += metadata.end()
+                refs.append(ref)
+        else:
+            raise NotesError('回收目标类型无效')
+        if not refs:
+            raise NotesError('当前笔记已没有该文件的有效嵌入，请重新选择', status=409, code='selection_changed')
+
+        targets = [target]
+        if kind == 'canvas':
+            companion = target.with_suffix('.assets')
+            if companion.exists():
+                if not companion.is_dir() or _is_reparse(companion):
+                    raise NotesError('伴生素材目录不安全', status=403, code='unsafe_path')
+                targets.append(companion)
+        refs.sort(key=lambda ref: ref['from'])
+        pieces, changes, position, utf16 = [], [], 0, 0
+        for ref in refs:
+            start, end = ref['from'], ref['to']
+            if start < position:
+                continue
+            pieces.append(text[position:start])
+            # CodeMirror uses LF and UTF-16 positions; files retain their original newlines.
+            utf16 += len(text[position:start].replace('\r\n', '\n').replace('\r', '\n').encode('utf-16-le')) // 2
+            length = len(text[start:end].replace('\r\n', '\n').replace('\r', '\n').encode('utf-16-le')) // 2
+            changes.append({'from': utf16, 'to': utf16 + length, 'insert': ''})
+            utf16 += length
+            position = end
+        pieces.append(text[position:])
+        updated = ''.join(pieces)
+        self.sync.foreground()
+        if self._read_note_bytes(note_path) != raw:
+            raise NotesError('笔记已在外部修改，请重试', status=409, code='revision_conflict')
+        if kind == 'canvas' and store.read(source)['revision'] != canvas_revision:
+            raise NotesError('画布已被其他程序修改，请重试', status=409, code='revision_conflict')
+        # Do not recycle if saving failed. Recycle failure restores the exact original bytes.
+        self.atomic_text(note_path, updated)
+        try:
+            recycle(targets)
+        except Exception:
+            self.atomic_bytes(note_path, raw)
+            self.sync.enqueue(normalized, priority=True)
+            raise
+        encoded = updated.encode('utf-8')
+        self._cache_document(normalized, encoded)
+        return {'path': normalized, 'content': updated, 'revision': _revision(encoded),
+                'changes': changes, 'target': target.relative_to(self.root).as_posix()}
+
     def trash_targets(self, relative: object) -> tuple[str, list[Path]]:
         normalized = self.normalize_path(relative)
         if normalized.casefold() == NOTEBOOK_CONTAINER.casefold():

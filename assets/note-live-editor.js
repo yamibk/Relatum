@@ -5929,6 +5929,13 @@
     function commandContext() {
       return { doc: view.state.doc, selection: view.state.selection, path: currentPath };
     }
+    function applyMediaRemoval(changes, before) {
+      if (destroyed || inputPending() || view.state.doc.toString() !== before) return false;
+      const scroll = view.scrollDOM.scrollTop;
+      view.dispatch({ changes, userEvent: 'delete.media-file', annotations: CM.isolateHistory.of('full') });
+      view.scrollDOM.scrollTop = scroll;
+      return true;
+    }
     function clipboardSelection(text, html) {
       let changed = false;
       const transaction = view.state.changeByRange(range => {
@@ -6149,7 +6156,7 @@
       },
       rewriteCanvasHistory,
       whenInputSettled, createImageInsertion, imageTextTarget, imageTextRenderedLines, exportImageTextPng,
-      commandContext, queryCommand, executeCommand,
+      commandContext, queryCommand, executeCommand, applyMediaRemoval,
       get inputPending() { return inputPending(); },
       focus() { view.focus(); },
       destroy() {

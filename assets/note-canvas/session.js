@@ -36,6 +36,7 @@
     }
     emit(change) { this.listeners.forEach(listener => listener(change)); }
     begin(owner) {
+      if (this.deleted) return false;
       if (this.owner && this.owner !== owner) return false;
       if (this.owner === owner) return true;
       this.owner = owner; this.before = clone(this.data); this.emit({ lock: true }); window.dispatchEvent(new Event('relatum:note-canvas-dirty')); return true;
@@ -70,7 +71,7 @@
     }
     change(owner, callback, info) { if (!this.begin(owner)) return false; callback(this.data); this.commit(owner, true, info || { all: true }); return true; }
     travel(redo) {
-      if (this.owner) return false;
+      if (this.deleted || this.owner) return false;
       const from = redo ? this.future : this.past, to = redo ? this.past : this.future;
       if (!from.length) return false;
       to.push(clone(this.data)); this.data = from.pop(); this.reindex(); this.generation++;
@@ -79,7 +80,9 @@
     }
     async flush() {
       clearTimeout(this.timer); this.timer = 0;
+      if (this.deleted) return true;
       this.chain = this.chain.catch(() => false).then(async () => {
+        if (this.deleted) return true;
         if (this.saved === this.generation) return true;
         if (this.owner) return false;
         const generation = this.generation, payload = clone(this.data);
@@ -102,9 +105,12 @@
     const key = canonical.toLowerCase();
     if (sessions.has(key)) return sessions.get(key);
     if (!inflight.has(key)) {
-      inflight.set(key, request('/api/notes-canvas/read?note=' + encodeURIComponent(note) + '&src=' + encodeURIComponent(src))
-        .then(result => { const session = new Session(result); sessions.set(result.path.toLowerCase(), session); return session; })
-        .finally(() => inflight.delete(key)));
+      const pending = request('/api/notes-canvas/read?note=' + encodeURIComponent(note) + '&src=' + encodeURIComponent(src))
+        .then(result => {
+          if (inflight.get(key) !== pending) throw new Error('Canvas session expired');
+          const session = new Session(result); sessions.set(result.path.toLowerCase(), session); return session;
+        }).finally(() => { if (inflight.get(key) === pending) inflight.delete(key); });
+      inflight.set(key, pending);
     }
     return inflight.get(key);
   }
@@ -112,6 +118,11 @@
     sessions.forEach((session, key) => { if (!session.notes.size && !session.pins && !session.listeners.size && session.saved === session.generation && !session.owner) { clearTimeout(session.timer); sessions.delete(key); } });
   }
   window.RelatumNoteCanvasSessions = Object.freeze({ acquire, request, target, sessions, releaseUnused,
+    discard(path) {
+      const key = path.toLowerCase(), session = sessions.get(key);
+      if (session) { session.deleted = true; clearTimeout(session.timer); session.timer = 0; sessions.delete(key); }
+      inflight.delete(key);
+    },
     retainNote(session, note) { session.notes.add(note); },
     releaseNote(note) { sessions.forEach(s => s.notes.delete(note)); releaseUnused(); },
     remapNotes(source, destination) { sessions.forEach(s => { [...s.notes].forEach(note => { if (note === source || note.startsWith(source + '/')) { s.notes.delete(note); s.notes.add(destination + note.slice(source.length)); } }); }); },

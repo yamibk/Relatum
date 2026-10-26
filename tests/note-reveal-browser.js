@@ -90,7 +90,7 @@ for (const target of targets) fs.writeFileSync(path.join(root, 'notes', notebook
     await menu.waitFor({ state: 'visible' });
     assert.equal(await (await explorer()).count(), 1, 'selected image supports keyboard menu');
     await page.keyboard.press('End');
-    assert.equal(await (await explorer()).evaluate(el => el === document.activeElement), true);
+    assert.equal(await menu.getByRole('menuitem', { name: '移到系统回收站', exact: true }).evaluate(el => el === document.activeElement), true);
     await page.keyboard.press('Escape');
 
     // A menu opened over text never inherits the previous image target.

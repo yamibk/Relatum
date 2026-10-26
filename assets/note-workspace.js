@@ -1837,7 +1837,8 @@
         event.preventDefault(); event.stopPropagation();
         if (contextOpen) { closeContextMenu(); return; }
         closeContextMenu({ instant: true });
-        showContext([imageRevealButton({ target: image.dataset.noteImage, syntax: image.dataset.noteImageSyntax })],
+        const target = { target: image.dataset.noteImage, syntax: image.dataset.noteImageSyntax };
+        showContext([imageRevealButton(target), separator(), mediaRecycleButton(target)],
           event.clientX, event.clientY, 'image');
       });
       readingHost.addEventListener('click', (event) => {
@@ -4098,7 +4099,8 @@
     closeContextMenu({ instant: true });
     const explorer = contextButton(tr('canvasExplorer'), () => revealCanvas(payload.adapter));
     explorer.disabled = !payload.adapter?.session;
-    showContext([contextButton(tr('rename'), () => renameCanvas(payload.adapter)), explorer], payload.x, payload.y, 'canvas');
+    showContext([contextButton(tr('rename'), () => renameCanvas(payload.adapter)), explorer, separator(),
+      mediaRecycleButton(null, liveEditor?.commandContext(), payload.adapter)], payload.x, payload.y, 'canvas');
   }
   async function revealCanvas(adapter) {
     const session = adapter?.session;
@@ -4385,7 +4387,8 @@
       return button;
     });
     items.push(separator(), ...['cut', 'copy', 'paste', 'paste-plain', 'select-all'].map(bodyCommandButton));
-    if (payload.image) items.push(separator(), imageRevealButton(payload.image, payload.context));
+    if (payload.image) items.push(separator(), imageRevealButton(payload.image, payload.context), separator(),
+      mediaRecycleButton(payload.image, payload.context));
     showContext(items, payload.x, payload.y, 'body'); fitBodyMenu(contextMenu, payload.x, payload.y);
     if (payload.keyboard) menuButtons(contextMenu)[0]?.focus({ preventScroll: true });
   }
@@ -4402,6 +4405,76 @@
     button.setAttribute('role', 'menuitem');
     button.addEventListener('pointerenter', () => closeBodySubmenu());
     return button;
+  }
+  function mediaRecycleButton(image, context, adapter) {
+    const documentState = state.current, path = documentState.path, mode = state.viewMode;
+    const epoch = readingHost?.dataset.noteReadingEpoch, session = adapter?.session;
+    const reference = adapter?.options.resolve?.();
+    const current = () => noteWorkspaceVisible() && state.current === documentState && documentState.path === path
+      && state.viewMode === mode && (context ? liveEditor?.queryCommand('select-all', context).enabled
+        : readingHost?.dataset.noteReadingEpoch === epoch)
+      && (!adapter || adapter.frame.isConnected && adapter.session === session && !!adapter.options.resolve?.()
+        && adapter.options.resolve().source === reference?.source);
+    const button = contextButton(tr('recycle'), () => recycleMedia({ documentState, path, mode, image, session, current }), true);
+    button.disabled = !!(adapter && !session || state.assetCleanupBusy || state.imageTextBusy || noteMovePromise);
+    button.setAttribute('role', 'menuitem');
+    button.addEventListener('pointerenter', () => closeBodySubmenu());
+    return button;
+  }
+  async function recycleMedia(target) {
+    if (noteMovePromise || state.assetCleanupBusy || state.imageTextBusy || state.recycleRunning || !target.current()) return false;
+    const documentState = target.documentState;
+    state.assetCleanupBusy = true;
+    stopExternalSync(); stopDocumentPrefetch(); clearTimeout(state.saveTimer); clearTimeout(state.retryTimer);
+    const operation = (async () => {
+      await whenEditorInputSettled();
+      if (!target.current()) return false;
+      root.inert = true; setNoteMoveInputLocked(true);
+      await state.externalSyncChain;
+      if (!target.current() || !(await flushSave(documentState, true)) || !target.current()) return false;
+      const before = liveEditor ? liveEditor.snapshot().value : editorSnapshot().value;
+      const result = target.session
+        ? await post('/api/notes-canvas/trash', { note: target.path, noteRevision: documentState.revision,
+          path: target.session.path, revision: target.session.revision })
+        : await post('/api/note-image-trash', { path: target.path, revision: documentState.revision,
+          target: target.image.target, imageSyntax: target.image.syntax || 'markdown' });
+      if (target.session) await window.RelatumNoteCanvas?.removeSession(result.target);
+      // The operation locks navigation and input; still refuse to apply to a replaced editor.
+      if (state.current !== documentState || state.current.path !== target.path) return true;
+      const scroll = editorSnapshot().scrollTop;
+      if (liveEditor) {
+        if (!liveEditor.applyMediaRemoval(result.changes, before)) throw new Error(tr('saveFailed'));
+        // Reading snapshots come from documentState, rather than the hidden editor.
+        documentState.content = liveEditor.snapshot().value;
+      } else {
+        const previous = editorSnapshot();
+        fallbackEditor.value = result.content;
+        const anchor = Math.min(previous.anchor, fallbackEditor.value.length), head = Math.min(previous.head, fallbackEditor.value.length);
+        fallbackEditor.setSelectionRange(anchor, head);
+        fallbackEditor.scrollTop = scroll;
+        markChanged({ value: fallbackEditor.value, anchor, head, scrollTop: scroll });
+      }
+      clearTimeout(state.saveTimer); clearTimeout(state.retryTimer);
+      rememberEditorState(documentState);
+      documentState.revision = result.revision;
+      documentState.persistedGeneration = documentState.editGeneration;
+      documentState.countedGeneration = 0;
+      state.loadPromises.delete(target.path); cacheDocument(documentState);
+      if (target.mode === 'reading') { renderReadingDocument(readingPayload(documentState)); readingHost.scrollTop = scroll; }
+      noteBrowser?.invalidate(); noteGraph?.invalidate(notebookRootForPath(target.path));
+      scheduleLinksRefresh(documentState); scheduleStatistics(documentState);
+      updateImageTextTools(); clearSaveError(); desktopDirty(false);
+      showToast(tr('recycled'));
+      return true;
+    })();
+    noteMovePromise = operation; noteMovePaths = null;
+    try { return await operation; }
+    catch (error) { showToast(error.message || tr('recycle'), 'error'); return false; }
+    finally {
+      root.inert = false; state.assetCleanupBusy = false;
+      if (noteMovePromise === operation) { noteMovePromise = null; setNoteMoveInputLocked(false); }
+      scheduleExternalSync(); scheduleDocumentPrefetch();
+    }
   }
   if (contextMenu) {
     contextMenu.addEventListener('transitionend', event => {

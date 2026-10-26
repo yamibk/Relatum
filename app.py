@@ -9896,6 +9896,7 @@ NOTES_POST_ROUTES = {
     "/api/notes-canvas/create",
     "/api/notes-canvas/save",
     "/api/notes-canvas/rename",
+    "/api/notes-canvas/trash",
     "/api/notes-canvas/reveal",
     "/api/note-notebooks-settings",
     "/api/note-cleanup-unused-images",
@@ -9905,6 +9906,7 @@ NOTES_POST_ROUTES = {
     "/api/note-save",
     "/api/note-move",
     "/api/note-trash",
+    "/api/note-image-trash",
     "/api/note-upload-image",
     "/api/note-import-begin",
     "/api/note-import-upload",
@@ -9978,6 +9980,15 @@ def _detach_note_assets_for_move(source):
         if stream.path.is_relative_to(directory):
             stream.detach()
             _NOTE_ASSET_STREAMS.discard(stream)
+
+
+def _recycle_note_media(targets):
+    # Finish active Windows readers on temporary snapshots before recycling.
+    for stream in tuple(_NOTE_ASSET_STREAMS):
+        if any(stream.path == target or target.is_dir() and stream.path.is_relative_to(target) for target in targets):
+            stream.detach()
+            _NOTE_ASSET_STREAMS.discard(stream)
+    _move_paths_to_recycle_bin(targets)
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -10666,6 +10677,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     target = store.reveal_target(body.get("path"))
                     subprocess.Popen(_explorer_select_args(target), close_fds=True)
                     result = {"ok": True}
+                elif path == "/api/notes-canvas/trash":
+                    result = NOTES_STORE.trash_media(body.get('note'), body.get('noteRevision'), body.get('path'),
+                        _recycle_note_media, kind='canvas', canvas_revision=body.get('revision'))
                 else:
                     return self._send_json(404, {"error": "未知画布操作"})
                 if path == "/api/notes-canvas/create":
@@ -10674,6 +10688,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     _usage_event("embedded", result["path"], Path(result["path"]).name, "modified", fingerprint=result.get("revision"))
                 elif path == "/api/notes-canvas/rename":
                     _usage_remap("move", "embedded", body["path"], result["path"], Path(result["path"]).name)
+                elif path == "/api/notes-canvas/trash":
+                    _usage_remap('remove', 'embedded', result['target'])
                 return self._send_json(200, result)
             except NotesError as err:
                 return self._send_notes_error(err)
@@ -10709,6 +10725,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_note_move(body)
         if path == "/api/note-trash":
             return self._api_note_trash(body)
+        if path == "/api/note-image-trash":
+            try:
+                result = NOTES_STORE.trash_media(body.get('path'), body.get('revision'), body.get('target'),
+                    _recycle_note_media, kind='image', syntax=body.get('imageSyntax', 'markdown'))
+                return self._send_json(200, result)
+            except NotesError as err:
+                return self._send_notes_error(err)
+            except OSError as err:
+                return self._send_json(500, {'error': f'移到系统回收站失败：{err}'})
         if path == "/api/note-upload-image":
             return self._api_note_upload_image(body)
         if path in {"/api/note-image-text-merge", "/api/note-image-text-cleanup"}:
