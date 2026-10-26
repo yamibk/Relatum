@@ -350,7 +350,7 @@ class CareerReports:
 
     def build(self, progress=lambda value, stage: None):
         cutoff = self.usage.clock()
-        history = self.usage.snapshot(cutoff)
+        history = self.usage.snapshot(cutoff, note_usage=True)
         progress(10, 'notes')
         notes, refs = note_inventory(self.notes, self.usage, self.notes_store)
         progress(45, 'canvas')

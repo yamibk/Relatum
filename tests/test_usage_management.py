@@ -69,12 +69,13 @@ class UsageManagementTests(unittest.TestCase):
         self.interval('Secret-B.md', 10000)
         self.interval('Live.md', 5000)
         self.interval('canvases/embed.canvas', 10000, category='embedded')
+        self.interval('', 60000, 10000)  # Workspace browsing is not a note's usage.
         self.deleted('Secret-A.md'); self.deleted('Secret-B.md')
-        before = self.store.snapshot()
+        before = self.store.snapshot(note_usage=True)
         totals = {year: self.store.totals(year) for year in (2025, 2026)}
         files = {str(p): p.read_bytes() for p in self.notes.rglob('*') if p.is_file()}
         result = self.archive()
-        after = self.store.snapshot()
+        after = self.store.snapshot(note_usage=True)
         self.assertEqual(result['count'], 2)
         self.assertEqual(after['days'], before['days'])
         self.assertEqual(after['hours'], before['hours'])
@@ -84,6 +85,13 @@ class UsageManagementTests(unittest.TestCase):
         for year in totals:
             self.assertEqual(self.store.totals(year), totals[year])
         self.assertEqual(after['archivedNotes']['count'], 2)
+        self.assertEqual(sum(row['total'] for row in before['noteUsageDays']), 50)
+        self.assertEqual(sum(row['archived'] for row in after['noteUsageDays']), 50)
+        self.assertEqual(sum(row['unarchived'] for row in after['noteUsageDays']), 40)
+        self.assertEqual(sum(row['total'] for row in after['noteUsageDays']), 50)
+        self.assertEqual(after['noteUsageDays'], [
+            {'date': '2025-12-31', 'archived': 20, 'unarchived': 15, 'total': 20},
+            {'date': '2026-01-01', 'archived': 30, 'unarchived': 25, 'total': 30}])
         self.assertTrue(any(row['id'] == ARCHIVED_NOTES for row in after['entityDays']))
         self.assertNotIn('Secret-', json.dumps(after))
         with self.store.connection() as conn:

@@ -84,11 +84,18 @@ export function buildReport(report, context, actions) {
   card(notes,'notebooks',tr('笔记本字数','Words by notebook'),tr('面积表示字词数量。','Area represents word count.'),{type:'treemap',inventory:true,unit:tr('字词','Words'),rows:inventory.notes.books.map(b=>({name:b.name,value:b.words}))});
   card(notes,'lengths',tr('篇幅分布','Note length distribution'),tr('按正文可见字词统计，包含图片文字。','Visible words, including image text.'),{type:'distribution',inventory:true,unit:tr('篇','Notes'),rows:inventory.notes.lengths.map((value,i)=>({name:['<100','100–499','500–999','1k–<2k','2k–<5k','≥5k'][i],value}))});
   const noteUse=card(notes,'note-use',tr('常用笔记','Most used notes'),tr('当前筛选范围内的前台使用时长。','Foreground time within the selected range.'),{type:'rank',unit:'seconds',rows:data.rankings('notes')});
-  const archivedSummary=el('p','career-archived-notes');noteUse.append(archivedSummary);
+  const archivedSummary=el('div','career-archived-notes'),noteUsageRows=new Map();noteUse.append(archivedSummary);
+  for(const key of ['archived','unarchived','all']){const row=el('p','career-note-usage-row');row.dataset.noteUsage=key;noteUsageRows.set(key,row);archivedSummary.append(row);}
+  archivedSummary.append(el('p','career-note-usage-help',tr('篇数为报告生成时的统计记录总数；未归档包含已删除但尚未归档的笔记。时长随日期筛选，重叠时段只计一次。','Counts describe statistical records at generation, including deleted notes whose statistics have not been archived. Times follow the date filter; overlapping intervals count once.')));
+  const noteUsageRefresh=el('button','career-more',tr('重新生成报告以更新时长汇总','Regenerate report to update time totals'));
+  noteUsageRefresh.type='button';noteUsageRefresh.dataset.careerAction='generate';noteUsageRefresh.addEventListener('click',actions.generate);archivedSummary.append(noteUsageRefresh);
   function updateArchivedSummary(){
-    const value=data.archivedNotes,selectedDates=context.filter.mode!=='all';
-    archivedSummary.hidden=!value?.count;
-    archivedSummary.textContent=value?.count?tr(`已归档笔记 · 累计 ${number(value.count)} 篇 · 已归档的笔记总时长 ${metricDuration(value.seconds)(value.seconds)}${selectedDates?'（所选日期）':''}`,`Archived notes · ${number(value.count)} in total · Total archived note time ${metricDuration(value.seconds)(value.seconds)}${selectedDates?' (selected dates)':''}`):'';
+    const selectedDates=context.filter.mode!=='all',usage=data.noteUsage;
+    const suffix=selectedDates?tr('（所选日期）',' (selected dates)'):'';
+    noteUsageRows.get('archived').textContent=tr(`已归档笔记 · 累计 ${number(usage.archived.count)} 篇 · 已归档的笔记总时长 ${metricDuration(usage.archived.seconds)(usage.archived.seconds)}${suffix}`,`Archived notes · ${number(usage.archived.count)} in total · Total archived note time ${metricDuration(usage.archived.seconds)(usage.archived.seconds)}${suffix}`);
+    noteUsageRows.get('unarchived').textContent=tr(`未归档笔记 · 共 ${number(usage.unarchived.count)} 篇 · 未归档的笔记总时长 ${metricDuration(usage.unarchived.seconds)(usage.unarchived.seconds)}${suffix}`,`Unarchived notes · ${number(usage.unarchived.count)} notes · Total unarchived note time ${metricDuration(usage.unarchived.seconds)(usage.unarchived.seconds)}${suffix}`);
+    noteUsageRows.get('all').textContent=tr(`全部笔记（已归档＋未归档） · 共 ${number(usage.all.count)} 篇 · 笔记总时长 ${metricDuration(usage.all.seconds)(usage.all.seconds)}${suffix}`,`All notes (archived + unarchived) · ${number(usage.all.count)} notes · Total note time ${metricDuration(usage.all.seconds)(usage.all.seconds)}${suffix}`);
+    noteUsageRefresh.hidden=usage.available;
   }
   updateArchivedSummary();
   card(notes,'note-size',tr('笔记字数排名','Notes by word count'),stockLabel,{type:'rank',inventory:true,unit:tr('字词','Words'),rows:prepared.inventoryRows.noteSize});

@@ -66,15 +66,16 @@ export function prepareReport(report) {
     if(categories[category]) all.push(...spans);
   }
   intervals.set('all',merge(all));
-  const bounds=new Map();
-  for(const name of ['days','entityDays','events','hours']){
+  const bounds=new Map(),noteUsageDays=Array.isArray(history.noteUsageDays)?history.noteUsageDays:null;
+  for(const name of ['days','entityDays','events','hours','noteUsageDays']){
     let first=null,last=null,invalid=false;
-    for(const row of history[name]){const day=row.date||row.day;if(typeof day!=='string'){invalid=true;continue;}if(first===null||day<first)first=day;if(last===null||day>last)last=day;}
+    for(const row of (name==='noteUsageDays'?noteUsageDays:history[name])||[]){const day=row.date||row.day;if(typeof day!=='string'){invalid=true;continue;}if(first===null||day<first)first=day;if(last===null||day>last)last=day;}
     bounds.set(name,{first,last,invalid});
   }
   const stock=report.inventory;
   const sorted=(rows,key)=>rows.map(row=>({...row,value:row[key]})).sort((a,b)=>b.value-a.value);
-  prepared={entities:new Map(history.entities.map(row=>[row.id,row])),policies,intervals,bounds,
+  prepared={entities:new Map(history.entities.map(row=>[row.id,row])),policies,intervals,bounds,noteUsageDays,
+    noteCount:history.entities.filter(row=>row.category==='notes').length,
     inventoryRows:stock?{noteSize:sorted(stock.notes.items,'words'),embeddedStructure:sorted(stock.embedded.items,'references'),researchSize:sorted(stock.research.items,'nodes')}:null,
     selection:null};
   preparedReports.set(report,prepared);
@@ -93,10 +94,11 @@ export function select(report, filter) {
   else if (filter.mode === 'custom') { start = filter.start || start; end = filter.end || end; }
   if(prepared.selection?.start===start && prepared.selection.end===end) return prepared.selection;
   const inRange = row => (row.date || row.day) >= start && (row.date || row.day) <= end;
-  const choose=name=>{const range=prepared.bounds.get(name);return !range.invalid&&(range.first===null||start<=range.first&&end>=range.last)?history[name]:history[name].filter(inRange);};
+  const choose=name=>{const range=prepared.bounds.get(name),rows=name==='noteUsageDays'?prepared.noteUsageDays:history[name];return !range.invalid&&(range.first===null||start<=range.first&&end>=range.last)?rows:rows.filter(inRange);};
   const days=choose('days'),entityDays=choose('entityDays'),events=choose('events'),hours=choose('hours');
+  const noteUsageDays=prepared.noteUsageDays?choose('noteUsageDays'):null;
   const previousSelection=prepared.selection;
-  if(previousSelection&&previousSelection.days===days&&previousSelection.entityDays===entityDays&&previousSelection.events===events&&previousSelection.hours===hours){prepared.selection={...previousSelection,start,end};return prepared.selection;}
+  if(previousSelection&&previousSelection.days===days&&previousSelection.entityDays===entityDays&&previousSelection.events===events&&previousSelection.hours===hours&&previousSelection.noteUsageDays===noteUsageDays){prepared.selection={...previousSelection,start,end};return prepared.selection;}
   const active = days.filter(d => d.seconds > 0).map(d => d.date);
   let longest = 0, streak = 0, previous = null;
   for (const day of active) { streak = previous && Math.round((dateValue(day)-dateValue(previous))/86400000) === 1 ? streak + 1 : 1; longest = Math.max(longest, streak); previous = day; }
@@ -123,8 +125,12 @@ export function select(report, filter) {
   function rankings(category) {
     return ranks.get(category)||[];
   }
-  const archivedNotes={count:history.archivedNotes?.count||0,seconds:totals.get('archive:notes')||0};
-  prepared.selection={ start, end, days, seconds, activeDays: active.length, longest, entityDays, events, hours, totals, entities, rankings, archivedNotes,monthly,weekdays,hourTotals,eventKinds,eventCategories,eventDays:[...eventDays.values()].sort((a,b)=>a.date.localeCompare(b.date)),
+  const noteTimes=noteUsageDays?noteUsageDays.reduce((sum,row)=>({archived:sum.archived+row.archived,unarchived:sum.unarchived+row.unarchived,total:sum.total+row.total}),{archived:0,unarchived:0,total:0}):null;
+  const archivedNotes={count:history.archivedNotes?.count||0,seconds:noteTimes?noteTimes.archived:totals.get('archive:notes')||0};
+  const noteUsage={available:noteTimes!==null,archived:archivedNotes,
+    unarchived:{count:prepared.noteCount,seconds:noteTimes?noteTimes.unarchived:null},
+    all:{count:archivedNotes.count+prepared.noteCount,seconds:noteTimes?noteTimes.total:null}};
+  prepared.selection={ start, end, days, seconds, activeDays: active.length, longest, entityDays, events, hours, totals, entities, rankings, archivedNotes,noteUsage,noteUsageDays,monthly,weekdays,hourTotals,eventKinds,eventCategories,eventDays:[...eventDays.values()].sort((a,b)=>a.date.localeCompare(b.date)),
            hasHistory: !!history.days.length, since: history.since, coverage: history.coverage, collection };
   return prepared.selection;
 }

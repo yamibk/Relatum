@@ -90,6 +90,10 @@ async function main() {
     assert(JSON.stringify(report).includes('Deleted-000.md'), 'unchecked note retains its history');
     assert(JSON.stringify(report).includes('External-1.md'), 'unchecked external candidate remains intact');
     assert.match(await page.locator('.career-archived-notes').textContent(), /85/);
+    assert.equal(await page.locator('[data-note-usage]').count(), 3, 'archived, unarchived and all-note summaries are visible');
+    assert.match(await page.locator('[data-note-usage="unarchived"]').textContent(), /未归档笔记/);
+    assert.match(await page.locator('[data-note-usage="all"]').textContent(), /全部笔记/);
+    assert.equal(report.history.noteUsageDays.reduce((sum, row) => sum+row.total, 0), fixture.seconds, 'note totals use actual note intervals');
     await peer.bringToFront();
     await peer.waitForFunction(() => window.RelatumCareerReport?.report?.history?.archivedNotes?.count === 85);
     assert(!(await peer.locator('.career-report-shell').textContent()).includes('Deleted-001.md'), 'peer window drops old report details');

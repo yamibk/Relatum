@@ -375,7 +375,7 @@ class UsageStore:
                          (event_id or uuid.uuid4().hex, now, datetime.fromtimestamp(now / 1000).date().isoformat(),
                           category, entity, kind, max(1, int(count))))
 
-    def snapshot(self, cutoff=None, *, private=False):
+    def snapshot(self, cutoff=None, *, private=False, note_usage=False):
         cutoff = self.clock() if cutoff is None else cutoff
         with self.connection() as conn:
             state = self._state(conn)
@@ -387,7 +387,7 @@ class UsageStore:
             events = [dict(row) for row in conn.execute("SELECT * FROM events WHERE at<=? ORDER BY at", (cutoff,))]
             archived = {'count': conn.execute('SELECT count(*) FROM archive_items').fetchone()[0],
                         'yearProjects': dict(conn.execute('SELECT year,count(*) FROM archive_years GROUP BY year'))}
-        days, targets, hours = {}, {}, {}
+        days, targets, hours, note_spans = {}, {}, {}, {}
         for span in spans:
             day = span['day']
             a, b = span['start'], min(span['end'], cutoff)
@@ -398,6 +398,9 @@ class UsageStore:
             record['workspaces'].setdefault(workspace, []).append((a, b))
             if span['entity']:
                 targets.setdefault((day, span['entity'], span['category']), []).append((a, b))
+                if note_usage and span['category'] == 'notes':
+                    group = note_spans.setdefault(day, {'archived': [], 'unarchived': []})
+                    group['archived' if span['entity'] == ARCHIVED_NOTES else 'unarchived'].append((a, b))
         for day, record in days.items():
             union = merged(record.pop('spans'))
             record['seconds'] = sum(b - a for a, b in union) / 1000
@@ -410,10 +413,18 @@ class UsageStore:
                     stop = min(b, boundary)
                     hours[(day, stamp.hour)] = hours.get((day, stamp.hour), 0) + (stop - a) / 1000
                     a = stop
+        note_usage_days = []
+        for day, groups in sorted(note_spans.items()):
+            archived_spans, unarchived_spans = merged(groups['archived']), merged(groups['unarchived'])
+            note_usage_days.append({'date': day,
+                'archived': sum(b-a for a,b in archived_spans)/1000,
+                'unarchived': sum(b-a for a,b in unarchived_spans)/1000,
+                'total': sum(b-a for a,b in merged(archived_spans + unarchived_spans))/1000})
         if not private:
             entities = [{k: row[k] for k in ('id', 'category', 'name', 'deleted')} for row in entities]
             events = [{k: row[k] for k in ('id', 'day', 'category', 'entity', 'kind', 'count')} for row in events]
-        return {**state, "archivedNotes": archived, "cutoff": cutoff, "days": sorted(days.values(), key=lambda d: d['date']),
+        return {**state, "archivedNotes": archived, **({'noteUsageDays': note_usage_days} if note_usage else {}),
+                "cutoff": cutoff, "days": sorted(days.values(), key=lambda d: d['date']),
                 "entities": entities, "events": events,
                 "entityDays": [{"date": d, "id": i, "category": c, "seconds": sum(b-a for a,b in merged(v))/1000}
                                for (d,i,c),v in targets.items()],
