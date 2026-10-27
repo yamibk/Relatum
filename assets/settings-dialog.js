@@ -83,6 +83,8 @@
       title.textContent = label(category); scroll.scrollTop = positions.get(selected) || 0;
       options.onCategoryChange?.(selected);
       if (target) {
+        // A category with internal pages can reveal the actual control before focus/scroll.
+        target = category.onReveal?.(target) || target;
         for (let parent = target.parentElement; parent && parent !== category.panel; parent = parent.parentElement) {
           if (parent.tagName === 'DETAILS') parent.open = true;
         }
@@ -109,7 +111,8 @@
       title.textContent = text('搜索结果', 'Search results');
       categories.forEach(category => {
         const categoryOnly = category.searchMode === 'category';
-        const targets = categoryOnly ? [] : category.panel.querySelectorAll('label, [data-settings-keywords], .note-canvas-default-tabs button, .note-shortcut-row');
+        const targets = categoryOnly ? [] : typeof category.searchTargets === 'function' ? category.searchTargets(query)
+          : category.panel.querySelectorAll('label, [data-settings-keywords], .note-canvas-default-tabs button, .note-shortcut-row');
         const matches = Array.from(targets).filter(element => {
           const described = element.querySelector('[aria-describedby]')?.getAttribute('aria-describedby')?.split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ') || '';
           const hint = element.nextElementSibling?.matches('p') ? element.nextElementSibling.textContent : '';

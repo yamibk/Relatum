@@ -1056,11 +1056,13 @@
       { id: 'shortcuts', label: ['快捷键', 'Shortcuts'], icon: 'note-icon-code-xml', panel: shortcuts, keywords: '键盘 keyboard bindings', reset: () => { stopShortcutRecording(true); if (NOTE_SHORTCUTS) state.shortcutBindings = NOTE_SHORTCUTS.reset(); applyShortcutBindings(); renderNoteShortcutSettings(); } },
       { id: 'system', label: ['系统', 'System'], icon: 'note-icon-settings', panel: systemSettings.panel, keywords: '性能 内存 动画 预读 预加载 缓存 清理 清晰度 启动 performance memory animation prefetch preload cache clear resolution startup', reset: () => { noteSystem.reset(); pref?.resetGraphPreload?.(); } },
       { id: 'notebooks', label: ['笔记本', 'Notebooks'], icon: 'note-icon-notebook-filled', panel: notebookSettingsPanel, searchMode: 'category', keywords: '显示 隐藏 恢复 visibility hidden show restore notebooks', reset: resetNotebookVisibility },
-      { id: 'extensions', label: ['扩展', 'Extensions'], icon: 'note-icon-puzzle', panel: extensionSettings.panel, keywords: '插件 公式 latex snippets plugin 扩展 extension', reset: () => window.RelatumNoteExtensions.reset() },
+      { id: 'extensions', label: ['扩展', 'Extensions'], icon: 'note-icon-puzzle', panel: extensionSettings.panel, layout: 'fill',
+        keywords: '插件 公式 latex snippets plugin 扩展 extension', searchTargets: query => extensionSettings.searchTargets(query),
+        onReveal: target => extensionSettings.reveal(target), reset: () => { const saved = window.RelatumNoteExtensions.reset(); if (saved) extensionSettings.reset(); return saved; } },
     ];
     settingsDialog = window.RelatumSettingsDialog.create({ content: settingsPop, categories, language,
-      onSearch(query) { extensionSettings.prepareSearch(query); if (aiEnabled() && !aiSettingsHost.querySelector('[data-ai-field]') && /deepseek|api|模型|预设|提示词|思考|强度|温度|连接|接口|地址|流式|输出|超时|token|top.?p|model|preset|prompt|temperature|stream|timeout|effort|base.?url|\bkey\b|\bai\b/.test(query)) return ensureAI().then(ai => ai.prepareSettings()); },
-      async resetAll() { await resetNotebookVisibility(); resetNoteSettings(); noteSystem.reset(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); window.RelatumNoteExtensions.reset(); if (canvasEnabled()) resetCanvas(); await resetAI(); },
+      onSearch(query) { if (aiEnabled() && !aiSettingsHost.querySelector('[data-ai-field]') && /deepseek|api|模型|预设|提示词|思考|强度|温度|连接|接口|地址|流式|输出|超时|token|top.?p|model|preset|prompt|temperature|stream|timeout|effort|base.?url|\bkey\b|\bai\b/.test(query)) return ensureAI().then(ai => ai.prepareSettings()); },
+      async resetAll() { await resetNotebookVisibility(); resetNoteSettings(); noteSystem.reset(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); if (window.RelatumNoteExtensions.reset()) extensionSettings.reset(); if (canvasEnabled()) resetCanvas(); await resetAI(); },
       onOpen() {
         state.settingsOpen = true; aiDialogReturning = false;
         settingsTrigger.setAttribute('aria-expanded', 'true'); libraryTrigger.setAttribute('aria-expanded', 'true'); renderAI();
@@ -1068,6 +1070,7 @@
       onClose({ reason }) {
         aiSequence++;
         systemSettings.setActive(false);
+        extensionSettings.setActive(false);
         aiDialogReturning = reason === 'user' && aiSettingsCategory === 'ai-chat' && !aiPageHiding && noteWorkspaceVisible()
           && !graphPresentation && aiEnabled() && sidePages().includes('ai');
         state.settingsOpen = false; settingsTrigger.setAttribute('aria-expanded', 'false'); libraryTrigger.setAttribute('aria-expanded', 'false');
@@ -1075,6 +1078,7 @@
         if (aiDialogReturning) aiController?.holdPresentation(); else aiController?.suspend();
       },
       onClosed({ reason }) {
+        extensionSettings.close();
         const returning = aiDialogReturning; aiDialogReturning = false;
         if (returning && reason === 'user' && !aiPageHiding && noteWorkspaceVisible() && !graphPresentation && aiEnabled() && sidePages().includes('ai')) {
           state.sideMode = 'ai'; setSideOpen(true);
@@ -1084,6 +1088,7 @@
         aiSettingsCategory = category; aiDialogReturning = false;
         if (category === 'notebooks') renderNotebookSettings();
         systemSettings.setActive(category === 'system' && !!settingsDialog?.isOpen && noteWorkspaceVisible());
+        extensionSettings.setActive(category === 'extensions');
         stopShortcutRecording(true); canvasStylePanel?.suspend(); sidePreferences.suspend();
         if (category === 'ai') ensureAI().then(ai => { if (settingsDialog?.isOpen && aiSettingsCategory === 'ai' && noteWorkspaceVisible()) ai.settings(); }).catch(error => showToast(error.message, 'error'));
         else aiController?.closeSettings();
