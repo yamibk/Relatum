@@ -1025,7 +1025,7 @@
         ['需要保留什么', '', [
           ['<code>canvases</code>', '主画布和附件。'],
           ['<code>notes</code>', 'Markdown 笔记、图片和内嵌画布。'],
-          ['<code>data</code>', '研究、学习、日常、复习、统计和设置，以及可重建的笔记索引。'],
+          ['<code>data</code>', '研究、学习、日常、复习、统计、文件配色和设置，以及可重建的笔记索引。'],
           ['本机设置', '桌面版还在 <code>data/desktop-sessions</code> 保存界面偏好。浏览器版的偏好存在浏览器中。'],
         ]],
         ['想腾出空间', '', [
@@ -1033,7 +1033,7 @@
           ['回收站', '确认不再需要后，在应用内清空。'],
           ['上传的背景', '先换成内置背景，再清理 <code>data/backgrounds</code>。'],
         ]],
-        ['笔记运行缓存', '在“笔记设置 → 系统”查看缓存概览，或使用“清理未使用缓存”释放闲置的正文、图谱和 Mermaid 内存缓存。当前正文、撤销和 AI 对话保留；这不会删除磁盘上的笔记索引或内容文件。'],
+        ['笔记运行缓存', '在“笔记设置 → 系统”查看缓存概览，或使用“清理未使用缓存”释放闲置的正文、图谱和 Mermaid 内存缓存。当前正文、撤销和 AI 对话保留；这不会删除磁盘上的笔记索引、文件配色或内容文件。'],
         ['删除前', '先备份，再清理。笔记移动、画布改名和删除请优先在应用内操作。只有笔记索引能从现有文件重建；缺失的正文、附件和历史记录不会自动恢复。'],
       ],
     },
@@ -1054,6 +1054,8 @@
           ['搜索、标签与双链', '从 Markdown 生成本地索引；全文搜索在“浏览”中打开，也可按 Ctrl/Cmd+Shift+F。'],
           ['笔记图谱与大纲', '图谱关系来自笔记链接，大纲来自当前正文的标题。图谱视角和大纲折叠只在当前会话保留。'],
           ['公式与 Mermaid 图表', '源码保存在 Markdown 正文中；渲染缓存无需备份。'],
+          ['选择题 Quiz', '题目、正确答案和解析保存在 Markdown 正文中。作答结果只在当前会话保留，刷新或重启后清空。'],
+          ['文件染色', '在“笔记设置 → 扩展”主动开启后，可右键为左侧文件或文件夹的图标与行背景配色，子项不继承。配色单独保存，不写入 Markdown。'],
         ]],
         ['移动与查看文件', '笔记和文件夹可在文件树中拖到另一个笔记本，图片素材由应用一起处理。右键选择“在系统资源管理器中显示”可查看文件；备份时复制整个 <code>notes</code> 文件夹，保留内嵌画布与素材。'],
       ],
@@ -1065,6 +1067,10 @@
         ['可重建的笔记索引', '', [
           ['<code>note-index.sqlite3</code>', '笔记目录、派生搜索文字、标签、双链和图谱关系的本地缓存。Markdown 与附件仍是原始数据。'],
           ['清理与重建', '退出所有窗口后，可删除这份索引及同名的 <code>-wal / -shm</code> 文件。下次进入笔记会后台重建；完成前搜索和关系可能不完整。'],
+        ]],
+        ['文件配色', '', [
+          ['<code>note-file-colors.sqlite3</code>', '左侧文件和文件夹的颜色设置，首次设置颜色时创建。属于用户数据，备份时应保留；不能从 Markdown 或笔记索引重建。'],
+          ['关闭与清除', '关闭文件染色、恢复笔记设置或清理运行缓存均保留配色。确认文件或文件夹删除后会清理对应记录；应用内改名和移动保留颜色，外部改名仅在能可靠识别时跟随。'],
         ]],
         ['日常工作区', '每日任务、日历与日记、专注和记账现在集中在“日常”中。仍使用下列原有文件，无需搬动数据；日记与倒数日从日历进入。'],
         ['内容与记录', '', [
@@ -1097,14 +1103,14 @@
         ]],
         ['列表与设置', '', [
           ['<code>recent.json</code>', '画布列表、分组、收藏和排序。'],
-          ['<code>note-notebooks.json</code>', '笔记本颜色、当前侧栏页签和展开状态。侧栏顺序与显隐另存于本机偏好。'],
+          ['<code>note-notebooks.json</code>', '右侧笔记本的颜色与显隐、当前侧栏页签和展开状态。侧栏页面的顺序与显隐另存于本机偏好。'],
           ['<code>templates.json</code>', '保存的节点模板，供新建节点时复用。'],
           ['<code>background.json</code>', '背景颜色、图片选择与辅助底纹；上传图片在 <code>backgrounds</code> 中。'],
           ['<code>ai.json</code>', '画布 AI 的服务地址、模型和 API Key。分享备份前移除密钥。'],
           ['<code>*.backup.*</code>', '自动保留的恢复副本。确认主文件正常且不再需要后再清理。'],
           ['<code>*.corrupt-*</code>', '损坏时保留的原文件。确认数据已恢复后再清理。'],
         ]],
-        ['数据库文件', '退出所有窗口后，再备份整个 <code>data</code>。不要在运行中删除数据库或单独清理旁边的 <code>-wal / -shm</code> 文件；<code>review.db</code> 和 <code>usage-v2.sqlite3</code> 保存真实历史，无法靠笔记索引重建。'],
+        ['数据库文件', '退出所有窗口后，再备份整个 <code>data</code>。不要在运行中删除数据库或单独清理旁边的 <code>-wal / -shm</code> 文件。<code>review.db</code> 和 <code>usage-v2.sqlite3</code> 保存真实历史，<code>note-file-colors.sqlite3</code> 保存文件配色；均无法靠重建笔记索引恢复。'],
       ],
     },
     {
@@ -1116,6 +1122,7 @@
           ['工作区与导航', '工作区显示与排序、画布和日常的页序、上次工作区与日常子页。隐藏工作区不删除内容。'],
           ['笔记', '标签页、侧栏顺序与显隐、字号、阅读位置、光标和编辑器快捷键。'],
           ['笔记系统与图谱', '交互动画、正文预读、缓存档位、图谱清晰度、间距和启动预加载。图谱坐标与镜头不写入偏好文件。'],
+          ['笔记扩展', 'latex辅助输入的开关、选项与自定义片段，以及文件染色的开关。实际文件颜色单独保存在 <code>data/note-file-colors.sqlite3</code>。'],
           ['视图', '画布镜头、树的折叠、复习模式和记账显示方式。'],
           ['专注偏好', '番茄钟或正计时模式、时长、提示音、雨声和音量。'],
           ['未结束的专注钟', '运行与待收尾状态、目标和成果草稿。切页或切换工作区会继续计时；已完成的记录保存在 <code>data/focus.json</code>。'],
@@ -1132,9 +1139,9 @@
         ]],
         ['恢复默认', '', [
           ['全局设置', '左上角齿轮中可恢复分类或全部设置。保留主题、语言、笔记设置、客户端窗口与启动器偏好，以及内容。'],
-          ['笔记设置', '笔记齿轮中恢复对应分类或全部笔记偏好，不删除正文。AI 恢复保留模型、Key、自定义预设和当前临时对话。'],
+          ['笔记设置', '笔记齿轮中恢复对应分类或全部笔记偏好，不删除正文。恢复扩展会关闭开关并重置 LaTeX 选项与片段，文件颜色仍保留。AI 恢复保留模型、Key、自定义预设和当前临时对话。'],
         ]],
-        ['清除后的结果', '清除站点存储或桌面偏好后，界面、位置和未结束的计时可能重置。笔记与画布文件仍保留。画布 AI Key 位于 <code>data/ai.json</code>，笔记 AI Key 位于 <code>data/note-ai.json</code>，均不在浏览器存储中。'],
+        ['清除后的结果', '清除站点存储或桌面偏好后，界面、位置、扩展开关、自定义片段和未结束的计时可能重置。笔记、画布和文件颜色仍保留；重新开启文件染色可恢复配色显示。画布 AI Key 位于 <code>data/ai.json</code>，笔记 AI Key 位于 <code>data/note-ai.json</code>，均不在浏览器存储中。'],
       ],
     },
   ];
@@ -1147,7 +1154,7 @@
         ['What to keep', '', [
           ['<code>canvases</code>', 'Main canvases and attachments.'],
           ['<code>notes</code>', 'Markdown notes, images and embedded canvases.'],
-          ['<code>data</code>', 'Research, study, Daily, reviews, statistics, settings and the rebuildable note index.'],
+          ['<code>data</code>', 'Research, study, Daily, reviews, statistics, file colors, settings and the rebuildable note index.'],
           ['Local settings', 'Desktop preferences also live in <code>data/desktop-sessions</code>. Browser preferences live in the browser.'],
         ]],
         ['Free up space', '', [
@@ -1155,7 +1162,7 @@
           ['Trash', 'Empty it in the app once you no longer need its contents.'],
           ['Uploaded backgrounds', 'Switch to a built-in background before cleaning <code>data/backgrounds</code>.'],
         ]],
-        ['Note runtime caches', 'Open Notes settings → System to view cache usage or use “Clear unused caches” to release idle text, graph and Mermaid memory caches. Current text, undo history and AI chats remain. This does not delete the note index or content files on disk.'],
+        ['Note runtime caches', 'Open Notes settings → System to view cache usage or use “Clear unused caches” to release idle text, graph and Mermaid memory caches. Current text, undo history and AI chats remain. This does not delete the note index, file colors or content files on disk.'],
         ['Before deleting', 'Back up first. Use the app to move notes, rename canvases and delete content. The note index can be rebuilt from existing files; missing text, attachments and history cannot be restored automatically.'],
       ],
     },
@@ -1176,6 +1183,8 @@
           ['Search, tags and backlinks', 'A local index is generated from Markdown. Open full-text search in Browse or press Ctrl/Cmd+Shift+F.'],
           ['Note graph and outline', 'Graph relations come from note links; the outline comes from headings in the current text. Graph views and collapsed outline sections last for the current session.'],
           ['Formulas and Mermaid diagrams', 'Source is saved in the Markdown text. Render caches do not need backing up.'],
+          ['Quiz blocks', 'Questions, correct answers and explanations are saved in Markdown. Your answer selections last only for the current session and are cleared on reload or restart.'],
+          ['File Colors', 'Enable it in Notes settings → Extensions, then right-click a file or folder in the left tree to color its icon and row background. Children do not inherit colors. Colors are saved separately from Markdown.'],
         ]],
         ['Move and find your files', 'Drag notes or folders to another notebook in the file tree; Relatum handles their image assets too. Right-click and choose “Show in File Explorer” to find files. Back up the entire <code>notes</code> folder to keep embedded canvases and assets.'],
       ],
@@ -1187,6 +1196,10 @@
         ['Rebuildable note index', '', [
           ['<code>note-index.sqlite3</code>', 'A local cache of the note catalog, derived search text, tags, backlinks and graph relations. Markdown and attachments remain the source data.'],
           ['Cleanup and rebuilding', 'Close every window before deleting this index together with its <code>-wal / -shm</code> files. Opening Notes rebuilds it in the background; search and relations may be incomplete until it finishes.'],
+        ]],
+        ['File colors', '', [
+          ['<code>note-file-colors.sqlite3</code>', 'Color settings for files and folders in the left tree, created when you first set a color. This is user data to keep in backups; it cannot be rebuilt from Markdown or the note index.'],
+          ['Disabling and clearing', 'Disabling File Colors, resetting Notes settings or clearing runtime caches keeps your colors. Confirmed file or folder deletion removes its color records. Renaming and moving within Relatum keeps colors; external renames follow only when they can be identified reliably.'],
         ]],
         ['Daily workspace', 'Daily tasks, Calendar and journals, Focus and Ledger now live in Daily. They still use the files below; no data needs moving. Open journals and countdowns from Calendar.'],
         ['Content and records', '', [
@@ -1219,14 +1232,14 @@
         ]],
         ['Library and settings', '', [
           ['<code>recent.json</code>', 'Canvas list, groups, favorites and ordering.'],
-          ['<code>note-notebooks.json</code>', 'Notebook colors, the current sidebar tab and expanded folders. Sidebar order and visibility are saved in local preferences.'],
+          ['<code>note-notebooks.json</code>', 'Colors and visibility of notebooks on the right, the current sidebar tab and expanded folders. Sidebar page order and visibility are saved in local preferences.'],
           ['<code>templates.json</code>', 'Saved node templates for reuse when creating nodes.'],
           ['<code>background.json</code>', 'Background colors, image choices and guide patterns. Uploaded images live in <code>backgrounds</code>.'],
           ['<code>ai.json</code>', 'Canvas AI endpoint, model and API key. Remove the key before sharing a backup.'],
           ['<code>*.backup.*</code>', 'Automatic recovery copies. Delete only once the main file is healthy and the copies are no longer needed.'],
           ['<code>*.corrupt-*</code>', 'Original files kept after corruption. Confirm your data has been recovered before deleting these.'],
         ]],
-        ['Database files', 'Close every window before backing up the entire <code>data</code> folder. Do not delete databases or clean their <code>-wal / -shm</code> files while running. <code>review.db</code> and <code>usage-v2.sqlite3</code> hold actual history that rebuilding the note index cannot restore.'],
+        ['Database files', 'Close every window before backing up the entire <code>data</code> folder. Do not delete databases or clean their <code>-wal / -shm</code> files while running. <code>review.db</code> and <code>usage-v2.sqlite3</code> hold actual history; <code>note-file-colors.sqlite3</code> holds file colors. Rebuilding the note index cannot restore any of them.'],
       ],
     },
     {
@@ -1238,6 +1251,7 @@
           ['Workspaces and navigation', 'Workspace visibility and order, Canvas and Daily page order, the last workspace and Daily page. Hiding a workspace keeps its content.'],
           ['Notes', 'Tabs, sidebar order and visibility, text size, reading position, cursor and editor shortcuts.'],
           ['Note system and graph', 'Interaction motion, text prefetch, cache size, graph resolution, spacing and startup preloading. Graph coordinates and cameras are not saved in preferences.'],
+          ['Note extensions', 'The LaTeX Input Assistant switch, options and custom snippets, plus the File Colors switch. Actual file colors are saved separately in <code>data/note-file-colors.sqlite3</code>.'],
           ['Views', 'Canvas cameras, collapsed trees, review mode and ledger display.'],
           ['Focus preferences', 'Pomodoro or count-up mode, durations, chimes, rain sounds and volume.'],
           ['Unfinished focus timer', 'Running timers, pending wrap-ups, goals and outcome drafts. Timers continue across pages and workspaces. Completed sessions live in <code>data/focus.json</code>.'],
@@ -1254,9 +1268,9 @@
         ]],
         ['Restore defaults', '', [
           ['Global settings', 'Use the upper-left gear to reset a category or all global preferences. Theme, language, Notes settings, desktop window and launcher preferences, and content are kept.'],
-          ['Notes settings', 'Use the Notes gear to reset a category or all Notes preferences without deleting text. Resetting AI keeps the model, key, custom presets and current temporary chat.'],
+          ['Notes settings', 'Use the Notes gear to reset a category or all Notes preferences without deleting text. Resetting Extensions turns them off and resets LaTeX options and snippets while keeping file colors. Resetting AI keeps the model, key, custom presets and current temporary chat.'],
         ]],
-        ['After clearing', 'Clearing site storage or desktop preferences may reset the interface, positions and unfinished timer. Note and canvas files remain. The canvas AI key lives in <code>data/ai.json</code>; the Notes AI key lives in <code>data/note-ai.json</code>. Neither is in browser storage.'],
+        ['After clearing', 'Clearing site storage or desktop preferences may reset the interface, positions, extension switches, custom snippets and unfinished timer. Notes, canvases and file colors remain; enable File Colors again to show your colors. The canvas AI key lives in <code>data/ai.json</code>; the Notes AI key lives in <code>data/note-ai.json</code>. Neither is in browser storage.'],
       ],
     },
   ];
