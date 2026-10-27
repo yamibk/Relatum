@@ -508,10 +508,12 @@
   "sharedScripts": {
     "review-controls.js": [
       "canvas.review",
+      "notes",
       "notes.ai"
     ],
     "review-controls.css": [
       "canvas.review",
+      "notes",
       "notes.ai"
     ],
     "usage-management.js": [

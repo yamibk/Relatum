@@ -1042,14 +1042,16 @@
     const resetCanvas = () => { try { localStorage.removeItem('canvas:noteCanvasDefaults:v1'); } catch (_) {} pref?.resetCanvasNodeScale?.(); canvasStylePanel?.refresh(); };
     const extensionSettings = window.RelatumNoteExtensionSettings.createPanel({ language,
       confirmAction: value => settingsDialog.confirmAction(value),
+      onPopoverOpen() { settingsDialog.finishContentMotion(); prepareWorkspacePopover('settings'); },
       async clearFileColors() {
         const result = await fileColorRequest('/api/note-file-colors/clear', {});
         fileColorHost?.instance?.colorsCleared(result.generation);
         return result;
       },
     });
-    if (!document.querySelector('link[href="note-extensions.css"]')) {
-      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = 'note-extensions.css'; document.head.append(style);
+    for (const href of ['review-controls.css', 'note-extensions.css']) {
+      if (document.querySelector('link[href="' + href + '"]')) continue;
+      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = href; document.head.append(style);
     }
     const categories = [
       { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-laptop-minimal', panel: appearance, keywords: '字体 font size image text scale', reset: () => { pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },

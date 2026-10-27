@@ -1,7 +1,7 @@
 // Extension overview and detail navigation. Settings never load an editor runtime.
 (function () {
   'use strict';
-  function createPanel({ language, confirmAction, clearFileColors }) {
+  function createPanel({ language, confirmAction, clearFileColors, onPopoverOpen }) {
     const registry = window.RelatumNoteExtensions;
     const panel = document.createElement('section'); panel.className = 'note-extension-settings'; panel.dataset.i18nManaged = 'true';
     const overview = document.createElement('div'); overview.className = 'note-extension-overview';
@@ -49,7 +49,7 @@
       if (!row.settings) row.settings = row.definition.createSettings({ language,
         read: () => registry.read(row.definition.id).options, update: options => registry.set(row.definition.id, { options }),
         preview: options => registry.previewOptions(row.definition.id, options),
-        cancelPreview: () => registry.previewOptions(row.definition.id, null), confirmAction, clearFileColors });
+        cancelPreview: () => registry.previewOptions(row.definition.id, null), confirmAction, clearFileColors, onPopoverOpen });
       selected?.settings?.setActive?.(false);
       selected = row; panel.dataset.detail = row.definition.id;
       overview.hidden = true; detail.hidden = false; body.replaceChildren(row.settings.panel);
@@ -116,7 +116,7 @@
       destroy() { unsubscribe(); rows.forEach(row => row.settings?.destroy?.()); },
     };
   }
-  function createLatexPanel({ language, read, update }) {
+  function createLatexPanel({ language, read, update, onPopoverOpen }) {
     const definition = window.RelatumNoteExtensions.list().find(item => item.id === 'latex-input');
     const panel = document.createElement('div'); panel.className = 'note-latex-settings'; panel.dataset.snippetView = 'list';
     const tr = (cn, en) => language() === 'en' ? en : cn;
@@ -167,7 +167,7 @@
       else { input.maxLength = key === 'trigger' ? 64 : 4096; input.spellcheck = false; }
       fields[key] = { input, name };
       if (key === 'replacement') make('small', 'note-latex-placeholder-help', label);
-      input.addEventListener('input', () => {
+      input.addEventListener(key === 'boundary' ? 'change' : 'input', () => {
         const item = current(); if (!item) return;
         const draft = getDraft(item); Object.keys(fields).forEach(key => { draft[key] = fields[key].input.value; });
         clearMessage(); updateDirty(item, draft);
@@ -188,6 +188,21 @@
     const guideNote = make('p', 'note-latex-guide-note', tabPages.get('guide'));
     const drafts = new Map();
     let tab = 'basic', group = 'common', selected = '', fresh = null, query = '', composing = false, saving = false, signature = '', renderedLanguage = '', errorKey = '';
+    let active = false, choices = null, choicePortal = null;
+    function ensureChoices() {
+      if (choices || !active || tab !== 'snippets') return;
+      const dialog = panel.closest('dialog'); if (!dialog) return;
+      choicePortal = make('div', 'note-latex-popovers', dialog); choicePortal.dataset.i18nManaged = 'true';
+      choices = window.RelatumReviewControls.createManager(panel, choicePortal);
+      choices.enhance(fields.boundary.input);
+    }
+    function prepareChoice(event) {
+      if (event.type === 'keydown' && (event.isComposing || event.keyCode === 229 || !['ArrowDown', 'ArrowUp'].includes(event.key))) return;
+      const trigger = event.target.closest('.review-choice-trigger');
+      if (trigger && !trigger.disabled && trigger.getAttribute('aria-expanded') !== 'true') onPopoverOpen?.();
+    }
+    panel.addEventListener('click', prepareChoice, true);
+    panel.addEventListener('keydown', prepareChoice, true);
     const entries = () => definition.effectiveSnippets(read());
     const current = () => fresh?.id === selected ? fresh : entries().find(item => item.id === selected);
     const getDraft = item => {
@@ -212,6 +227,7 @@
       try { return update({ [key]: items }); } finally { saving = false; }
     }
     function setTab(id, focus = false) {
+      choices?.close();
       tab = tabButtons.has(id) ? id : 'basic';
       tabPages.forEach((page, key) => { page.hidden = key !== tab; });
       tabButtons.forEach((entry, key) => { entry.setAttribute('aria-selected', String(key === tab)); entry.tabIndex = key === tab ? 0 : -1; });
@@ -225,6 +241,7 @@
       setTab(event.key === 'Home' ? ids[0] : event.key === 'End' ? ids.at(-1) : ids[(index + (event.key === 'ArrowLeft' ? -1 : 1) + ids.length) % ids.length], true);
     });
     function renderList() {
+      choices?.close();
       const all = entries(), terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
       const matches = all.filter(item => {
         const info = definition.snippetInfo(item, language());
@@ -269,6 +286,7 @@
       editorName.textContent = info.name; source.textContent = builtIn ? tr('内置片段', 'Built-in snippet') : tr('自定义片段', 'Custom snippet');
       enabled.checked = item === fresh ? draft.enabled : item.enabled;
       Object.keys(fields).forEach(key => { if (fields[key].input.value !== draft[key]) fields[key].input.value = draft[key]; });
+      ensureChoices(); choices?.sync(fields.boundary.input);
       restore.dataset.latexAction = builtIn ? 'restore' : 'delete'; restore.hidden = item === fresh;
       restore.textContent = builtIn ? tr('恢复此片段默认值', 'Restore this snippet') : tr('删除片段', 'Delete snippet');
       updateDirty(item, draft);
@@ -282,7 +300,7 @@
       selected = fresh.id; group = 'custom'; query = ''; search.value = ''; panel.dataset.snippetView = 'editor'; clearMessage(); setTab('snippets');
       if (read().custom.length >= 128) fail('limit'); fields.trigger.input.focus({ preventScroll: true });
     });
-    listBack.addEventListener('click', () => { panel.dataset.snippetView = 'list';
+    listBack.addEventListener('click', () => { choices?.close(); panel.dataset.snippetView = 'list';
       (Array.from(list.children).find(entry => entry.dataset.latexSnippet === selected) || add).focus({ preventScroll: true }); });
     enabled.addEventListener('change', () => {
       const item = current(); if (!item) return;
@@ -313,6 +331,7 @@
     });
     function refresh() {
       const english = language() === 'en', index = english ? 1 : 0, options = read();
+      if (language() !== renderedLanguage) choices?.close();
       tabButtons.get('basic').textContent = tr('基础设置', 'Basics'); tabButtons.get('snippets').textContent = tr('片段管理', 'Snippets'); tabButtons.get('guide').textContent = tr('使用说明', 'Usage');
       tabs.setAttribute('aria-label', tr('latex 辅助输入设置', 'LaTeX input settings'));
       controls.forEach(row => { row.input.checked = options[row.item.id]; row.name.textContent = row.item.name[index]; row.hint.textContent = row.item.description[index]; });
@@ -324,6 +343,7 @@
       fields.trigger.name.textContent = tr('触发词', 'Trigger'); fields.replacement.name.textContent = tr('替换模板', 'Replacement'); fields.boundary.name.textContent = tr('匹配方式', 'Match boundary');
       fieldArea.querySelector('.note-latex-placeholder-help').textContent = tr('$1–$9：占位 · $0：退出位置', '$1–$9: placeholders · $0: exit position');
       Array.from(fields.boundary.input.options).forEach((entry, index) => { entry.textContent = tr(['词首', '后缀', '任意位置'][index], ['Start', 'Suffix', 'Anywhere'][index]); });
+      choices?.refresh(fields.boundary.input);
       save.textContent = tr('保存更改', 'Save changes'); cancel.textContent = tr('取消', 'Cancel'); error.textContent = message(errorKey);
       guideElements.forEach(({ row, name, code }) => { name.textContent = row[index]; code.textContent = row[2]; });
       guideNote.textContent = tr('仅在已闭合公式内生效。粘贴、输入法候选与多光标不自动展开；嵌套片段完成后继续返回外层占位。',
@@ -338,7 +358,11 @@
     }
     refresh(); setTab('basic');
     return { panel, refresh,
-      setActive(value) { if (!value) composing = false; },
+      setActive(value) {
+        active = value === true;
+        if (!active) { composing = false; choices?.close(); }
+        else { ensureChoices(); choices?.sync(fields.boundary.input); }
+      },
       reveal(key) {
         if (key?.startsWith('option:')) { setTab('basic'); return controls.find(row => row.item.id === key.slice(7))?.label || tabButtons.get('basic'); }
         if (key?.startsWith('snippet:')) {
@@ -350,8 +374,12 @@
         if (key === 'guide') { setTab('guide'); return tabButtons.get('guide'); }
         setTab('basic'); return tabButtons.get('basic');
       },
-      reset() { drafts.clear(); fresh = null; selected = ''; clearMessage(); signature = ''; refresh(); },
-      close() { drafts.clear(); fresh = null; selected = ''; group = 'common'; query = ''; search.value = ''; composing = false; panel.dataset.snippetView = 'list'; clearMessage(); setTab('basic'); },
+      reset() { choices?.close(); drafts.clear(); fresh = null; selected = ''; clearMessage(); signature = ''; refresh(); },
+      close() { active = false; drafts.clear(); fresh = null; selected = ''; group = 'common'; query = ''; search.value = ''; composing = false; panel.dataset.snippetView = 'list'; clearMessage(); setTab('basic'); },
+      destroy() {
+        active = false; composing = false; drafts.clear(); choices?.dispose(); choices = null; choicePortal?.remove(); choicePortal = null;
+        panel.removeEventListener('click', prepareChoice, true); panel.removeEventListener('keydown', prepareChoice, true);
+      },
     };
   }
   function createFileColorsPanel({ language, read, update, preview, cancelPreview, confirmAction, clearFileColors }) {

@@ -171,6 +171,7 @@
       .then(() => loadScript('settings-dialog.js', () => !!window.RelatumSettingsDialog))
       .then(() => loadScript('settings-order-list.js', () => !!window.RelatumSettingsOrderList))
       .then(() => loadScript('note-sidebar-settings.js', () => !!window.RelatumNoteSidebarSettings))
+      .then(() => loadScript('review-controls.js', () => !!window.RelatumReviewControls))
       .then(() => loadScript('note-extensions.js', () => !!window.RelatumNoteExtensions))
       .then(() => loadScript('note-extensions/catalog.js', () => !!window.RelatumNoteExtensions?.read('latex-input')))
       .then(() => loadScript('note-extensions-settings.js', () => !!window.RelatumNoteExtensionSettings))
