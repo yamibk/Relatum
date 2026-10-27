@@ -96,7 +96,7 @@ Quiz 实时预览复用既有紧凑块投影及候选边界映射，外层上下
 
 设置弹窗交互采用 120–180ms 的有限动效：分类内容/标题轻移淡入，搜索只在进入结果时过渡，导航/选项/按钮/聚焦与恢复反馈使用局部颜色及按下反馈；搜索输入框聚焦时不绘制内部矩形描边，保留外层圆角容器的柔和焦点反馈，鼠标与键盘聚焦一致。快捷键录制只有一次反馈和静态状态，不沿用旧循环呼吸。弹窗及重置确认反向开合从当前显示状态接续，关闭确认立即 inert，旧收尾核对动画身份。每个表面最多一个 Web Animation，完成/取消释放；尺寸变化、失焦、语言和低动态切换提交最终状态，隐藏/最小化/离场取消全部。控件按下先完成内容位移，避免颜色弹层和滑块使用动画中几何；无尺寸动画、常驻合成提示、JS RAF 循环或新偏好。`node tests/note-settings-browser.js --motion` 覆盖六种功能组合下的真实中间帧、快速反转、连续搜索、录制无循环、低动态/API 回退、宽窄/深浅及闲置零 RAF，报告只写临时目录。
 
-AI 对话、输入框、代码/表格/公式，以及笔记设置正文、分类导航和文本框共用 `assets/styles.css` 中限定这两处宿主的 6px 横纵滚动条，滑块为细圆角，轨道透明、颜色跟随深浅主题，去掉两端按钮。Chromium/WebView2 支持自定义滚动条时将标准 scrollbar-width/color 恢复 auto，避免 thin 优先于 WebKit 部件而重新出现系统箭头；其他引擎保留 thin 回退。原生滚轮、拖动和键盘行为保留，不增加 JS、监听或偏好，不改变正文和既有隐藏滚动条。
+AI 对话、输入框、代码/表格/公式，以及笔记设置正文、分类导航和文本框共用 `assets/styles.css` 中限定这两处宿主的 6px 横纵滚动条，滑块为细圆角，轨道透明、颜色跟随深浅主题，去掉两端按钮。文件染色配置的独立滚动容器 `.note-file-colors-settings` 在 `assets/note-extensions.css` 中复用扩展面板同款 6px 细圆角滚动条和无箭头样式。Chromium/WebView2 支持自定义滚动条时将标准 scrollbar-width/color 恢复 auto，避免 thin 优先于 WebKit 部件而重新出现系统箭头；其他引擎保留 thin 回退。原生滚轮、拖动和键盘行为保留，不增加 JS、监听或偏好，不改变正文和既有隐藏滚动条。
 
 笔记 Mermaid 由默认启用的子功能 `notes.mermaid` 独立控制，父项是 `notes`，与图谱和内嵌画布互不依赖。`assets/note-mermaid.js`、`assets/note-mermaid-worker.js`、专用 CSS 及 `assets/vendor/pele/` 归此功能独占；关闭后实时预览保留源码，阅读显示普通代码与复制入口，不请求这些资源。共享 `MarkdownMini.renderResult` 的可选 `mermaid:false` 同样传入脚注递归；其他调用默认行为不变。笔记不再归属旧 `mermaid-renderer.js`，其他区域继续原 Mermaid。Pele 固定 1.9.0 且 vendor 未改写，浏览器包、MIT 许可证与校验来源均本地保存，不增加 npm 构建或运行时出站。
 

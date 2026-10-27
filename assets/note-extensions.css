@@ -137,14 +137,14 @@
 }
 .note-latex-popovers .review-choice-option.is-selected { font-weight: 600; background: var(--settings-card); }
 .note-latex-popovers .review-choice-option.is-highlighted { background: var(--settings-selected); }
-.note-extension-settings :is(.note-extension-overview, .note-latex-page, .note-latex-library, .note-latex-editor-fields) { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, currentColor 25%, transparent) transparent; }
+.note-extension-settings :is(.note-extension-overview, .note-file-colors-settings, .note-latex-page, .note-latex-library, .note-latex-editor-fields) { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, currentColor 25%, transparent) transparent; }
 @supports selector(::-webkit-scrollbar) {
-  .note-extension-settings :is(.note-extension-overview, .note-latex-page, .note-latex-library, .note-latex-editor-fields) { scrollbar-width: auto; scrollbar-color: auto; }
+  .note-extension-settings :is(.note-extension-overview, .note-file-colors-settings, .note-latex-page, .note-latex-library, .note-latex-editor-fields) { scrollbar-width: auto; scrollbar-color: auto; }
 }
-.note-extension-settings :is(.note-extension-overview, .note-latex-page, .note-latex-library, .note-latex-editor-fields)::-webkit-scrollbar { width: 6px; height: 6px; }
-.note-extension-settings :is(.note-extension-overview, .note-latex-page, .note-latex-library, .note-latex-editor-fields)::-webkit-scrollbar-track { background: transparent; }
-.note-extension-settings :is(.note-extension-overview, .note-latex-page, .note-latex-library, .note-latex-editor-fields)::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
-.note-extension-settings :is(.note-extension-overview, .note-latex-page, .note-latex-library, .note-latex-editor-fields)::-webkit-scrollbar-thumb { border: 1px solid transparent; border-radius: 999px; background: color-mix(in srgb, currentColor 25%, transparent); background-clip: padding-box; }
+.note-extension-settings :is(.note-extension-overview, .note-file-colors-settings, .note-latex-page, .note-latex-library, .note-latex-editor-fields)::-webkit-scrollbar { width: 6px; height: 6px; }
+.note-extension-settings :is(.note-extension-overview, .note-file-colors-settings, .note-latex-page, .note-latex-library, .note-latex-editor-fields)::-webkit-scrollbar-track { background: transparent; }
+.note-extension-settings :is(.note-extension-overview, .note-file-colors-settings, .note-latex-page, .note-latex-library, .note-latex-editor-fields)::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.note-extension-settings :is(.note-extension-overview, .note-file-colors-settings, .note-latex-page, .note-latex-library, .note-latex-editor-fields)::-webkit-scrollbar-thumb { border: 1px solid transparent; border-radius: 999px; background: color-mix(in srgb, currentColor 25%, transparent); background-clip: padding-box; }
 .note-extension-settings .note-latex-editor .note-latex-editor-fields { scrollbar-width: none; }
 .note-extension-settings .note-latex-editor .note-latex-editor-fields::-webkit-scrollbar { display: none; width: 0; height: 0; }
 @media (max-width: 900px) {
