@@ -41,6 +41,7 @@
 .note-file-colors-clearing button { color: #b7554f; border-color: #b7554f55; }
 .note-file-colors-clearing button:disabled { opacity: .6; cursor: default; }
 .relatum-settings[data-content-layout="fill"]:has(.note-extension-settings:not([hidden])) .relatum-settings-footer { display: flex; }
+.relatum-settings:has(.relatum-settings-pages:not([hidden]) > .note-extension-settings[data-detail="latex-input"]:not([hidden]) .note-latex-settings[data-tab="snippets"]) .relatum-settings-footer { min-height: 47px; padding-top: 0; }
 .relatum-settings:has(.relatum-settings-pages:not([hidden]) > .note-extension-settings[data-detail]:not([hidden])) .relatum-settings-main { position: relative; }
 .relatum-settings:has(.relatum-settings-pages:not([hidden]) > .note-extension-settings[data-detail]:not([hidden])) .relatum-settings-header { position: absolute; top: 24px; right: 24px; padding: 0; z-index: 1; }
 .relatum-settings:has(.relatum-settings-pages:not([hidden]) > .note-extension-settings[data-detail]:not([hidden])) .relatum-settings-header > div { display: none; }
