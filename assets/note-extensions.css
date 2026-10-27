@@ -21,6 +21,8 @@
 .note-extension-detail-toggle { margin-top: 6px; }
 .note-extension-detail > .note-extension-status:not([hidden]) { margin-bottom: 12px; }
 .note-extension-detail-body { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.note-file-colors-guide { overflow-y: auto; color: var(--settings-muted); font-size: 13px; line-height: 1.8; }
+.note-file-colors-guide h4 { color: var(--settings-text); font-size: 14px; margin: 0 0 12px; }
 .relatum-settings[data-content-layout="fill"]:has(.note-extension-settings:not([hidden])) .relatum-settings-footer { display: flex; }
 .relatum-settings:has(.relatum-settings-pages:not([hidden]) > .note-extension-settings[data-detail]:not([hidden])) .relatum-settings-main { position: relative; }
 .relatum-settings:has(.relatum-settings-pages:not([hidden]) > .note-extension-settings[data-detail]:not([hidden])) .relatum-settings-header { position: absolute; top: 24px; right: 24px; padding: 0; z-index: 1; }

@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import stat
 import time
 import threading
@@ -25,6 +26,7 @@ from note_metadata import note_metadata, valid_tag
 from note_canvas_reference import CANVAS_DIRECTORY, canvas_target, references as canvas_references, rewrite as rewrite_canvas_references
 from notes_index import NoteIndex, book_root
 from notes_sync import NoteSync
+from note_file_colors import NoteFileColors, COLORS as FILE_COLORS
 from note_search import projection
 from note_svg import MAX_SVG_BYTES, SvgImageError, validate_svg
 
@@ -568,12 +570,46 @@ class NotesStore:
         self.index = NoteIndex(index_path or self.root.parent / 'data' / 'note-index.sqlite3', self.root,
                                persistent=background_index)
         self.sync = NoteSync(self, background=background_index)
+        self.file_colors = NoteFileColors(self.root.parent / 'data' / 'note-file-colors.sqlite3')
+        self.file_color_warning = ''
         self.graph_index_enabled = True
         self._graph_cache: dict[str, tuple[tuple, dict, int]] = {}
         self._graph_cache_bytes = 0
         self._graph_lock = threading.RLock()
         self._notebook_settings: dict | None = None
         self._notebook_settings_needs_write = False
+
+    def query_file_colors(self, paths):
+        if not isinstance(paths, list) or len(paths) > 512:
+            raise NotesError('文件颜色查询每批最多 512 项')
+        paths = list(dict.fromkeys(self.normalize_path(path) for path in paths))
+        return self.file_colors.query(paths)
+
+    def set_file_color(self, path, color):
+        relative = self.normalize_path(path)
+        if color is not None and (not isinstance(color, str) or color not in FILE_COLORS):
+            raise NotesError('文件颜色无效')
+        target = self._absolute(relative)
+        try:
+            data = target.stat(follow_symlinks=False)
+        except (FileNotFoundError, NotADirectoryError) as error:
+            raise NotesError('文件或文件夹不存在', status=404, code='not_found') from error
+        kind = 'folder' if stat.S_ISDIR(data.st_mode) else 'note'
+        if kind == 'note' and (not stat.S_ISREG(data.st_mode) or target.suffix.casefold() != NOTE_SUFFIX):
+            raise NotesError('只能为 Markdown 文件和普通文件夹设置颜色')
+        relative = target.resolve(strict=True).relative_to(self.root.resolve()).as_posix()
+        result = self.file_colors.set(relative, kind, color)
+        self.file_color_warning = ''
+        return result
+
+    def sync_file_colors(self, action, *args):
+        # Metadata failures must never turn an already committed disk move/trash
+        # into a failed file operation (and an incorrect frontend rollback).
+        try:
+            getattr(self.file_colors, action)(*args)
+            self.file_color_warning = ''
+        except (OSError, sqlite3.Error, RuntimeError):
+            self.file_color_warning = '文件配色同步失败，颜色数据已保留；可稍后刷新重试'
 
     @staticmethod
     def _default_notebook_settings() -> dict:
@@ -1127,9 +1163,16 @@ class NotesStore:
     def index_status(self):
         return self.sync.status()
 
-    def index_changes(self, since):
+    def index_changes(self, since, *, file_colors=False):
         result = self.index.changes(since)
         result['index'] = self.sync.status()
+        if file_colors:
+            try:
+                result['fileColorGeneration'] = self.file_colors.generation()
+            except (OSError, sqlite3.Error, RuntimeError):
+                result['fileColorWarning'] = '无法读取文件颜色数据，原数据已保留'
+            if self.file_color_warning:
+                result['fileColorWarning'] = self.file_color_warning
         return result
 
     def children(self, parent='', offset=0, limit=50, sort='name-asc', generation=None, folders_only=False):
@@ -1633,6 +1676,10 @@ class NotesStore:
                 raise NotesError("伴生素材目录不能是链接或重解析点", status=403, code="unsafe_path")
             if destination_companion and destination_companion.exists() and not companion_case_only:
                 raise NotesError("目标伴生素材目录已存在", status=409, code="exists")
+        # Keep notification cleanup out of intermediate paths in this structural
+        # disk transaction. A walk begun earlier must retry after the handoff.
+        self.sync._condition.acquire()
+        self.sync._epoch += 1
         try:
             for index, post_relative in enumerate(updates):
                 pre_relative = reverse_mapping.get(post_relative, post_relative)
@@ -1672,6 +1719,7 @@ class NotesStore:
             for post_relative, text in updates.items():
                 self.atomic_text(self._absolute(post_relative), text)
             moved_paths = self.index.remap(source_rel, destination_rel)
+            self.sync_file_colors('remap', source_rel, destination_rel)
             for path in moved_paths:
                 self.sync.enqueue(destination_rel + path[len(source_rel):], priority=True)
             for path in updates:
@@ -1702,11 +1750,12 @@ class NotesStore:
                     pass
             raise
         finally:
+            self.sync._condition.release()
             shutil.rmtree(stage, ignore_errors=True)
         return {
             "path": destination_rel,
             "rewritten": len(updates),
-            "warnings": warnings,
+            "warnings": warnings + ([self.file_color_warning] if self.file_color_warning else []),
         }
 
     def image_text_operation(self, relative: object, content: object, expected_revision: object,

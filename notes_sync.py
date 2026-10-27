@@ -19,6 +19,7 @@ class NoteSync:
         self._condition = threading.Condition(threading.RLock())
         self._scan_lock = threading.Lock()
         self._pending = OrderedDict()
+        self._color_renames = []
         self._saved = OrderedDict()
         self._saved_bytes = 0
         self._stop = threading.Event()
@@ -116,6 +117,7 @@ class NoteSync:
 
     def retire(self, path, *, notebook=False):
         with self._condition:
+            self._apply_color_renames()
             prefix = normalize(path)
             self._epoch += 1
             self._serial += 1
@@ -129,9 +131,38 @@ class NoteSync:
             self._incomplete = {item for item in self._incomplete if prefix and normalize(item) != prefix and not normalize(item).startswith(prefix + '/')}
             self._directory_failed = {item for item in self._directory_failed if prefix and normalize(item) != prefix and not normalize(item).startswith(prefix + '/')}
             self.store.index.remove(path, notebook=notebook)
+            self.store.sync_file_colors('remove', path)
             self._maintenance_requested = True
             self._condition.notify_all()
         self.store._drop_graph_cache(book_root(path))
+
+    def _apply_color_renames(self):
+        # Called under the existing scheduler lock, before any old-path cleanup.
+        pending, self._color_renames = self._color_renames, []
+        for source, destination in pending:
+            self.store.sync_file_colors('remap', source, destination)
+
+    def notifications(self, events):
+        """Decode one complete kernel batch; never guess across missing pairs."""
+        with self._condition:
+            previous = None
+            for action, raw in events:
+                try:
+                    name = self.store.normalize_path(raw)
+                except ValueError:
+                    previous = None
+                    continue
+                if action == 4:
+                    previous = name
+                    self._scan_requested = True
+                else:
+                    if action == 5 and previous:
+                        if len(self._color_renames) < 8192:
+                            self._color_renames.append((previous, name))
+                        self._epoch += 1  # Invalidate a walk begun before this rename.
+                    previous = None
+                    self.enqueue(name, priority=True, notification=True)
+            self._condition.notify_all()
 
     def graph(self, root):
         self._graph_books.add(normalize(root))
@@ -199,6 +230,8 @@ class NoteSync:
     def scan(self, scope=None, *, strict=False, drain=False):
         from notes_library import NotesError
         with self._scan_lock:
+            with self._condition:
+                self._apply_color_renames()
             epoch = self._epoch
             verify = self._verify_scan
             previous_failures, previous_directory_failures = set(self._incomplete), set(self._directory_failed)
@@ -210,18 +243,23 @@ class NoteSync:
                 for root, identity in self._observed_identities.items():
                     if any(not root or path == root or path.startswith(root + '/') or root.startswith(path + '/') for path in failed):
                         continue
-                    previous = self.store.index.source_identity(root)
-                    if previous and previous != identity:
-                        self.retire(root, notebook=True)
-                    self.store.index.identify(root, identity)
-                epoch = self._epoch
-                live = {normalize(row[0]) for row in records}
+                    with self._condition:
+                        if epoch != self._epoch:
+                            self.request_scan(); return
+                        previous = self.store.index.source_identity(root)
+                        if previous and previous != identity:
+                            self.retire(root, notebook=True)
+                            epoch = self._epoch
+                        self.store.index.identify(root, identity)
+                live = {normalize(row[0]): row[1] for row in records}
                 changed_keys = set()
                 for begin in range(0, len(records), 64):
                     self.cooperate()
                     if self._stop.is_set() or epoch != self._epoch or self.background and not self.active:
                         self.request_scan(); return
                     with self._condition:
+                        if epoch != self._epoch:
+                            self.request_scan(); return
                         pending = self.store.index.register(records[begin:begin + 64], verify=verify)
                     for path, book in pending:
                         self.enqueue(path, book=book)
@@ -230,6 +268,8 @@ class NoteSync:
                         time.sleep(0)
                 removed_roots = []
                 for row in self.store.index.rows(scope, folders=True, directory=True):
+                    if epoch != self._epoch or self._stop.is_set() or self.background and not self.active:
+                        self.request_scan(); return
                     key = row['key']
                     if any(key.startswith(prefix + '/') for prefix in removed_roots):
                         continue
@@ -240,21 +280,32 @@ class NoteSync:
                     if any(key == normalize(p) or key.startswith(normalize(p) + '/') or normalize(p).startswith(key + '/') for p in failed):
                         continue
                     root = book_root(row['path'])
-                    self.retire(row['path'], notebook=bool(root and normalize(root) == key))
-                    if row['kind'] == 'folder':
-                        removed_roots.append(key)
+                    with self._condition:
+                        if epoch != self._epoch:
+                            self.request_scan(); return
+                        self.retire(row['path'], notebook=bool(root and normalize(root) == key))
+                        if row['kind'] == 'folder':
+                            removed_roots.append(key)
+                        epoch = self._epoch
+                with self._condition:
+                    if epoch != self._epoch or self._stop.is_set() or self.background and not self.active:
+                        self.request_scan(); return
+                    self.store.sync_file_colors('reconcile', live, failed, scope)
                 if changed_keys:
                     keys = list(changed_keys)
                     for begin in range(0, len(keys), 128):
                         self.store.index.resolve(keys[begin:begin + 128])
-                if scope is None:
-                    self._incomplete = failed
-                    self._scanned = True; self._scan_requested = False; self._last_scan = time.monotonic()
-                    self._verify_scan = False
-                else:
-                    contains = lambda path: normalize(book_root(path)) == normalize(scope) if not scope else normalize(path) == normalize(scope) or normalize(path).startswith(normalize(scope) + '/')
-                    self._incomplete = {path for path in previous_failures if not contains(path)} | failed
-                    self._directory_failed |= {path for path in previous_directory_failures if not contains(path)}
+                with self._condition:
+                    if epoch != self._epoch:
+                        self.request_scan(); return
+                    if scope is None:
+                        self._incomplete = failed
+                        self._scanned = True; self._scan_requested = False; self._last_scan = time.monotonic()
+                        self._verify_scan = False
+                    else:
+                        contains = lambda path: normalize(book_root(path)) == normalize(scope) if not scope else normalize(path) == normalize(scope) or normalize(path).startswith(normalize(scope) + '/')
+                        self._incomplete = {path for path in previous_failures if not contains(path)} | failed
+                        self._directory_failed |= {path for path in previous_directory_failures if not contains(path)}
                 self._maintenance_requested = True
             finally:
                 self._scanning = False
@@ -286,6 +337,12 @@ class NoteSync:
                 with self.store.index.read() as conn:
                     known = conn.execute('SELECT 1 FROM entries e JOIN books b ON b.id=e.book WHERE e.key=? AND b.deleted=0 LIMIT 1', (normalize(path),)).fetchone()
                 if not known:
+                    # The index may just have been rebuilt; colors are durable
+                    # and still need this confirmed missing-path notification.
+                    with self._condition:
+                        self._apply_color_renames()
+                        if valid():
+                            self.store.sync_file_colors('remove', path)
                     self._incomplete.discard(path)
                     return
                 self.retire(path, notebook=bool(book_root(path) and normalize(book_root(path)) == normalize(path)))
@@ -327,6 +384,7 @@ class NoteSync:
         from notes_library import NotesError
         while True:
             with self._condition:
+                self._apply_color_renames()
                 if not self._pending:
                     for path, book in self.store.index.pending():
                         self.enqueue(path, book=book)
@@ -474,20 +532,15 @@ class NoteSync:
                     self._verify_scan = True
                     self.request_scan(); continue
                 offset = 0
+                events = []
                 while offset + 12 <= returned.value:
                     following, action, length = struct.unpack_from('<III', buffer.raw, offset)
                     name = buffer.raw[offset + 12:offset + 12 + length].decode('utf-16-le').replace('\\', '/')
-                    try:
-                        name = self.store.normalize_path(name)
-                        if action == 4:
-                            self.request_scan()
-                        if action != 4:
-                            self.enqueue(name, priority=True, notification=True)
-                    except (ValueError, UnicodeError):
-                        pass
+                    events.append((action, name))
                     if not following:
                         break
                     offset += following
+                self.notifications(events)
         finally:
             self._watch_supported = False
             kernel.CancelIoEx(handle, None); kernel.CloseHandle(event); kernel.CloseHandle(handle)

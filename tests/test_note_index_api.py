@@ -66,6 +66,23 @@ class NoteIndexApiTests(unittest.TestCase):
         self.assertEqual((code, body['code']), (409, 'query_changed'))
         self.assertEqual(self.fixture.request('/api/note-query', {'q': 'needle', 'paths': ['../escape.md']})[0], 403)
 
+    def test_file_color_api_is_batched_durable_and_feature_guarded(self):
+        query, save = '/api/note-file-colors/query', '/api/note-file-colors/set'
+        code, first = self.fixture.request(save, {'path': 'N000.md', 'color': 'blue'})
+        self.assertEqual(code, 200)
+        with mock.patch.object(app, '_cross_process_mutation_lock', side_effect=AssertionError('color query write lock')):
+            code, result = self.fixture.request(query, {'paths': ['N000.md', 'N001.md']})
+        self.assertEqual((code, result['colors']), (200, {'N000.md': 'blue'}))
+        delta = self.fixture.request('/api/note-changes?since=0&fileColors=1')[1]
+        self.assertEqual(delta['fileColorGeneration'], first['generation'])
+        self.assertNotIn('fileColorGeneration', self.fixture.request('/api/note-changes?since=0')[1])
+        self.assertEqual(self.fixture.request(query, {'paths': ['N000.md'] * 513})[0], 400)
+        self.assertEqual(self.fixture.request(save, {'path': '../escape.md', 'color': 'red'})[0], 403)
+        self.assertEqual(self.fixture.request(save, {'path': 'N000.md'})[0], 400)
+        self.fixture.server.launch_profile = LaunchProfile({key: key == 'canvas' for key in FEATURES}, restricted=True)
+        self.assertEqual(self.fixture.request(query, {'paths': []})[0], 403)
+        self.assertEqual(self.fixture.request(save, {'path': 'N000.md', 'color': None})[0], 403)
+
 
 if __name__ == '__main__':
     unittest.main()

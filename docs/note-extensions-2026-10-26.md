@@ -1,10 +1,10 @@
-# 笔记扩展与 latex辅助输入 1.1
+# 笔记扩展、latex辅助输入 1.1 与文件染色
 
 ## 使用与边界
 
 “笔记设置 → 扩展”（`extensions`，位于笔记本之后）管理随软件附带的离线扩展。第一项中文卡片标题为“latex辅助输入 1.1”，英文为“LaTeX Input Assistant 1.1”，内部 ID 仍为 `latex-input`，版本元数据 `1.1.0`。总开关默认关闭；自动展开、自动分式、Tab 跳出、矩阵快捷输入和数字下标各自默认开启，可分别关闭。旧启停及自动展开偏好保留，新增默认值不在启动时回写。列表卡片只提供名称、说明、总开关、“配置”入口及错误重试；点击配置或搜索结果才创建详情，不加载公式运行时。
 
-仅增强笔记编辑器，不提供安装包、在线市场、自动更新、Obsidian 兼容层，也不迁移 Mermaid、Quiz 等现有功能。所有资源继续归 `notes` 功能；禁用笔记时沿用现有静态资源权限。源码修改无需增加依赖或构建应用；已发布的旧桌面程序仍需下次打包才包含新功能。
+扩展分别增强笔记编辑器或文件树。第二项“文件染色 / File Colors 1.0”（`file-colors`，版本 `1.0.0`）默认关闭，按需加载独立文件树运行时；详情仅提供使用说明。具体存储、文件生命周期和验证见 [文件染色](note-file-colors-2026-10-27.md)。不提供安装包、在线市场、自动更新、Obsidian 兼容层，也不迁移 Mermaid、Quiz 等现有功能。所有资源继续归 `notes` 功能；禁用笔记时沿用现有静态资源权限。源码修改无需增加依赖或构建应用；已发布的旧桌面程序仍需下次打包才包含新功能。
 
 ## 设置面板
 
@@ -40,7 +40,7 @@ RelatumNoteExtensions.register({
 });
 ```
 
-ID 为稳定的小写字母/数字/短横线名称，必须以字母开头，不可重复。`name/description` 使用中英文数组，可选 `displayVersion` 单独指定展示版本。不声明规范化钩子时，选项继续按默认值的原始类型读取；结构化选项可提供 `normalizeOptions(value)`，返回完整、校验过的独立副本。需要搜索的设置词在 `keywords` 声明。设置工厂的 `read()` 返回选项副本，`update(partialOptions)` 合并修改并返回保存是否成功。通用设置页面不操作正文。
+ID 为稳定的小写字母/数字/短横线名称，必须以字母开头，不可重复。`scope` 默认 `editor`，保持既有 Compartment 接入；`workspace` 扩展通过 `attachWorkspace(id,context)` 接入宿主，编辑器不会创建其配置槽。工作区宿主返回 `instance/refresh()/destroy()`，按总开关、页面/原生可见状态及 `context.isCurrent()` 加载或销毁实例，迟到加载核对身份。`name/description` 使用中英文数组，可选 `displayVersion` 单独指定展示版本。不声明规范化钩子时，选项继续按默认值的原始类型读取；结构化选项可提供 `normalizeOptions(value)`，返回完整、校验过的独立副本。需要搜索的设置词在 `keywords` 声明。设置工厂的 `read()` 返回选项副本，`update(partialOptions)` 合并修改并返回保存是否成功。通用设置页面不操作正文。
 
 对应脚本调用 `registerRuntime(id, factory)`。`factory(context, options)` 返回：
 
@@ -60,7 +60,7 @@ ID 为稳定的小写字母/数字/短横线名称，必须以字母开头，不
 {"version":1,"extensions":{"latex-input":{"enabled":true,"options":{"automatic":true}}}}
 ```
 
-默认值只驻留内存，启动和搜索不写存储；显式修改才写入。字段损坏按默认值回退，未知扩展记录保留，供升级后恢复。分类恢复和全部笔记设置恢复删除此键；未改现有其他分类恢复边界。沿用桌面 `canvas:*` 按模式偏好快照，无后端 API、配置文件或 Markdown 字段。
+默认值只驻留内存，启动和搜索不写存储；显式修改才写入。字段损坏按默认值回退，未知扩展记录保留，供升级后恢复。分类恢复和全部笔记设置恢复删除此键；未改现有其他分类恢复边界。开关沿用桌面 `canvas:*` 按模式偏好快照。LaTeX 配置没有后端 API、配置文件或 Markdown 字段；文件颜色独立保存为用户数据，关闭扩展和恢复设置均不清空颜色。
 
 1.1 的 `options` 增加布尔项 `autoFraction/tabout/matrix/subscripts` 以及 `overrides/custom` 两个片段数组。片段记录为 `{id,trigger,replacement,boundary,enabled}`；内置覆盖按稳定的原触发词 ID 保存，自定义 ID 为 `custom-…`。读取和传入运行时的配置相互独立；无效记录丢弃或回退，不执行配置中的代码。
 

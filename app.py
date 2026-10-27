@@ -9838,6 +9838,7 @@ class RequestBodyError(ValueError):
 # appropriate lock only after the dialog returns, so an open dialog never stalls
 # autosave in another request thread.
 POST_WITHOUT_DATA_LOCK = {
+    "/api/note-file-colors/query",
     "/api/review-import-preview",
     "/api/review-import",
     "/api/usage/batch",
@@ -9900,6 +9901,7 @@ NOTES_POST_ROUTES = {
     "/api/notes-canvas/trash-file",
     "/api/notes-canvas/reveal",
     "/api/note-notebooks-settings",
+    "/api/note-file-colors/set",
     "/api/note-cleanup-unused-images",
     "/api/note-image-text-merge",
     "/api/note-image-text-cleanup",
@@ -10334,7 +10336,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 if parsed.path == '/api/note-index-state':
                     result = NOTES_STORE.index_status()
                 elif parsed.path == '/api/note-changes':
-                    result = NOTES_STORE.index_changes(int(query.get('since', ['0'])[0]))
+                    result = NOTES_STORE.index_changes(int(query.get('since', ['0'])[0]),
+                        file_colors=query.get('fileColors', ['0'])[0] == '1')
                 else:
                     result = NOTES_STORE.children(query.get('parent', [''])[0], int(query.get('offset', ['0'])[0]),
                         int(query.get('limit', ['50'])[0]), query.get('sort', ['name-asc'])[0],
@@ -10702,6 +10705,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_notes_error(err)
             except OSError as err:
                 return self._send_json(500, {"error": f"画布操作失败：{err}"})
+        if path in ('/api/note-file-colors/query', '/api/note-file-colors/set'):
+            try:
+                if path.endswith('/set') and 'color' not in body:
+                    raise NotesError('缺少文件颜色')
+                result = (NOTES_STORE.query_file_colors(body.get('paths')) if path.endswith('/query')
+                          else NOTES_STORE.set_file_color(body.get('path'), body.get('color')))
+                return self._send_json(200, result)
+            except NotesError as err:
+                return self._send_notes_error(err)
+            except (OSError, sqlite3.Error, RuntimeError) as err:
+                return self._send_json(503, {'error': '文件颜色数据读写失败，原数据已保留', 'code': 'file_colors_unavailable'})
         if path == "/api/note-notebooks-settings":
             try:
                 return self._send_json(200, NOTES_STORE.update_notebook_settings(body))
@@ -11077,6 +11091,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             _move_paths_to_recycle_bin(targets)
             NOTES_STORE.removed(normalized)
             result = {"ok": True, "path": normalized, "tree": NOTES_STORE.tree(body.get('_tree', {}))}
+            if NOTES_STORE.file_color_warning:
+                result['fileColorWarning'] = NOTES_STORE.file_color_warning
             _usage_remap("remove", "notes", normalized, prefix=True)
         except NotesError as err:
             return self._send_notes_error(err)

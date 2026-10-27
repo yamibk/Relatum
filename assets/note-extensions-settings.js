@@ -352,5 +352,26 @@
       close() { drafts.clear(); fresh = null; selected = ''; group = 'common'; query = ''; search.value = ''; composing = false; panel.dataset.snippetView = 'list'; clearMessage(); setTab('basic'); },
     };
   }
-  window.RelatumNoteExtensionSettings = Object.freeze({ createPanel, createLatexPanel });
+  function createFileColorsPanel({ language }) {
+    const panel = document.createElement('section'); panel.className = 'note-file-colors-guide';
+    function refresh() {
+      const english = language() === 'en';
+      panel.replaceChildren();
+      const heading = document.createElement('h4'); heading.textContent = english ? 'Usage' : '使用说明'; panel.append(heading);
+      const lines = english ? [
+        'Enable this extension, then right-click a file or folder in the left tree to choose a color or clear it.',
+        'Only this item’s icon and soft row background change. Children keep their own colors.',
+        'Turning the extension off or resetting Note settings preserves your colors for the next time you enable it.',
+        'Renaming and moving within Relatum preserves colors. External renames follow when file notifications can be paired reliably; otherwise old colors are cleared after deletion is confirmed.',
+      ] : [
+        '开启扩展后，右键左侧的文件或文件夹，选择颜色或“清除颜色”。',
+        '仅改变当前项目的图标和柔和行背景，子项不会继承颜色。',
+        '关闭扩展或恢复笔记设置后，颜色记录仍保留，再次开启即可恢复。',
+        '在 Relatum 内改名、移动会保留颜色。外部改名在文件通知能可靠配对时跟随；否则确认旧项目删除后清除旧颜色。',
+      ];
+      lines.forEach(text => { const p = document.createElement('p'); p.textContent = text; panel.append(p); });
+    }
+    refresh(); return { panel, refresh };
+  }
+  window.RelatumNoteExtensionSettings = Object.freeze({ createPanel, createLatexPanel, createFileColorsPanel });
 })();

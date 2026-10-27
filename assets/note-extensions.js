@@ -67,7 +67,8 @@
   function attachEditor(context) {
     const { CM, view } = context;
     let active = context.active !== false, disposed = false, revision = 0, waiting = false;
-    const slots = Array.from(definitions.values(), definition => ({ definition, compartment: new CM.Compartment(), instance: null, signature: '' }));
+    const slots = Array.from(definitions.values()).filter(definition => (definition.scope || 'editor') === 'editor')
+      .map(definition => ({ definition, compartment: new CM.Compartment(), instance: null, signature: '' }));
     const foreground = () => !disposed && active && pageActive && !document.hidden
       && document.documentElement.dataset.desktopMinimized !== '1' && context.isCurrent()
       && view.dom.isConnected && !view.dom.closest('[hidden]');
@@ -132,7 +133,33 @@
     if (!hosts.size) watch(true);
     hosts.add(host); refresh(); return host;
   }
-  window.RelatumNoteExtensions = Object.freeze({ register, read, set, reset, retry, loadScript, attachEditor,
+  function attachWorkspace(id, context) {
+    const definition = definitions.get(id);
+    if (!definition || definition.scope !== 'workspace') throw new Error('Invalid workspace extension');
+    let instance = null, disposed = false, loading = false, revision = 0;
+    function detach() { revision++; instance?.destroy?.(); instance = null; }
+    const host = {
+      get instance() { return instance; },
+      refresh() {
+        if (disposed) return;
+        if (!pageActive || document.hidden || document.documentElement.dataset.desktopMinimized === '1'
+            || !context.isCurrent() || !read(id).enabled) { detach(); return; }
+        if (instance || loading || errors.has(id)) return;
+        const token = revision; loading = true;
+        definition.load().then(factory => {
+          if (disposed || token !== revision || !context.isCurrent() || !read(id).enabled) return;
+          instance = factory(context, read(id).options); errors.delete(id);
+        }).catch(error => {
+          if (disposed || token !== revision) return;
+          errors.set(id, String(error.message || error)); listeners.forEach(listener => listener());
+        }).finally(() => { loading = false; if (!disposed && token !== revision) host.refresh(); });
+      },
+      destroy() { if (disposed) return; disposed = true; detach(); hosts.delete(host); if (!hosts.size) watch(false); },
+    };
+    if (!hosts.size) watch(true);
+    hosts.add(host); host.refresh(); return host;
+  }
+  window.RelatumNoteExtensions = Object.freeze({ register, read, set, reset, retry, loadScript, attachEditor, attachWorkspace,
     list: () => Array.from(definitions.values()),
     error: id => errors.get(id) || '',
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },

@@ -100,4 +100,11 @@
     load: () => registry.loadScript('latex-input', 'note-extensions/latex-input.js'),
     createSettings(context) { return window.RelatumNoteExtensionSettings.createLatexPanel(context); },
   });
+  registry.register({ id: 'file-colors', scope: 'workspace', version: '1.0.0', displayVersion: '1.0',
+    name: ['文件染色', 'File Colors'], defaultEnabled: false,
+    description: ['为左侧文件和文件夹的图标及行背景设置柔和配色。', 'Add soft colors to file and folder icons and row backgrounds in the left tree.'],
+    keywords: '文件 文件夹 染色 颜色 配色 右键 file folder color colour palette context menu',
+    load: () => registry.loadScript('file-colors', 'note-extensions/file-colors.js'),
+    createSettings(context) { return window.RelatumNoteExtensionSettings.createFileColorsPanel(context); },
+  });
 })();

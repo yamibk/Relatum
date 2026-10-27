@@ -20,6 +20,8 @@
   const sidePane = $('.note-links-pane');
   const NOTEBOOK_CONTAINER = 'CustomNotebook';
   const NOTEBOOK_COLORS = ['gray', 'blue', 'cyan', 'green', 'yellow', 'orange', 'red', 'purple'];
+  let fileColorHost = null;
+  let fileColorWarning = '';
   let notebookSettingsTimer = 0, notebookSettingsChain = Promise.resolve(true), notebookSettingsPending = {};
   let notebookVisibilityBusy = false, notebookSettingsPanel = null, notebookEmptyHint = null;
   let notebookVisibilityPending = null;
@@ -2931,6 +2933,7 @@
     }
     if (!options?.entryIndexReady) rebuildEntryIndex();
     renderTreeInto(treeEl, visibleTreeEntries(), state.expanded, false);
+    fileColorHost?.instance?.sync();
     state.treeRendered = true;
     state.renderedOrder = options?.orderSignature ?? treeOrderSignature(state.entries);
     state.pendingTreeReorder = false;
@@ -3064,6 +3067,7 @@
       const icon = row.querySelector('.note-notebook-icon');
       const color = state.notebookColors[entry.path] || 'gray';
       if (icon && icon.dataset.color !== color) icon.dataset.color = color;
+      if (!notebookTree) fileColorHost?.instance?.decorate(row, entry.path);
       if (rowIndex.rows.get(entry.path) !== row) { rowIndex.rows.set(entry.path, row); rowIndex.selectionKey = null; }
     }
     function ordered(entries, depth) {
@@ -3152,6 +3156,7 @@
         input.addEventListener('blur', () => commitInlineRename(getEntry(rowPath), input, false)); requestAnimationFrame(() => { input.focus(); input.select(); });
       } else label.textContent = entry.name;
       row.append(toggle, entry.notebook ? notebookIcon(entry.path) : treeIcon(entry.kind), label);
+      if (!notebookTree) fileColorHost?.instance?.decorate(row, entry.path);
       async function activateRow(expansion) {
         const clickedPath = rowPath;
         if (!(await finishInlineTitle())) return;
@@ -3190,7 +3195,7 @@
         hoverPrefetchTimer = setTimeout(() => { hoverPrefetchPath = rowPath; runDocumentPrefetch(); }, 150);
       });
       row.addEventListener('pointerleave', () => { clearTimeout(hoverPrefetchTimer); hoverPrefetchPath = ''; });
-      row.addEventListener('contextmenu', (event) => { event.preventDefault(); event.stopPropagation(); const liveEntry = getEntry(rowPath); if (!liveEntry) return; if (notebookEntry) { openNotebookContext(liveEntry, event.clientX, event.clientY); return; } if (notebookTree) selectNotebook(notebookRootForPath(rowPath)); state.rootTargeted = false; state.selectedPath = rowPath; state.selectedFolder = liveEntry.kind === 'folder' ? rowPath : parentPath(rowPath); updateTreeSelection(); openContextMenu(liveEntry, event.clientX, event.clientY); });
+      row.addEventListener('contextmenu', (event) => { event.preventDefault(); event.stopPropagation(); const liveEntry = getEntry(rowPath); if (!liveEntry) return; if (notebookEntry) { openNotebookContext(liveEntry, event.clientX, event.clientY); return; } if (notebookTree) selectNotebook(notebookRootForPath(rowPath)); state.rootTargeted = false; state.selectedPath = rowPath; state.selectedFolder = liveEntry.kind === 'folder' ? rowPath : parentPath(rowPath); updateTreeSelection(); openContextMenu(liveEntry, event.clientX, event.clientY, { fileTree: !notebookTree }); });
       row.addEventListener('dragstart', (event) => {
         if (notebookTree || !row.draggable || !noteWorkspaceVisible() || noteMovePromise || notebookDropRunning) { event.preventDefault(); return; }
         clearNoteTreeDrag(); state.draggedPath = rowPath; noteTreeDragRow = row; row.classList.add('dragging');
@@ -3367,7 +3372,11 @@
       let graphRetired = false;
       const reconcile = state.initialized && !options?.background && options?.reconcile !== false && noteWorkspaceVisible();
       if (state.indexGeneration !== undefined && !options?.reset && !reconcile) {
-        const delta = await request('/api/note-changes?since=' + state.indexGeneration); if (!current()) return false;
+        const delta = await request('/api/note-changes?since=' + state.indexGeneration
+          + (fileColorHost?.instance ? '&fileColors=1' : '')); if (!current()) return false;
+        fileColorHost?.instance?.sync(delta.fileColorGeneration);
+        if (delta.fileColorWarning && delta.fileColorWarning !== fileColorWarning && fileColorHost?.instance) showToast(delta.fileColorWarning, 'error');
+        fileColorWarning = delta.fileColorWarning || '';
         indexChanged = delta.changes?.length > 0 || state.indexState?.phase !== delta.index?.phase;
         state.indexState = delta.index;
         if (!delta.reset && !delta.hasMore) {
@@ -3505,6 +3514,7 @@
     document.dispatchEvent(new Event('relatum:usage-target'));
   }
   function syncEditorExtensions() {
+    fileColorHost?.refresh();
     liveEditor?.setExtensionsActive(noteWorkspaceVisible() && !!state.current && state.viewMode !== 'reading'
       && !graphPresentation && !browserResultsActive());
   }
@@ -3878,6 +3888,7 @@
     if (result.rewritten) {
       state.documentCache.forEach((cached, path) => { if (cached !== state.current && !hasPendingEdits(cached)) state.documentCache.delete(path); });
     }
+    fileColorHost?.instance?.invalidate();
     if (Object.prototype.hasOwnProperty.call(state.notebookColors, source)) {
       const color = state.notebookColors[source]; delete state.notebookColors[source]; state.notebookColors[destination] = color;
       queueNotebookSettings({ colors: { [destination]: color }, pruneMissing: [source] });
@@ -4013,6 +4024,7 @@
       await reconcileExternalTree(previousTabs);
       if (notebookMissing) selectNotebook('', { rootTarget: true });
       showToast(tr('recycled'));
+      if (result.fileColorWarning) showToast(result.fileColorWarning, 'error');
     } catch (error) {
       if (isMissingError(error)) await refreshTree(false, { silentErrors: true });
       else { rollback(); showToast(error.message || tr('recycle'), 'error'); }
@@ -4563,6 +4575,14 @@
     if (!entry) { showContext([contextButton(tr('newNote'), () => createEntry('note', { parent: state.notebookRoot })), contextButton(tr('newFolder'), () => createEntry('folder', { parent: state.notebookRoot })), separator(), contextButton(tr('refresh'), () => triggerExternalSync({ announce: true })), contextButton(tr('openLibrary'), () => reveal(state.notebookRoot, false))], x, y); return; }
     state.selectedPath = entry.path;
     const items = [];
+    if (fileColorHost?.instance && options?.fileTree) {
+      items.push(createColorPalette(fileColorHost.instance.get(entry.path), color => {
+        closeContextMenu(); fileColorHost?.instance?.set(entry.path, color);
+      }, language() === 'en' ? 'File color' : '文件颜色'),
+      contextButton(language() === 'en' ? 'Clear color' : '清除颜色', () => {
+        closeContextMenu(); fileColorHost?.instance?.set(entry.path, null);
+      }), separator());
+    }
     if (entry.kind === 'note' && options && options.viewModes) {
       items.push(
         viewModeButton('live', tr('livePreview')),
@@ -4587,26 +4607,28 @@
     showContext(items, x, y, options && options.source);
   }
 
+  function createColorPalette(selected, choose, label) {
+    const colors = document.createElement('div'); colors.className = 'note-notebook-colors';
+    colors.setAttribute('role', 'group'); colors.setAttribute('aria-label', label);
+    NOTEBOOK_COLORS.forEach(color => {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'note-notebook-icon'; button.dataset.color = color;
+      button.setAttribute('aria-label', notebookCopy(color)); button.setAttribute('aria-pressed', String(selected === color));
+      button.addEventListener('click', () => choose(color)); colors.append(button);
+    });
+    return colors;
+  }
   function openNotebookContext(entry, x, y) {
     closeContextMenu({ instant: true });
     const hide = contextButton(notebookCopy('hide'), () => commitNotebookVisibility({ [entry.path]: false }));
     hide.disabled = notebookVisibilityBusy;
     if (!entry.path) { showContext([contextButton(tr('openExplorer'), () => reveal('', false)), hide], x, y); return; }
-    const colors = document.createElement('div'); colors.className = 'note-notebook-colors';
-    colors.setAttribute('role', 'group'); colors.setAttribute('aria-label', language() === 'en' ? 'Notebook color' : '笔记本颜色');
-    NOTEBOOK_COLORS.forEach((color) => {
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'note-notebook-icon'; button.dataset.color = color;
-      button.setAttribute('aria-label', notebookCopy(color));
-      button.setAttribute('aria-pressed', String((state.notebookColors[entry.path] || 'gray') === color));
-      button.addEventListener('click', () => {
+    const colors = createColorPalette(state.notebookColors[entry.path] || 'gray', color => {
         closeContextMenu(); state.notebookColors[entry.path] = color;
         notebookTreeEl.querySelectorAll('.note-notebook-root > .note-tree-row').forEach((row) => {
           if (row.dataset.notePath === entry.path) row.querySelector('.note-notebook-icon').dataset.color = color;
         });
         queueNotebookSettings({ colors: { [entry.path]: color } });
-      });
-      colors.appendChild(button);
-    });
+    }, language() === 'en' ? 'Notebook color' : '笔记本颜色');
     showContext([colors, separator(), contextButton(tr('rename'), () => beginInlineRename(entry.path)),
       contextButton(tr('openExplorer'), () => reveal(entry.path, false)), hide, contextButton(tr('recycle'), () => recycleEntry(entry), true)], x, y);
   }
@@ -5478,6 +5500,10 @@
   document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); noteGraph?.setLanguage(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeSettingsDialog();
+  fileColorHost = window.RelatumNoteExtensions.attachWorkspace('file-colors', {
+    host: treeEl, entries: () => state.entryIndex, rows: () => treeRowIndexes.get(treeEl).rows,
+    isCurrent: noteWorkspaceVisible, post, notify: showToast, language, colors: NOTEBOOK_COLORS,
+  });
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateSidePanel(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   updateBrowserControls();
   window.CanvasNoteWorkspace = { activate, deactivate, preload, preloadGraph, flushSave, toggleCanvasPanel,
