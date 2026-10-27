@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-10-26（笔记扩展框架与公式输入助手、交互选择题与引导、笔记本显隐及设置；保留启动首帧、统计归档、备份及各工作区既有边界）。
+> 最后按源码校准：2026-10-27（latex辅助输入 1.1 的片段表单、连续输入、分式与矩阵；保留笔记扩展生命周期、交互选择题、启动首帧及各工作区既有边界）。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -74,7 +74,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 笔记设置由 `assets/settings-dialog.js` 与专用 CSS 提供应用内居中的原生 `dialog`，位于工作区变换容器之外，常规 1200×820 CSS px、四周留白、黑白灰主题、窄窗顶部分类导航。`assets/note-workspace.js` 注册外观、编辑、文件与笔记库、侧栏、引导、AI设置、AI对话、图谱、内嵌画布、快捷键、系统、笔记本、扩展十三类；内嵌画布使用本地 `note-icon-wallpaper` 山景显示器 SVG，笔记本紧接系统且使用 `notebooks` ID，扩展紧接笔记本且使用 `extensions` ID 和 `note-icon-puzzle`。AI设置保留 `ai` ID，AI对话为紧接其后的 `ai-chat`，使用路径绘制的 AI 字母 SVG，禁用笔记 AI 时两类均不注册，右栏仍叫 AI。通用控制器管理分类、搜索、确认、焦点及有限动画，不保存业务偏好；`open({category,trigger})/close({restoreFocus,instant,reason})/setLanguage()/destroy()` 供入口调用。分类可声明 `layout:'fill'` 填满内容区、无 reset 时隐藏分类恢复、空页脚不占位；`searchMode:'category'` 仅匹配分类名称与关键词，不检索聊天内容。搜索支持可选 `onSearch(query)` 按需准备分类内容，异步完成只刷新仍相同的搜索，不抢占新操作；分类关键词只作分类级回退，字段结果按自身名称/说明匹配。搜索跳转展开目标的 details 祖先，选择可见且启用的表单控件，自制下拉聚焦实际触发按钮，不聚焦隐藏 select。`onClose({reason})` 在关闭开始调用，`onClosed({reason})` 只在真正关闭后调用，开合版本使旧收尾不能改动重开的弹窗；`whenContentSettled()/finishContentMotion()` 协调聊天布局与锚定弹层。右侧齿轮、原库设置和画布默认样式入口共用弹窗，设置即时生效；分类恢复仅重置对应偏好，全部恢复另外确认，AI 重置保留模型、Key、预设与当前临时对话。普通失焦保留弹窗但结束录制，离场、隐藏、原生最小化和 pagehide 关闭，候选交接核对原正文/标签/操作身份，不改笔记或重建编辑器。
 
-笔记扩展由 `assets/note-extensions.js` 管注册、偏好与每编辑器的独立 Compartment；`note-extensions/catalog.js` 只含内置元数据、选项及设置工厂，`note-extensions-settings.js` 与专用 CSS 管卡片。详情首次展开或相关搜索才创建，不加载运行时；启用且真实编辑视图可见才加载扩展脚本，关闭、阅读、离场、隐藏、最小化和 pagehide 卸载配置。输入未结束先暂停任务，原交接完成后只应用最新选项；迟到加载核对宿主/配置身份，不重建编辑器或改正文、历史和滚动。首个“公式输入助手” `latex-input` 默认关闭，内置 16 个片段，开启后默认自动展开，可改为 Tab 确认；只处理有效公式与单光标普通输入，代码、注释、公式文本参数、候选、粘贴、外部替换及历史回放不自动展开。Tab/Shift+Tab 处理嵌套占位后回落既有输入，Escape 退出；占位只在内存中映射，切文档或卸载清理。沿用共享有界公式/保护区域识别、离线 CodeMirror 与已有 MathJax，无第二解析器、渲染器、安装包、市场或新 HTTP API。触发映射参考固定上游提交并保留 MIT 许可，详见 `docs/note-extensions-2026-10-26.md`。
+笔记扩展由 `assets/note-extensions.js` 管注册、偏好与每编辑器的独立 Compartment；`note-extensions/catalog.js` 只含内置元数据、规范化与设置工厂，`note-extensions-settings.js` 与专用 CSS 管卡片。详情首次展开或相关搜索才创建，不加载运行时；启用且真实编辑视图可见才加载扩展脚本，关闭、阅读、离场、隐藏、最小化和 pagehide 卸载配置。输入未结束先暂停任务，原交接完成后只应用最新选项；迟到加载核对宿主/配置身份，不重建编辑器或改正文、历史和滚动。首项中文显示“latex辅助输入 1.1”、英文“LaTeX Input Assistant 1.1”，稳定 ID `latex-input`、元数据版本 `1.1.0`，总开关默认关闭；自动展开、分式、Tab 跳出、矩阵和数字下标分别默认开启，旧偏好保留。61 个内置片段支持编辑、启停及恢复，自定义表单支持增删改和启停；最多 128 条、触发词 64 字符、模板 4096 字符，纯文字及唯一 `$1`–`$9`/`$0` 占位，不执行 JavaScript 或用户正则。只处理有效公式与单光标普通输入，代码、注释、文本及环境名称参数、候选、粘贴、外部替换及历史回放不自动展开。助手生成的命令按会话边界支持连续幂次、字母及希腊命令；Tab 依次尝试展开、占位、矩阵单元和公式跳出，手动模式也支持嵌套，Shift+Tab 返回占位，Escape 清除占位。分式提取有界相邻操作数；矩阵顶层 Tab/Enter/Shift+Enter 分别插入单元分隔、行结束换行及跳出环境，保留引用/Callout 前缀。占位、命令边界及有界结构缓存不持久化，切文档或卸载清理。沿用共享公式/保护区域识别、离线 CodeMirror 与已有 MathJax，无第二解析器、渲染器、安装包、市场或新 HTTP API。触发映射参考固定上游提交并保留 MIT 许可，详见 `docs/note-extensions-2026-10-26.md`。
 
 `assets/note-system.js` 由共享加载器先于笔记运行时加载，提供系统页及统一资源策略，选项始终显示，不再有“展开细调”。`canvas:noteSystem:v1` 仅保存 `animations/prefetch/cache/renderScale`，默认开动画、开正文预读、标准缓存、100% 图谱像素比例；启动不写默认，显式改动自动纳入当前模式的桌面快照。均衡、节省资源（关动画、关预读、较小缓存、75%）和切换优先（开动画、开预读、较大缓存、100%）由实际值匹配，手动组合显示自定义。缓存为极小、较小、标准、较大、更大五档；新增 tiny/xlarge，原三档存储值和容量不变。正文、图谱分别为 3/6/24/48/96 项与 2/4/16/32/64MiB，Mermaid 主线程和 Worker 各为 4/8/32/64/128 项与 1/2/8/16/32MiB；当前正文、待保存内容、活动图谱/图表可受保护而超预算，这不是进程内存硬上限。调低立即淘汰闲置项，清理取消预读与图谱准备，版本隔离阻止旧任务补回缓存，保留正文、撤销、AI 对话、活动视图及阅读高度提示；预读取消不得 abort 与前台共用的读取。统一 motion 合并系统低动态和用户选择，结束已有动效，只影响笔记及所属浮层；说明明确取消勾选后关闭交互动效。图谱清晰度 50%–100% 每 5% 一档，通过共享引擎可选 `renderScale/setRenderScale()` 更新有效 DPR，不重建引擎、不改变 CSS 命中、文字、节点和镜头，其他宿主默认 1。图谱启动预加载独立于预设并保持下次启动生效；系统恢复同时清除启动预加载，图谱恢复只处理间距。禁用功能不显示专属参数或加载资源。接口、预算与验证见 `docs/note-system-2026-10-25.md`；集中入口为 `tests/note-system-browser.js`，使用隔离库且不重新打包。
 
@@ -486,7 +486,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 ### 浏览器本地偏好
 
-- 笔记扩展使用 `canvas:noteExtensions:v1` 的 `{version:1,extensions:{<id>:{enabled,options}}}`，启动不写默认；无效字段按注册默认回退，未知扩展记录保留。扩展分类恢复和全部笔记设置恢复删除此键，其他分类恢复不处理它。沿用桌面 `canvas:*` 按模式快照，不写笔记正文或新增后端配置。
+- 笔记扩展使用 `canvas:noteExtensions:v1` 的 `{version:1,extensions:{<id>:{enabled,options}}}`，启动不写默认；无效字段按注册默认回退，未知扩展记录保留。注册记录可用 `normalizeOptions(value)` 返回结构化独立副本，未声明时保留原类型规则。`latex-input` 的选项为 `automatic/autoFraction/tabout/matrix/subscripts` 及内置覆盖 `overrides`、自定义 `custom` 片段数组；旧记录缺项采用默认，不启动回写。扩展分类恢复和全部笔记设置恢复删除此键，其他分类恢复不处理它。沿用桌面 `canvas:*` 按模式快照，不写笔记正文或新增后端配置。
 
 - 工作区展示用 `canvas:workspaceLayout:v1` 保存完整 `{order,hidden}`，与启动器功能开关分开；正常读取不写默认。桌面沿用 `canvas:*` 的按模式快照，无新后端文件或 HTTP 接口。损坏值安全回退，启动选择沿用 `canvas:startWorkspace:v1` 的上次仍可见项，否则取第一项，没有候选为 `none`；空白时不覆盖上次真实工作区 ID。新增描述缺少 `defaultVisible:true` 即默认隐藏。
 - 笔记系统策略使用 `canvas:noteSystem:v1` 的 JSON（`animations`、`prefetch` 布尔值，`cache` 为 `tiny/small/standard/large/xlarge`，`renderScale` 为 `.5` 至 `1`、每 `.05` 一档）；字段无效时内存回退，不在启动时改写原值，原三档缓存及 `.5/.75/1` 继续兼容。恢复系统或全部笔记设置删除此键；图谱启动预加载继续使用原独立键。桌面沿用 `data/desktop-sessions/<模式>/preferences.json`，不新增后端配置或正文持久化字段，缓存概览不持久化。
@@ -1066,7 +1066,7 @@ AI 设置使用独立星芒 SVG，按当前对话预设、连接、生成参数�
 
 ## 11. 验证清单
 
-笔记扩展使用 `node tests/note-extensions-browser.js`，沿用 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`；单个隔离生产页面覆盖开关/设置恢复、详情与搜索按需、加载失败和迟到、16 个片段、嵌套占位、撤销重做、保护区域、源码模式、原生候选交接、多光标、阅读/最小化/pagehide、实际保存和重载，以及深浅/窄窗截图。数据、截图和报告只写临时目录，结束关闭服务和浏览器；按本次用户要求只做定向验证，不重复全量回归、独立性能基准或桌面打包。
+笔记扩展使用 `node tests/note-extensions-browser.js`，沿用 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`；隔离生产页面覆盖开关/恢复、详情与搜索按需、加载失败和迟到、原有及新增片段、连续命令、自动/手动嵌套、分式/历史、公式跳出、矩阵/Callout、片段表单/限额/重载、旧偏好及未知扩展保留、保护区域、源码模式、原生候选交接、多光标、阅读/最小化/pagehide、实际保存，以及中英文深浅/窄窗截图。数据、截图和报告只写临时目录，结束关闭服务和浏览器；仅做定向验证，不重复全量回归、独立性能基准或桌面打包，真实微软拼音候选窗仍需桌面人工验收。
 
 笔记选择题运行 `node tests/note-quiz-core-regression.js` 与 `node tests/note-quiz-browser.js`，覆盖语法、引用/Callout、frontmatter 位置、重复题块、判分/重做/键盘、正文与历史不变、状态映射/外部替换、公式、资源按需/禁用/重试、迟到加载、最小化/pagehide、刷新、百题可见挂载及闲置零 RAF。`node tests/note-quiz-layout-browser.js` 另覆盖 32 组紧凑布局、真实空行的点击/输入/历史、12 组反馈变化后的鼠标落点、4 组 Chromium 原生候选，以及多种语法混排和长文滚动；配合实时编辑器静态与原 `note-live-presentation-browser.js` 回归，保留其他语法边界。再运行 `node tests/note-settings-browser.js`（七种功能组合，含 no-quiz；完整模式额外验证题块旁空行输入、保存与撤销/重做的真实磁盘内容）、`node tests/feature-profile-browser.js notes-quiz notes-quiz-off notes-quiz-parent-off`、`python -B -m unittest tests.test_feature_profile tests.test_launcher_native`，验证引导复制/恢复/记忆、真实 Markdown 字节与保存请求不变，以及启动器父子开关和静态资源权限。继续回归 Markdown、实时编辑器、输入、公式和 Mermaid；浏览器沿用已有三项宿主变量，Python 单测设置隔离 `RELATUM_DATA_ROOT`，截图与报告只写临时目录，不重新打包。
 

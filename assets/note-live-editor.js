@@ -5663,7 +5663,8 @@
       const find = (source, offset) => {
         const math = window.MarkdownMini.mathRanges(source).find(range => range.to - range.from <= (range.display ? BLOCK_MATH_LIMIT : INLINE_MATH_LIMIT)
           && offset + range.from + range.open.length <= from && offset + range.to - range.close.length >= to);
-        return math ? { from: offset + math.from + math.open.length, to: offset + math.to - math.close.length } : null;
+        return math ? { from: offset + math.from + math.open.length, to: offset + math.to - math.close.length,
+          outerFrom: offset + math.from, outerTo: offset + math.to, open: math.open, close: math.close } : null;
       };
       const inline = find(line.text, line.from);
       if (inline) return inline;

@@ -14,3 +14,23 @@
 .note-extension-card code { font-family: var(--font-code, monospace); }
 .note-extension-status:not([hidden]) { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 12px; overflow-wrap: anywhere; }
 .note-extension-status button { flex: none; }
+.note-latex-settings h4 { font-size: 13px; margin: 24px 0 10px; }
+.note-latex-list { max-height: 360px; overflow: auto; overscroll-behavior: contain; }
+.note-latex-list:empty { display: none; }
+.note-latex-row { display: grid; grid-template-columns: 20px minmax(55px, .6fr) minmax(100px, 2fr) auto auto; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--settings-selected); font-size: 12px; }
+.note-latex-row code { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.note-latex-settings button { font: inherit; font-size: 12px; color: var(--settings-text); background: var(--settings-card); border: 1px solid var(--settings-selected); border-radius: 7px; padding: 6px 10px; cursor: pointer; }
+.note-latex-settings button:hover { background: var(--settings-selected); }
+.note-latex-settings > button { margin-top: 12px; }
+.note-latex-form { margin-top: 16px; padding: 14px; border: 1px solid var(--settings-selected); border-radius: 10px; }
+.note-latex-form[hidden] { display: none; }
+.note-latex-form label { display: grid; gap: 6px; margin-bottom: 12px; font-size: 12px; }
+.note-latex-form input, .note-latex-form textarea, .note-latex-form select { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid var(--settings-selected); border-radius: 7px; background: var(--settings-card); color: var(--settings-text); padding: 8px; font: inherit; }
+.note-latex-form textarea { min-height: 80px; resize: vertical; font-family: var(--font-code, monospace); }
+.note-latex-form > div { display: flex; gap: 8px; }
+.note-latex-form [role="alert"]:empty { display: none; }
+.note-latex-form [role="alert"] { color: var(--settings-text); }
+@media (max-width: 640px) {
+  .note-latex-row { grid-template-columns: 20px minmax(45px, 1fr) auto auto; gap: 6px; }
+  .note-latex-row code:nth-of-type(2) { grid-column: 2 / -1; grid-row: 2; }
+}

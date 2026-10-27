@@ -49,12 +49,43 @@ async function main() {
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteExtensions:v1')), null);
     assert(!requests.some(url => url.endsWith('/note-extensions/latex-input.js')), 'disabled extension stays unloaded, even in settings');
     const toggle = dialog.locator('[data-extension-enabled="latex-input"]');
-    assert.equal(await dialog.locator('.note-extension-card table').count(), 0, 'details are lazy');
+    assert.equal(await dialog.locator('.note-latex-row').count(), 0, 'details are lazy');
     await dialog.locator('[data-settings-search]').fill('自动展开');
     await dialog.locator('.relatum-settings-result').first().click();
-    assert.equal(await dialog.locator('.note-extension-card table tr').count(), 16);
+    assert.equal(await dialog.locator('.note-latex-row').count(), await page.evaluate(() => RelatumNoteExtensions.list()[0].snippets.length));
+    assert.equal(await dialog.locator('.note-extension-toggle strong').textContent(), 'latex辅助输入 1.1');
     assert(await dialog.locator('.note-extension-card details').evaluate(element => element.open), 'search prepares settings and opens details');
     assert(!requests.some(url => url.endsWith('/note-extensions/latex-input.js')), 'search only prepares metadata');
+    const configChecks = await page.evaluate(() => {
+      const definition = RelatumNoteExtensions.list()[0], item = (id, trigger, replacement = '\\test{$1}$0') => ({ id, trigger, replacement, boundary: 'start', enabled: true });
+      const many = Array.from({ length: 129 }, (_, index) => item('custom-' + index, 'zz' + index));
+      const valid = definition.normalizeOptions({ automatic: false, custom: many });
+      const invalid = definition.normalizeOptions({ custom: [item('custom-long', 'a'.repeat(65)), item('custom-template', 'aaa', 'a'.repeat(4097)),
+        item('custom-placeholder', 'bbb', '$10'), item('custom-duplicate', 'sq'), item('custom-valid', 'c'.repeat(64))] });
+      const copy = RelatumNoteExtensions.read('latex-input'); copy.options.custom.push(item('custom-mutated', 'mmm'));
+      const collisions = definition.effectiveSnippets({ overrides: [item('sq', 'sum'), item('sum', 'sum')] });
+      return { count: valid.custom.length, defaultFraction: valid.autoFraction, automatic: valid.automatic,
+        invalid: invalid.custom.map(item => item.id), independent: RelatumNoteExtensions.read('latex-input').options.custom.length === 0,
+        repeated: definition.snippetProblem(item('custom-repeat', 'rrr', '$1$1')), unique: new Set(collisions.map(item => item.trigger)).size === collisions.length };
+    });
+    assert.deepEqual(configChecks, { count: 128, defaultFraction: true, automatic: false, invalid: ['custom-valid'], independent: true, repeated: 'placeholder', unique: true });
+    const field = key => dialog.locator('[data-latex-field="' + key + '"]');
+    const action = key => dialog.locator('[data-latex-action="' + key + '"]');
+    await action('add').click(); await field('trigger').fill('qq'); await field('replacement').fill('\\mathbb{$1}$0'); await action('save').click();
+    const customId = await page.evaluate(() => RelatumNoteExtensions.read('latex-input').options.custom[0].id);
+    const customRow = () => dialog.locator('[data-latex-snippet="' + customId + '"]');
+    await customRow().locator('input').uncheck(); assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('latex-input').options.custom[0].enabled), false);
+    await customRow().locator('input').check();
+    await customRow().locator('[data-latex-action="edit"]').click(); await field('trigger').fill('sq'); await action('save').click();
+    assert((await dialog.locator('.note-latex-form [role="alert"]').textContent()).includes('已被')); assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('latex-input').options.custom[0].trigger), 'qq');
+    await field('trigger').fill('qq'); await field('replacement').fill('$10'); await action('save').click();
+    assert((await dialog.locator('.note-latex-form [role="alert"]').textContent()).includes('占位')); await action('cancel').click();
+    await dialog.locator('[data-latex-snippet="sq"] [data-latex-action="edit"]').click();
+    await field('replacement').fill('\\sqrt[3]{$1}$0'); await action('save').click();
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('latex-input').options.overrides[0].replacement), '\\sqrt[3]{$1}$0');
+    await dialog.locator('[data-latex-snippet="sq"] [data-latex-action="restore"]').click();
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('latex-input').options.overrides.length), 0);
+    assert(!requests.some(url => url.endsWith('/note-extensions/latex-input.js')), 'editing snippet settings does not load runtime');
     await page.evaluate(() => { window.originalView = T.editor.view; window.originalDoc = T.editor.view.state.doc; });
     // Failed and delayed loads must never replace the editor or attach after disable.
     await page.route('**/note-extensions/latex-input.js', route => route.abort());
@@ -71,6 +102,11 @@ async function main() {
     await page.evaluate(() => T.setNoteSettingsOpen(false)); await dialog.waitFor({ state: 'hidden' });
     await reset('$  $', 2); await type('sq'); assert.equal(await doc(), '$ sq $');
     await set({ enabled: true });
+    await reset('$  $', 2); await type('qq'); await type('R'); assert.equal(await doc(), '$ \\mathbb{R} $', 'custom template uses normal placeholders');
+    await set({ options: { custom: [] } });
+    await set({ options: { overrides: [{ id: 'sq', trigger: 'sq', replacement: '\\sqrt{$1}$0', boundary: 'start', enabled: false }] } });
+    await reset('$  $', 2); await type('sq'); assert.equal(await doc(), '$ sq $', 'disabled built-in remains literal');
+    await set({ options: { overrides: [] } });
     for (const [trigger, result] of [['sq', '\\sqrt{}'], ['//', '\\frac{}{}'], ['sum', '\\sum_{}^{}'], ['int', '\\int_{}^{}'],
       ['xsr', 'x^{2}'], ['xcb', 'x^{3}'], ['xinvs', 'x^{-1}'], ['@a', '\\alpha'], ['@b', '\\beta'], ['@g', '\\gamma'],
       ['@d', '\\delta'], ['@t', '\\theta'], ['@l', '\\lambda'], ['@p', '\\pi'], ['@s', '\\sigma'], ['@o', '\\omega']]) {
@@ -84,8 +120,65 @@ async function main() {
     assert.equal(await page.evaluate(() => T.editor.view.state.sliceDoc(T.editor.view.state.selection.main.from, T.editor.view.state.selection.main.to)), '\\sqrt{x}');
     await page.keyboard.press('Tab'); await page.keyboard.press('Tab');
     assert.equal(await doc(), '$ \\frac{\\sqrt{x}}{y} $', 'nested sessions return to their outer placeholder');
+    await set({ options: { tabout: false } });
     await reset('$  $', 2); await type('sq'); await page.keyboard.press('Escape'); await page.keyboard.press('Tab');
     assert((await doc()).includes('\t'), 'Escape releases snippet Tab handling');
+    await set({ options: { tabout: true } });
+    for (const [trigger, result] of [['@asr', '\\alpha^{2}'], ['@ax', '\\alpha x'], ['@a@b', '\\alpha\\beta'],
+      ['@a1', '\\alpha_{1}'], ['x12', 'x_{12}'], ['xvec', '\\vec{x}'], ['@ahat', '\\hat{\\alpha}'],
+      ['rd', 'rd'], ['xrd', 'x^{}'], ['x_', 'x_{}'], ['sin', '\\sin'], ['@G', '\\Gamma'], ['phi', '\\phi'],
+      ['\\customsr', '\\customsr'], ['\\alphax', '\\alphax']]) {
+      await reset('$  $', 2); await type(trigger); assert.equal(await doc(), '$ ' + result + ' $', trigger);
+    }
+    await set({ options: { automatic: false } });
+    await reset('$  $', 2); await type('//'); await page.keyboard.press('Tab'); await type('sq'); await page.keyboard.press('Tab');
+    assert.equal(await doc(), '$ \\frac{\\sqrt{}}{} $', 'manual nested expansion precedes placeholder navigation');
+    await type('x'); await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await type('y');
+    assert.equal(await doc(), '$ \\frac{\\sqrt{x}}{y} $');
+    await set({ options: { automatic: true } });
+    for (const [input, result] of [['x/', '\\frac{x}{}'], ['(a+b)/', '\\frac{a+b}{}'], ['(a+b(c+d))/', '\\frac{a+b(c+d)}{}'],
+      ['a+x/', 'a+\\frac{x}{}'], ['x^{2}/', '\\frac{x^{2}}{}'], ['x^2/', '\\frac{x^2}{}'], ['\\alpha/', '\\frac{\\alpha}{}'],
+      ['\\sin(x)/', '\\frac{\\sin(x)}{}'], ['\\frac{a}{b}/', '\\frac{\\frac{a}{b}}{}'], ['x_{1}^{2}/', '\\frac{x_{1}^{2}}{}'],
+      ['a&x/', 'a&\\frac{x}{}']]) {
+      await reset('$  $', 2);
+      // Literal source setup avoids the independent numeric-subscript input rule.
+      const prefix = input.slice(0, -1); await reset('$ ' + prefix + ' $', 2 + prefix.length); await type('/');
+      assert.equal(await doc(), '$ ' + result + ' $', 'fraction ' + input);
+      await page.keyboard.press('Control+z'); await settle(); assert.equal(await doc(), '$ ' + input + ' $', 'fraction undo');
+      await page.keyboard.press('Control+y'); await settle(); assert.equal(await doc(), '$ ' + result + ' $', 'fraction redo');
+    }
+    await set({ options: { automatic: false } }); await reset('$ x $', 3); await type('/'); assert.equal(await doc(), '$ x/ $');
+    await page.keyboard.press('Tab'); assert.equal(await doc(), '$ \\frac{x}{} $');
+    await set({ options: { automatic: true, autoFraction: false } }); await reset('$ x $', 3); await type('/'); assert.equal(await doc(), '$ x/ $');
+    await set({ options: { autoFraction: true } });
+    for (const [value, at, target] of [['$ (x) $', 4, 5], ['$ \\left(x\\right) $', 8, 16], ['$ x $', 4, 5], ['\\(x\\)', 3, 5]]) {
+      await reset(value, at); await page.keyboard.press('Tab'); assert.equal(await page.evaluate(() => T.editor.view.state.selection.main.head), target, 'tabout ' + value);
+      assert.equal(await doc(), value, 'tabout does not write source');
+    }
+    for (const environment of ['matrix', 'pmatrix', 'bmatrix', 'Bmatrix', 'vmatrix', 'Vmatrix', 'array', 'cases', 'align', 'aligned', 'gather']) {
+      const value = '$$\n\\begin{' + environment + '}\na\n\\end{' + environment + '}\n$$', at = value.indexOf('\na\n') + 2;
+      await reset(value, at); await page.keyboard.press('Tab'); await type('b'); await page.keyboard.press('Enter'); await type('c');
+      assert((await doc()).includes('\na&b\\\\\nc\n'), 'matrix keys ' + environment);
+      await page.keyboard.press('Shift+Enter');
+      assert.equal(await page.evaluate(() => T.editor.view.state.selection.main.head), (await doc()).indexOf('\\end{') + ('\\end{' + environment + '}').length);
+    }
+    const quotedMatrix = '> [!note]\n> $$\n> \\begin{matrix}\n> a\n> \\end{matrix}\n> $$';
+    await reset(quotedMatrix, quotedMatrix.indexOf('> a') + 3); await page.keyboard.press('Enter'); await type('b');
+    assert((await doc()).includes('> a\\\\\n> b\n'), 'matrix preserves Callout prefixes');
+    const nestedMatrix = '$$\n\\begin{matrix}\n(x)\n\\end{matrix}\n$$';
+    await reset(nestedMatrix, nestedMatrix.indexOf('(x)') + 2); await page.keyboard.press('Tab');
+    assert.equal(await doc(), nestedMatrix, 'bracket navigation wins inside matrix parameters');
+    await set({ options: { matrix: false } }); await reset(nestedMatrix, nestedMatrix.indexOf('(x)') + 3); await page.keyboard.press('Tab');
+    assert.notEqual(await doc(), nestedMatrix, 'matrix switch releases Tab to ordinary indentation');
+    assert(!(await doc()).includes('&')); await set({ options: { matrix: true } });
+    const environments = '$$\n\\begin{matrix}\n\\begin{cases}\nx\n\\end{cases}\n\\end{matrix}\n$$';
+    await reset(environments, environments.indexOf('\nx\n') + 2); await page.keyboard.press('Shift+Enter');
+    assert.equal(await page.evaluate(() => T.editor.view.state.selection.main.head), environments.indexOf('\\end{cases}') + 11, 'nested matrix exits the innermost environment');
+    await page.keyboard.press('Tab'); assert((await doc()).includes('\\end{cases}&'), 'outer environment resumes after inner exit');
+    await set({ options: { tabout: false, subscripts: false } });
+    await reset('$ x $', 3); await type('1'); assert.equal(await doc(), '$ x1 $', 'numeric subscript has its own switch');
+    await reset('$ (x) $', 4); await page.keyboard.press('Tab'); assert.notEqual(await doc(), '$ (x) $', 'tabout switch releases original input');
+    await set({ options: { tabout: true, subscripts: true } });
     for (const [value, at, result] of [['\\(  \\)', 3, '\\( \\alpha \\)'], ['\\[  \\]', 3, '\\[ \\alpha \\]'],
       ['$$\n\n$$', 3, '$$\n\\alpha\n$$'], ['> [!note]\n> $$\n> \n> $$', 16, '> [!note]\n> $$\n> \\alpha\n> $$']]) {
       const position = value.includes('> $$') ? value.indexOf('\n> \n') + 3 : at;
@@ -95,7 +188,7 @@ async function main() {
     await page.evaluate(() => T.setViewMode('source')); await reset('$$\n\n$$', 3); await type('sq'); assert.equal(await doc(), '$$\n\\sqrt{}\n$$');
     for (const [value, at, trigger] of [['plain ', 6, 'sq'], ['`$  $`', 3, 'sq'], ['```tex\n$  $\n```', 9, 'sq'],
       ['<!-- $  $ -->', 7, 'sq'], ['$ \\text{} $', 8, 'sq'], ['$ \\operatorname{} $', 16, 'sq'], ['$ %  $', 4, 'sq'],
-      ['$ \\textcolor{red}{} $', 18, 'sq'],
+      ['$ \\textcolor{red}{} $', 18, 'sq'], ['$ \\begin{} $', 9, 'int'], ['$ \\end{} $', 7, 'sum'],
       ['$ \\ $', 3, '@a'], ['$ as $', 4, 'q']]) {
       await reset(value, at); await type(trigger); assert.equal(await doc(), value.slice(0, at) + trigger + value.slice(at), 'protected source ' + value);
     }
@@ -139,22 +232,45 @@ async function main() {
     await reset('$  $', 2); await type('@t'); assert.equal(await doc(), '$ \\theta $');
     assert(await page.evaluate(() => T.flushSave())); assert.equal(fs.readFileSync(filename, 'utf8'), '$ \\theta $', 'normal save contains only LaTeX');
     await page.reload(); await page.waitForFunction(() => window.T?.state.current?.path === 'Main.md' && T.editor);
-    assert.deepEqual(await page.evaluate(() => RelatumNoteExtensions.read('latex-input')), { enabled: true, options: { automatic: true } });
+    assert.deepEqual(await page.evaluate(() => RelatumNoteExtensions.read('latex-input')), { enabled: true,
+      options: { automatic: true, autoFraction: true, tabout: true, matrix: true, subscripts: true, overrides: [], custom: [] } });
     await reset('$  $', 2); await type('sq'); assert.equal(await doc(), '$ \\sqrt{} $', 'reload restores activation');
+    const legacyPreference = JSON.stringify({ version: 1, extensions: { 'latex-input': { enabled: true, options: { automatic: false } },
+      'future-extension': { enabled: true, options: { keep: 'unchanged' } } } });
+    await page.evaluate(value => localStorage.setItem('canvas:noteExtensions:v1', value), legacyPreference);
+    await page.reload(); await page.waitForFunction(() => window.T?.editor && T.state.current?.path === 'Main.md');
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('latex-input').options.automatic), false, 'legacy manual preference survives upgrade');
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('latex-input').options.autoFraction), true, 'new capability defaults on');
+    assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteExtensions:v1')), legacyPreference, 'upgrade does not write defaults');
+    await set({ options: { automatic: true } });
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('canvas:noteExtensions:v1')).extensions['future-extension']),
+      { enabled: true, options: { keep: 'unchanged' } }, 'unknown extension is preserved');
     await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'extensions' })); await dialog.waitFor();
     await dialog.locator('.note-extension-card summary').click();
+    await action('add').click(); await field('trigger').fill('z'.repeat(64)); await field('replacement').fill('\\boldsymbol{$1}$0'); await action('save').click();
+    await page.evaluate(() => T.setNoteSettingsOpen(false)); await dialog.waitFor({ state: 'hidden' });
+    await reset('$  $', 2); await type('z'.repeat(64)); assert.equal(await doc(), '$ \\boldsymbol{} $', 'longest configured trigger is supported');
+    await page.reload(); await page.waitForFunction(() => window.T?.editor && T.state.current?.path === 'Main.md');
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('latex-input').options.custom[0].trigger.length), 64, 'custom snippet survives reload');
+    await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'extensions' })); await dialog.waitFor();
+    await dialog.locator('.note-extension-card summary').click();
+    await dialog.locator('[data-latex-action="delete"]').click(); assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('latex-input').options.custom.length), 0);
+    await dialog.locator('.relatum-settings-scroll').evaluate(element => { element.scrollTop = 0; });
+    await page.screenshot({ path: path.join(output, 'extensions-overview.png') });
+    await action('add').click(); await field('trigger').fill('demo'); await field('replacement').fill('\\mathbb{$1}$0');
     await page.screenshot({ path: path.join(output, 'extensions-light.png') });
     await page.setViewportSize({ width: 600, height: 860 });
     await page.evaluate(() => { document.body.dataset.startTheme = 'dark'; RelatumI18n.setLanguage('en'); });
     await settle(); await page.screenshot({ path: path.join(output, 'extensions-dark-narrow.png') });
     assert.equal(await dialog.locator('[data-settings-title]').textContent(), 'Extensions');
+    assert.equal(await dialog.locator('.note-extension-toggle strong').textContent(), 'LaTeX Input Assistant 1.1');
     assert(await dialog.locator('nav [data-settings-category="extensions"]').isVisible());
     await dialog.locator('[data-settings-action="reset-category"]').click();
     await dialog.locator('[data-settings-action="accept-reset"]').click();
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteExtensions:v1')), null);
     assert.equal(await toggle.isChecked(), false);
     assert.deepEqual(errors, [], 'no browser exceptions');
-    fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ passed: true, scenarios: ['lazy loading and failure', 'stale load', '16 snippets', 'undo/redo', 'nested tabstops', 'boundaries', 'source mode', 'IME handoff', 'multi-cursor', 'lifecycle', 'save/reload', 'settings and reset'] }, null, 2));
+    fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ passed: true, scenarios: ['lazy loading and failure', 'stale load', 'original and added snippets', 'continuous commands', 'manual and automatic nesting', 'fractions and history', 'tabout', 'matrix and Callout', 'custom snippet forms, limits and reload', 'boundaries', 'source mode', 'IME handoff', 'multi-cursor', 'lifecycle', 'save/reload', 'bilingual settings and reset'] }, null, 2));
     console.log('PASS note extensions; artifacts: ' + output);
   } catch (error) {
     if (page) { await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {}); console.error(await page.evaluate(() => ({ editor: !!window.T?.editor, text: window.T?.editor?.view.state.doc.toString(), error: document.body.innerText.slice(-500) })).catch(() => ({}))); }

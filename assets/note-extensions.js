@@ -11,6 +11,7 @@
   } catch (_) {}
   function publish() { listeners.forEach(listener => listener()); hosts.forEach(host => host.refresh()); }
   function optionsFor(definition, value) {
+    if (typeof definition.normalizeOptions === 'function') return definition.normalizeOptions(value);
     const options = {};
     Object.entries(definition.defaultOptions || {}).forEach(([key, fallback]) => {
       options[key] = typeof value?.[key] === typeof fallback ? value[key] : fallback;

@@ -32,7 +32,7 @@
       intro.textContent = english ? 'Built-in offline extensions. Enable the tools you need; changes apply immediately.' : '随软件附带的离线扩展。按需开启，更改立即生效。';
       rows.forEach(row => {
         row.input.checked = registry.read(row.definition.id).enabled;
-        row.title.textContent = row.definition.name[index] + ' · ' + row.definition.version;
+        row.title.textContent = row.definition.name[index] + (row.definition.displayVersion ? ' ' + row.definition.displayVersion : ' · ' + row.definition.version);
         row.description.textContent = row.definition.description[index];
         row.summary.textContent = english ? 'Settings & usage' : '设置与使用说明';
         const error = registry.error(row.definition.id); row.status.hidden = !error;
