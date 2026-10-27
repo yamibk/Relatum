@@ -28,6 +28,7 @@
     const status = find('[data-settings-status]');
     const motion = options.motion || window.RelatumNoteSystem?.motion || matchMedia('(prefers-reduced-motion: reduce)');
     let selected = categories[0].id, trigger = null, closing = false, statusTimer = 0, resetTarget = '', backdropDown = false, disposed = false, surfaceRevision = 0;
+    let actionConfirmation = null;
     const positions = new Map(), buttons = new Map(), lifetime = new AbortController();
     const animations = new Map();
     const listen = (el, event, fn, extra = {}) => el.addEventListener(event, fn, { ...extra, signal: lifetime.signal });
@@ -135,6 +136,7 @@
       if (entering) enterContent(results);
     }
     function cancelReset({ instant = false } = {}) {
+      const pending = actionConfirmation; actionConfirmation = null; pending?.resolve(false);
       const visible = !confirm.hidden, from = visible ? appearance(confirm) : null;
       const card = confirm.firstElementChild, cardFrom = visible ? appearance(card) : null;
       resetTarget = ''; confirm.inert = true; confirm.setAttribute('aria-hidden', 'true');
@@ -146,20 +148,45 @@
       animate('confirm-card', card, cardFrom, { opacity: 0, transform: 'translateY(4px) scale(.985)' }, 120);
       animate('confirm', confirm, from, { opacity: 0, transform: 'none' }, 120, finish);
     }
-    function askReset(all) {
-      if (!all && typeof categories.find(item => item.id === selected)?.reset !== 'function') return;
+    function revealConfirmation() {
       const visible = !confirm.hidden, from = visible ? appearance(confirm) : { opacity: 0, transform: 'none' };
       const card = confirm.firstElementChild, cardFrom = visible ? appearance(card) : { opacity: 0, transform: 'translateY(6px) scale(.985)' };
-      resetTarget = all ? 'all' : selected;
-      confirm.querySelector('h3').textContent = all ? message('confirmAll', '恢复全部笔记设置？', 'Reset all note settings?') : text('恢复此分类的默认设置？', 'Reset this category?');
-      confirm.querySelector('p').textContent = all
-        ? message('confirmDescription', '恢复笔记界面、侧栏顺序、AI 调用参数及其他笔记偏好。保留笔记、模型、API Key、自定义预设和聊天历史。', 'Restore note preferences, sidebar order and AI parameters. Keep notes, model, API key, custom presets and chat history.')
-        : text('将“' + label(categories.find(item => item.id === selected)) + '”恢复为默认值。', 'Restore defaults for “' + label(categories.find(item => item.id === selected)) + '”.');
       confirm.hidden = false; confirm.inert = false; confirm.removeAttribute('aria-hidden'); confirm.classList.remove('is-closing');
       find('.relatum-settings-sidebar').inert = true; find('.relatum-settings-main').inert = true;
       animate('confirm', confirm, from, { opacity: 1, transform: 'none' }, 160);
       animate('confirm-card', card, cardFrom, { opacity: 1, transform: 'none' }, 180);
       find('[data-settings-action="cancel-reset"]').focus();
+    }
+    function askReset(all) {
+      if (!all && typeof categories.find(item => item.id === selected)?.reset !== 'function') return;
+      const pending = actionConfirmation; actionConfirmation = null; pending?.resolve(false);
+      resetTarget = all ? 'all' : selected;
+      delete confirm.dataset.confirmAction;
+      find('[data-settings-action="accept-reset"]').textContent = message('accept-reset', '恢复默认', 'Restore defaults');
+      confirm.querySelector('h3').textContent = all ? message('confirmAll', '恢复全部笔记设置？', 'Reset all note settings?') : text('恢复此分类的默认设置？', 'Reset this category?');
+      confirm.querySelector('p').textContent = all
+        ? message('confirmDescription', '恢复笔记界面、侧栏顺序、AI 调用参数及其他笔记偏好。保留笔记、模型、API Key、自定义预设和聊天历史。', 'Restore note preferences, sidebar order and AI parameters. Keep notes, model, API key, custom presets and chat history.')
+        : text('将“' + label(categories.find(item => item.id === selected)) + '”恢复为默认值。', 'Restore defaults for “' + label(categories.find(item => item.id === selected)) + '”.');
+      revealConfirmation();
+    }
+    function renderActionConfirmation() {
+      confirm.querySelector('h3').textContent = actionConfirmation.title[english() ? 1 : 0];
+      confirm.querySelector('p').textContent = actionConfirmation.description[english() ? 1 : 0];
+      find('[data-settings-action="accept-reset"]').textContent = actionConfirmation.acceptLabel[english() ? 1 : 0];
+    }
+    function confirmAction(value) {
+      if (!dialog.open || dialog.inert || disposed || closing) return Promise.resolve(false);
+      cancelReset({ instant: true });
+      return new Promise(resolve => {
+        actionConfirmation = { ...value, resolve, trigger: value.trigger || document.activeElement };
+        resetTarget = 'action'; confirm.dataset.confirmAction = value.id || 'action';
+        renderActionConfirmation(); revealConfirmation();
+      });
+    }
+    function dismissConfirmation() {
+      const source = actionConfirmation?.trigger || (reset.hidden ? find('[data-settings-action="reset-all"]') : reset);
+      cancelReset();
+      if (source?.isConnected && !source.closest('[hidden],[inert]')) source.focus({ preventScroll: true });
     }
     function close({ restoreFocus = true, instant = false, reason = 'user' } = {}) {
       if (!dialog.open) return;
@@ -193,7 +220,7 @@
         if (action === 'close') button.setAttribute('aria-label', values[english() ? 1 : 0]); else button.textContent = message(action, ...values);
       });
       if (search.value) searchSettings(); else title.textContent = label(categories.find(category => category.id === selected));
-      if (resetTarget) askReset(resetTarget === 'all');
+      if (actionConfirmation) renderActionConfirmation(); else if (resetTarget) askReset(resetTarget === 'all');
     }
     listen(search, 'compositionstart', () => { search.isComposing = true; });
     listen(search, 'compositionend', () => { search.isComposing = false; searchSettings(); });
@@ -211,8 +238,13 @@
       const action = event.target.closest('[data-settings-action]')?.dataset.settingsAction;
       if (action === 'close') close();
       else if (action === 'reset-category' || action === 'reset-all') askReset(action === 'reset-all');
-      else if (action === 'cancel-reset') { cancelReset(); (reset.hidden ? find('[data-settings-action="reset-all"]') : reset).focus(); }
+      else if (action === 'cancel-reset') dismissConfirmation();
       else if (action === 'accept-reset' && resetTarget) {
+        if (actionConfirmation) {
+          const pending = actionConfirmation; actionConfirmation = null; cancelReset();
+          if (pending.trigger?.isConnected && !pending.trigger.closest('[hidden],[inert]')) pending.trigger.focus({ preventScroll: true });
+          pending.resolve(true); return;
+        }
         const target = resetTarget; cancelReset();
         try { if (target === 'all') await options.resetAll(); else await categories.find(item => item.id === target)?.reset?.(); }
         catch (_) { if (dialog.open && !dialog.inert) { status.textContent = text('恢复失败，请重试', 'Could not restore defaults. Please retry.'); (reset.hidden ? find('[data-settings-action="reset-all"]') : reset).focus(); } return; }
@@ -226,7 +258,7 @@
       event.stopPropagation();
       if (event.isComposing || event.keyCode === 229) return;
       if (options.onKeyDown?.(event)) return;
-      if (event.key === 'Escape') { event.preventDefault(); if (resetTarget) { cancelReset(); (reset.hidden ? find('[data-settings-action="reset-all"]') : reset).focus(); } else if (search.value) { search.value = ''; show(selected); } else close(); }
+      if (event.key === 'Escape') { event.preventDefault(); if (resetTarget) dismissConfirmation(); else if (search.value) { search.value = ''; show(selected); } else close(); }
       if (event.key === 'Tab') {
         const scope = resetTarget ? confirm : dialog;
         const focusable = Array.from(scope.querySelectorAll('button,input,select,textarea,[tabindex="0"]')).filter(el => !el.disabled && !el.closest('[hidden], [inert]') && el.getClientRects().length);
@@ -246,7 +278,7 @@
       items[next].click();
     });
     setLanguage(); content.hidden = true;
-    return { dialog, setLanguage, setStatus(value) { status.textContent = value; }, get isOpen() { return dialog.open && !dialog.inert; },
+    return { dialog, setLanguage, confirmAction, setStatus(value) { status.textContent = value; }, get isOpen() { return dialog.open && !dialog.inert; },
       finishContentMotion() { if (!closing) { stopMotion('dialog', true); stopMotion('page', true); stopMotion('title', true); } },
       whenContentSettled() { return Promise.all(['dialog', 'page', 'title'].map(key => animations.get(key)?.animation.finished.catch(() => {}))); },
       open({ category = selected, trigger: source } = {}) {

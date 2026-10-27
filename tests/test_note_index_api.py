@@ -79,9 +79,14 @@ class NoteIndexApiTests(unittest.TestCase):
         self.assertEqual(self.fixture.request(query, {'paths': ['N000.md'] * 513})[0], 400)
         self.assertEqual(self.fixture.request(save, {'path': '../escape.md', 'color': 'red'})[0], 403)
         self.assertEqual(self.fixture.request(save, {'path': 'N000.md'})[0], 400)
+        code, cleared = self.fixture.request('/api/note-file-colors/clear', {})
+        self.assertEqual((code, cleared['cleared']), (200, 1))
+        self.assertGreater(cleared['generation'], first['generation'])
+        self.assertEqual(self.fixture.request(query, {'paths': ['N000.md']})[1]['colors'], {})
         self.fixture.server.launch_profile = LaunchProfile({key: key == 'canvas' for key in FEATURES}, restricted=True)
         self.assertEqual(self.fixture.request(query, {'paths': []})[0], 403)
         self.assertEqual(self.fixture.request(save, {'path': 'N000.md', 'color': None})[0], 403)
+        self.assertEqual(self.fixture.request('/api/note-file-colors/clear', {})[0], 403)
 
 
 if __name__ == '__main__':

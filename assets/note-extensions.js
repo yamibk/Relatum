@@ -55,6 +55,12 @@
     loads.set(id, promise); return promise;
   }
   function retry(id) { errors.delete(id); publish(); }
+  function previewOptions(id, options) {
+    const definition = definitions.get(id);
+    if (definition?.scope !== 'workspace') return;
+    const value = options === null ? null : optionsFor(definition, { ...read(id).options, ...options });
+    hosts.forEach(host => host.previewOptions?.(id, value));
+  }
   function watch(add) {
     const method = add ? 'addEventListener' : 'removeEventListener';
     document[method]('visibilitychange', refreshHosts);
@@ -136,19 +142,26 @@
   function attachWorkspace(id, context) {
     const definition = definitions.get(id);
     if (!definition || definition.scope !== 'workspace') throw new Error('Invalid workspace extension');
-    let instance = null, disposed = false, loading = false, revision = 0;
-    function detach() { revision++; instance?.destroy?.(); instance = null; }
+    let instance = null, disposed = false, loading = false, revision = 0, preview = null, signature = '';
+    function detach() { revision++; instance?.destroy?.(); instance = null; preview = null; signature = ''; }
     const host = {
       get instance() { return instance; },
+      previewOptions(extensionId, options) { if (extensionId === id) { preview = options; host.refresh(); } },
       refresh() {
         if (disposed) return;
         if (!pageActive || document.hidden || document.documentElement.dataset.desktopMinimized === '1'
             || !context.isCurrent() || !read(id).enabled) { detach(); return; }
-        if (instance || loading || errors.has(id)) return;
+        const options = preview || read(id).options, nextSignature = JSON.stringify(options);
+        if (instance) {
+          if (signature !== nextSignature) { instance.updateOptions?.(options); signature = nextSignature; }
+          return;
+        }
+        if (loading || errors.has(id)) return;
         const token = revision; loading = true;
         definition.load().then(factory => {
           if (disposed || token !== revision || !context.isCurrent() || !read(id).enabled) return;
-          instance = factory(context, read(id).options); errors.delete(id);
+          const options = preview || read(id).options;
+          instance = factory(context, options); signature = JSON.stringify(options); errors.delete(id);
         }).catch(error => {
           if (disposed || token !== revision) return;
           errors.set(id, String(error.message || error)); listeners.forEach(listener => listener());
@@ -159,7 +172,7 @@
     if (!hosts.size) watch(true);
     hosts.add(host); host.refresh(); return host;
   }
-  window.RelatumNoteExtensions = Object.freeze({ register, read, set, reset, retry, loadScript, attachEditor, attachWorkspace,
+  window.RelatumNoteExtensions = Object.freeze({ register, read, set, reset, retry, previewOptions, loadScript, attachEditor, attachWorkspace,
     list: () => Array.from(definitions.values()),
     error: id => errors.get(id) || '',
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },

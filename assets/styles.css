@@ -2398,21 +2398,21 @@ body:not([data-start-theme="dark"]) .note-canvas-settings input[type="range"]:no
 .note-notebook-colors button[aria-pressed="true"] { outline: 1px solid var(--text-secondary); outline-offset: 2px; }
 .note-notebook-colors button:hover, .note-notebook-colors button:focus-visible, .note-notebook-colors button:active { background: var(--notebook-color, #93978f); outline: 1px solid var(--text-secondary); outline-offset: 2px; }
 /* File colors decorate individual rows, never descendant rows or names. */
-[data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color="gray"] { --file-color-rgb: 147, 151, 143; }
-[data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color="blue"] { --file-color-rgb: 94, 136, 189; }
-[data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color="cyan"] { --file-color-rgb: 85, 166, 174; }
-[data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color="green"] { --file-color-rgb: 120, 147, 108; }
-[data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color="yellow"] { --file-color-rgb: 217, 185, 91; }
-[data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color="orange"] { --file-color-rgb: 214, 150, 98; }
-[data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color="red"] { --file-color-rgb: 200, 125, 120; }
-[data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color="purple"] { --file-color-rgb: 157, 130, 184; }
-.note-workspace [data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color] { background: rgba(var(--file-color-rgb), .09); }
-.note-workspace [data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color]:hover { background: rgba(var(--file-color-rgb), .15); }
-.note-workspace [data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color]:is(.active, .opening, .selected-folder) { background: rgba(var(--file-color-rgb), .22); }
-.note-workspace [data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color] > .note-tree-icon { color: rgb(var(--file-color-rgb)); opacity: 1; }
-body.start-page[data-start-theme="dark"] [data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color] { background: rgba(var(--file-color-rgb), .14); }
-body.start-page[data-start-theme="dark"] [data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color]:hover { background: rgba(var(--file-color-rgb), .22); }
-body.start-page[data-start-theme="dark"] [data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color]:is(.active, .opening, .selected-folder) { background: rgba(var(--file-color-rgb), .3); }
+:is([data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color="gray"] { --file-color-rgb: 147, 151, 143; --file-color-icon-rgb: var(--file-color-icon-gray, 147, 151, 143); }
+:is([data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color="blue"] { --file-color-rgb: 94, 136, 189; --file-color-icon-rgb: var(--file-color-icon-blue, 94, 136, 189); }
+:is([data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color="cyan"] { --file-color-rgb: 85, 166, 174; --file-color-icon-rgb: var(--file-color-icon-cyan, 85, 166, 174); }
+:is([data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color="green"] { --file-color-rgb: 120, 147, 108; --file-color-icon-rgb: var(--file-color-icon-green, 120, 147, 108); }
+:is([data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color="yellow"] { --file-color-rgb: 217, 185, 91; --file-color-icon-rgb: var(--file-color-icon-yellow, 217, 185, 91); }
+:is([data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color="orange"] { --file-color-rgb: 214, 150, 98; --file-color-icon-rgb: var(--file-color-icon-orange, 214, 150, 98); }
+:is([data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color="red"] { --file-color-rgb: 200, 125, 120; --file-color-icon-rgb: var(--file-color-icon-red, 200, 125, 120); }
+:is([data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color="purple"] { --file-color-rgb: 157, 130, 184; --file-color-icon-rgb: var(--file-color-icon-purple, 157, 130, 184); }
+:is(.note-workspace [data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color] { background: rgba(var(--file-color-rgb), var(--file-color-background-light, .09)); }
+:is(.note-workspace [data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color]:is(:hover, [data-preview-state="hover"]) { background: rgba(var(--file-color-rgb), var(--file-color-hover-light, .15)); }
+:is(.note-workspace [data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color]:is(.active, .opening, .selected-folder, [data-preview-state="selected"]) { background: rgba(var(--file-color-rgb), var(--file-color-selected-light, .22)); }
+:is(.note-workspace [data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color] > .note-tree-icon { color: rgb(var(--file-color-icon-rgb)); opacity: 1; }
+body.start-page[data-start-theme="dark"] :is([data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color] { background: rgba(var(--file-color-rgb), var(--file-color-background-dark, .14)); }
+body.start-page[data-start-theme="dark"] :is([data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color]:is(:hover, [data-preview-state="hover"]) { background: rgba(var(--file-color-rgb), var(--file-color-hover-dark, .22)); }
+body.start-page[data-start-theme="dark"] :is([data-role="note-tree"][data-file-colors-enabled], .note-file-colors-preview) .note-tree-row[data-file-color]:is(.active, .opening, .selected-folder, [data-preview-state="selected"]) { background: rgba(var(--file-color-rgb), var(--file-color-selected-dark, .3)); }
 .note-workspace [data-role="note-tree"][data-file-colors-enabled] .note-tree-row[data-file-color].note-drop-target { background: rgba(108, 129, 95, .18); }
 @media (min-width: 1121px) {
   /* Keep the document container and its readable-width breakpoints fixed. */

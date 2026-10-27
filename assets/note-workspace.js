@@ -21,6 +21,7 @@
   const NOTEBOOK_CONTAINER = 'CustomNotebook';
   const NOTEBOOK_COLORS = ['gray', 'blue', 'cyan', 'green', 'yellow', 'orange', 'red', 'purple'];
   let fileColorHost = null;
+  let fileColorMutationChain = Promise.resolve();
   let fileColorWarning = '';
   let notebookSettingsTimer = 0, notebookSettingsChain = Promise.resolve(true), notebookSettingsPending = {};
   let notebookVisibilityBusy = false, notebookSettingsPanel = null, notebookEmptyHint = null;
@@ -1039,7 +1040,14 @@
       } });
     const resetGuide = () => { try { localStorage.removeItem(GUIDE_TOPIC_KEY); } catch (_) {} applyGuideTopic('callout', false); };
     const resetCanvas = () => { try { localStorage.removeItem('canvas:noteCanvasDefaults:v1'); } catch (_) {} pref?.resetCanvasNodeScale?.(); canvasStylePanel?.refresh(); };
-    const extensionSettings = window.RelatumNoteExtensionSettings.createPanel({ language });
+    const extensionSettings = window.RelatumNoteExtensionSettings.createPanel({ language,
+      confirmAction: value => settingsDialog.confirmAction(value),
+      async clearFileColors() {
+        const result = await fileColorRequest('/api/note-file-colors/clear', {});
+        fileColorHost?.instance?.colorsCleared(result.generation);
+        return result;
+      },
+    });
     if (!document.querySelector('link[href="note-extensions.css"]')) {
       const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = 'note-extensions.css'; document.head.append(style);
     }
@@ -2191,6 +2199,13 @@
   function post(url, payload, options) {
     if (['/api/note-create', '/api/note-move', '/api/note-trash', '/api/note-import-commit'].includes(url)) payload = Object.assign({}, payload, { _tree: treeView() });
     return request(url, Object.assign({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {}) }, options));
+  }
+  function fileColorRequest(url, payload, options) {
+    if (url === '/api/note-file-colors/query') return post(url, payload, options);
+    // Keep color writes ordered across extension sessions. A confirmed clear
+    // follows older selections, including requests from a closed controller.
+    const task = fileColorMutationChain.then(() => post(url, payload, options));
+    fileColorMutationChain = task.catch(() => {}); return task;
   }
   let indexHeartbeat = 0;
   function indexActivity(visible, keepalive) {
@@ -5502,7 +5517,7 @@
   initializeSettingsDialog();
   fileColorHost = window.RelatumNoteExtensions.attachWorkspace('file-colors', {
     host: treeEl, entries: () => state.entryIndex, rows: () => treeRowIndexes.get(treeEl).rows,
-    isCurrent: noteWorkspaceVisible, post, notify: showToast, language, colors: NOTEBOOK_COLORS,
+    isCurrent: noteWorkspaceVisible, post: fileColorRequest, notify: showToast, language, colors: NOTEBOOK_COLORS,
   });
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateSidePanel(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   updateBrowserControls();

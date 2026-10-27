@@ -9902,6 +9902,7 @@ NOTES_POST_ROUTES = {
     "/api/notes-canvas/reveal",
     "/api/note-notebooks-settings",
     "/api/note-file-colors/set",
+    "/api/note-file-colors/clear",
     "/api/note-cleanup-unused-images",
     "/api/note-image-text-merge",
     "/api/note-image-text-cleanup",
@@ -10705,12 +10706,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_notes_error(err)
             except OSError as err:
                 return self._send_json(500, {"error": f"画布操作失败：{err}"})
-        if path in ('/api/note-file-colors/query', '/api/note-file-colors/set'):
+        if path in ('/api/note-file-colors/query', '/api/note-file-colors/set', '/api/note-file-colors/clear'):
             try:
                 if path.endswith('/set') and 'color' not in body:
                     raise NotesError('缺少文件颜色')
-                result = (NOTES_STORE.query_file_colors(body.get('paths')) if path.endswith('/query')
-                          else NOTES_STORE.set_file_color(body.get('path'), body.get('color')))
+                if path.endswith('/clear'):
+                    result = NOTES_STORE.clear_file_colors()
+                elif path.endswith('/query'):
+                    result = NOTES_STORE.query_file_colors(body.get('paths'))
+                else:
+                    result = NOTES_STORE.set_file_color(body.get('path'), body.get('color'))
                 return self._send_json(200, result)
             except NotesError as err:
                 return self._send_notes_error(err)

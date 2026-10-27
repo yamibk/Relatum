@@ -10,13 +10,15 @@ async function main() {
   fs.mkdirSync(path.join(notes, 'Folder'), { recursive: true });
   fs.writeFileSync(path.join(notes, 'Main.md'), '# File colors\n\nOriginal text.\n');
   fs.writeFileSync(path.join(notes, 'Folder/A.md'), 'Child note\n');
+  fs.mkdirSync(path.join(notes, 'CustomNotebook/Other'), { recursive: true });
+  fs.writeFileSync(path.join(notes, 'CustomNotebook/Other/Hidden.md'), 'Unopened notebook\n');
   const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
   const catalog = JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json')));
   const profile = { version: 1, features: Object.fromEntries(catalog.features.map(item => [item.id, item.id === 'notes'])) };
   const server = spawn(process.env.RELATUM_PYTHON || 'python', ['-B', 'app.py', '--no-browser', '--port', String(port), '--launch-profile', JSON.stringify(profile)],
     { cwd: repo, env: { ...process.env, RELATUM_DATA_ROOT: data }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-  let logs = '', browser, page;
+  let logs = '', browser, page, releaseQueuedWrite = () => {};
   server.stdout.on('data', chunk => { logs = (logs + chunk).slice(-5000); }); server.stderr.on('data', chunk => { logs = (logs + chunk).slice(-5000); });
   try {
     const url = 'http://127.0.0.1:' + port; let ready = false;
@@ -47,6 +49,15 @@ async function main() {
     const dialog = page.locator('[data-role="note-settings-dialog"]');
     await dialog.locator('[data-extension-configure="file-colors"]').click();
     assert((await dialog.locator('.note-file-colors-guide').innerText()).includes('子项不会继承'));
+    assert.equal(await dialog.locator('[data-file-color-option]').count(), 4);
+    assert.deepEqual(await dialog.locator('[data-file-color-option]').evaluateAll(items => items.map(item => item.value)), ['100', '100', '100', '100']);
+    assert.deepEqual(await page.evaluate(() => RelatumNoteExtensions.list().find(item => item.id === 'file-colors').normalizeOptions({
+      backgroundStrength: Infinity, hoverStrength: -10, selectedStrength: 333, iconSaturation: '200' })),
+      { backgroundStrength: 100, hoverStrength: 0, selectedStrength: 300, iconSaturation: 100 });
+    await dialog.locator('[data-settings-search]').fill('图标饱和度');
+    await dialog.locator('.relatum-settings-result').first().click();
+    assert.equal(await dialog.locator('[data-file-color-option="iconSaturation"]').evaluate(input => input === document.activeElement), true);
+    await dialog.locator('[data-settings-search]').fill('');
     assert(!requests.some(url => /note-extensions\/file-colors\.js/.test(url)), 'settings stay metadata-only');
     await dialog.locator('[data-extension-enabled="file-colors"]:visible').check();
     await page.waitForFunction(() => T.colors);
@@ -67,6 +78,58 @@ async function main() {
       icon: getComputedStyle(element.querySelector('.note-tree-icon')).color, name: getComputedStyle(element.querySelector('.note-tree-label')).color,
       text: getComputedStyle(element).color }));
     let style = await appearance(); assert.equal(style.icon, 'rgb(94, 136, 189)'); assert.equal(style.name, style.text); assert.notEqual(style.bg, 'rgba(0, 0, 0, 0)');
+    await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'extensions' }));
+    await dialog.locator('[data-extension-configure="file-colors"]').click();
+    const option = key => dialog.locator('[data-file-color-option="' + key + '"]');
+    const colorRequests = () => requests.filter(url => url.includes('/api/note-file-colors/')).length;
+    const beforeOptions = colorRequests();
+    await page.evaluate(() => {
+      window.appearanceIdentity = { colors: T.colors, row: document.querySelector('[data-role="note-tree"] [data-note-path="Main.md"]'),
+        view: T.editor.view, doc: T.editor.view.state.doc };
+      window.optionWrites = 0; const original = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) { if (key === 'canvas:noteExtensions:v1') window.optionWrites++; return original.call(this, key, value); };
+    });
+    const bounds = await option('backgroundStrength').boundingBox();
+    await page.mouse.move(bounds.x + bounds.width / 3, bounds.y + bounds.height / 2); await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width * 2 / 3, bounds.y + bounds.height / 2, { steps: 16 });
+    const backgroundStrength = Number(await option('backgroundStrength').inputValue());
+    assert(backgroundStrength >= 190 && backgroundStrength <= 210);
+    assert.equal(await page.evaluate(() => window.optionWrites), 0, 'native dragging previews without storage writes');
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('file-colors').options.backgroundStrength), 100);
+    assert.equal(await page.locator(left).evaluate(element => Number(element.style.getPropertyValue('--file-color-background-light'))), .09 * backgroundStrength / 100);
+    await page.mouse.up();
+    assert.equal(await page.evaluate(() => window.optionWrites), 1, 'release persists once');
+    for (const key of ['hoverStrength', 'selectedStrength', 'iconSaturation']) { await option(key).focus(); await page.keyboard.press('End'); }
+    assert.deepEqual(await page.evaluate(() => RelatumNoteExtensions.read('file-colors').options),
+      { backgroundStrength, hoverStrength: 300, selectedStrength: 300, iconSaturation: 200 });
+    assert.equal(await row('Main.md').locator('.note-tree-icon').evaluate(element => getComputedStyle(element).filter), 'none');
+    assert.notEqual((await appearance()).icon, 'rgb(94, 136, 189)', 'saturation increases icon color without a CSS filter');
+    assert.equal(colorRequests(), beforeOptions, 'appearance changes do not query or write color records');
+    assert(await page.evaluate(() => appearanceIdentity.colors === T.colors && appearanceIdentity.row === document.querySelector('[data-role="note-tree"] [data-note-path="Main.md"]')
+      && appearanceIdentity.view === T.editor.view && appearanceIdentity.doc === T.editor.view.state.doc));
+    const committed = await page.locator(left).evaluate(element => element.style.getPropertyValue('--file-color-background-light'));
+    await option('backgroundStrength').evaluate(input => { input.value = '0'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    assert.equal(await page.locator(left).evaluate(element => element.style.getPropertyValue('--file-color-background-light')), committed, 'blur cancels an unfinished preview');
+    await page.screenshot({ path: path.join(output, 'appearance-controls.png') });
+    await page.reload();
+    await page.waitForFunction(() => window.T?.state.current?.path === 'Main.md' && T.colors?.get('Main.md') === 'blue');
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('file-colors').options.backgroundStrength), backgroundStrength, 'appearance persists across reload');
+    await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'extensions' }));
+    await dialog.locator('[data-extension-configure="file-colors"]').click();
+    await page.evaluate(() => RelatumI18n.setLanguage('en'));
+    assert.equal(await option('iconSaturation').getAttribute('aria-label'), 'Icon saturation');
+    await page.setViewportSize({ width: 600, height: 760 });
+    await option('iconSaturation').scrollIntoViewIfNeeded();
+    assert.equal(await dialog.locator('.note-file-colors-settings').evaluate(element => element.scrollWidth > element.clientWidth + 1), false);
+    await page.screenshot({ path: path.join(output, 'appearance-narrow-en.png') });
+    await page.setViewportSize({ width: 1440, height: 980 });
+    await page.evaluate(() => RelatumI18n.setLanguage('zh-CN'));
+    await dialog.locator('[data-file-color-reset]').click();
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('file-colors').enabled), true);
+    assert.equal(await page.evaluate(() => T.colors.get('Main.md')), 'blue', 'resetting appearance preserves file colors');
+    assert.deepEqual(await dialog.locator('[data-file-color-option]').evaluateAll(items => items.map(item => item.value)), ['100', '100', '100', '100']);
+    await dialog.locator('[data-settings-action="close"]').click();
     await page.screenshot({ path: path.join(output, 'light.png') });
     await page.evaluate(() => document.body.dataset.startTheme = 'dark'); await settle();
     style = await appearance(); assert.equal(style.icon, 'rgb(94, 136, 189)'); assert.equal(style.name, style.text);
@@ -98,6 +161,63 @@ async function main() {
     await page.waitForFunction(() => T.colors?.get('Renamed.md') === 'blue');
     await row('Renamed.md').click({ button: 'right' }); await menu.getByRole('button', { name: '清除颜色', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('[data-role="note-tree"] [data-note-path="Renamed.md"]').dataset.fileColor === undefined);
+    await page.evaluate(() => T.colors.set('Renamed.md', 'blue'));
+    await page.evaluate(async () => {
+      await fetch('/api/note-file-colors/set', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: 'CustomNotebook/Other/Hidden.md', color: 'purple' }) });
+    });
+    await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'extensions' }));
+    await dialog.locator('[data-extension-configure="file-colors"]').click();
+    const clearButton = dialog.locator('[data-file-color-clear]');
+    const confirmation = dialog.locator('.relatum-settings-confirm[data-confirm-action="file-colors-clear"]');
+    const clearRequests = () => requests.filter(url => url.includes('/api/note-file-colors/clear')).length;
+    const beforeClear = clearRequests();
+    await clearButton.click(); await confirmation.waitFor({ state: 'visible' });
+    assert((await confirmation.innerText()).includes('滑条参数保留'));
+    await page.keyboard.press('Escape'); await confirmation.waitFor({ state: 'hidden' });
+    assert.equal(clearRequests(), beforeClear, 'cancel sends no clear request');
+    assert.equal(await page.evaluate(() => T.colors.get('Renamed.md')), 'blue');
+    await page.route('**/api/note-file-colors/clear', route => route.fulfill({ status: 503, json: { error: 'Fixture clear failure' } }));
+    await clearButton.click(); await confirmation.locator('[data-settings-action="accept-reset"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-file-color-clear-status]').textContent.includes('Fixture clear failure'));
+    assert.equal(await page.evaluate(() => T.colors.get('Renamed.md')), 'blue', 'failed clear preserves color display');
+    await page.unroute('**/api/note-file-colors/clear');
+    const beforeClearOptions = await page.evaluate(() => RelatumNoteExtensions.read('file-colors'));
+    await clearButton.click();
+    await page.evaluate(() => RelatumI18n.setLanguage('en'));
+    assert.equal(await confirmation.locator('h3').textContent(), 'Clear all file color data?');
+    await page.keyboard.press('Tab');
+    assert.equal(await confirmation.locator('[data-settings-action="accept-reset"]').evaluate(button => button === document.activeElement), true);
+    await page.keyboard.press('Tab');
+    assert.equal(await confirmation.locator('[data-settings-action="cancel-reset"]').evaluate(button => button === document.activeElement), true);
+    await confirmation.locator('[data-settings-action="accept-reset"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-file-color-clear-status]').textContent.includes('All file colors cleared'));
+    assert.equal(clearRequests(), beforeClear + 2);
+    assert.equal(await page.locator(left + ' [data-file-color]').count(), 0);
+    assert.deepEqual(await page.evaluate(() => RelatumNoteExtensions.read('file-colors')), beforeClearOptions);
+    const hiddenColors = await page.evaluate(async () => (await (await fetch('/api/note-file-colors/query', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paths: ['Renamed.md', 'CustomNotebook/Other/Hidden.md'] }) })).json()).colors);
+    assert.deepEqual(hiddenColors, {}, 'all notebooks are cleared, including unloaded rows');
+    assert.equal(fs.readFileSync(path.join(notes, 'CustomNotebook/Other/Hidden.md'), 'utf8'), 'Unopened notebook\n');
+    const queuedWriteGate = new Promise(resolve => { releaseQueuedWrite = resolve; });
+    await page.route('**/api/note-file-colors/set', async route => { await queuedWriteGate; await route.continue(); });
+    const queuedWrite = page.waitForRequest(request => request.url().endsWith('/api/note-file-colors/set'));
+    await page.evaluate(() => { T.colors.set('Renamed.md', 'red'); RelatumNoteExtensions.set('file-colors', { enabled: false }); });
+    await queuedWrite;
+    const beforeQueuedClear = clearRequests();
+    await clearButton.click(); await confirmation.locator('[data-settings-action="accept-reset"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-file-color-clear]').disabled);
+    assert.equal(clearRequests(), beforeQueuedClear, 'clear waits behind a save from the disabled controller');
+    releaseQueuedWrite();
+    await page.waitForFunction(() => !document.querySelector('[data-file-color-clear]').disabled
+      && document.querySelector('[data-file-color-clear-status]').textContent.includes('All file colors cleared'));
+    await page.unroute('**/api/note-file-colors/set');
+    await enabled(true); await page.waitForFunction(() => T.colors);
+    const afterQueuedClear = await page.evaluate(async () => (await (await fetch('/api/note-file-colors/query', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paths: ['Renamed.md'] }) })).json()).colors);
+    assert.deepEqual(afterQueuedClear, {}, 'an old save cannot restore cleared colors after re-enabling');
+    await page.evaluate(() => RelatumI18n.setLanguage('zh-CN'));
+    await dialog.locator('[data-settings-action="close"]').click();
     const report = [];
     const measure = () => page.evaluate(() => {
       const rounds = [];
@@ -152,6 +272,7 @@ async function main() {
     if (page) await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});
     console.error('Artifacts: ' + output + '\n' + logs); throw error;
   } finally {
+    releaseQueuedWrite();
     await browser?.close(); server.kill(); await new Promise(resolve => server.exitCode !== null ? resolve() : server.once('exit', resolve));
   }
 }

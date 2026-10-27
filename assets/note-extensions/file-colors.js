@@ -1,7 +1,8 @@
 // Sparse file-tree decoration. No editor state, observers, timers or render loop.
 (function () {
   'use strict';
-  window.RelatumNoteExtensions.registerRuntime('file-colors', context => {
+  window.RelatumNoteExtensions.registerRuntime('file-colors', (context, options) => {
+    const definition = window.RelatumNoteExtensions.list().find(item => item.id === 'file-colors');
     const cache = new Map(), writes = new Map();
     let destroyed = false, scheduled = false, running = false, rerun = false, revision = 0, generation = null, controller = null, lastError = '';
     const current = () => !destroyed && context.isCurrent();
@@ -59,8 +60,7 @@
       const operation = { previous: pending ? pending.previous : cache.get(path) || null, color, task: null };
       revision++; controller?.abort();
       cache.set(path, color); paint(path);
-      operation.task = Promise.resolve(pending?.task).catch(() => {}).then(() =>
-        context.post('/api/note-file-colors/set', { path, color })).then(result => {
+      operation.task = context.post('/api/note-file-colors/set', { path, color }).then(result => {
         if (!current()) return;
         const latest = writes.get(path);
         if (latest !== operation) { if (latest) latest.previous = result.color; return; }
@@ -74,14 +74,23 @@
       writes.set(path, operation); return operation.task;
     }
     function invalidate() { if (!current()) return; generation = null; revision++; controller?.abort(); cache.clear(); sync(); }
+    function colorsCleared(value) {
+      if (!current()) return;
+      generation = value; revision++; controller?.abort(); cache.clear();
+      for (const path of context.entries().keys()) cache.set(path, writes.get(path)?.color || null);
+      for (const [path, row] of context.rows()) decorate(row, path);
+    }
     for (const [path, row] of context.rows()) decorate(row, path);
     context.host.dataset.fileColorsEnabled = 'true';
+    const updateOptions = value => definition.applyAppearance(context.host, value);
+    updateOptions(options);
     sync();
-    return { decorate, sync, set, invalidate, get: path => cache.get(path) || null,
+    return { decorate, sync, set, invalidate, colorsCleared, updateOptions, get: path => cache.get(path) || null,
       destroy() {
         if (destroyed) return;
         destroyed = true; revision++; controller?.abort(); cache.clear(); writes.clear();
         delete context.host.dataset.fileColorsEnabled;
+        definition.appearanceProperties.forEach(key => context.host.style.removeProperty(key));
       },
     };
   });

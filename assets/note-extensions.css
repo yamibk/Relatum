@@ -23,6 +23,23 @@
 .note-extension-detail-body { display: flex; flex: 1; min-height: 0; min-width: 0; }
 .note-file-colors-guide { overflow-y: auto; color: var(--settings-muted); font-size: 13px; line-height: 1.8; }
 .note-file-colors-guide h4 { color: var(--settings-text); font-size: 14px; margin: 0 0 12px; }
+.note-file-colors-settings { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; padding-bottom: 20px; font-size: 13px; }
+.note-file-colors-intro { margin: 0 0 18px; color: var(--settings-muted); line-height: 1.7; }
+.note-file-colors-settings > h4 { margin: 0 0 10px; color: var(--settings-text); font-size: 13px; }
+.note-file-colors-preview { display: grid; gap: 5px; margin-bottom: 18px; max-width: 460px; }
+.note-file-colors-preview .note-tree-row { font-size: 12px; color: var(--settings-text); pointer-events: none; }
+.note-file-colors-range { display: grid; gap: 8px; padding: 15px 0; border-top: 1px solid var(--settings-selected); }
+.note-file-colors-range-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.note-file-colors-range-head strong { font-size: 13px; font-weight: 580; }
+.note-file-colors-range output { color: var(--settings-muted); font-variant-numeric: tabular-nums; }
+.note-file-colors-range small { color: var(--settings-muted); font-size: 12px; line-height: 1.6; }
+.note-file-colors-range input { width: 100%; min-width: 0; margin: 3px 0 0; }
+.note-file-colors-settings > .note-extension-configure { margin: 6px 0 24px; }
+.note-file-colors-clearing { border-top: 1px solid var(--settings-selected); padding: 20px 0; margin-bottom: 8px; }
+.note-file-colors-clearing h4 { margin: 0 0 8px; font-size: 13px; color: var(--settings-text); }
+.note-file-colors-clearing p { margin: 0 0 12px; color: var(--settings-muted); line-height: 1.7; }
+.note-file-colors-clearing button { color: #b7554f; border-color: #b7554f55; }
+.note-file-colors-clearing button:disabled { opacity: .6; cursor: default; }
 .relatum-settings[data-content-layout="fill"]:has(.note-extension-settings:not([hidden])) .relatum-settings-footer { display: flex; }
 .relatum-settings:has(.relatum-settings-pages:not([hidden]) > .note-extension-settings[data-detail]:not([hidden])) .relatum-settings-main { position: relative; }
 .relatum-settings:has(.relatum-settings-pages:not([hidden]) > .note-extension-settings[data-detail]:not([hidden])) .relatum-settings-header { position: absolute; top: 24px; right: 24px; padding: 0; z-index: 1; }

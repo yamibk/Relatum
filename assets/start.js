@@ -1070,7 +1070,7 @@
         ]],
         ['文件配色', '', [
           ['<code>note-file-colors.sqlite3</code>', '左侧文件和文件夹的颜色设置，首次设置颜色时创建。属于用户数据，备份时应保留；不能从 Markdown 或笔记索引重建。'],
-          ['关闭与清除', '关闭文件染色、恢复笔记设置或清理运行缓存均保留配色。确认文件或文件夹删除后会清理对应记录；应用内改名和移动保留颜色，外部改名仅在能可靠识别时跟随。'],
+          ['关闭与清除', '关闭文件染色、恢复笔记设置或清理运行缓存均保留配色。“文件染色 → 配置”中的“清空所有数据”经确认后清除全部配色，保留笔记、附件和参数。确认文件或文件夹删除后也会清理对应记录；应用内改名和移动保留颜色，外部改名仅在能可靠识别时跟随。'],
         ]],
         ['日常工作区', '每日任务、日历与日记、专注和记账现在集中在“日常”中。仍使用下列原有文件，无需搬动数据；日记与倒数日从日历进入。'],
         ['内容与记录', '', [
@@ -1122,7 +1122,7 @@
           ['工作区与导航', '工作区显示与排序、画布和日常的页序、上次工作区与日常子页。隐藏工作区不删除内容。'],
           ['笔记', '标签页、侧栏顺序与显隐、字号、阅读位置、光标和编辑器快捷键。'],
           ['笔记系统与图谱', '交互动画、正文预读、缓存档位、图谱清晰度、间距和启动预加载。图谱坐标与镜头不写入偏好文件。'],
-          ['笔记扩展', 'latex辅助输入的开关、选项与自定义片段，以及文件染色的开关。实际文件颜色单独保存在 <code>data/note-file-colors.sqlite3</code>。'],
+          ['笔记扩展', 'latex辅助输入的开关、选项与自定义片段，以及文件染色的开关、浓度和图标饱和度参数。实际文件颜色单独保存在 <code>data/note-file-colors.sqlite3</code>。'],
           ['视图', '画布镜头、树的折叠、复习模式和记账显示方式。'],
           ['专注偏好', '番茄钟或正计时模式、时长、提示音、雨声和音量。'],
           ['未结束的专注钟', '运行与待收尾状态、目标和成果草稿。切页或切换工作区会继续计时；已完成的记录保存在 <code>data/focus.json</code>。'],
@@ -1139,7 +1139,7 @@
         ]],
         ['恢复默认', '', [
           ['全局设置', '左上角齿轮中可恢复分类或全部设置。保留主题、语言、笔记设置、客户端窗口与启动器偏好，以及内容。'],
-          ['笔记设置', '笔记齿轮中恢复对应分类或全部笔记偏好，不删除正文。恢复扩展会关闭开关并重置 LaTeX 选项与片段，文件颜色仍保留。AI 恢复保留模型、Key、自定义预设和当前临时对话。'],
+          ['笔记设置', '笔记齿轮中恢复对应分类或全部笔记偏好，不删除正文。恢复扩展会关闭开关并重置 LaTeX 选项、片段和配色参数，文件颜色仍保留。AI 恢复保留模型、Key、自定义预设和当前临时对话。'],
         ]],
         ['清除后的结果', '清除站点存储或桌面偏好后，界面、位置、扩展开关、自定义片段和未结束的计时可能重置。笔记、画布和文件颜色仍保留；重新开启文件染色可恢复配色显示。画布 AI Key 位于 <code>data/ai.json</code>，笔记 AI Key 位于 <code>data/note-ai.json</code>，均不在浏览器存储中。'],
       ],
@@ -1199,7 +1199,7 @@
         ]],
         ['File colors', '', [
           ['<code>note-file-colors.sqlite3</code>', 'Color settings for files and folders in the left tree, created when you first set a color. This is user data to keep in backups; it cannot be rebuilt from Markdown or the note index.'],
-          ['Disabling and clearing', 'Disabling File Colors, resetting Notes settings or clearing runtime caches keeps your colors. Confirmed file or folder deletion removes its color records. Renaming and moving within Relatum keeps colors; external renames follow only when they can be identified reliably.'],
+          ['Disabling and clearing', 'Disabling File Colors, resetting Notes settings or clearing runtime caches keeps your colors. “Clear all data” in File Colors → Configure requires confirmation and removes every saved color while keeping notes, attachments and appearance parameters. Confirmed file or folder deletion also removes its color records. Renaming and moving within Relatum keeps colors; external renames follow only when they can be identified reliably.'],
         ]],
         ['Daily workspace', 'Daily tasks, Calendar and journals, Focus and Ledger now live in Daily. They still use the files below; no data needs moving. Open journals and countdowns from Calendar.'],
         ['Content and records', '', [
@@ -1251,7 +1251,7 @@
           ['Workspaces and navigation', 'Workspace visibility and order, Canvas and Daily page order, the last workspace and Daily page. Hiding a workspace keeps its content.'],
           ['Notes', 'Tabs, sidebar order and visibility, text size, reading position, cursor and editor shortcuts.'],
           ['Note system and graph', 'Interaction motion, text prefetch, cache size, graph resolution, spacing and startup preloading. Graph coordinates and cameras are not saved in preferences.'],
-          ['Note extensions', 'The LaTeX Input Assistant switch, options and custom snippets, plus the File Colors switch. Actual file colors are saved separately in <code>data/note-file-colors.sqlite3</code>.'],
+          ['Note extensions', 'The LaTeX Input Assistant switch, options and custom snippets, plus the File Colors switch, strengths and icon saturation. Actual file colors are saved separately in <code>data/note-file-colors.sqlite3</code>.'],
           ['Views', 'Canvas cameras, collapsed trees, review mode and ledger display.'],
           ['Focus preferences', 'Pomodoro or count-up mode, durations, chimes, rain sounds and volume.'],
           ['Unfinished focus timer', 'Running timers, pending wrap-ups, goals and outcome drafts. Timers continue across pages and workspaces. Completed sessions live in <code>data/focus.json</code>.'],
@@ -1268,7 +1268,7 @@
         ]],
         ['Restore defaults', '', [
           ['Global settings', 'Use the upper-left gear to reset a category or all global preferences. Theme, language, Notes settings, desktop window and launcher preferences, and content are kept.'],
-          ['Notes settings', 'Use the Notes gear to reset a category or all Notes preferences without deleting text. Resetting Extensions turns them off and resets LaTeX options and snippets while keeping file colors. Resetting AI keeps the model, key, custom presets and current temporary chat.'],
+          ['Notes settings', 'Use the Notes gear to reset a category or all Notes preferences without deleting text. Resetting Extensions turns them off and resets LaTeX options, snippets and color appearance parameters while keeping file colors. Resetting AI keeps the model, key, custom presets and current temporary chat.'],
         ]],
         ['After clearing', 'Clearing site storage or desktop preferences may reset the interface, positions, extension switches, custom snippets and unfinished timer. Notes, canvases and file colors remain; enable File Colors again to show your colors. The canvas AI key lives in <code>data/ai.json</code>; the Notes AI key lives in <code>data/note-ai.json</code>. Neither is in browser storage.'],
       ],

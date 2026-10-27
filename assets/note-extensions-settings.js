@@ -1,7 +1,7 @@
 // Extension overview and detail navigation. Settings never load an editor runtime.
 (function () {
   'use strict';
-  function createPanel({ language }) {
+  function createPanel({ language, confirmAction, clearFileColors }) {
     const registry = window.RelatumNoteExtensions;
     const panel = document.createElement('section'); panel.className = 'note-extension-settings'; panel.dataset.i18nManaged = 'true';
     const overview = document.createElement('div'); overview.className = 'note-extension-overview';
@@ -47,7 +47,9 @@
     }
     function open(row, focus = false) {
       if (!row.settings) row.settings = row.definition.createSettings({ language,
-        read: () => registry.read(row.definition.id).options, update: options => registry.set(row.definition.id, { options }) });
+        read: () => registry.read(row.definition.id).options, update: options => registry.set(row.definition.id, { options }),
+        preview: options => registry.previewOptions(row.definition.id, options),
+        cancelPreview: () => registry.previewOptions(row.definition.id, null), confirmAction, clearFileColors });
       selected?.settings?.setActive?.(false);
       selected = row; panel.dataset.detail = row.definition.id;
       overview.hidden = true; detail.hidden = false; body.replaceChildren(row.settings.panel);
@@ -352,12 +354,96 @@
       close() { drafts.clear(); fresh = null; selected = ''; group = 'common'; query = ''; search.value = ''; composing = false; panel.dataset.snippetView = 'list'; clearMessage(); setTab('basic'); },
     };
   }
-  function createFileColorsPanel({ language }) {
-    const panel = document.createElement('section'); panel.className = 'note-file-colors-guide';
+  function createFileColorsPanel({ language, read, update, preview, cancelPreview, confirmAction, clearFileColors }) {
+    const definition = window.RelatumNoteExtensions.list().find(item => item.id === 'file-colors');
+    const panel = document.createElement('section'); panel.className = 'note-file-colors-settings';
+    const intro = document.createElement('p'); intro.className = 'note-file-colors-intro';
+    const sampleTitle = document.createElement('h4');
+    const sample = document.createElement('div'); sample.className = 'note-file-colors-preview'; sample.setAttribute('aria-hidden', 'true');
+    const samples = ['normal', 'hover', 'selected'].map((state, index) => {
+      const row = document.createElement('div'); row.className = 'note-tree-row'; row.dataset.fileColor = 'blue'; row.dataset.previewState = state;
+      const spacer = document.createElement('span');
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); icon.setAttribute('viewBox', '0 0 24 24'); icon.classList.add('note-tree-icon');
+      const path = document.createElementNS(icon.namespaceURI, 'path'); path.setAttribute('d', 'M14 3H6v18h12V7z M14 3v5h4 M9 12h6 M9 16h6'); icon.append(path);
+      const label = document.createElement('span'); label.className = 'note-tree-label'; row.append(spacer, icon, label); sample.append(row);
+      return { state, label, index };
+    });
+    const controls = document.createElement('div'), fields = new Map();
+    let draft = null, active = false, clearBusy = false, lifetime = 0;
+    function cancel() { draft = null; cancelPreview(); refresh(); }
+    function commit() {
+      if (!draft) return;
+      const options = draft; draft = null; cancelPreview(); update(options); refresh();
+    }
+    definition.settingsControls.forEach(item => {
+      const label = document.createElement('label'); label.className = 'note-file-colors-range';
+      const head = document.createElement('span'); head.className = 'note-file-colors-range-head';
+      const name = document.createElement('strong'), output = document.createElement('output'), hint = document.createElement('small');
+      const input = document.createElement('input'); input.type = 'range'; input.min = item.min; input.max = item.max; input.step = item.step;
+      input.dataset.fileColorOption = item.id;
+      head.append(name, output); label.append(head, hint, input); controls.append(label);
+      let dragging = false;
+      input.addEventListener('input', () => {
+        draft = definition.normalizeOptions({ ...(draft || read()), [item.id]: Number(input.value) });
+        output.value = draft[item.id] + '%'; input.setAttribute('aria-valuetext', output.value);
+        definition.applyAppearance(sample, draft); preview(draft);
+      });
+      input.addEventListener('change', commit);
+      input.addEventListener('blur', commit);
+      input.addEventListener('pointerdown', () => { dragging = true; });
+      input.addEventListener('pointerup', () => { dragging = false; });
+      input.addEventListener('pointercancel', () => { dragging = false; cancel(); });
+      input.addEventListener('lostpointercapture', () => { if (dragging) { dragging = false; cancel(); } });
+      input.addEventListener('keydown', event => { if (event.key === 'Escape' && draft) { event.preventDefault(); event.stopPropagation(); cancel(); } });
+      fields.set(item.id, { item, name, output, hint, input, label });
+    });
+    const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'note-extension-configure'; restore.dataset.fileColorReset = '';
+    restore.addEventListener('click', () => { draft = null; cancelPreview(); update(definition.defaultOptions); refresh(); });
+    const clearing = document.createElement('section'); clearing.className = 'note-file-colors-clearing';
+    const clearTitle = document.createElement('h4'), clearHint = document.createElement('p'), clearButton = document.createElement('button');
+    clearButton.type = 'button'; clearButton.className = 'note-extension-configure'; clearButton.dataset.fileColorClear = '';
+    const clearStatus = document.createElement('p'); clearStatus.setAttribute('role', 'status'); clearStatus.dataset.fileColorClearStatus = '';
+    clearing.append(clearTitle, clearHint, clearButton, clearStatus);
+    clearButton.addEventListener('click', async () => {
+      if (!active || clearBusy) return;
+      cancel(); const token = lifetime;
+      const accepted = await confirmAction({ id: 'file-colors-clear', trigger: clearButton,
+        title: ['清空所有配色数据？', 'Clear all file color data?'],
+        description: ['将清除所有笔记本中已设置的文件和文件夹颜色，无法撤销。笔记、附件、扩展开关和滑条参数保留。',
+          'Remove all saved file and folder colors across every notebook. This cannot be undone. Notes, attachments, the extension switch and appearance parameters are kept.'],
+        acceptLabel: ['清空所有数据', 'Clear all data'],
+      });
+      if (!accepted || !active || token !== lifetime) return;
+      clearBusy = true; clearStatus.textContent = ''; refresh();
+      try {
+        await clearFileColors();
+        if (active && token === lifetime) clearStatus.textContent = language() === 'en' ? 'All file colors cleared.' : '已清空全部文件配色。';
+      } catch (error) {
+        if (active && token === lifetime) clearStatus.textContent = error.message || (language() === 'en' ? 'Could not clear colors. Please retry.' : '清空失败，请重试。');
+      } finally { clearBusy = false; refresh(); }
+    });
+    const guide = document.createElement('div'); guide.className = 'note-file-colors-guide';
+    const heading = document.createElement('h4');
+    const paragraphs = Array.from({ length: 4 }, () => document.createElement('p')); guide.append(heading, ...paragraphs);
+    panel.append(intro, sampleTitle, sample, controls, restore, clearing, guide);
     function refresh() {
-      const english = language() === 'en';
-      panel.replaceChildren();
-      const heading = document.createElement('h4'); heading.textContent = english ? 'Usage' : '使用说明'; panel.append(heading);
+      const english = language() === 'en', index = english ? 1 : 0, options = draft || read();
+      intro.textContent = english ? '100% keeps the original appearance. Increase the strengths for more visible colors; light and dark themes adapt automatically. Changes preview as you drag and are saved on release.'
+        : '100% 为原有效果。调高浓度可让颜色更明显，深浅主题会自动适配。拖动时即时预览，松手后保存。';
+      sampleTitle.textContent = english ? 'Preview' : '效果预览';
+      samples.forEach(({ label, index }) => { label.textContent = (english ? ['Normal', 'Hover', 'Selected'] : ['普通', '悬停', '选中'])[index] + ' · ' + (english ? 'Note.md' : '笔记.md'); });
+      fields.forEach(({ item, name, output, hint, input, label }) => {
+        name.textContent = item.name[index]; hint.textContent = item.description[index]; output.value = options[item.id] + '%';
+        input.value = options[item.id]; input.setAttribute('aria-label', name.textContent); input.setAttribute('aria-valuetext', output.value);
+        label.dataset.settingsKeywords = item.name.join(' ') + ' ' + item.description.join(' ');
+      });
+      definition.applyAppearance(sample, options);
+      restore.textContent = english ? 'Reset appearance parameters' : '恢复配色参数';
+      clearTitle.textContent = english ? 'Color data' : '配色数据';
+      clearHint.textContent = english ? 'Clear saved file and folder colors across all notebooks. Notes, attachments, the extension switch and the parameters above are kept.'
+        : '清除所有笔记本中的文件、文件夹配色记录。笔记、附件、扩展开关和上方参数保留。';
+      clearButton.textContent = clearBusy ? (english ? 'Clearing…' : '清空中…') : (english ? 'Clear all data' : '清空所有数据'); clearButton.disabled = clearBusy;
+      heading.textContent = english ? 'Usage' : '使用说明';
       const lines = english ? [
         'Enable this extension, then right-click a file or folder in the left tree to choose a color or clear it.',
         'Only this item’s icon and soft row background change. Children keep their own colors.',
@@ -369,9 +455,18 @@
         '关闭扩展或恢复笔记设置后，颜色记录仍保留，再次开启即可恢复。',
         '在 Relatum 内改名、移动会保留颜色。外部改名在文件通知能可靠配对时跟随；否则确认旧项目删除后清除旧颜色。',
       ];
-      lines.forEach(text => { const p = document.createElement('p'); p.textContent = text; panel.append(p); });
+      lines.forEach((text, index) => { paragraphs[index].textContent = text; });
     }
-    refresh(); return { panel, refresh };
+    function setActive(value) {
+      const next = value === true;
+      if (next === active) return;
+      active = next; window[active ? 'addEventListener' : 'removeEventListener']('blur', cancel);
+      if (!active) { lifetime++; clearStatus.textContent = ''; cancel(); }
+    }
+    refresh(); return { panel, refresh, setActive,
+      reveal: key => key === 'clear' ? clearButton : fields.get(key?.replace(/^option:/, ''))?.input || fields.values().next().value.input,
+      reset: cancel, close: () => { setActive(false); cancel(); }, destroy: () => { setActive(false); cancelPreview(); },
+    };
   }
   window.RelatumNoteExtensionSettings = Object.freeze({ createPanel, createLatexPanel, createFileColorsPanel });
 })();

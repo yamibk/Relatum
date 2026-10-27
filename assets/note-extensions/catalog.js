@@ -100,10 +100,50 @@
     load: () => registry.loadScript('latex-input', 'note-extensions/latex-input.js'),
     createSettings(context) { return window.RelatumNoteExtensionSettings.createLatexPanel(context); },
   });
-  registry.register({ id: 'file-colors', scope: 'workspace', version: '1.0.0', displayVersion: '1.0',
+  const fileColorControls = Object.freeze([
+    { id: 'backgroundStrength', name: ['背景浓度', 'Background strength'], max: 300,
+      description: ['普通状态下行背景的颜色浓度。', 'Color strength of the normal row background.'] },
+    { id: 'hoverStrength', name: ['悬停浓度', 'Hover strength'], max: 300,
+      description: ['鼠标停留在项目上时的背景浓度。', 'Background strength while the pointer is over an item.'] },
+    { id: 'selectedStrength', name: ['选中浓度', 'Selection strength'], max: 300,
+      description: ['当前笔记或选中文件夹的背景浓度。', 'Background strength of the current note or selected folder.'] },
+    { id: 'iconSaturation', name: ['图标饱和度', 'Icon saturation'], max: 200,
+      description: ['调高使图标颜色更鲜明，调低则接近灰色。', 'Increase for more vivid icons, or decrease toward gray.'] },
+  ].map(item => Object.freeze({ ...item, min: 0, step: 5, default: 100 })));
+  const fileColorPalette = { gray: [147,151,143], blue: [94,136,189], cyan: [85,166,174], green: [120,147,108],
+    yellow: [217,185,91], orange: [214,150,98], red: [200,125,120], purple: [157,130,184] };
+  function normalizeFileColorOptions(value) {
+    return Object.fromEntries(fileColorControls.map(item => [item.id,
+      typeof value?.[item.id] === 'number' && Number.isFinite(value[item.id])
+        ? Math.round(Math.max(item.min, Math.min(item.max, value[item.id])) / item.step) * item.step : item.default]));
+  }
+  const fileColorProperties = Object.freeze(['background-light', 'background-dark', 'hover-light', 'hover-dark', 'selected-light', 'selected-dark']
+    .map(key => '--file-color-' + key).concat(Object.keys(fileColorPalette).map(key => '--file-color-icon-' + key)));
+  function applyFileColorAppearance(host, value) {
+    const options = normalizeFileColorOptions(value);
+    const write = (key, value) => { const text = String(value); if (host.style.getPropertyValue(key) !== text) host.style.setProperty(key, text); };
+    for (const [state, key, light, dark, limit] of [['background', 'backgroundStrength', .09, .14, .6],
+      ['hover', 'hoverStrength', .15, .22, .65], ['selected', 'selectedStrength', .22, .3, .7]]) {
+      write('--file-color-' + state + '-light', Math.min(limit, light * options[key] / 100));
+      write('--file-color-' + state + '-dark', Math.min(limit, dark * options[key] / 100));
+    }
+    for (const [name, rgb] of Object.entries(fileColorPalette)) {
+      const gray = rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
+      write('--file-color-icon-' + name, rgb.map(value => Math.round(Math.max(0, Math.min(255,
+        gray + (value - gray) * options.iconSaturation / 100)))).join(', '));
+    }
+  }
+  registry.register({ id: 'file-colors', scope: 'workspace', version: '1.1.0', displayVersion: '1.1',
     name: ['文件染色', 'File Colors'], defaultEnabled: false,
     description: ['为左侧文件和文件夹的图标及行背景设置柔和配色。', 'Add soft colors to file and folder icons and row backgrounds in the left tree.'],
-    keywords: '文件 文件夹 染色 颜色 配色 右键 file folder color colour palette context menu',
+    keywords: '文件 文件夹 染色 颜色 配色 右键 浓度 饱和度 file folder color colour palette context menu strength saturation',
+    defaultOptions: Object.fromEntries(fileColorControls.map(item => [item.id, item.default])), normalizeOptions: normalizeFileColorOptions,
+    settingsControls: fileColorControls, applyAppearance: applyFileColorAppearance, appearanceProperties: fileColorProperties,
+    settingsSearch(value, language) { const index = language === 'en' ? 1 : 0;
+      return fileColorControls.map(item => ({ key: 'option:' + item.id, name: item.name[index],
+        keywords: item.name.join(' ') + ' ' + item.description.join(' ') })).concat([
+          { key: 'clear', name: index ? 'Clear all data' : '清空所有数据', keywords: '清空 删除 全部 文件 配色 clear all delete color data' },
+        ]); },
     load: () => registry.loadScript('file-colors', 'note-extensions/file-colors.js'),
     createSettings(context) { return window.RelatumNoteExtensionSettings.createFileColorsPanel(context); },
   });

@@ -104,6 +104,13 @@ class NoteFileColors:
                 if changed:
                     self._changed(conn)
 
+    def clear(self):
+        with self.connection() as conn:
+            cleared = conn.execute('DELETE FROM colors').rowcount if conn else 0
+            if cleared:
+                self._changed(conn)
+            return {'generation': self._generation(conn), 'cleared': cleared}
+
     def remap(self, source, destination):
         key = normalize(source)
         depth = len(source.split('/'))

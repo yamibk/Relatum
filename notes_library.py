@@ -585,6 +585,11 @@ class NotesStore:
         paths = list(dict.fromkeys(self.normalize_path(path) for path in paths))
         return self.file_colors.query(paths)
 
+    def clear_file_colors(self):
+        result = self.file_colors.clear()
+        self.file_color_warning = ''
+        return result
+
     def set_file_color(self, path, color):
         relative = self.normalize_path(path)
         if color is not None and (not isinstance(color, str) or color not in FILE_COLORS):

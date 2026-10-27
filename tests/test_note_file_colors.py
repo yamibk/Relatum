@@ -41,6 +41,31 @@ class FileColorTests(unittest.TestCase):
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM colors').fetchone()[0], 1)
         self.assertEqual((self.root / 'Folder/A.md').read_text(encoding='utf-8'), 'original\n')
 
+    def test_clear_all_removes_only_colors_and_is_lazy_and_idempotent(self):
+        self.assertEqual(self.store.clear_file_colors(), {'generation': 0, 'cleared': 0})
+        self.assertFalse(self.store.file_colors.path.exists())
+        self.store.set_file_color('Folder', 'blue')
+        self.store.set_file_color('Folder/A.md', 'red')
+        before = self.store.set_file_color('B.md', 'green')['generation']
+        with mock.patch('os.scandir', side_effect=AssertionError('clear walked notes')):
+            result = self.store.clear_file_colors()
+        self.assertEqual(result, {'generation': before + 1, 'cleared': 3})
+        self.assertEqual(self.colors('Folder', 'Folder/A.md', 'B.md'), {})
+        self.assertEqual(self.store.clear_file_colors(), {'generation': before + 1, 'cleared': 0})
+        self.assertEqual((self.root / 'Folder/A.md').read_text(encoding='utf-8'), 'original\n')
+        self.assertTrue(self.store.file_colors.path.exists())
+
+    def test_failed_clear_rolls_back_records_and_generation(self):
+        self.store.set_file_color('Folder', 'blue')
+        before = self.store.set_file_color('B.md', 'red')['generation']
+        with self.store.file_colors.connection() as conn:
+            conn.execute("CREATE TRIGGER fail_clear BEFORE DELETE ON colors WHEN OLD.path='B.md' "
+                         "BEGIN SELECT RAISE(ABORT,'fixture'); END")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.clear_file_colors()
+        self.assertEqual(self.colors('Folder', 'B.md'), {'Folder': 'blue', 'B.md': 'red'})
+        self.assertEqual(self.store.file_colors.generation(), before)
+
     def test_path_type_and_palette_validation(self):
         for value in ('../escape.md', 'Folder/../../escape.md', 'C:/escape.md', 'Folder.assets/X.md'):
             with self.subTest(path=value), self.assertRaises(NotesError):
