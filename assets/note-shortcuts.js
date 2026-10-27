@@ -12,6 +12,7 @@
     { id: 'link', zh: '插入链接', en: 'Insert link', defaults: ['Mod-k'] },
     { id: 'inline-code', zh: '行内代码', en: 'Inline code', defaults: ['Mod-`'] },
     { id: 'code-block', zh: '代码块', en: 'Code block', defaults: ['Mod-Shift-k'] },
+    { id: 'math', zh: '数学块', en: 'Math block', defaults: ['Mod-g'] },
   ].map((command) => Object.freeze(command)));
   const COMMAND_INDEX = new Map(COMMANDS.map((command) => [command.id, command]));
   const MODIFIER_ORDER = Object.freeze(['Mod', 'Ctrl', 'Alt', 'Shift', 'Meta']);
@@ -173,6 +174,9 @@
       if (!invalid || stored.length === 0 || normalized.length) next[command.id] = normalized;
     });
     if (invalid) return defaults;
+    // An older customization owns its chord before a newly added default does.
+    if (!Object.prototype.hasOwnProperty.call(raw.commands, 'math')
+        && COMMANDS.some((command) => command.id !== 'math' && next[command.id].includes('Mod-g'))) next.math = [];
     for (const command of COMMANDS) {
       const seen = new Set();
       for (const binding of next[command.id]) {

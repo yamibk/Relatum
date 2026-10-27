@@ -21,11 +21,11 @@ const shortcuts = sandbox.window.RelatumNoteShortcuts;
 assert(shortcuts && shortcuts.STORAGE_KEY === 'canvas:noteShortcuts:v1', 'the local shortcut registry must be available');
 assert.deepStrictEqual(JSON.parse(JSON.stringify(shortcuts.defaultBindings())), {
   save: ['Mod-s'], bold: ['Mod-b'], italic: ['Mod-i'], strike: [], highlight: [], link: ['Mod-k'],
-  'inline-code': ['Mod-`'], 'code-block': ['Mod-Shift-k'],
+  'inline-code': ['Mod-`'], 'code-block': ['Mod-Shift-k'], math: ['Mod-g'],
 }, 'every initial Note command must keep its existing default binding');
 assert.deepStrictEqual(
   JSON.parse(JSON.stringify(shortcuts.COMMANDS.map((command) => command.id))),
-  ['save', 'bold', 'italic', 'strike', 'highlight', 'link', 'inline-code', 'code-block'],
+  ['save', 'bold', 'italic', 'strike', 'highlight', 'link', 'inline-code', 'code-block', 'math'],
   'formatting commands must appear in the intended settings order',
 );
 assert.strictEqual(shortcuts.normalizeBinding('Shift-Mod-K'), 'Mod-Shift-k', 'modifier order must normalize before persistence');
@@ -42,6 +42,9 @@ assert.deepStrictEqual(JSON.parse(JSON.stringify(reloaded.bold)), ['Mod-b', 'Alt
 assert.deepStrictEqual(JSON.parse(JSON.stringify(reloaded.strike)), ['Alt-Shift-5'], 'an initially unassigned command must persist a user binding');
 assert.strictEqual(shortcuts.conflictFor('Mod-s', 'bold', reloaded).command.id, 'save', 'command conflicts must be rejected');
 assert.strictEqual(shortcuts.conflictFor('Mod-n', 'bold', reloaded).command.id, 'new-note', 'workspace conflicts must be rejected');
+assert.strictEqual(shortcuts.conflictFor('Mod-g', 'bold', reloaded).command.id, 'math', 'the math factory chord participates in conflict checks');
+assert.strictEqual(shortcuts.displayBinding('Mod-g', false), 'Ctrl + G');
+assert.strictEqual(shortcuts.displayBinding('Mod-g', true), '⌘G');
 
 const cancelled = shortcuts.defaultBindings();
 cancelled.link = [];
@@ -66,6 +69,26 @@ const legacyV1 = shortcuts.load(sandbox.localStorage);
 assert.deepStrictEqual(JSON.parse(JSON.stringify(legacyV1.strike)), [], 'older v1 preferences must add strike as unassigned');
 assert.deepStrictEqual(JSON.parse(JSON.stringify(legacyV1.highlight)), [], 'older v1 preferences must add highlight as unassigned');
 assert.deepStrictEqual(JSON.parse(JSON.stringify(shortcuts.inactiveDefaultBindings(legacyV1))), ['Mod-k', 'Mod-Shift-k']);
+assert.deepStrictEqual(JSON.parse(JSON.stringify(legacyV1.math)), ['Mod-g'], 'older preferences add the math default when its chord is free');
+
+values.set(shortcuts.STORAGE_KEY, JSON.stringify({ version: 1, commands: { bold: ['Ctrl-G'], italic: [], strike: ['Alt-s'] } }));
+const claimedMath = shortcuts.load(sandbox.localStorage);
+assert.deepStrictEqual(JSON.parse(JSON.stringify(claimedMath.bold)), ['Mod-g'], 'existing Ctrl+G customizations keep their chord');
+assert.deepStrictEqual(JSON.parse(JSON.stringify(claimedMath.math)), [], 'a newly added default must yield to the older customization');
+assert.deepStrictEqual(JSON.parse(JSON.stringify(claimedMath.italic)), [], 'migration preserves an explicitly cancelled command');
+assert.deepStrictEqual(JSON.parse(JSON.stringify(claimedMath.strike)), ['Alt-s'], 'migration preserves unrelated customizations');
+shortcuts.save(claimedMath, sandbox.localStorage);
+assert.deepStrictEqual(JSON.parse(JSON.stringify(shortcuts.load(sandbox.localStorage))), JSON.parse(JSON.stringify(claimedMath)),
+  'saving a migrated preference must preserve the unassigned math command');
+
+const customMath = shortcuts.defaultBindings();
+customMath.math = ['Alt-m'];
+shortcuts.save(customMath, sandbox.localStorage);
+assert.deepStrictEqual(JSON.parse(JSON.stringify(shortcuts.load(sandbox.localStorage).math)), ['Alt-m']);
+assert(shortcuts.inactiveDefaultBindings(customMath).includes('Mod-g'), 'a removed math factory chord must not reach CodeMirror search');
+customMath.math = [];
+shortcuts.save(customMath, sandbox.localStorage);
+assert.deepStrictEqual(JSON.parse(JSON.stringify(shortcuts.load(sandbox.localStorage).math)), [], 'explicit removal survives reload');
 
 values.set(shortcuts.STORAGE_KEY, '{broken');
 assert.deepStrictEqual(JSON.parse(JSON.stringify(shortcuts.load(sandbox.localStorage))), JSON.parse(JSON.stringify(shortcuts.defaultBindings())),

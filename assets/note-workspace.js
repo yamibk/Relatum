@@ -1161,6 +1161,7 @@
       event.preventDefault();
       return true;
     }
+    if (command.id === 'math' && (event.isComposing || event.keyCode === 229)) return false;
     event.preventDefault();
     if (command.id === 'save') flushSave();
     else if (command.id === 'bold') replaceFallbackSelection('**', '**', '粗体');
@@ -1169,7 +1170,35 @@
     else if (command.id === 'highlight') replaceFallbackSelection('==', '==', '高光');
     else if (command.id === 'inline-code') replaceFallbackSelection('`', '`', '代码');
     else if (command.id === 'code-block') replaceFallbackSelection('```\n', '\n```', '');
+    else if (command.id === 'math') insertFallbackMathBlock();
     else if (command.id === 'link') replaceFallbackSelection('[', '](https://)', '链接文字');
+    return true;
+  }
+
+  function insertFallbackMathBlock() {
+    if (!noteWorkspaceVisible() || !state.current || state.settingsOpen || state.viewMode === 'reading'
+        || document.activeElement !== fallbackEditor || fallbackEditor.hidden || fallbackEditor.readOnly || fallbackEditor.disabled) return false;
+    const start = fallbackEditor.selectionStart, end = fallbackEditor.selectionEnd;
+    const value = fallbackEditor.value, selected = value.slice(start, end), after = value.slice(end, end + 2);
+    const leading = start > 0 && value[start - 1] !== '\n' ? '\n' : '';
+    const trailing = end < value.length ? (after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n') : '';
+    const insert = leading + '$$\n' + selected + (selected.endsWith('\n') ? '' : '\n') + '$$' + trailing;
+    // Use native insertion so the complete block is one textarea undo step.
+    // Chromium loses the first inserted line on redo when a replacement consumes
+    // the final newline. Keep it for insertion, then delete it in the same typing group.
+    const nativeEnd = end === value.length && selected.endsWith('\n') ? end - 1 : end;
+    fallbackEditor.setSelectionRange(start, nativeEnd);
+    let inserted = false;
+    try { inserted = !!document.execCommand?.('insertText', false, insert); } catch (error) {}
+    if (!inserted) fallbackEditor.setRangeText(insert, start, end, 'end');
+    else if (nativeEnd !== end) {
+      let deleted = false;
+      try { deleted = !!document.execCommand('forwardDelete'); } catch (error) {}
+      if (!deleted) fallbackEditor.setRangeText('', start + insert.length, start + insert.length + 1, 'end');
+    }
+    const caret = start + leading.length + 3;
+    fallbackEditor.setSelectionRange(caret, caret);
+    markChanged(editorSnapshot());
     return true;
   }
 

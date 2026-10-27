@@ -4540,8 +4540,9 @@
       const independent = kind === 'table' || kind === 'rule' || kind === 'canvas';
       const from = independent ? doc.lineAt(range.to > range.from ? range.to - 1 : range.to).to : range.from;
       const to = independent ? from : range.to;
-      const leading = from > 0 ? (doc.sliceString(Math.max(0, from - 2), from).endsWith('\n\n') ? ''
+      let leading = from > 0 ? (doc.sliceString(Math.max(0, from - 2), from).endsWith('\n\n') ? ''
         : doc.sliceString(from - 1, from) === '\n' ? '\n' : '\n\n') : '';
+      if (kind === 'math' || kind === 'code-block') leading = from > 0 && doc.sliceString(from - 1, from) !== '\n' ? '\n' : '';
       const trailing = to < doc.length ? (doc.sliceString(to, to + 2).startsWith('\n\n') ? ''
         : doc.sliceString(to, to + 1) === '\n' ? '\n' : '\n\n') : '';
       let block, offset;
@@ -5139,6 +5140,7 @@
     const fallbackShortcutDefaults = Object.freeze({
       save: ['Mod-s'], bold: ['Mod-b'], italic: ['Mod-i'], strike: [], highlight: [], link: ['Mod-k'],
       'inline-code': ['Mod-`'], 'code-block': ['Mod-Shift-k'],
+      math: ['Mod-g'],
     });
 
     function normalizedShortcutBindings(bindings) {
@@ -5261,6 +5263,12 @@
       highlight(view) { return toggleInlineFormat(view, 'highlight'); },
       'inline-code'(view) { return toggleInlineFormat(view, 'inline-code'); },
       'code-block': wrapCodeBlock,
+      math(view) {
+        if (!view.state.readOnly && view.hasFocus && !document.hidden && !host.closest('[inert]') && host.getClientRects().length) {
+          executeCommand('insert:math');
+        }
+        return true;
+      },
       link(view) {
         const range = view.state.selection.main;
         const selected = view.state.doc.sliceString(range.from, range.to) || '链接文字';
