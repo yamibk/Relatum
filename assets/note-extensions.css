@@ -47,6 +47,10 @@
 .relatum-settings:has(.relatum-settings-pages:not([hidden]) > .note-extension-settings[data-detail]:not([hidden])) .relatum-settings-scroll { padding-top: 24px; padding-bottom: 0; }
 .relatum-settings:has(.relatum-settings-pages:not([hidden]) > .note-extension-settings[data-detail="file-colors"]:not([hidden])) .relatum-settings-pages { --file-colors-edge-inset: 32px; margin-right: calc(-1 * var(--file-colors-edge-inset)); }
 .note-extension-settings[data-detail="file-colors"] .note-extension-detail-head { padding-right: var(--file-colors-edge-inset, 32px); }
+.relatum-settings:has(.relatum-settings-pages:not([hidden]) > .note-extension-settings[data-detail="latex-input"]:not([hidden]) .note-latex-settings[data-tab="guide"]) .relatum-settings-pages { --latex-guide-edge-inset: 32px; margin-right: calc(-1 * var(--latex-guide-edge-inset)); }
+.note-extension-settings[data-detail="latex-input"]:has(.note-latex-settings[data-tab="guide"]) .note-extension-detail-head { padding-right: var(--latex-guide-edge-inset, 32px); }
+.note-latex-settings[data-tab="guide"] .note-latex-tabs { margin-right: var(--latex-guide-edge-inset, 32px); }
+.note-latex-settings[data-tab="guide"] #note-latex-page-guide { padding-right: var(--latex-guide-edge-inset, 32px); }
 .note-extension-settings[data-detail="latex-input"], .note-latex-popovers {
   --latex-line: color-mix(in srgb, var(--settings-text) 12%, transparent);
   --latex-line-hover: color-mix(in srgb, var(--settings-text) 24%, transparent);
@@ -118,7 +122,7 @@
 .note-latex-field .review-choice-trigger:active { transform: none; }
 .note-latex-field textarea { min-height: 108px; max-height: 220px; resize: vertical; font-family: var(--font-code, monospace); }
 .note-latex-placeholder-help { font-size: 11px; color: var(--settings-muted); line-height: 1.6; }
-.note-latex-editor-footer { flex: none; padding: 16px 0 0; }
+.note-latex-editor-footer { flex: none; padding: 16px 0 0; position: relative; top: 6px; }
 .note-latex-editor-footer > div { display: flex; gap: 8px; }
 .note-latex-editor-footer button { min-height: 34px; padding: 7px 12px; border-radius: 8px; border: 0; background: transparent; }
 .note-latex-editor-footer button:hover:not(:disabled) { background: var(--settings-card); }
@@ -163,6 +167,7 @@
 }
 @media (max-width: 720px) {
   .relatum-settings:has(.relatum-settings-pages:not([hidden]) > .note-extension-settings[data-detail="file-colors"]:not([hidden])) .relatum-settings-pages { --file-colors-edge-inset: 22px; }
+  .relatum-settings:has(.relatum-settings-pages:not([hidden]) > .note-extension-settings[data-detail="latex-input"]:not([hidden]) .note-latex-settings[data-tab="guide"]) .relatum-settings-pages { --latex-guide-edge-inset: 22px; }
 }
 @media (max-width: 640px) {
   .note-extension-detail-head { gap: 12px; }
