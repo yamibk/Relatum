@@ -89,7 +89,11 @@
 .note-latex-list > button[aria-selected="true"] { background: var(--settings-selected); }
 .note-latex-list > button > span { display: grid; gap: 4px; min-width: 0; }
 .note-latex-list code { font-family: var(--font-code, monospace); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.note-latex-list > button > span > code { color: var(--settings-text); font-weight: 600; }
+.note-latex-list > button > span > code, .note-latex-field input[data-latex-field="trigger"] {
+  font-family: "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  font-size: 14px; line-height: 1.5; font-weight: 500; letter-spacing: .025em; font-variant-ligatures: none;
+}
+.note-latex-list > button > span > code { color: var(--settings-text); }
 .note-latex-list small { color: var(--latex-secondary); font-size: 12px; overflow-wrap: anywhere; }
 .note-latex-preview { color: var(--settings-muted); font-size: 12px; }
 .note-latex-list > button[aria-selected="true"] small, .note-latex-list > button[aria-selected="true"] .note-latex-preview { color: var(--latex-secondary); }
