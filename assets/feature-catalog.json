@@ -455,13 +455,14 @@
     {
       "id": "daily",
       "label": "日常工作区",
-      "description": "每日任务、日历、专注与记账。",
+      "description": "每日任务、日历、专注、记账与临时图片编辑。",
       "default": true,
       "availableWhenAny": [
         "daily.tasks",
         "daily.calendar",
         "daily.focus",
-        "daily.ledger"
+        "daily.ledger",
+        "daily.images"
       ],
       "scripts": [
         "daily-workspace.js",
@@ -502,6 +503,18 @@
       ],
       "writePrefixes": [
         "/api/ledger-"
+      ]
+    },
+    {
+      "id": "daily.images",
+      "parent": "daily",
+      "label": "图片编辑",
+      "description": "粘贴或拖入图片，添加图形、文字、马赛克及裁剪，复制后即可带走；内容只在本次会话保留。",
+      "default": true,
+      "scripts": [
+        "image-markup-core.js",
+        "daily-images.js",
+        "daily-images.css"
       ]
     }
   ],

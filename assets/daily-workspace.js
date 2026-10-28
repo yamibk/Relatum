@@ -9,10 +9,12 @@
     calendar: { label: ['日历', 'Calendar'], factory: 'RelatumDailyCalendar', scripts: ['markdown.js', 'mermaid-renderer.js', 'start-sticky-notes.js', 'calendar.js'], role: 'calendar-shell' },
     focus: { label: ['专注', 'Focus'], factory: 'RelatumDailyFocus', scripts: ['focus-service.js', 'start-sticky-notes.js', 'focus.js'], role: 'focus-view' },
     ledger: { label: ['记账', 'Ledger'], factory: 'RelatumDailyLedger', scripts: ['study-palette.js', 'ledger-model.js', 'start-sticky-notes.js', 'ledger.js'], role: 'ledger-shell' },
+    images: { label: ['图片编辑', 'Image editor'], factory: 'RelatumDailyImages', scripts: ['image-markup-core.js', 'daily-images.js'], role: 'images-shell' },
   };
   const ready = { 'markdown.js': () => window.MarkdownMini, 'mermaid-renderer.js': () => window.MermaidRenderer,
     'study-palette.js': () => window.RelatumStudyPalette, 'ledger-model.js': () => window.RelatumLedgerModel,
-    'focus-service.js': () => window.RelatumFocusService, 'start-sticky-notes.js': () => window.RelatumStartPageNotes };
+    'focus-service.js': () => window.RelatumFocusService, 'start-sticky-notes.js': () => window.RelatumStartPageNotes,
+    'image-markup-core.js': () => window.RelatumImageMarkupCore };
   const instances = new Map(), snapshots = new Map(), prepared = new Map(), styles = new Map();
   let active = false, current = '', sequence = 0, disposed = false, releaseTimer = 0;
   let warmup = null, dataVersion = 0, navigation = Promise.resolve(true), pageHidden = false;

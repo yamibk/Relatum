@@ -14,6 +14,7 @@
   const daily = [
     ['tasks', '每日任务', 'Daily tasks', 'daily.tasks'], ['calendar', '日历', 'Calendar', 'daily.calendar'],
     ['focus', '专注', 'Focus', 'daily.focus'], ['ledger', '记账', 'Ledger', 'daily.ledger'],
+    ['images', '图片编辑', 'Image editor', 'daily.images'],
   ];
   let groups = null;
   const descriptors = workspace => {

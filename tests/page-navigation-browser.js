@@ -46,8 +46,8 @@ async function fullChecks(browser) {
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:pageOrder:v1')), null);
     const dialog = await openNavigation(page), canvas = dialog.locator('[data-role="canvas-page-order-list"]'), daily = dialog.locator('[data-role="daily-page-order-list"]');
     assert.equal(await dialog.locator('nav [data-settings-category="navigation"]').textContent(), '导航');
-    assert.equal(await canvas.locator('input[type="checkbox"]').count(), 10); assert.equal(await daily.locator('input[type="checkbox"]').count(), 4);
-    assert(!f.requests.some(url => /daily-workspace\.js|daily-(tasks|focus|calendar|ledger)\.(js|css|html)$/.test(url)), 'navigation settings do not load Daily pages');
+    assert.equal(await canvas.locator('input[type="checkbox"]').count(), 10); assert.equal(await daily.locator('input[type="checkbox"]').count(), 5);
+    assert(!f.requests.some(url => /daily-workspace\.js|image-markup-core\.js|daily-(tasks|focus|calendar|ledger|images)\.(js|css|html)$/.test(url)), 'navigation settings do not load Daily pages');
     await page.evaluate(() => { window.__recentButton = document.querySelector('.page-dot[data-group-id=""]'); window.__bookRoot = document.querySelector('[data-role="book-stage"]'); });
     await moveRow(page, canvas, 'group:g0', 'Home');
     await moveRow(page, canvas, 'recent', 'Home');
@@ -109,7 +109,7 @@ async function fullChecks(browser) {
       await RelatumStartWorkspace.applyLayout(value); await RelatumStartWorkspace.set('daily');
     });
     await page.waitForSelector('.daily-page-ledger:not([hidden])');
-    assert.deepEqual(await page.locator('.daily-navigation button').evaluateAll(nodes => nodes.map(node => node.dataset.dailyPage)), ['ledger', 'tasks', 'calendar', 'focus']);
+    assert.deepEqual(await page.locator('.daily-navigation button').evaluateAll(nodes => nodes.map(node => node.dataset.dailyPage)), ['ledger', 'tasks', 'calendar', 'focus', 'images']);
     await sliderChecks(page);
     await openNavigation(page); await page.locator('#global-settings-dialog [data-settings-action="reset-category"]').click();
     await page.locator('#global-settings-dialog [data-settings-action="accept-reset"]').click();
@@ -124,8 +124,10 @@ async function sliderChecks(page) {
   await page.mouse.wheel(0, 60); await page.waitForFunction(() => RelatumDailyWorkspace.current === 'tasks');
   await page.mouse.wheel(0, 60); await page.waitForFunction(() => RelatumDailyWorkspace.current === 'calendar');
   await page.mouse.wheel(0, 60); await page.waitForFunction(() => RelatumDailyWorkspace.current === 'focus');
+  await page.mouse.wheel(0, 60); await page.waitForFunction(() => RelatumDailyWorkspace.current === 'images');
   await page.mouse.wheel(0, 60); await frames(page);
-  assert.equal(await page.evaluate(() => RelatumDailyWorkspace.current), 'focus', 'wheel stops at the last page');
+  assert.equal(await page.evaluate(() => RelatumDailyWorkspace.current), 'images', 'wheel stops at the last page');
+  await page.mouse.wheel(0, -60); await page.waitForFunction(() => RelatumDailyWorkspace.current === 'focus');
   await page.mouse.wheel(0, -60); await page.waitForFunction(() => RelatumDailyWorkspace.current === 'calendar');
   await page.mouse.move(nav.x + nav.width + 200, nav.y + 200); await page.mouse.wheel(0, -60); await frames(page);
   assert.equal(await page.evaluate(() => RelatumDailyWorkspace.current), 'calendar', 'content wheel does not flip pages');

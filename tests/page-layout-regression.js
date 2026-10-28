@@ -9,7 +9,7 @@ const context = { window: { RelatumFeatureRuntime: { enabled: id => !disabled.ha
 vm.runInNewContext(source, context);
 const model = context.window.RelatumPageLayout, plain = value => JSON.parse(JSON.stringify(value));
 (async () => {
-assert.deepEqual(plain(model.layout('daily').order), ['tasks', 'calendar', 'focus', 'ledger']);
+assert.deepEqual(plain(model.layout('daily').order), ['tasks', 'calendar', 'focus', 'ledger', 'images']);
 assert.equal(saved.size, 0, 'default reads never persist');
 saved.set(model.keys.canvas, JSON.stringify({ order: ['group:b', 'recent', 'review', 'group:a', 'recent', 'invalid'] }));
 assert(model.layout('canvas').order.includes('group:b'), 'unknown group identities survive before a successful directory read');
@@ -26,7 +26,7 @@ assert.equal(model.layout('canvas').order.indexOf('review'), 2, 'disabled pages 
 disabled.delete('canvas.review');
 model.setGroups([{ id: 'b', name: 'B' }]);
 assert.equal(model.layout('canvas').order.some(id => id === 'group:a' || id === 'group:c'), false);
-const daily = { order: ['ledger', 'tasks', 'focus', 'calendar'], hidden: ['focus'] };
+const daily = { order: ['ledger', 'tasks', 'focus', 'calendar', 'images'], hidden: ['focus'] };
 assert.equal(await model.apply('daily', daily), true);
 assert.deepEqual(plain(model.layout('daily')), daily);
 assert.equal(model.items('daily').some(item => item.id === 'focus'), false);
@@ -44,7 +44,7 @@ await model.apply('daily', null, { reset: true });
 assert.equal(saved.has(model.keys.daily), false);
 for (const id of ['review', 'recent', 'favorites', 'inbox', 'group:b']) assert.equal(model.routeId(model.route(id)), id);
 saved.set(model.keys.daily, '{broken');
-assert.deepEqual(plain(model.layout('daily').order), ['tasks', 'calendar', 'focus', 'ledger']);
+assert.deepEqual(plain(model.layout('daily').order), ['tasks', 'calendar', 'focus', 'ledger', 'images']);
 saved.set('canvas:hideSpecialPages', '1'); saved.delete(model.keys.canvas);
 assert.deepEqual(plain(model.layout('canvas').hidden), ['review', 'cadence', 'notes', 'tree', 'study']);
 assert.equal(saved.has(model.keys.canvas), false, 'legacy reads do not write defaults');

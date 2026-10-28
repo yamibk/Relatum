@@ -25,7 +25,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     page.on('console', msg => { if (msg.type() === 'error') console.log('CONSOLE:', msg.text()); });
     await page.goto(base); await page.waitForFunction(() => !!window.RelatumStartWorkspace);
     await page.waitForTimeout(2200);
-    assert(!requests.some(p => /daily-(?:workspace|tasks|focus|calendar|ledger)\.(?:js|css|html)$|\/(?:focus-service|calendar|ledger|focus)\.js$|\/api\/(?:daily|focus|calendar|ledger)$/.test(p)), 'unvisited Daily loaded exclusive resources');
+    assert(!requests.some(p => /daily-(?:workspace|tasks|focus|calendar|ledger|images)\.(?:js|css|html)$|\/(?:focus-service|calendar|ledger|focus|image-markup-core)\.js$|\/api\/(?:daily|focus|calendar|ledger)$/.test(p)), 'unvisited Daily loaded exclusive resources');
     assert.equal(await page.locator('[data-start-workspace="daily"]').isVisible(), false);
     let attempts = 0;
     await page.route('**/daily-workspace.js', route => ++attempts === 1 ? route.abort() : route.continue());

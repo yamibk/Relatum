@@ -34,6 +34,7 @@ const cases = [
   ...catalog.features.filter(item => item.view).map(item => [item.view, only([item.parent, item.id])]),
   ['daily-tasks', only(['daily', 'daily.tasks'])],
   ['daily-ledger', only(['daily', 'daily.ledger'])],
+  ['daily-images', only(['daily', 'daily.images'])],
   ['editor', only(['canvas', 'canvas.editor'])],
 ];
 (async () => {

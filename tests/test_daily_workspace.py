@@ -32,6 +32,19 @@ class DailyWorkspaceTests(unittest.TestCase):
         self.assertFalse(profile.has_home)
         self.assertEqual(profile.workspaces, ())
 
+    def test_image_markup_is_independent_and_has_no_write_api(self):
+        profile = self.only("daily", "daily.images")
+        profile.validate()
+        self.assertTrue(profile.has_home)
+        self.assertEqual(profile.workspaces, ("daily",))
+        for name in ("image-markup-core.js", "daily-images.js", "daily-images.css"):
+            self.assertTrue(profile.resource_allowed(name))
+            self.assertFalse(self.only("daily", "daily.tasks").resource_allowed(name))
+        self.assertFalse(profile.resource_allowed("note-workspace.js"))
+        self.assertFalse(profile.resource_allowed("canvas.js"))
+        self.assertFalse(profile.write_allowed("/api/daily-create"))
+        self.assertFalse(profile.write_allowed("/api/ledger-entry-create"))
+
     def test_focus_independent_from_tasks(self):
         profile = self.only("daily", "daily.focus")
         self.assertTrue(profile.resource_allowed("focus-service.js"))
