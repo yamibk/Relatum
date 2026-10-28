@@ -1551,7 +1551,7 @@
     outlineLoader.then(() => {
       if (sequence !== outlineLoadSequence || !outlineVisible()) return;
       if (!noteOutline) noteOutline = window.RelatumNoteOutline.create(outlineContent, {
-        language, getDocument: outlineDocument, inputPending: editorInputPending, whenInputSettled: whenEditorInputSettled,
+        language, motion: tabMotionPreference, getDocument: outlineDocument, inputPending: editorInputPending, whenInputSettled: whenEditorInputSettled,
         getSurface: () => ({ kind: state.viewMode === 'reading' ? 'reading' : liveEditor ? 'editor' : 'fallback',
           scroller: editorScrollElement(), view: state.viewMode === 'reading' ? null : liveEditor?.view }),
         navigate: navigateOutline,

@@ -74,6 +74,108 @@ async function run(browser, mode) {
     assert.equal(await row('Skipped level').getAttribute('aria-level'), '2', 'skipped levels attach to the nearest smaller heading');
     assert.equal(await outline.locator('[aria-expanded]').count(), 5);
     assert.equal(requests.filter(value => value.includes('/note-outline.js')).length, 1);
+    const guides = await outline.locator('.note-outline-group').evaluateAll(groups => groups.map(group => {
+      const toggle = group.parentElement.previousElementSibling.querySelector('.note-outline-toggle').getBoundingClientRect();
+      const style = getComputedStyle(group), rect = group.getBoundingClientRect();
+      return { width: style.borderLeftWidth, color: style.borderLeftColor, error: Math.abs(rect.left + parseFloat(style.borderLeftWidth) / 2 - (toggle.left + toggle.width / 2)) };
+    }));
+    assert.equal(guides.length, 5);
+    assert(guides.every(guide => guide.width === '2px' && guide.color === 'rgba(42, 42, 39, 0.26)' && guide.error < 1), 'all guide levels align with the parent arrow, including skipped headings');
+    assert.equal(await row('Skipped level').evaluate(element => element.getBoundingClientRect().left - element.closest('.note-outline-tree').firstChild.firstChild.getBoundingClientRect().left), 14, 'outline keeps its compact indent');
+    if (mode === 'full') {
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+      await page.waitForFunction(() => !RelatumNoteSystem.motion.matches);
+      await page.evaluate(() => {
+        window.motionRoot = document.querySelector('.note-outline-row');
+        window.motionShell = motionRoot.nextElementSibling;
+        window.motionHeight = motionShell.getBoundingClientRect().height;
+        motionRoot.focus(); motionRoot.querySelector('.note-outline-toggle').click();
+        window.motionImmediate = { hidden: motionShell.hidden, inert: motionShell.inert, expanded: motionRoot.getAttribute('aria-expanded') };
+        motionRoot.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      });
+      assert.deepEqual(await page.evaluate(() => motionImmediate), { hidden: false, inert: true, expanded: 'false' }, 'collapse disables interaction before hiding');
+      assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), 'Underlined heading', 'keyboard skips collapsing descendants immediately');
+      await page.waitForFunction(() => {
+        const height = motionShell.getBoundingClientRect().height;
+        return height > 1 && height < motionHeight - 1 && motionShell.getAnimations().some(animation => animation.transitionProperty === 'grid-template-rows');
+      });
+      await page.evaluate(() => motionRoot.querySelector('.note-outline-toggle').click());
+      await pause(330);
+      assert(await page.evaluate(() => !motionShell.hidden && !motionShell.inert && Math.abs(motionShell.getBoundingClientRect().height - motionHeight) < 1), 'reversal restores the full subtree without stale collapse cleanup');
+      for (let reverse = 0; reverse < 5; reverse++) {
+        await page.evaluate(() => motionRoot.querySelector('.note-outline-toggle').click()); await pause(35);
+      }
+      await pause(330);
+      assert(await page.evaluate(() => motionShell.hidden && motionRoot.getAttribute('aria-expanded') === 'false'), 'repeated reversals settle the latest collapse');
+      await page.evaluate(() => motionRoot.querySelector('.note-outline-toggle').click()); await pause(330);
+      assert.equal(await row('Fourier Transform').locator('.note-outline-toggle').evaluate(element => getComputedStyle(element, '::before').transitionDuration), '0.19s');
+      await row('Fourier Transform').locator('.note-outline-toggle').hover();
+      await page.mouse.down(); await pause(65);
+      assert.notEqual(await row('Fourier Transform').locator('.note-outline-toggle').evaluate(element => getComputedStyle(element).transform), 'none', 'arrow has a real pressed feedback');
+      await page.mouse.up(); await pause(330);
+      await page.evaluate(() => motionRoot.querySelector('.note-outline-toggle').click()); await pause(330);
+
+      for (const preference of ['system', 'notes']) {
+        await page.evaluate(() => motionRoot.querySelector('.note-outline-toggle').click());
+        if (preference === 'system') await page.emulateMedia({ reducedMotion: 'reduce' });
+        else await page.evaluate(() => RelatumNoteSystem.update({ animations: false }));
+        await page.waitForFunction(() => RelatumNoteSystem.motion.matches && motionShell.hidden);
+        assert(await page.evaluate(() => motionShell.hidden && !motionShell.getAnimations().length), 'changing ' + preference + ' motion preference settles an active collapse');
+        await page.evaluate(() => motionRoot.querySelector('.note-outline-toggle').click());
+        assert(await page.evaluate(() => !motionShell.hidden && !motionShell.inert && !motionShell.getAnimations().length), 'reduced motion opens immediately');
+        if (preference === 'system') await page.emulateMedia({ reducedMotion: 'no-preference' });
+        else await page.evaluate(() => RelatumNoteSystem.update({ animations: true }));
+        await page.waitForFunction(() => !RelatumNoteSystem.motion.matches);
+      }
+      // Each interruption occurs while the shell is still animating.
+      for (const interruption of ['minimize', 'hidden', 'pagehide', 'sidebar', 'document', 'structure']) {
+        await page.evaluate(() => {
+          motionRoot.querySelector('.note-outline-toggle').click();
+          window.oldMotionShell = motionShell;
+        });
+        if (interruption === 'minimize') await page.evaluate(() => {
+          document.documentElement.dataset.desktopMinimized = '1';
+          window.dispatchEvent(new CustomEvent('canvasdesktop:visibility', { detail: { minimized: true } }));
+        });
+        else if (interruption === 'hidden') await page.evaluate(() => {
+          Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange'));
+        });
+        else if (interruption === 'pagehide') await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+        else if (interruption === 'sidebar') await page.locator('[data-note-action="close-links"]').click();
+        else if (interruption === 'document') { await page.evaluate(() => T.openNote('B.md')); await settled(); }
+        else {
+          await page.evaluate(() => T.editor.view.dispatch({ changes: { from: T.editor.view.state.doc.length, insert: '\n## Motion edit\n' }, userEvent: 'input' }));
+          await page.waitForFunction(() => !oldMotionShell.isConnected);
+        }
+        assert(await page.evaluate(() => oldMotionShell.hidden && !oldMotionShell.getAnimations().length), interruption + ' settles the old subtree');
+        await page.evaluate(() => {
+          window.oldMotionWrites = 0;
+          window.oldMotionObserver = new MutationObserver(records => { oldMotionWrites += records.length; });
+          oldMotionObserver.observe(oldMotionShell, { subtree: true, attributes: true, childList: true });
+        });
+        await pause(330);
+        assert.equal(await page.evaluate(() => oldMotionWrites), 0, interruption + ' leaves no delayed cleanup');
+        await page.evaluate(() => oldMotionObserver.disconnect());
+        if (interruption === 'minimize') await page.evaluate(() => {
+          document.documentElement.dataset.desktopMinimized = '0'; window.dispatchEvent(new CustomEvent('canvasdesktop:visibility', { detail: { minimized: false } }));
+        });
+        else if (interruption === 'hidden') await page.evaluate(() => { delete document.hidden; document.dispatchEvent(new Event('visibilitychange')); });
+        else if (interruption === 'pagehide') await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow')));
+        else if (interruption === 'sidebar') await page.locator('[data-note-action="toggle-notebooks"]').click();
+        else if (interruption === 'document') await page.evaluate(() => T.openNote('A.md'));
+        else {
+          await page.evaluate(() => RelatumCodeMirror.historyKeymap.find(binding => binding.key === 'Mod-z').run(T.editor.view));
+          await page.waitForFunction(() => ![...document.querySelectorAll('.note-outline-title')].some(element => element.textContent === 'Motion edit'));
+        }
+        await settled();
+        await page.evaluate(() => {
+          window.motionRoot = document.querySelector('.note-outline-row'); window.motionShell = motionRoot.nextElementSibling;
+          motionRoot.querySelector('.note-outline-toggle').click();
+        });
+        await pause(330);
+      }
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+    }
     const secondPosition = documentSource.lastIndexOf('## Same title');
     const snapshot = () => page.evaluate(() => T.editor.snapshot());
     const original = await snapshot();
@@ -206,6 +308,7 @@ async function run(browser, mode) {
     assert.equal(await row('Fourier Transform').getAttribute('aria-expanded'), 'true', 'a new session starts expanded');
     await page.evaluate(() => { RelatumI18n.setLanguage('en'); document.body.dataset.startTheme = 'dark'; });
     await page.setViewportSize({ width: 640, height: 760 }); await settled();
+    assert(await outline.locator('.note-outline-group').evaluateAll(groups => groups.every(group => getComputedStyle(group).borderLeftColor === 'rgba(235, 240, 235, 0.28)')), 'dark guides match the file tree');
     assert.equal(await page.locator('[data-note-action="side-outline"]').textContent(), 'Outline');
     const layout = await page.evaluate(() => {
       const button = document.querySelector('[data-note-action="side-outline"]'), nav = button.parentElement;

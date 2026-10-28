@@ -38,7 +38,8 @@
     let active = false, epoch = 0, navigationEpoch = 0, timer = 0, frame = 0;
     let documentState = null, headings = [], rows = new Map(), structure = '', currentKey = '', focusedKey = '';
     let surface = null, readingPositions = null, resizeObserver = null, mutationObserver = null;
-    const sessions = new Map();
+    const sessions = new Map(), motions = new Map();
+    const motion = options.motion || window.matchMedia('(prefers-reduced-motion: reduce)');
     const text = key => copy[key][options.language() === 'en' ? 1 : 0];
     const pending = () => options.inputPending && options.inputPending();
     const session = path => {
@@ -47,6 +48,48 @@
       while (sessions.size > 24) sessions.delete(sessions.keys().next().value);
       return value;
     };
+    function cancelMotion(shell) {
+      const task = motions.get(shell);
+      if (!task) return;
+      clearTimeout(task.timer); shell.removeEventListener('transitionend', task.onEnd);
+      motions.delete(shell);
+    }
+    function finishMotions() {
+      for (const task of Array.from(motions.values())) task.finish();
+      // Also settle arrow and row feedback when the host leaves the foreground.
+      host.getAnimations?.({ subtree: true }).forEach(animation => animation.cancel());
+    }
+    function motionChanged() { if (motion.matches) finishMotions(); }
+    function setExpanded(record, expanded, animate) {
+      const shell = record.shell;
+      cancelMotion(shell);
+      record.expanded = expanded;
+      record.row.setAttribute('aria-expanded', String(expanded));
+      shell.inert = !expanded; shell.setAttribute('aria-hidden', String(!expanded));
+      if (!expanded && record.group.contains(document.activeElement)) focusRow(record.key);
+      if (!animate || motion.matches || !active) {
+        shell.classList.toggle('is-open', expanded); shell.hidden = !expanded;
+        return;
+      }
+      if (shell.hidden) {
+        shell.hidden = false;
+        // Only reopening a fully hidden group needs a collapsed starting layout.
+        // Reversals keep the current CSS transition and its intermediate height.
+        void shell.offsetHeight;
+      }
+      const task = { timer: 0, finish() {
+        if (motions.get(shell) !== task) return;
+        cancelMotion(shell);
+        shell.classList.toggle('is-open', record.expanded); shell.hidden = !record.expanded;
+      }, onEnd(event) {
+        if (event.target !== shell || event.propertyName !== 'grid-template-rows') return;
+        if ((shell.getAnimations?.() || []).some(animation => animation.transitionProperty === 'grid-template-rows' && animation.playState === 'running')) return;
+        task.finish();
+      } };
+      motions.set(shell, task); shell.addEventListener('transitionend', task.onEnd);
+      shell.classList.toggle('is-open', expanded);
+      task.timer = setTimeout(task.finish, 280);
+    }
     function cancel() {
       epoch++; clearTimeout(timer); timer = 0;
       host.removeAttribute('aria-busy');
@@ -54,6 +97,7 @@
     function status(kind) {
       const value = text(kind);
       if (host.dataset.outlineStatus === kind && host.firstChild?.textContent === value) return;
+      finishMotions();
       const item = document.createElement(kind === 'failed' ? 'button' : 'p');
       item.className = 'note-outline-status'; item.textContent = value;
       if (kind === 'failed') { item.type = 'button'; item.addEventListener('click', () => refresh(0)); }
@@ -156,6 +200,7 @@
       host.removeAttribute('aria-busy'); delete host.dataset.outlineStatus;
       if (!headings.length) { status('empty'); return; }
       if (signature !== structure || !samePath || !rows.size) {
+        finishMotions();
         const hadFocus = host.contains(document.activeElement), oldFocus = focusedKey;
         const tree = document.createElement('ul'); tree.className = 'note-outline-tree'; tree.setAttribute('role', 'tree');
         rows = new Map();
@@ -167,13 +212,14 @@
           const title = document.createElement('button'); title.type = 'button'; title.className = 'note-outline-title'; title.tabIndex = -1;
           title.textContent = entry.label; title.title = entry.label; row.setAttribute('aria-label', entry.label);
           row.append(toggle, title); item.appendChild(row);
-          const record = { key: entry.key, item, row, toggle, title, group: null }; rows.set(entry.key, record);
+          const record = { key: entry.key, item, row, toggle, title, group: null, shell: null, expanded: false }; rows.set(entry.key, record);
           if (entry.parent >= 0) {
             const parent = rows.get(headings[entry.parent].key);
             if (!parent.group) {
-              parent.group = document.createElement('ul'); parent.group.setAttribute('role', 'group');
-              parent.group.hidden = saved.collapsed.has(parent.key); parent.item.appendChild(parent.group);
-              parent.row.setAttribute('aria-expanded', String(!parent.group.hidden)); parent.toggle.classList.add('has-children');
+              parent.shell = document.createElement('div'); parent.shell.className = 'note-outline-children-shell';
+              parent.group = document.createElement('ul'); parent.group.className = 'note-outline-group'; parent.group.setAttribute('role', 'group');
+              parent.shell.appendChild(parent.group); parent.item.appendChild(parent.shell);
+              setExpanded(parent, !saved.collapsed.has(parent.key), false); parent.toggle.classList.add('has-children');
             }
             parent.group.appendChild(item);
           } else tree.appendChild(item);
@@ -230,7 +276,7 @@
       navigationEpoch++;
       const collapsed = session(documentState.path).collapsed;
       if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
-      record.group.hidden = collapsed.has(key); record.row.setAttribute('aria-expanded', String(!record.group.hidden));
+      setExpanded(record, !collapsed.has(key), true);
       updateLabels(); scheduleHighlight();
     }
     function navigate(key) {
@@ -265,7 +311,7 @@
       if (!entry || !record) return;
       const visible = headings.filter(item => {
         let parent = item.parent;
-        while (parent >= 0) { if (rows.get(headings[parent].key).group.hidden) return false; parent = headings[parent].parent; }
+        while (parent >= 0) { if (!rows.get(headings[parent].key).expanded) return false; parent = headings[parent].parent; }
         return true;
       });
       const index = visible.indexOf(entry);
@@ -273,18 +319,19 @@
       else if (event.key === 'ArrowUp') focusRow(visible[Math.max(0, index - 1)].key);
       else if (event.key === 'Home') focusRow(visible[0].key);
       else if (event.key === 'End') focusRow(visible[visible.length - 1].key);
-      else if (event.key === 'ArrowRight') { if (record.group?.hidden) fold(entry.key); else if (record.group) focusRow(headings[entry.index + 1].key); }
-      else if (event.key === 'ArrowLeft') { if (record.group && !record.group.hidden) fold(entry.key); else if (entry.parent >= 0) focusRow(headings[entry.parent].key); }
+      else if (event.key === 'ArrowRight') { if (record.group && !record.expanded) fold(entry.key); else if (record.group) focusRow(headings[entry.index + 1].key); }
+      else if (event.key === 'ArrowLeft') { if (record.group && record.expanded) fold(entry.key); else if (entry.parent >= 0) focusRow(headings[entry.parent].key); }
       else if (event.key === 'Enter') navigate(entry.key);
       else if (event.key === ' ') { if (record.group) fold(entry.key); else navigate(entry.key); }
       else return;
       event.preventDefault(); event.stopPropagation();
     });
     return {
-      resume() { active = true; refresh(0); },
+      resume() { if (!active) motion.addEventListener?.('change', motionChanged); active = true; refresh(0); },
       suspend() {
         if (documentState) session(documentState.path).scrollTop = host.scrollTop;
         active = false; navigationEpoch++; cancel();
+        motion.removeEventListener?.('change', motionChanged); finishMotions();
         if (frame) cancelAnimationFrame(frame); frame = 0; detachSurface();
       },
       documentChanged() { if (active) refresh(120); },
