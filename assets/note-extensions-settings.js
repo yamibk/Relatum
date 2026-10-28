@@ -38,7 +38,8 @@
           + '<path class="note-file-color-menu-slash" d="m3 3 18 18"/></svg>';
         menuToggle.addEventListener('click', () => registry.set(definition.id,
           { options: { showContextMenu: !registry.read(definition.id).options.showContextMenu } }));
-        card.append(menuToggle);
+        input.id = 'note-extension-enabled-' + definition.id; label.htmlFor = input.id;
+        card.append(menuToggle, input);
       }
       const status = document.createElement('div'); status.className = 'note-extension-status'; status.setAttribute('role', 'status');
       const configure = document.createElement('button'); configure.type = 'button'; configure.className = 'note-extension-configure'; configure.dataset.extensionConfigure = definition.id;
