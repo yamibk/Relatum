@@ -1,19 +1,27 @@
 
 
 .ledger-shell {
-  width: min(1380px, 100%);
-  margin: 0 auto;
+  width: 100%;
   color: var(--text);
 }
 
+.daily-workspace .daily-page-ledger {
+  padding-inline: 0;
+}
+
 .ledger-page {
-  width: 100%;
-  padding-top: 8px;
+  width: min(1380px, 100%);
+  margin: 0 auto;
+  padding: 8px clamp(20px, 3vw, 56px) 0;
 }
 
 .study-task-page-rail.ledger-page-rail {
-  right: 12px;
   grid-template-rows: minmax(0, 1fr);
+}
+
+/* Keep the hidden rail inside the scrollport while sharing the 4px edge inset. */
+.ledger-page-rail.auto-hide:not(.revealed) {
+  transform: translate3d(4px, 0, 0);
 }
 
 .ledger-head {
@@ -621,6 +629,7 @@ body.start-page[data-start-theme="dark"] .ledger-entry[data-ledger-palette].is-p
   .ledger-head-actions { flex-wrap: wrap; justify-content: flex-end; }}
 
 @media (max-width: 700px){
+  .ledger-page { padding-inline: 14px; }
   .ledger-head { display: grid; }
   .ledger-head-actions { justify-content: flex-start; }
   .ledger-legend { order: 3; }
