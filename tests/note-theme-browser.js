@@ -111,7 +111,13 @@ async function run(browser, minimal) {
         return { bg: style.backgroundColor, color: text.color, overflow: pane.getBoundingClientRect().right > root.getBoundingClientRect().right + 2, font: text.fontFamily };
       }, { skin, mode, bg, scale });
       assert(!result.overflow, JSON.stringify({ skin, mode, bg, width, scale, result }));
-      if (skin === 'claude' && bg === 'simple') assert.equal(result.bg, mode === 'light' ? 'rgb(250, 249, 245)' : 'rgb(38, 38, 36)');
+      if (skin === 'claude' && bg === 'simple') {
+        const expected = mode === 'light' ? 'rgb(250, 249, 245)' : 'rgb(25, 25, 25)';
+        assert.equal(result.bg, expected);
+        if (mode === 'dark') assert(await page.evaluate(expected =>
+          ['.note-tree-pane', '.top-bar', '.note-links-pane'].every(selector =>
+            getComputedStyle(document.querySelector(selector)).backgroundColor === expected), expected), 'dark chrome and document use one black');
+      }
       matrix.push({ skin, mode, bg, width, scale, ...result });
     }
     await page.setViewportSize({ width: 1440, height: 980 });

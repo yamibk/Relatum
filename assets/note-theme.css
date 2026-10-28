@@ -55,11 +55,12 @@ html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > :
 }
 html[data-note-theme="claude"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
 html[data-note-theme="claude"] body.start-page[data-start-theme="dark"][data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
-  --note-theme-paper: #262624; --note-theme-nav: #1f1f1e; --note-theme-surface: #30302e;
-  --note-theme-card: #343432; --note-theme-hover: #363633; --note-theme-selected: #41413c;
+  /* Match the supplied Claude content sample; keep all large panes on one black. */
+  --note-theme-paper: #191919; --note-theme-nav: var(--note-theme-paper); --note-theme-surface: #242424;
+  --note-theme-card: var(--note-theme-surface); --note-theme-hover: #2a2a2a; --note-theme-selected: #404040;
   --note-theme-text: #faf9f5; --note-theme-secondary: #c3c2b7; --note-theme-muted: #aaa89f;
-  --note-theme-line: rgba(226,225,218,.12); --note-theme-line-strong: rgba(226,225,218,.28);
-  --note-theme-link: #9fc5f4; --note-theme-code: #30302e;
+  --note-theme-line: rgba(239,239,239,.10); --note-theme-line-strong: rgba(239,239,239,.24);
+  --note-theme-link: #9fc5f4; --note-theme-code: var(--note-theme-surface);
 }
 /* Retain header geometry and its finite interactions, without backdrop sampling. */
 html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) { background: var(--note-theme-paper); }
@@ -116,6 +117,7 @@ html[data-note-theme="claude"] body.start-page :is(.note-tab:hover, .note-icon-b
 /* File Colors owns rows with explicit user colors, including hover/selection. */
 html[data-note-theme="claude"] body.start-page .note-tree-row:not([data-file-color]):hover { background: var(--note-theme-hover); }
 html[data-note-theme="claude"] body.start-page .note-tree-row:not([data-file-color]):is(.active, .opening) { background: var(--note-theme-selected); color: var(--text); }
+html[data-note-theme="claude"] body.start-page[data-start-theme="dark"] .note-notebook-root > .note-tree-row.selected-notebook { background: var(--note-theme-selected); color: var(--text); }
 html[data-note-theme="claude"] body.start-page :is(.note-tree-children, .note-outline-group) { border-left-color: var(--note-theme-line-strong); }
 html[data-note-theme="claude"] body.start-page :is(.note-side-button.active, .note-view-toggle button.active) { background: var(--note-theme-selected); }
 html[data-note-theme="claude"] body.start-page :is(.note-library-popover, .note-context-menu, .note-modal-card, .note-search-popover) {
@@ -163,9 +165,9 @@ html[data-note-theme="claude"] body.start-page[data-start-background="scenic"] .
   background: var(--note-scenic-shell);
 }
 html[data-note-theme="claude"] body.start-page[data-start-theme="dark"][data-start-background="scenic"] .note-workspace {
-  --note-scenic-shell: rgba(31,31,30,.66); --note-scenic-tree: rgba(31,31,30,.78);
-  --note-scenic-paper: rgba(38,38,36,.84); --note-scenic-chrome: rgba(38,38,36,.76);
-  --note-scenic-overlay: rgba(48,48,46,.94);
+  --note-scenic-shell: rgba(25,25,25,.66); --note-scenic-tree: rgba(25,25,25,.78);
+  --note-scenic-paper: rgba(25,25,25,.84); --note-scenic-chrome: rgba(25,25,25,.76);
+  --note-scenic-overlay: rgba(25,25,25,.94);
 }
 html[data-note-theme="claude"] body.start-page[data-start-background="scenic"] :is(.note-tree-pane, .note-links-pane, .note-tree-foot) { background: var(--note-scenic-tree); }
 html[data-note-theme="claude"] body.start-page[data-start-background="scenic"] :is(.note-document-pane, .note-document-body) { background: var(--note-scenic-paper); }
