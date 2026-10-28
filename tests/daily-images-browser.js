@@ -231,6 +231,14 @@ async function interactionChecks(page) {
     await page.evaluate(() => RelatumStartWorkspace.set('daily', { animate: false })); await page.waitForSelector('.images-canvas');
     await page.waitForFunction(() => !document.querySelector('[data-images-action="copy"]').disabled);
     result = await copy(page); assert.deepEqual(result.bytes, retained, 'workspace teardown preserves only the session');
+    await page.evaluate(() => { RelatumGlobalSystem.update({ dailyRetention: 'session' }); window.__retainedImages = document.querySelector('.daily-page-images'); });
+    await page.evaluate(() => RelatumStartWorkspace.set('canvas', { animate: false }));
+    assert.equal(await page.locator('.images-canvas').evaluate(node => node.width), 0, 'retention still releases decoded drawing resources');
+    await page.evaluate(() => RelatumStartWorkspace.set('daily', { animate: false }));
+    await page.waitForFunction(() => !document.querySelector('[data-images-action="copy"]').disabled);
+    assert(await page.evaluate(() => __retainedImages === document.querySelector('.daily-page-images')), 'retention reuses the image view');
+    result = await copy(page); assert.deepEqual(result.bytes, retained, 'retention preserves image edits');
+    await page.evaluate(() => { RelatumGlobalSystem.update({ dailyRetention: 'immediate' }); delete window.__retainedImages; });
     await drag(page, 'crop', 110, 80, 650, 400); await page.locator('[data-images-action="apply"]').click();
     result = await copy(page); assert(Math.abs(result.width - 540) <= 1 && Math.abs(result.height - 320) <= 1, 'crop outputs native pixel dimensions');
     await page.keyboard.press('Control+z'); result = await copy(page); assert.deepEqual(result.bytes, retained, 'crop undo restores full image');

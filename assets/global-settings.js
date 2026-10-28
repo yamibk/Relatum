@@ -29,11 +29,11 @@
     ['starmap', ['星图', 'Star map'], '<circle cx="5" cy="5" r="2"/><circle cx="19" cy="7" r="2"/><circle cx="12" cy="19" r="2"/><path d="m7 5 10 2M6 7l5 10m7-8-5 8"/>', 'graph animation physics fit 动画 生长 阻尼 取景'],
     ['career', ['生涯', 'Career'], '<path d="M4 3v17h17M8 15l4-5 4 2 5-7"/>', 'career scroll inertia reveal 生涯 滚动 惯性 揭示'],
     ['usage', ['使用统计', 'Usage statistics'], '<path d="M5 21V11m7 10V3m7 18V7"/>', 'usage statistics tracking time archive backup data 统计 记录 时间 归档 备份 数据管理'],
-    ['system', ['系统', 'System'], '<path d="M4 4h16v12H4zM8 20h8m-4-4v4"/>', 'system desktop launcher startup selection 系统 启动器 启动 弹窗 选择'],
+    ['system', ['系统', 'System'], '<path d="M4 4h16v12H4zM8 20h8m-4-4v4"/>', 'system desktop launcher startup preload daily retention memory 系统 启动器 启动 弹窗 预加载 日常 保留 内存'],
   ];
   definitions.forEach(([id, label, iconMarkup, keywords]) => {
     const panel = document.createElement('section'); panels.set(id, panel);
-    categories.push({ id, label, iconMarkup, keywords, panel, searchMode: id === 'usage' ? 'category' : undefined, reset: id === 'system' ? null : () => resetCategory(id) });
+    categories.push({ id, label, iconMarkup, keywords, panel, searchMode: id === 'usage' ? 'category' : undefined, reset: () => resetCategory(id) });
   });
   function take(selector, category, enabled = true) {
     source.querySelectorAll(selector).forEach(element => {
@@ -87,6 +87,50 @@
     systemEntry.querySelector('input').dataset.role = 'global-launcher-skip-selection';
     panels.get('system').append(systemEntry);
   }
+  const systemPolicy = window.RelatumGlobalSystem;
+  const systemIntro = document.createElement('p'); systemIntro.dataset.i18nManaged = 'true';
+  const preloadSetting = document.createElement('label'); preloadSetting.className = 'start-setting-toggle'; preloadSetting.dataset.i18nManaged = 'true';
+  preloadSetting.dataset.settingsKeywords = '后台 预加载 启动 preload background startup';
+  preloadSetting.innerHTML = '<span><strong></strong><small></small><small data-global-preload-status></small></span><input type="checkbox" data-role="global-system-preload">';
+  const preloadInput = preloadSetting.querySelector('input');
+  preloadInput.addEventListener('change', () => saveSystem({ preload: preloadInput.checked }));
+  const retentionSetting = document.createElement('fieldset'); retentionSetting.className = 'global-system-retention'; retentionSetting.dataset.i18nManaged = 'true';
+  retentionSetting.dataset.settingsKeywords = '日常 页面 保留 时长 内存 返回 daily retention memory return';
+  retentionSetting.innerHTML = '<legend></legend><p id="global-retention-hint"></p><div class="global-system-choices"></div>';
+  const retentionLabels = {
+    immediate: ['立即释放', 'Release immediately'], '30s': ['30 秒', '30 seconds'],
+    '5m': ['5 分钟', '5 minutes'], session: ['直到关闭窗口', 'Until window closes'],
+  };
+  for (const value of Object.keys(retentionLabels)) {
+    const label = document.createElement('label'), radio = document.createElement('input'), caption = document.createElement('span');
+    radio.type = 'radio'; radio.name = 'global-daily-retention'; radio.value = value; radio.dataset.role = 'global-daily-retention';
+    radio.setAttribute('aria-describedby', 'global-retention-hint');
+    radio.addEventListener('change', () => { if (radio.checked) saveSystem({ dailyRetention: value }); });
+    label.append(radio, caption); retentionSetting.querySelector('div').append(label);
+  }
+  panels.get('system').append(systemIntro, preloadSetting);
+  if (features.workspaceEnabled('daily')) panels.get('system').append(retentionSetting);
+  function saveSystem(patch) {
+    if (!systemPolicy.update(patch)) dialog?.setStatus(text('未能保存系统设置，选择已恢复。', 'Could not save system settings. Your selection was restored.'));
+    refreshSystem();
+  }
+  function refreshSystem() {
+    const value = systemPolicy.read();
+    systemIntro.textContent = text('按需调整首次打开速度与返回速度。更快的切换可能占用更多内存。', 'Adjust first-open and return speed. Faster switching may use more memory.');
+    preloadSetting.querySelector('strong').textContent = text('后台预加载', 'Background preloading');
+    preloadSetting.querySelector('small').textContent = text('下次启动生效。空闲时提前准备已有功能，提高首次打开速度；会增加后台读取与资源占用。', 'Applies at next launch. Prepare existing features while idle for faster first opening, using additional background reads and resources.');
+    preloadInput.checked = value.preload; preloadInput.disabled = !features.enabled('runtime.preload');
+    preloadSetting.querySelector('[data-global-preload-status]').textContent = !features.enabled('runtime.preload')
+      ? text('本次启动器已关闭后台预加载；需在启动器启用后才可使用。', 'Preloading is disabled by the launcher for this session. Enable it in the launcher to use it.')
+      : features.preloadEnabled ? text('本次启动：已启用', 'This launch: enabled') : text('本次启动：未启用', 'This launch: disabled');
+    retentionSetting.querySelector('legend').textContent = text('日常页面保留时长', 'Daily page retention');
+    retentionSetting.querySelector('p').textContent = text('即时生效。离开日常工作区后保留已打开的页面，减少返回时的重复创建，但仍占用内存。刷新、打开独立编辑器或关闭窗口时释放；图片解码与绘图缓存仍会释放。', 'Applies immediately. Keep opened Daily pages after leaving for faster returns, using more memory. Refreshing, opening a separate editor or closing the window releases them; decoded images and drawing caches are still released.');
+    retentionSetting.querySelectorAll('input').forEach(radio => {
+      radio.checked = radio.value === value.dailyRetention;
+      radio.nextElementSibling.textContent = text(...retentionLabels[radio.value]);
+    });
+  }
+  window.addEventListener('relatum:global-system', refreshSystem);
   source.remove();
   const hint = document.createElement('p'), rows = document.createElement('div');
   hint.dataset.i18nManaged = 'true'; rows.dataset.role = 'workspace-layout-list';
@@ -104,13 +148,13 @@
   content.hidden = true; visibleCategories.forEach(category => content.append(category.panel)); document.body.append(content);
   function ensureDialog() {
     if (dialog) return dialog;
-    const activeCategories = visibleCategories.filter(category => category.id !== 'system' || !systemEntry.hidden);
+    const activeCategories = visibleCategories;
     dialog = window.RelatumSettingsDialog.create({ id: 'global-settings-dialog', content, categories: activeCategories, language, motion,
       labels: { title: ['全局设置', 'Settings'], 'reset-all': ['恢复全部设置', 'Reset all settings'], confirmAll: ['恢复全部全局设置？', 'Reset all global settings?'],
         confirmDescription: ['恢复工作区顺序、显示选择及本面板其他偏好。保留主题、语言、笔记设置、客户端窗口设置及所有内容。', 'Restore workspace order, visibility and other preferences in this panel. Keep theme, language, note settings, window settings and all content.'] },
       async resetAll() {
         await resetCategory('workspaces');
-        for (const category of activeCategories) if (category.id !== 'workspaces' && category.id !== 'system') await resetCategory(category.id);
+        for (const category of activeCategories) if (category.id !== 'workspaces') await resetCategory(category.id);
       },
       onCategoryChange(id) { usageVisibility(id === 'usage'); if (id !== 'workspaces') orderList?.suspend(); if (id !== 'navigation') pageLists.forEach(list => list.suspend()); },
       onKeyDown(event) { return usageActive && usageManager?.onKeyDown(event); },
@@ -120,14 +164,6 @@
     dialog.dialog.classList.add('global-settings-dialog'); ensureOrderList(); ensurePageLists(); translate();
     return dialog;
   }
-  document.addEventListener('canvasdesktop:launcher-settings', () => {
-    if (!dialog || !systemEntry) return;
-    const registered = !!dialog.dialog.querySelector('nav [data-settings-category="system"]');
-    if (registered === !systemEntry.hidden) return;
-    const wasOpen = dialog.isOpen, category = dialog.dialog.querySelector('nav [aria-current="page"]')?.dataset.settingsCategory;
-    dialog.destroy(); dialog = null; content.hidden = true; document.body.append(content);
-    if (wasOpen) ensureDialog().open({ trigger, category });
-  });
   function ensureOrderList() {
     if (orderList || !window.RelatumStartWorkspace) return;
     orderList = window.RelatumSettingsOrderList.create({ ids: features.workspaces.map(item => item.id), names: Object.fromEntries(features.workspaces.map(item => [item.id, item.label])),
@@ -169,10 +205,13 @@
       localStorage.removeItem('daily:calendarCountdownProgressMode');
       window.RelatumDailyLoader.applyCountdown(true);
       document.dispatchEvent(new Event('daily:settings-reset'));
+    } else if (id === 'system') {
+      if (!systemPolicy.reset()) throw new Error(text('未能恢复系统设置，请重试。', 'Could not reset system settings. Please retry.'));
     } else if (id === 'usage') window.RelatumUsage?.resetSettings();
     else await adapter?.reset(id);
   }
   function translate() {
+    refreshSystem();
     trigger.title = text('全局设置', 'Settings');
     trigger.setAttribute('aria-label', text('全局设置', 'Settings'));
     themeLabel.textContent = text('主题', 'Theme');

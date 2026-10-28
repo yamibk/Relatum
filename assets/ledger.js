@@ -1,6 +1,7 @@
 (function () {
   'use strict';
   window.RelatumDailyLedger = function (root, host) {
+  let languageDirty = false;
     const scope = host.createScope();
     const { listen, setTimeout, clearTimeout, requestAnimationFrame, cancelAnimationFrame } = scope;
   const model = window.RelatumLedgerModel;
@@ -1723,9 +1724,10 @@
     scheduleSettingsPosition(); positionUnitSettings(); if (paletteController) paletteController.schedulePosition();
   }, true);
   listen(document, 'relatum:languagechange', () => {
-    if (!state.mounted) return;
+    languageDirty = true;
+    if (!state.mounted || !state.active) return;
     if (state.settingsPopover) closeSettings(false, true);
-    if (state.unitPopover) closeUnitSettings(false, true); syncLanguage();
+    if (state.unitPopover) closeUnitSettings(false, true); syncLanguage(); languageDirty = false;
   });
   listen(window, 'pagehide', () => {
     state.active = false; discardDraft({ instant: true }); cancelMainRequest();
@@ -1742,6 +1744,7 @@
       state.active = true;
       // 保险清理：切页交接若被离页/重入打断，不能残留透明度、位移或入场动画。
       clearPageSwitchMotion();
+      if (languageDirty) { syncLanguage(); languageDirty = false; }
       if (dom.page) {
         dom.page.classList.remove('is-revealing');
       }

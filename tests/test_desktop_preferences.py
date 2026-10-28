@@ -112,6 +112,17 @@ class DesktopPreferencesTests(unittest.TestCase):
             self.assertEqual(restored.values['canvas:reviewPreferences:v1'], value)
             self.assertIn('canvas:reviewPreferences:v1', restored.bootstrap())
 
+    def test_global_system_policy_joins_existing_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for session in ('full', 'daily', 'notes'):
+                value = json.dumps({'preload': False, 'dailyRetention': 'session'})
+                preferences = DesktopPreferences(Path(directory), session)
+                preferences.update({'canvas:globalSystem:v1': value})
+                preferences.flush()
+                restored = DesktopPreferences(Path(directory), session)
+                self.assertEqual(restored.values['canvas:globalSystem:v1'], value)
+                self.assertNotEqual(preferences.launch_id, restored.launch_id)
+
     def test_failed_write_retries_and_invalid_input_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             preferences = DesktopPreferences(Path(directory), 'notes')

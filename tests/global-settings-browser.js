@@ -61,8 +61,8 @@ async function run(browser, mode) {
       await globalToggle.waitFor({ state: 'visible' });
       const categories = await dialog.locator('nav [data-settings-category]').evaluateAll(nodes => nodes.map(node => node.dataset.settingsCategory));
       assert.deepEqual(categories.slice(-2), ['usage', 'system']);
-      assert.equal(await dialog.locator('section[data-settings-category="system"] input').count(), 1);
-      assert(await dialog.locator('[data-settings-action="reset-category"]').isHidden(), 'client preference has no category reset');
+      assert.equal(await dialog.locator('[data-role="global-daily-retention"]').count(), 4);
+      assert(await dialog.locator('[data-settings-action="reset-category"]').isVisible(), 'resource policy supports category reset');
       const original = page.locator('[data-role="launcher-skip-selection"]');
       await page.evaluate(() => { window.__holdLauncherSave = true; });
       await globalToggle.click();
@@ -97,7 +97,9 @@ async function run(browser, mode) {
       await page.waitForFunction(() => document.querySelector('[data-role="launcher-setting"]').hidden);
       await page.locator('.desktop-settings-close').click();
       await page.evaluate(() => RelatumGlobalSettings.open());
-      assert.equal(await category('system').count(), 0, 'unsupported launcher hides the empty category');
+      assert.equal(await category('system').count(), 1, 'resource settings keep System available without a launcher');
+      await category('system').click();
+      assert(await globalToggle.locator('..').isHidden(), 'unsupported launcher hides only its own row');
       assert.deepEqual(errors, []); console.log('system: category placement, shared toggle, single-flight save, failure rollback, reset protection, language, reload and unsupported host passed');
       return;
     }
@@ -140,8 +142,8 @@ async function run(browser, mode) {
     await page.evaluate(() => RelatumGlobalSettings.open()); await dialog.waitFor();
     assert(await dialog.evaluate(node => node.matches(':modal') && !node.closest('.start-workspace-stage')));
     assert.deepEqual(await dialog.locator('nav button').evaluateAll(nodes => nodes.map(node => node.dataset.settingsCategory)), mode === 'full'
-      ? ['appearance', 'workspaces', 'navigation', 'daily', 'learning', 'starmap', 'career', 'usage']
-      : ['appearance', 'workspaces', ...(mode === 'library' ? ['navigation'] : []), ...(['career', 'mixed'].includes(mode) ? ['career'] : []), ...(mode === 'career' ? [] : ['usage'])]);
+      ? ['appearance', 'workspaces', 'navigation', 'daily', 'learning', 'starmap', 'career', 'usage', 'system']
+      : ['appearance', 'workspaces', ...(mode === 'library' ? ['navigation'] : []), ...(['career', 'mixed'].includes(mode) ? ['career'] : []), ...(mode === 'career' ? [] : ['usage']), 'system']);
     const bounds = await dialog.boundingBox(); assert.equal(Math.round(bounds.width), 1200); assert.equal(Math.round(bounds.height), 820);
     await category('workspaces').click();
     assert.deepEqual(await dialog.locator('[data-role="workspace-layout-list"] [data-sidebar-visible]').evaluateAll(nodes => nodes.map(node => node.dataset.sidebarVisible)), available);

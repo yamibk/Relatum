@@ -40,6 +40,14 @@
 .global-settings-dialog .start-usage-settings .start-setting-row { margin-bottom: 10px; padding: 18px 20px; font-size: 13px; }
 .global-settings-dialog .start-speed-range-wrap { margin-top: 8px; }
 .global-settings-dialog input[type="range"] { width: 100%; margin-inline: 0; }
+.global-settings-dialog .global-system-retention { min-width: 0; margin: 0; padding: 18px 20px; border: 0; border-radius: 14px; background: var(--settings-card); }
+.global-settings-dialog .global-system-retention legend { float: left; width: 100%; padding: 0; font-size: 13px; font-weight: 580; }
+.global-settings-dialog .global-system-retention p { clear: both; margin: 8px 0 14px; color: var(--settings-muted); font-size: 11px; line-height: 1.6; }
+.global-settings-dialog .global-system-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.global-settings-dialog .global-system-choices label { display: flex; align-items: center; gap: 9px; padding: 12px; border: 1px solid var(--settings-selected); border-radius: 9px; font-size: 12px; cursor: pointer; }
+.global-settings-dialog .global-system-choices label:has(:checked) { background: var(--settings-selected); border-color: var(--settings-text); }
+.global-settings-dialog .global-system-choices input { margin: 0; flex: 0 0 auto; accent-color: var(--settings-text); }
+@media (max-width: 720px) { .global-settings-dialog .global-system-choices { grid-template-columns: 1fr; } }
 html[data-start-theme="dark"] { --workspace-active-ink: #1b1d1b; }
 html[data-start-workspace="none"] body.start-page { height: 100vh; overflow: hidden; }
 html[data-start-workspace="none"] :is(.start-sky, .start-workspace-stage, .top-actions, .desktop-settings-trigger, .start-workspace-switch) { display: none !important; }

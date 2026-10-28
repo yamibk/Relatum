@@ -800,21 +800,22 @@ function onDurationInput() {
 
 root.addEventListener('click',event=>{const action=event.target.closest('[data-action]')?.dataset.action;if(action?.startsWith('focus-wrapup-'))service.finishWrapup(action.slice(13)).catch(error=>toast(error.message));if(action==='focus-session-save')saveSessionEdit();if(action==='focus-session-delete')deleteSessionEdit();if(action==='focus-session-close')closeSessionEditor();if(action==='focus-session-open-source'){const session=sessions.find(item=>item.id===editingSessionId);if(session?.source)host.openSource(session.source);}if(action==='focus-zen-enter')enterZen();});
 listen(document,'keydown',event=>{if(!host.isActive()||isTypingTarget(event.target))return;if(event.key==='Escape'){exitZen();toggleSettings(false);toggleHelp(false);closeSessionEditor();}else if(event.code==='Space'&&!service.pendingSession){event.preventDefault();if(!service.running||service.paused)start();else pause();}});
-const unsubscribe = service.subscribe(() => {
+let unsubscribe = null;
+function updateFromService() {
   if (!host.isActive()) return;
   if (goalEl.value !== service.goal) goalEl.value = service.goal;
   if (outcomeEl.value !== service.outcome) outcomeEl.value = service.outcome;
   if (service.pendingSession) { exitZen(); renderPendingWrapup(); }
   else if (wrapupEl) wrapupEl.hidden = true;
   syncDisplay();
-});
+}
 listen(document, 'canvas:data-changed', () => { if (host.isActive()) loadSessions(); });
 goalEl.value=service.goal;outcomeEl.value=service.outcome;syncSettingsInputs();syncModeUI();updateNoiseVolRow();
 return {
-  activate() { syncDisplay(); if (service.pendingSession) renderPendingWrapup(); replayEntrance(); return Promise.allSettled([loadDaily(), loadSessions()]); },
-  deactivate({ freeze = false } = {}) { service.goal = goalEl.value; service.outcome = outcomeEl.value; exitZen(); toggleSettings(false); toggleHelp(false); closeSessionEditor(); scope.stop({ freeze }); service.releaseIdleAudio(); },
+  activate() { if (!unsubscribe) unsubscribe = service.subscribe(updateFromService); syncDisplay(); if (service.pendingSession) renderPendingWrapup(); replayEntrance(); return Promise.allSettled([loadDaily(), loadSessions()]); },
+  deactivate({ freeze = false } = {}) { unsubscribe?.(); unsubscribe = null; service.goal = goalEl.value; service.outcome = outcomeEl.value; exitZen(); toggleSettings(false); toggleHelp(false); closeSessionEditor(); scope.stop({ freeze }); service.releaseIdleAudio(); },
   showDay(day, id) { footprintDay = day; footprintSessionId = id || ''; return loadSessions().then(() => { if (id && host.isActive()) openSessionEditor(id); }); },
-  destroy() { this.deactivate(); unsubscribe(); scope.destroy(); },
+  destroy() { this.deactivate(); scope.destroy(); },
 };
   };
 })();

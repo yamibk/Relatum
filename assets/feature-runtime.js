@@ -3,6 +3,44 @@
   'use strict';
   const profile = window.RelatumFeatures;
   const enabled = key => !profile || !profile.restricted || profile.features[key] === true;
+  // Resource preferences are independent of launch permissions. Only preload is
+  // frozen for the launch; retention changes apply to the current homepage.
+  const systemKey = 'canvas:globalSystem:v1', bootKey = 'relatum:globalSystemBoot:v1';
+  const retentionValues = ['immediate', '30s', '5m', 'session'];
+  function normalizeSystem(raw) {
+    return Object.freeze({ preload: typeof raw?.preload === 'boolean' ? raw.preload : true,
+      dailyRetention: retentionValues.includes(raw?.dailyRetention) ? raw.dailyRetention : 'immediate' });
+  }
+  function readSystem() {
+    try { return normalizeSystem(JSON.parse(localStorage.getItem(systemKey))); } catch (_) { return normalizeSystem(null); }
+  }
+  let systemValue = readSystem(), bootPreload = systemValue.preload;
+  const seed = window.RelatumDesktopPreferencesSeed;
+  const bootIdentity = seed ? seed.sessionKey + ':' + seed.launchId : 'browser';
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(bootKey));
+    if (saved?.identity === bootIdentity && typeof saved.preload === 'boolean') bootPreload = saved.preload;
+    else sessionStorage.setItem(bootKey, JSON.stringify({ identity: bootIdentity, preload: bootPreload }));
+  } catch (_) { /* A storage-restricted page still has a stable in-document policy. */ }
+  function publishSystem(next) {
+    const previous = systemValue; systemValue = next;
+    window.dispatchEvent(new CustomEvent('relatum:global-system', { detail: { previous, value: next } }));
+  }
+  window.RelatumGlobalSystem = Object.freeze({
+    read: () => systemValue,
+    update(patch) {
+      const next = normalizeSystem({ ...systemValue, ...patch });
+      try { localStorage.setItem(systemKey, JSON.stringify(next)); } catch (_) { return false; }
+      publishSystem(next); return true;
+    },
+    reset() {
+      try { localStorage.removeItem(systemKey); } catch (_) { return false; }
+      publishSystem(normalizeSystem(null)); return true;
+    },
+  });
+  window.addEventListener?.('storage', event => {
+    if (event.key === systemKey || event.key === null) publishSystem(readSystem());
+  });
   const workspaces = Object.freeze((profile?.workspaces || []).map(item => Object.freeze({ ...item, label: Object.freeze(item.label.slice()) })));
   const workspaceIds = workspaces.map(item => item.id);
   const workspaceEnabled = key => workspaceIds.includes(key) && (key === 'canvas' ? !profile || profile.canvasHome
@@ -26,7 +64,7 @@
   };
   const viewEnabled = name => !profile || !profile.restricted || (profile.views[name]
     ? enabled(profile.views[name]) : enabled('canvas.library'));
-  window.RelatumFeatureRuntime = Object.freeze({ enabled, workspaceEnabled, workspace, workspaces, layoutKey, normalizeLayout, readLayout, visibleWorkspaces, viewEnabled, preloadEnabled: enabled('runtime.preload') });
+  window.RelatumFeatureRuntime = Object.freeze({ enabled, workspaceEnabled, workspace, workspaces, layoutKey, normalizeLayout, readLayout, visibleWorkspaces, viewEnabled, preloadEnabled: enabled('runtime.preload') && bootPreload });
   // This stylesheet is ready before the body, so hidden/reordered tabs never flash.
   const navigationStyle = document.createElement('style');
   function syncWorkspaceStyle(layout = readLayout()) {

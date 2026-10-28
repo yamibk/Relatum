@@ -17,6 +17,7 @@
     'image-markup-core.js': () => window.RelatumImageMarkupCore, 'review-controls.js': () => window.RelatumReviewControls };
   const instances = new Map(), snapshots = new Map(), prepared = new Map(), styles = new Map();
   let active = false, current = '', sequence = 0, disposed = false, releaseTimer = 0;
+  let releaseVersion = 0, leftAt = null, exitFinished = false;
   let warmup = null, dataVersion = 0, navigation = Promise.resolve(true), pageHidden = false;
   let composing = null;
   let sliderTarget = '', sliderFrame = 0, sliderRestore = 0, sliderInstant = false, sliderReady = false, navResize = null;
@@ -82,10 +83,27 @@
   }
   function createScope(root) {
     const controller = new AbortController(), timers = new Set(), frames = new Set();
+    const listeners = new WeakMap();
     let alive = true;
     const scope = {
       get alive() { return alive; },
-      listen(target, type, callback, options) { target.addEventListener(type, callback, { ...(typeof options === 'boolean' ? { capture: options } : options), signal: controller.signal }); },
+      listen(target, type, callback, options) {
+        const capture = typeof options === 'boolean' ? options : !!options?.capture;
+        let callbacks = listeners.get(target);
+        if (!callbacks) listeners.set(target, callbacks = new Map());
+        let registrations = callbacks.get(callback);
+        if (!registrations) callbacks.set(callback, registrations = new Map());
+        const key = type + ':' + capture;
+        if (registrations.has(key)) return;
+        const foreground = /^(?:click|keydown|pointermove|pointerup|pointercancel|resize|scroll)$/.test(type);
+        const listener = event => {
+          if (options?.once) { registrations.delete(key); if (!registrations.size) callbacks.delete(callback); }
+          if (!alive || (foreground && (!visible() || root.hidden))) return;
+          callback.call(target, event);
+        };
+        registrations.set(key, listener);
+        target.addEventListener(type, listener, { ...(typeof options === 'boolean' ? { capture: options } : options), signal: controller.signal });
+      },
       setTimeout(callback, delay, ...args) { if (!alive) return 0; const id = window.setTimeout(() => { timers.delete(id); if (alive) callback(...args); }, delay); timers.add(id); return id; },
       clearTimeout(id) { timers.delete(id); window.clearTimeout(id); },
       requestAnimationFrame(callback) { if (!alive) return 0; const id = window.requestAnimationFrame(time => { frames.delete(id); if (alive) callback(time); }); frames.add(id); return id; },
@@ -133,7 +151,7 @@
     })().catch(() => {}).finally(() => { if (warmup === controller) warmup = null; });
   }
   function makeShell() {
-    if (element.firstElementChild) return;
+    if (element.firstElementChild) { observeNavigation(); orderNavigation(); return; }
     const nav = document.createElement('nav'); nav.className = 'daily-navigation'; nav.setAttribute('aria-label', text(['日常页面', 'Daily pages']));
     for (const { id } of pageLayout.items('daily', { includeHidden: true })) {
       const button = document.createElement('button'); button.type = 'button'; button.dataset.dailyPage = id;
@@ -168,9 +186,14 @@
       if (next) navigate(next);
     }, { passive: false });
     const stage = document.createElement('div'); stage.className = 'daily-stage'; element.append(nav, stage);
+    observeNavigation();
+    orderNavigation();
+  }
+  function observeNavigation() {
+    const nav = element.querySelector('.daily-navigation');
+    if (!nav || navResize) return;
     navResize = new ResizeObserver(() => queueSlider(true)); navResize.observe(nav);
     nav.querySelectorAll('button').forEach(button => navResize.observe(button));
-    orderNavigation();
   }
   async function mount(id, expected) {
     if (instances.has(id)) return instances.get(id);
@@ -190,7 +213,8 @@
     if (id === 'ledger') root.classList.add('ledger-shell');
     root.innerHTML = markup;
     element.querySelector('.daily-stage').append(root);
-    const entry = { root, controller: null, api: null, scopes: [], front: false, state: snapshots.get(id) || {} };
+    const entry = { root, controller: null, api: null, scopes: [], front: false, workspaceReturn: false,
+      language: window.RelatumI18n?.language, state: snapshots.get(id) || {} };
     const host = {
       element, state: entry.state, isActive: () => visible() && current === id,
       toast: notice,
@@ -269,9 +293,9 @@
     try { localStorage.setItem('daily:page:v1', id); } catch (_) {}
     const isCurrent = () => active && expected === sequence && current === id && entry.front;
     Promise.resolve().then(() => {
-      if (!isCurrent()) return;
+      if (!isCurrent() || !visible()) return;
       entry.scopes.forEach(scope => scope.stop());
-      return entry.api.activate?.();
+      return activateEntry(entry);
     }).then(async () => {
       if (!isCurrent()) return;
       const scroller = entry.root.querySelector('.focus-daily-scroll');
@@ -310,15 +334,47 @@
   function notice(error) {
     window.RelatumDailyLoader.toast(typeof error === 'string' ? error : error.message);
   }
+  function activateEntry(entry) {
+    if (entry.language !== window.RelatumI18n?.language) {
+      window.RelatumI18n?.apply?.(entry.root); entry.language = window.RelatumI18n?.language;
+    }
+    const workspaceReturn = entry.workspaceReturn; entry.workspaceReturn = false;
+    return entry.api.activate?.({ workspaceReturn });
+  }
+  function cancelRelease() {
+    clearTimeout(releaseTimer); releaseTimer = 0; releaseVersion++;
+  }
+  function retentionMs() {
+    if (!features.visibleWorkspaces(window.RelatumStartWorkspace?.layout).includes('daily')) return 0;
+    return { immediate: 0, '30s': 30000, '5m': 300000, session: Infinity }[window.RelatumGlobalSystem.read().dailyRetention];
+  }
+  function scheduleRelease() {
+    cancelRelease();
+    if (active || !exitFinished || leftAt === null) return;
+    const duration = retentionMs(); if (duration === Infinity) return;
+    const expected = releaseVersion;
+    releaseTimer = setTimeout(() => {
+      if (expected === releaseVersion && !active) release();
+    }, Math.max(0, duration - (Date.now() - leftAt)));
+  }
+  function afterLeave() {
+    if (active || exitFinished) return;
+    exitFinished = true; leftAt = Date.now();
+    navResize?.disconnect(); navResize = null; prepared.clear();
+    instances.forEach(entry => { entry.api.finalizeExitMotion?.(); entry.scopes.forEach(scope => scope.stop()); });
+    scheduleRelease();
+  }
   function release() {
     if (active) return;
+    cancelRelease(); cancelWarmup(); leftAt = null; exitFinished = false;
     stopSlider(); navResize?.disconnect(); navResize = null;
     instances.forEach((entry, id) => { entry.api.destroy?.(); snapshots.set(id, { ...entry.state }); entry.scopes.forEach(scope => scope.destroy()); entry.root.remove(); });
     instances.clear(); prepared.clear(); element.replaceChildren(); current = ''; disposed = true;
     styles.forEach(pending => pending.then(link => link.remove()).catch(() => {})); styles.clear();
   }
   async function activate() {
-    clearTimeout(releaseTimer); disposed = false; active = true;
+    if (!active && exitFinished && leftAt !== null && Date.now() - leftAt >= retentionMs()) release();
+    cancelRelease(); leftAt = null; exitFinished = false; disposed = false; active = true;
     await css('daily-workspace.css'); makeShell();
     let requested; try { requested = localStorage.getItem('daily:page:v1'); } catch (_) {}
     const query = new URLSearchParams(location.search);
@@ -337,18 +393,22 @@
     if (!await beforeLeave()) return false;
     stopSlider();
     active = false; sequence++; cancelWarmup(); deactivatePage({ freeze: true });
+    instances.forEach(entry => { entry.workspaceReturn = true; });
+    cancelRelease(); leftAt = null; exitFinished = false;
     return true;
   }
   function visibility() {
     cancelWarmup();
     const entry = instances.get(current);
     if (!visible()) { stopSlider(); if (entry) entry.front = false; entry?.api.deactivate?.(); entry?.controller?.abort(); }
-    else if (entry) { queueSlider(true); entry.front = true; entry.controller = new AbortController(); entry.api.activate?.(); prepare(); }
+    else if (entry) { queueSlider(true); entry.front = true; entry.controller = new AbortController(); activateEntry(entry); prepare(); }
     else if (available().length) navigate(available()[0]);
   }
   document.addEventListener('canvas:data-changed', changed);
   document.addEventListener('visibilitychange', visibility);
   window.addEventListener('canvasdesktop:visibility', visibility);
+  window.addEventListener('relatum:global-system', scheduleRelease);
+  document.addEventListener('relatum:workspace-layout', scheduleRelease);
   window.addEventListener('pagehide', () => { pageHidden = true; active = false; sequence++; cancelWarmup(); release(); });
   window.addEventListener('pageshow', event => { pageHidden = false; if (event.persisted && window.RelatumStartWorkspace.current === 'daily') activate(); });
   document.addEventListener('relatum:languagechange', () => {
@@ -360,6 +420,5 @@
     cancelWarmup(); prepared.clear(); orderNavigation();
   });
   reducedMotion.addEventListener('change', () => { stopSlider(); queueSlider(true); });
-  window.RelatumDailyWorkspace = Object.freeze({ activate, leave, navigate, release,
-    afterLeave() { clearTimeout(releaseTimer); releaseTimer = setTimeout(release, 0); }, get current() { return current; } });
+  window.RelatumDailyWorkspace = Object.freeze({ activate, leave, navigate, release, afterLeave, get current() { return current; } });
 })();

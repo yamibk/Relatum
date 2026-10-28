@@ -296,7 +296,7 @@
   }
 
   function prefetchMonth(year, month) {
-    if (!state.active) return;
+    if (!state.active || window.RelatumFeatureRuntime?.preloadEnabled === false) return;
     const value = new Date(year, month - 1, 1);
     const key = monthKey(value.getFullYear(), value.getMonth() + 1);
     if (state.monthCache.has(key) || state.prefetching.has(key)) return;
@@ -321,6 +321,7 @@
 
   function scheduleNeighborPrefetch(year, month) {
     cancelNeighborPrefetch();
+    if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
     const run = () => {
       state.neighborPrefetchHandle = 0;
       if (!state.active) return;
@@ -2767,7 +2768,8 @@
 
   listen(document, 'calendar:countdown-visibility', (event) => {
     state.countdownEnabled = !(event.detail && event.detail.enabled === false);
-    if (!state.loaded) return;
+    state.stale = true;
+    if (!state.loaded || !state.active) return;
     syncCountdownCard({ reveal: state.countdownEnabled });
     syncCountdownProgress();
   });
@@ -2777,6 +2779,7 @@
   });
 
   listen(document, 'relatum:languagechange', () => {
+    if (!state.active) { state.stale = true; return; }
     const trigger = root.querySelector('[data-date-range-open]');
     if (trigger) {
       trigger.setAttribute('aria-label', uiText('计算日期间隔'));
@@ -2906,10 +2909,20 @@
     if (column) animateDayColumn(column, { kind: 'enter', direction: 0 });
   }
 
-  function activateCalendarPanel() {
+  function activateCalendarPanel({ workspaceReturn = false } = {}) {
     const interrupted = entranceExitFrozen;
     finalizeEntranceExit(true);
     state.active = true;
+    if (state.loaded && (workspaceReturn || state.payload?.today !== localDay(new Date()))) {
+      // Reuse the retained frame while checking authoritative data, including
+      // midnight and changes made while this workspace was suspended.
+      root.classList.remove('calendar-refreshing');
+      replayEntranceMotion(interrupted);
+      state.stale = true;
+      load(state.day, { kind: 'refresh', direction: 0 });
+      scheduleCountdownProgressBreath(900);
+      return;
+    }
     if (!state.loaded || state.stale) {
       // 首次进入由 render 的 initial 入场负责；非首次（stale 刷新）时：
       // 等待数据期间先隐藏整个日历内容区（calendar-refreshing），
@@ -2948,6 +2961,7 @@
 
 return {
   activate: activateCalendarPanel,
+  finalizeExitMotion() { finalizeEntranceExit(false); },
   async beforeLeave() {
     captureCurrentDraft();
     const values = await Promise.all([...state.drafts.values()].filter(draft => !draft.deleting).map(draft => queueDiarySave(draft.day, true)));
