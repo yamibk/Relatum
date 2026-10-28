@@ -76,7 +76,7 @@ async function point(page, x, y, width = 800, height = 500) {
 async function drag(page, tool, x, y, x2, y2) {
   if (tool) await page.locator('[data-images-tool="' + tool + '"]').click();
   const start = await point(page, x, y), end = await point(page, x2, y2);
-  await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.mouse.move(end.x, end.y, { steps: 8 }); await page.mouse.up();
+  await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.mouse.move(end.x, end.y, { steps: 8 }); await page.mouse.up(); await frames(page);
 }
 async function copy(page) {
   await page.locator('[data-images-action="copy"]').click();
@@ -90,9 +90,108 @@ async function copy(page) {
 }
 function pixel(image, x, y) { const i = (Math.round(y) * image.width + Math.round(x)) * 4; return image.bytes.slice(i, i + 4); }
 function red(pixel) { return pixel[0] > 180 && pixel[1] < 140 && pixel[2] < 140 && pixel[3] > 200; }
+const frames = page => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+const setting = (page, key) => page.locator('[data-images-setting="' + key + '"]').locator('..').locator('.review-choice-trigger');
+async function digest(page) {
+  await page.locator('[data-images-action="copy"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-images-action="copy"]').getAttribute('aria-busy') === 'false');
+  return page.evaluate(async () => {
+    const item = (await navigator.clipboard.read()).find(item => item.types.includes('image/png')), blob = await item.getType('image/png');
+    const image = await createImageBitmap(blob), canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+    const context = canvas.getContext('2d'); context.drawImage(image, 0, 0); image.close(); const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    return { width: canvas.width, height: canvas.height, alpha: pixels[3], hash: [...new Uint8Array(await crypto.subtle.digest('SHA-256', pixels))].join(',') };
+  });
+}
+async function tap(page, tool, dx = 0, dy = 0) {
+  await page.locator('[data-images-tool="' + tool + '"]').click();
+  const p = await point(page, 250, 190);
+  await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(p.x + dx, p.y + dy, { steps: 2 }); await page.mouse.up(); await frames(page);
+}
+async function interactionChecks(page) {
+  await load(page, await imageFile(page));
+  await drag(page, 'rect', 100, 100, 300, 220); const rectangle = await digest(page);
+  await drag(page, 'ellipse', 180, 140, 360, 280); const original = await digest(page);
+  for (const tool of ['rect', 'ellipse', 'arrow', 'line', 'pen', 'mosaic', 'text', 'crop', 'select']) {
+    for (const jitter of [0, 3, 4]) {
+      await tap(page, tool, jitter);
+      assert.equal(await page.locator('[data-images-tool="' + tool + '"]').getAttribute('aria-pressed'), 'true', 'tap retains ' + tool);
+      assert.equal(await page.locator('.images-text-editor').isVisible(), false, 'tap on an old annotation does not start text input');
+      const selected = await page.locator('.images-selection').boundingBox(), image = await page.locator('.images-image-frame').boundingBox();
+      assert(selected && Math.abs(selected.width - image.width * 180 / 800) < 2, 'tap selects topmost ellipse: ' + tool + '/' + jitter + ' ' + JSON.stringify({ selected, image }));
+    }
+  }
+  assert.deepEqual(await digest(page), original, 'taps never alter image pixels');
+  await page.keyboard.press('Control+z'); assert.deepEqual(await digest(page), rectangle, 'taps do not append history');
+  await page.keyboard.press('Control+Shift+z'); assert.deepEqual(await digest(page), original);
+  await tap(page, 'pen'); await page.keyboard.press('Backspace'); assert.deepEqual(await digest(page), rectangle, 'Backspace deletes just selected annotation');
+  await page.keyboard.press('Control+z'); await tap(page, 'arrow'); await page.keyboard.press('Delete'); assert.deepEqual(await digest(page), rectangle, 'Delete shares annotation deletion');
+  await page.keyboard.press('Control+z');
+  await page.locator('[data-images-tool="rect"]').click(); let p = await point(page, 250, 190);
+  await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(p.x + 5, p.y + 5, { steps: 2 }); await page.mouse.up();
+  assert.notDeepEqual(await digest(page), original, 'drag beyond threshold draws even over old annotations');
+  await page.keyboard.press('Control+z');
+  await page.locator('[data-images-tool="pen"]').click(); p = await point(page, 250, 190);
+  await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(p.x + 35, p.y + 20, { steps: 5 }); await page.mouse.move(p.x, p.y, { steps: 5 }); await page.mouse.up();
+  assert.notDeepEqual(await digest(page), original, 'out-and-back stroke is not classified using only its endpoint');
+  await page.keyboard.press('Control+z');
+  await page.locator('[data-images-tool="rect"]').click();
+  for (const [key, tool, endValue] of [['width', 'rect', '8'], ['size', 'text', '42'], ['block', 'mosaic', '28']]) {
+    await page.locator('[data-images-tool="' + tool + '"]').click(); const trigger = setting(page, key);
+    assert(await page.locator('[data-images-setting="' + key + '"]').evaluate(node => node.hidden && node.classList.contains('review-select-native')));
+    await trigger.focus(); await page.keyboard.press('ArrowDown'); await page.waitForSelector('.images-choice-popovers [role="listbox"]');
+    await page.keyboard.press('End'); await page.keyboard.press('Enter');
+    assert.equal(await page.locator('[data-images-setting="' + key + '"]').inputValue(), endValue, 'keyboard chooses one option, not two');
+    assert.equal(await trigger.evaluate(node => getComputedStyle(node).outlineStyle), 'none', 'no outer black focus outline');
+    await trigger.click(); await page.locator('.images-choice-popovers [role="option"]').nth(1).click();
+    assert.equal(await page.locator('.images-choice-popovers [role="listbox"]').count(), 0);
+  }
+  await tap(page, 'pen'); await setting(page, 'width').click();
+  await page.keyboard.press('Backspace'); assert(await page.locator('.images-choice-popovers [role="listbox"]').isVisible());
+  await page.keyboard.press('Escape'); await page.keyboard.press('Backspace');
+  assert.deepEqual(await digest(page), original, 'combobox keys cannot delete a selected annotation');
+  await tap(page, 'text'); p = await point(page, 430, 300); await page.mouse.click(p.x, p.y);
+  assert(await setting(page, 'size').isVisible(), 'new text switches property controls after selecting a different annotation type');
+  await page.locator('.images-text-editor').fill('abc'); await page.keyboard.press('Backspace'); assert.equal(await page.locator('.images-text-editor').inputValue(), 'ab', 'Backspace edits native text');
+  await page.keyboard.press('Control+Enter'); await page.locator('[data-images-tool="arrow"]').click(); await page.mouse.dblclick(p.x + 15, p.y + 15);
+  assert(await page.locator('.images-text-editor').isVisible(), 'double-click can edit text under a drawing tool');
+  await page.keyboard.press('Escape'); await page.keyboard.press('Control+z'); assert.deepEqual(await digest(page), original);
+  // Deletion in an active, uncommitted drawing cancels it without a no-op undo entry.
+  await page.locator('[data-images-tool="rect"]').click(); p = await point(page, 500, 350);
+  await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(p.x + 50, p.y + 30, { steps: 3 }); await page.keyboard.press('Backspace'); await page.mouse.up();
+  assert.deepEqual(await digest(page), original); await page.keyboard.press('Control+z'); assert.deepEqual(await digest(page), rectangle); await page.keyboard.press('Control+Shift+z');
+  await page.locator('[data-images-action="fit"]').click(); await frames(page);
+  const beforeZoom = await page.locator('.images-image-frame').boundingBox();
+  await page.locator('[data-images-action="in"]').click(); await frames(page);
+  const zoomed = await page.locator('.images-image-frame').boundingBox(); assert(Math.abs(zoomed.width / beforeZoom.width - 1.25) < .01, 'edge frame follows zoom');
+  await page.keyboard.down('Space'); await page.mouse.move(zoomed.x + zoomed.width / 2, zoomed.y + zoomed.height / 2); await page.mouse.down(); await page.mouse.move(zoomed.x + zoomed.width / 2 + 35, zoomed.y + zoomed.height / 2 + 20); await page.mouse.up(); await page.keyboard.up('Space'); await frames(page);
+  const panned = await page.locator('.images-image-frame').boundingBox(); assert(Math.abs(panned.x - zoomed.x - 35) < 1 && Math.abs(panned.y - zoomed.y - 20) < 1, 'edge frame follows pan');
+  assert.deepEqual(await digest(page), original, 'view transforms and image shadow do not affect export');
+  await page.locator('.images-image-frame').evaluate(node => node.style.boxShadow = 'none'); assert.deepEqual(await digest(page), original, 'export ignores decorative frame');
+  await page.locator('.images-image-frame').evaluate(node => node.style.removeProperty('box-shadow'));
+  await page.locator('[data-images-action="fit"]').click(); await drag(page, 'crop', 110, 80, 650, 400);
+  const cropBefore = await page.locator('.images-selection').boundingBox(); p = await point(page, 250, 190);
+  await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(p.x + 3, p.y); await page.mouse.up(); await frames(page);
+  const cropAfter = await page.locator('.images-selection').boundingBox(); assert(Math.abs(cropAfter.width - cropBefore.width) < 1, 'pending crop takes priority over annotations');
+  await page.locator('[data-images-action="apply"]').click(); const cropped = await digest(page); assert(Math.abs(cropped.width - 540) <= 1 && Math.abs(cropped.height - 320) <= 1);
+  const croppedFrame = await page.locator('.images-image-frame').boundingBox(); assert(Math.abs(croppedFrame.width / croppedFrame.height - cropped.width / cropped.height) < .01, 'edge frame follows crop');
+  await page.keyboard.press('Control+z'); assert.deepEqual(await digest(page), original);
+  await page.evaluate(() => { document.body.dataset.startTheme = 'dark'; RelatumI18n.setLanguage('en'); });
+  await page.locator('[data-images-tool="rect"]').click(); await setting(page, 'width').click();
+  assert.deepEqual(await page.locator('.images-choice-popovers [role="option"]').allTextContents(), ['Thin', 'Medium', 'Thick']);
+  const dark = await page.locator('.images-choice-popovers .review-choice-popup').evaluate(node => getComputedStyle(node).backgroundColor); assert.notEqual(dark, 'rgb(255, 255, 255)');
+  await page.screenshot({ path: path.join(artifacts, 'editor-dropdown-dark.png') });
+  await page.keyboard.press('Escape');
+  await page.locator('[data-images-tool="rect"]').focus(); assert.equal(await page.locator('[data-images-tool="rect"]').evaluate(node => getComputedStyle(node).outlineStyle), 'none');
+  await setting(page, 'width').click(); await page.evaluate(() => RelatumDailyWorkspace.navigate('ledger')); assert.equal(await page.locator('.images-choice-popovers [role="listbox"]').count(), 0);
+  await page.evaluate(() => RelatumDailyWorkspace.navigate('images')); await page.waitForFunction(() => !document.querySelector('[data-images-action="copy"]').disabled);
+  await frames(page); assert(await page.locator('.images-image-frame').isVisible(), 'edge frame restored after page switch');
+  await page.evaluate(() => { document.body.dataset.startTheme = 'light'; RelatumI18n.setLanguage('zh-CN'); });
+  console.log('Image editor: shared dropdowns, tap selection, deletion isolation and display-only edge frame passed');
+}
 (async () => {
   const f = await fixture(), { page } = f;
   try {
+    await interactionChecks(page);
     const original = await imageFile(page); await load(page, original);
     await drag(page, null, 100, 100, 300, 220);
     let result = await copy(page);
@@ -221,6 +320,18 @@ function red(pixel) { return pixel[0] > 180 && pixel[1] < 140 && pixel[2] < 140 
       assert(!independent.requests.some(url => /\/(?:note-workspace|note-live-editor|canvas|mathjax-runtime|graph-engine)\.js$/.test(url)), 'standalone images does not load editors');
       await load(independent.page, await imageFile(independent.page)); await drag(independent.page, 'arrow', 30, 40, 250, 200);
       const result = await copy(independent.page); assert.equal(result.width, 800, 'DPR 2 does not multiply output pixels');
+      const arrowOnly = await digest(independent.page);
+      await drag(independent.page, 'rect', 340, 200, 460, 300);
+      for (const direction of ['out', 'actual', 'in']) {
+        for (let i = 0; i < (direction === 'actual' ? 1 : 6); i++) await independent.page.locator('[data-images-action="' + direction + '"]').click();
+        await independent.page.locator('[data-images-tool="pen"]').click(); await frames(independent.page);
+        const center = await independent.page.locator('.images-image-frame').evaluate(node => { const r = node.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+        await independent.page.mouse.move(center.x, center.y); await independent.page.mouse.down(); await independent.page.mouse.move(center.x + 4, center.y); await independent.page.mouse.up(); await frames(independent.page);
+        const selection = await independent.page.locator('.images-selection').boundingBox(), image = await independent.page.locator('.images-image-frame').boundingBox();
+        assert(selection && Math.abs(selection.width - image.width * 120 / 800) < 2, '4 CSS px selects at DPR 2 and zoom ' + direction);
+        await independent.page.keyboard.press('Backspace'); assert.deepEqual(await digest(independent.page), arrowOnly, 'DPR/zoom do not affect selection/deletion result'); await independent.page.keyboard.press('Control+z');
+      }
+      await independent.page.locator('[data-images-action="fit"]').click(); await frames(independent.page);
       const raf = await independent.page.evaluate(async () => {
         let calls = 0; const original = window.requestAnimationFrame; window.requestAnimationFrame = (...args) => { calls++; return original(...args); };
         await new Promise(resolve => setTimeout(resolve, 500)); window.requestAnimationFrame = original; return calls;

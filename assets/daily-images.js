@@ -35,6 +35,7 @@
   const tools = ['select', 'rect', 'ellipse', 'arrow', 'line', 'pen', 'text', 'mosaic', 'crop'];
   const colors = [['red', '#ef4444'], ['orange', '#f97316'], ['yellow', '#eab308'], ['green', '#16a34a'], ['blue', '#0284c7'], ['black', '#171717'], ['white', '#ffffff']];
   const inputTarget = target => !!target?.closest?.('input,textarea,select,[contenteditable="true"],[role="textbox"]');
+  const TAP_DISTANCE = 4;
   window.RelatumDailyImages = function (root, host) {
     const session = host.state.markup || (host.state.markup = C.createSession()), scope = host.createScope();
     const tr = key => labels[key][window.RelatumI18n?.language === 'en' ? 1 : 0];
@@ -56,7 +57,7 @@
       + '<label class="images-option" hidden><span data-images-label="block"></span><select data-images-setting="block"></select></label></div>'
       + '<div class="images-history"><button type="button" data-images-action="undo">' + icon('undo') + '</button><button type="button" data-images-action="redo">' + icon('redo') + '</button></div>'
       + '<div class="images-crop-actions" hidden><button type="button" data-images-action="apply">' + icon('apply') + '<span data-images-label="apply"></span></button><button type="button" data-images-action="cancel" data-images-label="cancel"></button></div></div>'
-      + '<div class="images-viewport" tabindex="0"><canvas class="images-canvas"></canvas><svg class="images-overlay" aria-hidden="true"></svg>'
+      + '<div class="images-viewport" tabindex="0"><canvas class="images-canvas"></canvas><div class="images-image-frame" hidden aria-hidden="true"></div><svg class="images-overlay" aria-hidden="true"></svg>'
       + '<div class="images-empty">' + icon('choose') + '<strong data-images-label="empty"></strong><span data-images-label="temporary"></span><button type="button" data-images-action="choose" data-images-label="choose"></button></div>'
       + '<div class="images-loading" role="status" hidden></div><button type="button" class="images-delete" data-images-action="remove">' + icon('remove') + '</button>'
       + '<textarea class="images-text-editor" hidden spellcheck="false"></textarea></div>'
@@ -66,8 +67,12 @@
       + '<input type="file" class="images-file-input" accept="image/png,image/jpeg,image/webp,image/bmp,image/gif" hidden></div>';
     const $ = selector => root.querySelector(selector), viewport = $('.images-viewport'), canvas = $('.images-canvas'), overlay = $('.images-overlay');
     const editor = $('.images-text-editor'), file = $('.images-file-input'), context = canvas.getContext('2d');
+    const imageFrame = $('.images-image-frame');
     const controls = [...root.querySelectorAll('button')];
+    const choicePortal = document.createElement('div'); choicePortal.className = 'images-choice-popovers'; choicePortal.dataset.i18nManaged = 'true'; document.body.append(choicePortal);
+    const choices = window.RelatumReviewControls.createManager($('.images-toolbar'), choicePortal);
     function updateLanguage() {
+      choices.close();
       root.querySelectorAll('[data-images-label]').forEach(node => { node.textContent = tr(node.dataset.imagesLabel); });
       controls.forEach(button => {
         const key = button.dataset.imagesTool || button.dataset.imagesColorName || button.dataset.imagesAction;
@@ -79,8 +84,7 @@
       const definitions = { width: [[2, 'thin'], [4, 'medium'], [8, 'thick']], size: [[18, 'small'], [28, 'medium'], [42, 'large']], block: [[8, 'small'], [16, 'medium'], [28, 'large']] };
       for (const [key, values] of Object.entries(definitions)) {
         const select = $('[data-images-setting="' + key + '"]');
-        select.replaceChildren(...values.map(([value, label]) => { const option = document.createElement('option'); option.value = value; option.textContent = tr(label); return option; }));
-        select.value = session.settings[key];
+        choices.setOptions(select, values.map(([value, label]) => ({ value, label: tr(label) })), session.settings[key]);
       }
       closeMenu(); sync(); queuePaint();
     }
@@ -105,11 +109,12 @@
         if (nearest) select.value = nearest.value;
       }
       $('.images-crop-actions').hidden = !pendingCrop;
+      choices.sync();
       $('.images-dimensions').textContent = scene ? scene.crop.w + ' × ' + scene.crop.h : '';
       viewport.dataset.tool = space ? 'pan' : session.settings.tool;
       $('[data-images-action="copy"]').setAttribute('aria-busy', String(copying));
     }
-    function closeResource() { resource?.close(); resource = null; imageId = ''; C.clearCache(mosaicCache); }
+    function closeResource() { resource?.close(); resource = null; imageId = ''; imageFrame.hidden = true; C.clearCache(mosaicCache); }
     async function decode(blob) {
       if (typeof createImageBitmap === 'function') {
         const image = await createImageBitmap(blob); return { image, close: () => image.close() };
@@ -131,6 +136,7 @@
     function cancelCopy() { copyJob?.abort(); copyJob = null; copying = false; }
     function changed(next, prepared = null) {
       const source = session.scene?.source;
+      choices.close(); cancelGesture();
       cancelCopy(); revision++; C.commit(session, next); draftScene = null; pendingCrop = null;
       if (!next || source !== next.source) {
         importId++; decodeId++; loading = false; closeResource(); session.view = null; session.textDraft = null;
@@ -141,7 +147,7 @@
     }
     async function importFiles(list) {
       const files = [...list]; if (!files.length || !visible() || composing) return;
-      finishText(true); cancelGesture(); closeMenu(); cancelCopy();
+      finishText(true); cancelGesture(); closeMenu(); choices.close(); cancelCopy();
       const id = ++importId, life = epoch, version = revision, blob = files[0];
       const current = () => visible() && epoch === life && importId === id && revision === version;
       if (files.length > 1) host.toast(tr('first'));
@@ -193,8 +199,12 @@
       if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
       context.setTransform(dpr, 0, 0, dpr, 0, 0); context.clearRect(0, 0, m.w, m.h);
       overlay.setAttribute('viewBox', '0 0 ' + m.w + ' ' + m.h); overlay.replaceChildren();
+      imageFrame.hidden = !scene || !resource || imageId !== scene.source.id;
       if (!scene || !resource || imageId !== scene.source.id) return;
       const corner = screen(scene.crop);
+      for (const [key, value] of Object.entries({ left: corner.x + 'px', top: corner.y + 'px', width: scene.crop.w * m.scale + 'px', height: scene.crop.h * m.scale + 'px' })) {
+        if (imageFrame.style[key] !== value) imageFrame.style[key] = value;
+      }
       context.fillStyle = getComputedStyle(root).getPropertyValue('--images-paper') || '#fff';
       context.fillRect(corner.x, corner.y, scene.crop.w * m.scale, scene.crop.h * m.scale);
       context.save(); context.translate(m.x, m.y); context.scale(m.scale, m.scale);
@@ -218,6 +228,7 @@
     function cancelGesture() {
       if (gesture) {
         const id = gesture.id;
+        if (gesture.kind === 'draw' || gesture.kind === 'text') selected = gesture.previousSelected;
         if (gesture.kind === 'pan') session.view = gesture.view;
         if (gesture.kind.startsWith('crop')) pendingCrop = gesture.cropBefore;
         gesture = null;
@@ -229,9 +240,9 @@
     function beginPointer(event) {
       if (!visible() || !session.scene || !resource || event.target.closest('button,textarea') || ![0, 1].includes(event.button) || composing) return;
       if (!finishText(true)) return;
-      event.preventDefault(); closeMenu(); viewport.focus({ preventScroll: true }); measure();
+      event.preventDefault(); closeMenu(); choices.close(); viewport.focus({ preventScroll: true }); measure();
       const p = point(event, false), crop = session.scene.crop;
-      const base = { id: event.pointerId, start: p, client: { x: event.clientX, y: event.clientY } };
+      const base = { id: event.pointerId, start: p, client: { x: event.clientX, y: event.clientY }, distance: 0, previousSelected: selected };
       if (space || event.button === 1) gesture = { ...base, kind: 'pan', view: { ...session.view } };
       else {
         if (p.x < crop.x || p.y < crop.y || p.x > crop.x + crop.w || p.y > crop.y + crop.h) { selected = ''; queuePaint(); return; }
@@ -241,8 +252,7 @@
         if (selectedHandle) {
           gesture = { ...base, kind: 'resize', object: C.cloneObject(selectedObject), handle: selectedHandle.key };
         } else if (tool === 'text') {
-          const existing = C.pick(session.scene.objects, p, 3 / metrics.scale);
-          beginText(existing?.type === 'text' ? existing : null, p); return;
+          gesture = { ...base, kind: 'text' };
         } else if (tool === 'select') {
           let object = session.scene.objects.find(object => object.id === selected), handle = object && hitHandle(object, p);
           if (!handle) object = C.pick(session.scene.objects, p, 6 / metrics.scale);
@@ -258,10 +268,9 @@
           const settings = session.settings, object = { id: uid(), type: tool, color: settings.color, width: settings.width / metrics.scale, x: p.x, y: p.y, w: 0, h: 0, block: settings.block };
           if (tool === 'pen') { object.points = [p]; delete object.x; delete object.y; }
           if (tool === 'arrow' || tool === 'line') { object.x2 = p.x; object.y2 = p.y; }
-          gesture = { ...base, kind: 'draw', object }; selected = object.id;
+          gesture = { ...base, kind: 'draw', object };
         }
         draftScene = C.snapshot(session.scene);
-        if (gesture.kind === 'draw') draftScene.objects.push(gesture.object);
       }
       try { viewport.setPointerCapture(event.pointerId); } catch (_) {}
       queuePaint();
@@ -276,10 +285,13 @@
     function movePointer(event) {
       const g = gesture; if (!g || g.id !== event.pointerId) return;
       event.preventDefault();
+      const coalesced = event.getCoalescedEvents?.() || [], samples = [...coalesced, event];
+      for (const sample of samples) g.distance = Math.max(g.distance, Math.hypot(sample.clientX - g.client.x, sample.clientY - g.client.y));
       if (g.kind === 'pan') {
         session.view = { ...g.view, x: g.view.x + event.clientX - g.client.x, y: g.view.y + event.clientY - g.client.y };
       } else {
         const p = point(event), dx = p.x - g.start.x, dy = p.y - g.start.y;
+        if (g.kind === 'text') return;
         if (g.kind === 'crop') pendingCrop = C.rectangle(g.start, p);
         else if (g.kind === 'crop-move') {
           const b = session.scene.crop;
@@ -288,11 +300,12 @@
         else if (g.kind === 'draw') {
           const object = g.object;
           if (object.type === 'pen') {
-            const samples = event.getCoalescedEvents?.() || [];
-            for (const sample of samples.length ? samples : [event]) object.points.push(point(sample));
+            for (const sample of samples) object.points.push(point(sample));
           } else if (object.type === 'line' || object.type === 'arrow') { object.x2 = p.x; object.y2 = p.y; }
           else Object.assign(object, C.rectangle(g.start, p));
+          if (g.distance > TAP_DISTANCE && !draftScene.objects.some(item => item.id === object.id)) { draftScene.objects.push(object); selected = object.id; }
         } else {
+          if (g.kind === 'move' && g.distance <= TAP_DISTANCE) return;
           let next;
           if (g.kind === 'move') next = C.moved(g.object, dx, dy);
           else if (g.handle === 'start') next = { ...g.object, x: p.x, y: p.y };
@@ -307,11 +320,23 @@
       if (!gesture || gesture.id !== event.pointerId) return;
       movePointer(event); const g = gesture, next = draftScene; gesture = null; draftScene = null;
       try { if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId); } catch (_) {}
+      const tap = g.distance <= TAP_DISTANCE, cropGesture = g.kind.startsWith('crop');
+      // Resolve taps against committed objects, never the tentative new stroke.
+      if (tap && (['draw', 'text', 'move'].includes(g.kind) || g.kind === 'crop' && !g.cropBefore)) {
+        const hit = C.pick(session.scene.objects, point(event), 6 / metrics.scale);
+        if (hit) { selected = hit.id; if (cropGesture) pendingCrop = g.cropBefore; sync(); queuePaint(); return; }
+      }
+      if (g.kind === 'text') { if (tap) beginText(null, g.start); else { selected = g.previousSelected; sync(); queuePaint(); } return; }
       if (g.kind.startsWith('crop')) {
+        if (tap && g.cropBefore) pendingCrop = g.cropBefore;
         if (!pendingCrop || pendingCrop.w * metrics.scale < 3 || pendingCrop.h * metrics.scale < 3) pendingCrop = null;
         sync(); queuePaint(); return;
       }
       if (g.kind === 'pan') { queuePaint(); return; }
+      if (g.kind === 'draw' && !next.objects.some(item => item.id === g.object.id)) {
+        if (g.object.type !== 'pen') { selected = ''; sync(); queuePaint(); return; }
+        next.objects.push(g.object); selected = g.object.id;
+      }
       const object = next.objects.find(object => object.id === selected), b = C.bounds(object);
       if (g.kind === 'draw' && object.type !== 'pen' && (Math.hypot(b.w, b.h) * metrics.scale < 3
           || !['line', 'arrow'].includes(object.type) && Math.min(b.w, b.h) * metrics.scale < 2)) { selected = ''; queuePaint(); return; }
@@ -324,7 +349,7 @@
         w: Math.max(30 / scale, Math.min(280 / scale, crop.x + crop.w - p.x)), h: session.settings.size * 1.5 / scale,
         text: '', size: session.settings.size / scale, color: session.settings.color, width: 0 };
       textDraft = { object, originalId: existing?.id || '' }; selected = object.id;
-      editor.value = object.text; editor.hidden = false; queuePaint(); editor.focus({ preventScroll: true }); editor.setSelectionRange(editor.value.length, editor.value.length);
+      editor.value = object.text; editor.hidden = false; sync(); queuePaint(); editor.focus({ preventScroll: true }); editor.setSelectionRange(editor.value.length, editor.value.length);
     }
     function updateText() {
       const draft = textDraft || session.textDraft;
@@ -348,7 +373,7 @@
     }
     async function copyImage() {
       if (!visible() || !session.scene || !resource || copying || !finishText(true)) return;
-      closeMenu(); cancelGesture();
+      closeMenu(); choices.close(); cancelGesture();
       if (!navigator.clipboard?.write || typeof ClipboardItem !== 'function') { host.toast(tr('failed')); return; }
       const job = copyJob = new AbortController(), life = epoch, version = revision, scene = C.snapshot(session.scene), image = resource.image;
       const check = () => { if (job.signal.aborted || !visible() || epoch !== life || revision !== version) throw new DOMException('Cancelled', 'AbortError'); };
@@ -370,8 +395,10 @@
       finally { job.abort(); if (copyJob === job) { copyJob = null; copying = false; sync(); } }
     }
     function removeMark() {
-      if (!selected || !session.scene) return;
-      const next = C.snapshot(session.scene); next.objects = next.objects.filter(object => object.id !== selected); changed(next);
+      const id = selected;
+      cancelGesture(); choices.close(); closeMenu();
+      if (!session.scene?.objects.some(object => object.id === id)) { selected = ''; sync(); queuePaint(); return; }
+      const next = C.snapshot(session.scene); next.objects = next.objects.filter(object => object.id !== id); changed(next);
     }
     function zoom(action) {
       if (!session.scene || !finishText(true)) return;
@@ -385,7 +412,7 @@
       if (name === 'copy') { copyImage(); return; }
       if (name === 'choose') { file.click(); return; }
       if (!finishText(true)) return;
-      closeMenu(); cancelGesture();
+      closeMenu(); choices.close(); cancelGesture();
       if (name === 'undo' || name === 'redo') {
         const source = session.scene?.source; importId++; loading = false; cancelCopy();
         if (C.travel(session, name === 'redo')) {
@@ -404,7 +431,7 @@
     function closeMenu() { menu?.remove(); menu = null; }
     function openMenu(event) {
       if (!visible() || !session.scene || composing || inputTarget(event.target)) return;
-      event.preventDefault(); if (!finishText(true)) return; cancelGesture(); closeMenu();
+      event.preventDefault(); if (!finishText(true)) return; cancelGesture(); closeMenu(); choices.close();
       menu = document.createElement('div'); menu.className = 'images-context-menu'; menu.setAttribute('role', 'menu');
       const commands = ['copy', ...(selected ? ['removeMark'] : []), 'reset', 'remove'];
       for (const name of commands) {
@@ -433,10 +460,11 @@
       const button = event.target.closest('button'); if (!button || button.disabled) return;
       if (button.dataset.imagesAction) action(button.dataset.imagesAction);
       else if (button.dataset.imagesTool && finishText(true)) {
-        cancelGesture(); closeMenu(); session.settings.tool = button.dataset.imagesTool; selected = ''; pendingCrop = null; sync(); queuePaint();
+        cancelGesture(); closeMenu(); choices.close(); session.settings.tool = button.dataset.imagesTool; selected = ''; pendingCrop = null; sync(); queuePaint();
       } else if (button.dataset.imagesColor) styleSetting('color', button.dataset.imagesColor);
     });
     scope.listen(root, 'change', event => { if (event.target.dataset.imagesSetting) styleSetting(event.target.dataset.imagesSetting, Number(event.target.value)); });
+    scope.listen(root, 'pointerdown', event => { if (event.target.closest('.review-choice-trigger')) { finishText(true); cancelGesture(); closeMenu(); } }, true);
     scope.listen(file, 'change', () => { importFiles(file.files); file.value = ''; });
     scope.listen(viewport, 'pointerdown', beginPointer); scope.listen(viewport, 'pointermove', movePointer); scope.listen(viewport, 'pointerup', endPointer);
     scope.listen(viewport, 'pointercancel', cancelGesture); scope.listen(viewport, 'lostpointercapture', () => { if (gesture) cancelGesture(); });
@@ -461,8 +489,10 @@
       event.preventDefault(); event.stopPropagation(); viewport.classList.remove('is-drag-over'); importFiles(event.dataTransfer.files);
     });
     function keydown(event) {
-      if (!visible() || composing || event.isComposing || event.keyCode === 229 || inputTarget(event.target)
+      if (!visible() || composing || event.isComposing || event.keyCode === 229
           || document.querySelector('dialog[open]') || event.target.closest('.daily-navigation')) return;
+      if (choices.handleKey(event)) { event.stopImmediatePropagation(); return; }
+      if (inputTarget(event.target) || event.target.closest('.review-choice, .images-choice-popovers')) return;
       if (menu) {
         const buttons = [...menu.querySelectorAll('button:not(:disabled)')], index = buttons.indexOf(document.activeElement);
         if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
@@ -474,7 +504,7 @@
         event.preventDefault(); event.stopPropagation(); if (!event.repeat) action(key === 'c' ? 'copy' : key === 'y' || event.shiftKey ? 'redo' : 'undo');
       } else if (!mod && !event.altKey && event.key === 'Escape') {
         event.preventDefault(); event.stopPropagation(); closeMenu(); cancelGesture(); pendingCrop = null; selected = ''; sync(); queuePaint();
-      } else if (!mod && !event.altKey && event.key === 'Delete' && selected) { event.preventDefault(); event.stopPropagation(); removeMark(); }
+      } else if (!mod && !event.altKey && ['Delete', 'Backspace'].includes(event.key) && !menu) { event.preventDefault(); event.stopPropagation(); removeMark(); }
       else if (!mod && !event.altKey && event.code === 'Space') { event.preventDefault(); space = true; sync(); }
     }
     function activate() {
@@ -489,9 +519,9 @@
       listen(document, 'keydown', keydown, { capture: true });
       listen(document, 'keyup', event => { if (event.code === 'Space' && space) { space = false; sync(); } });
       listen(document, 'pointerdown', event => { if (menu && !menu.contains(event.target)) closeMenu(); }, { capture: true });
-      listen(window, 'blur', () => { cancelGesture(); closeMenu(); space = false; sync(); });
+      listen(window, 'blur', () => { cancelGesture(); closeMenu(); choices.close(); space = false; sync(); });
       listen(document, 'relatum:languagechange', updateLanguage);
-      observer = new ResizeObserver(() => { cancelGesture(); closeMenu(); queuePaint(); }); observer.observe(viewport);
+      observer = new ResizeObserver(() => { cancelGesture(); closeMenu(); choices.close(); queuePaint(); }); observer.observe(viewport);
       if (session.textDraft) {
         textDraft = session.textDraft; editor.value = textDraft.object.text; editor.hidden = false; selected = textDraft.object.id;
       }
@@ -504,14 +534,14 @@
         else { updateText(); session.textDraft = textDraft; textDraft = null; editor.hidden = true; }
       }
       active = false; epoch++; importId++; decodeId++; loading = false; cancelCopy(); cancelGesture(); pendingCrop = null; space = false;
-      scope.cancelAnimationFrame(paint); paint = 0; closeMenu(); foreground?.abort(); foreground = null;
+      scope.cancelAnimationFrame(paint); paint = 0; closeMenu(); choices.close(); foreground?.abort(); foreground = null;
       observer?.disconnect(); observer = null; closeResource(); canvas.width = canvas.height = 0; overlay.replaceChildren(); viewport.classList.remove('is-drag-over');
     }
     updateLanguage();
     return {
       activate, deactivate,
       async beforeLeave() { if (composing) { editor.blur(); await new Promise(resolve => setTimeout(resolve, 0)); } return finishText(true); },
-      destroy() { deactivate(); destroyed = true; scope.destroy(); closeMenu(); closeResource(); },
+      destroy() { deactivate(); destroyed = true; scope.destroy(); choices.dispose(); choicePortal.remove(); closeMenu(); closeResource(); },
     };
   };
 })();

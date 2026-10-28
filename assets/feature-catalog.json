@@ -522,12 +522,14 @@
     "review-controls.js": [
       "canvas.review",
       "notes",
-      "notes.ai"
+      "notes.ai",
+      "daily.images"
     ],
     "review-controls.css": [
       "canvas.review",
       "notes",
-      "notes.ai"
+      "notes.ai",
+      "daily.images"
     ],
     "usage-management.js": [
       "notes",

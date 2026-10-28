@@ -37,7 +37,7 @@ class DailyWorkspaceTests(unittest.TestCase):
         profile.validate()
         self.assertTrue(profile.has_home)
         self.assertEqual(profile.workspaces, ("daily",))
-        for name in ("image-markup-core.js", "daily-images.js", "daily-images.css"):
+        for name in ("image-markup-core.js", "daily-images.js", "daily-images.css", "review-controls.js", "review-controls.css"):
             self.assertTrue(profile.resource_allowed(name))
             self.assertFalse(self.only("daily", "daily.tasks").resource_allowed(name))
         self.assertFalse(profile.resource_allowed("note-workspace.js"))
