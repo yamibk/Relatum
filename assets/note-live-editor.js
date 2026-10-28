@@ -5582,7 +5582,7 @@
             if (!link) return false;
             event.preventDefault();
             if (link.kind === 'url' && isDangerousTarget(link.target)) return true;
-            if (link.kind === 'wiki') safeOptions.onOpenWiki(link.target);
+            if (link.kind === 'wiki') safeOptions.onOpenWiki(link.target, { reuseActiveTab: false });
             else safeOptions.onOpenExternal(normalizedImageTarget(link.target));
             return true;
           },

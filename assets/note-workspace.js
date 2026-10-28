@@ -1393,13 +1393,15 @@
   }
 
   let wikiOpenTask = null;
-  async function openWikiFromEditor(rawTarget) {
+  async function openWikiFromEditor(rawTarget, options) {
     const documentState = state.current, target = normalizedWikiTarget(rawTarget);
     if (!documentState || !target || !noteWorkspaceVisible()) return;
+    const reuseActiveTab = options?.reuseActiveTab !== false;
     const path = documentState.path, tab = state.activeTab, sequence = state.openSeq, visibility = noteVisibilityEpoch;
     if (wikiOpenTask?.document === documentState && wikiOpenTask.target === target
-        && wikiOpenTask.sequence === sequence && wikiOpenTask.visibility === visibility) return wikiOpenTask.promise;
-    const task = { document: documentState, target, sequence, visibility };
+        && wikiOpenTask.sequence === sequence && wikiOpenTask.visibility === visibility
+        && wikiOpenTask.reuseActiveTab === reuseActiveTab) return wikiOpenTask.promise;
+    const task = { document: documentState, target, sequence, visibility, reuseActiveTab };
     const valid = () => wikiOpenTask === task && noteWorkspaceVisible() && visibility === noteVisibilityEpoch
       && state.current === documentState && documentState.path === path && state.activeTab === tab && state.openSeq === sequence;
     wikiOpenTask = task;
@@ -1411,14 +1413,14 @@
         const writtenTarget = String(rawTarget || '').split('|', 1)[0];
         const hashAt = writtenTarget.indexOf('#');
         const fragment = hashAt >= 0 ? writtenTarget.slice(hashAt + 1) : '';
-        if (await openNote(outgoing.path)) scheduleHeadingJump(fragment);
+        if (await openNote(outgoing.path, { reuseActiveTab })) scheduleHeadingJump(fragment);
         return;
       }
       if (outgoing && outgoing.state === 'ambiguous') { showToast(tr('ambiguous'), 'warning'); return; }
       const parts = target.replace(/\\/g, '/').split('/').filter(Boolean);
       const name = parts.pop(), hasPath = parts.length > 0;
       if (!name) return;
-      return createEntry('note', { parent: hasPath ? parts.join('/') : parentPath(path), name, createParents: hasPath, guard: valid });
+      return createEntry('note', { parent: hasPath ? parts.join('/') : parentPath(path), name, createParents: hasPath, guard: valid, reuseActiveTab });
     })();
     try { return await task.promise; }
     finally { if (wikiOpenTask === task) wikiOpenTask = null; }
@@ -1857,7 +1859,7 @@
           extensionsActive: false,
           onDocChanged: (meta) => markChanged(meta),
           onSaveRequest: () => flushSave(),
-          onOpenWiki: (target) => openWikiFromEditor(target),
+          onOpenWiki: (target, options) => openWikiFromEditor(target, options),
           onOpenTag: (tag) => setBrowserMode(true, tag),
           onOpenExternal: (target) => openMarkdownTarget(target),
           onOpenLocalFile: (target, syntax) => openLocalNoteFile(target, syntax),
@@ -1893,7 +1895,7 @@
         const tag = event.target.closest('[data-note-tag]');
         if (tag) { event.preventDefault(); setBrowserMode(true, tag.dataset.noteTag); return; }
         const wiki = event.target.closest('[data-wikilink]');
-        if (wiki) { event.preventDefault(); openWikiFromEditor(wiki.dataset.wikilink || ''); return; }
+        if (wiki) { event.preventDefault(); openWikiFromEditor(wiki.dataset.wikilink || '', { reuseActiveTab: !(event.button === 0 && (event.ctrlKey || event.metaKey)) }); return; }
         const imageFrame = event.target.closest('.md-local-image');
         const image = imageFrame && imageFrame.querySelector('[data-note-image]');
         if (image) { event.preventDefault(); openLocalNoteFile(image.dataset.noteImage || '', image.dataset.noteImageSyntax); return; }
@@ -3203,7 +3205,7 @@
       } else label.textContent = entry.name;
       row.append(toggle, entry.notebook ? notebookIcon(entry.path) : treeIcon(entry.kind), label);
       if (!notebookTree) fileColorHost?.instance?.decorate(row, entry.path);
-      async function activateRow(expansion) {
+      async function activateRow(expansion, newTab = false) {
         const clickedPath = rowPath;
         if (!(await finishInlineTitle())) return;
         if (state.renamePath && !(await finishInlineRename())) return;
@@ -3219,9 +3221,10 @@
           }
           if (notebookTree && !liveEntry.notebook && expandTreePath(liveEntry.path, false)) renderTree({ keepNotebookTree: true });
           updateTreeSelection();
-        } else { state.selectedFolder = parentPath(liveEntry.path); state.openingPath = liveEntry.path; renderCurrentPath(liveEntry.path); updateTreeSelection(); openNote(liveEntry.path, { selectionPrimed: true }); }
+        } else { state.selectedFolder = parentPath(liveEntry.path); state.openingPath = liveEntry.path; renderCurrentPath(liveEntry.path); updateTreeSelection(); openNote(liveEntry.path, { selectionPrimed: true, reuseActiveTab: !newTab }); }
       }
-      row.addEventListener('click', (event) => activateRow(notebookEntry && !toggle.contains(event.target) ? null : undefined));
+      row.addEventListener('click', (event) => activateRow(notebookEntry && !toggle.contains(event.target) ? null : undefined,
+        !notebookTree && event.button === 0 && event.ctrlKey));
       if (entry.notebook && entry.path) label.addEventListener('dblclick', async (event) => {
         if (event.target.closest('input')) return;
         event.preventDefault(); event.stopPropagation();
@@ -3596,7 +3599,7 @@
     setDocumentSwitchPending(false);
     state.current = documentState; cacheDocument(documentState); state.openingPath = '';
     document.dispatchEvent(new Event('relatum:usage-target'));
-    if (!state.tabs.includes(documentState.path)) selectNoteTab(documentState.path, true);
+    if (!state.tabs.includes(documentState.path)) selectNoteTab(documentState.path, options?.reuseActiveTab !== false);
     else if (state.activeTab !== documentState.path) { state.activeTab = documentState.path; persistTabs(); }
     setEditorDocument(documentState);
     renderCurrentPath(documentState.path);
@@ -3804,8 +3807,9 @@
         renderTree();
         // A newly created file may reuse a deleted note's name, but not its position.
         if (viewStates.delete(result.path)) viewStatesDirty = true;
-        if (typeof result.content === 'string') applyDocument(result);
-        else await openNote(result.path, { skipSave: true, force: true });
+        if (options?.reuseActiveTab === false) rememberEditorState(state.current);
+        if (typeof result.content === 'string') applyDocument(result, { reuseActiveTab: options?.reuseActiveTab });
+        else await openNote(result.path, { skipSave: true, force: true, reuseActiveTab: options?.reuseActiveTab });
         if (!(options && options.noFocus)) requestAnimationFrame(() => hasExplicitName ? focusEditor() : focusInlineTitle());
       }
       scheduleDocumentPrefetch();
