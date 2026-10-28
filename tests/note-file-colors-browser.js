@@ -42,18 +42,42 @@ async function main() {
     const row = value => page.locator(left + ' .note-tree-row[data-note-path="' + value + '"]');
     const enabled = value => page.evaluate(value => RelatumNoteExtensions.set('file-colors', { enabled: value }), value);
     const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const colorRequests = () => requests.filter(url => url.includes('/api/note-file-colors/')).length;
     assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('file-colors').enabled), false);
     assert(!requests.some(url => /file-colors/.test(url)));
     assert(!fs.existsSync(path.join(data, 'data/note-file-colors.sqlite3')));
     await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'extensions' }));
     const dialog = page.locator('[data-role="note-settings-dialog"]');
+    const menuToggle = dialog.locator('[data-file-color-menu]');
+    assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteExtensions:v1')), null, 'opening settings never writes defaults');
+    assert.equal(await menuToggle.getAttribute('aria-pressed'), 'false');
+    assert.equal(await menuToggle.evaluate(button => button.closest('label')), null, 'menu button is outside the extension checkbox label');
+    await menuToggle.click();
+    assert.equal(await menuToggle.getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('file-colors').enabled), false);
+    await page.evaluate(() => {
+      window.menuStorageSet = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) {
+        if (key === 'canvas:noteExtensions:v1') throw new DOMException('Fixture storage failure', 'QuotaExceededError');
+        return window.menuStorageSet.call(this, key, value);
+      };
+    });
+    await menuToggle.click();
+    assert.equal(await menuToggle.getAttribute('aria-pressed'), 'true', 'failed preference save preserves the old button state');
+    assert((await dialog.locator('[data-extension-id="file-colors"] .note-extension-status').innerText()).includes('设置保存失败'));
+    await page.evaluate(() => { Storage.prototype.setItem = window.menuStorageSet; delete window.menuStorageSet; });
+    await menuToggle.focus(); await page.keyboard.press('Space');
+    assert.equal(await menuToggle.getAttribute('aria-pressed'), 'false');
+    assert.equal(colorRequests(), 0, 'disabled extension menu preference never queries or writes colors');
     await dialog.locator('[data-extension-configure="file-colors"]').click();
     assert((await dialog.locator('.note-file-colors-guide').innerText()).includes('子项不会继承'));
     assert.equal(await dialog.locator('[data-file-color-option]').count(), 4);
     assert.deepEqual(await dialog.locator('[data-file-color-option]').evaluateAll(items => items.map(item => item.value)), ['100', '100', '100', '100']);
     assert.deepEqual(await page.evaluate(() => RelatumNoteExtensions.list().find(item => item.id === 'file-colors').normalizeOptions({
       backgroundStrength: Infinity, hoverStrength: -10, selectedStrength: 333, iconSaturation: '200' })),
-      { backgroundStrength: 100, hoverStrength: 0, selectedStrength: 300, iconSaturation: 100 });
+      { backgroundStrength: 100, hoverStrength: 0, selectedStrength: 300, iconSaturation: 100, showContextMenu: true });
+    assert.deepEqual(await page.evaluate(() => [false, 'false', null].map(showContextMenu =>
+      RelatumNoteExtensions.list().find(item => item.id === 'file-colors').normalizeOptions({ showContextMenu }).showContextMenu)), [false, true, true]);
     await dialog.locator('[data-settings-search]').fill('图标饱和度');
     await dialog.locator('.relatum-settings-result').first().click();
     assert.equal(await dialog.locator('[data-file-color-option="iconSaturation"]').evaluate(input => input === document.activeElement), true);
@@ -79,9 +103,44 @@ async function main() {
       text: getComputedStyle(element).color }));
     let style = await appearance(); assert.equal(style.icon, 'rgb(94, 136, 189)'); assert.equal(style.name, style.text); assert.notEqual(style.bg, 'rgba(0, 0, 0, 0)');
     await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'extensions' }));
+    await page.evaluate(() => { window.menuIdentity = { colors: T.colors, row: document.querySelector('[data-role="note-tree"] [data-note-path="Main.md"]'),
+      view: T.editor.view, doc: T.editor.view.state.doc }; });
+    const beforeMenu = colorRequests();
+    await menuToggle.click();
+    assert.equal(await dialog.locator('[data-extension-enabled="file-colors"]:visible').isChecked(), true);
+    assert.equal(await menuToggle.getAttribute('aria-pressed'), 'true');
+    assert.equal(await menuToggle.locator('.note-file-color-menu-slash').evaluate(element => getComputedStyle(element).display), 'block');
+    assert.equal(colorRequests(), beforeMenu);
+    assert(await page.evaluate(() => menuIdentity.colors === T.colors && menuIdentity.row === document.querySelector('[data-role="note-tree"] [data-note-path="Main.md"]')
+      && menuIdentity.view === T.editor.view && menuIdentity.doc === T.editor.view.state.doc));
+    assert.deepEqual(await appearance(), style, 'hiding menu colors leaves the existing appearance intact');
+    await page.screenshot({ path: path.join(output, 'menu-hidden-light.png') });
+    await dialog.locator('[data-settings-action="close"]').click();
+    for (const value of ['Main.md', 'Folder']) {
+      await row(value).click({ button: 'right' });
+      assert.equal(await menu.locator('.note-notebook-colors').count(), 0);
+      assert.equal(await menu.getByRole('button', { name: '清除颜色', exact: true }).count(), 0);
+      assert.equal(await menu.evaluate(element => element.firstElementChild.tagName), 'BUTTON', 'no leading color separator remains');
+      assert(await menu.getByRole('button', { name: '重命名', exact: true }).isVisible());
+      await page.keyboard.press('Escape');
+    }
+    await enabled(false); await enabled(true);
+    await page.waitForFunction(() => T.colors?.get('Main.md') === 'blue');
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('file-colors').options.showContextMenu), false);
+    await page.reload();
+    await page.waitForFunction(() => window.T?.state.current?.path === 'Main.md' && T.colors?.get('Main.md') === 'blue');
+    await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'extensions' }));
+    assert.equal(await menuToggle.getAttribute('aria-pressed'), 'true', 'hidden menu preference survives reload');
+    await page.setViewportSize({ width: 600, height: 760 });
+    await page.evaluate(() => { RelatumI18n.setLanguage('en'); document.body.dataset.startTheme = 'dark'; });
+    assert.equal(await menuToggle.getAttribute('data-ui-tooltip'), 'Show context menu colors');
+    assert.equal(await menuToggle.getAttribute('aria-label'), 'Hide context menu colors');
+    assert.equal(await dialog.locator('.note-extension-overview').evaluate(element => element.scrollWidth > element.clientWidth + 1), false);
+    await page.screenshot({ path: path.join(output, 'menu-hidden-dark-narrow-en.png') });
+    await page.evaluate(() => { RelatumI18n.setLanguage('zh-CN'); document.body.dataset.startTheme = 'light'; });
+    await page.setViewportSize({ width: 1440, height: 980 });
     await dialog.locator('[data-extension-configure="file-colors"]').click();
     const option = key => dialog.locator('[data-file-color-option="' + key + '"]');
-    const colorRequests = () => requests.filter(url => url.includes('/api/note-file-colors/')).length;
     const beforeOptions = colorRequests();
     await page.evaluate(() => {
       window.appearanceIdentity = { colors: T.colors, row: document.querySelector('[data-role="note-tree"] [data-note-path="Main.md"]'),
@@ -101,7 +160,7 @@ async function main() {
     assert.equal(await page.evaluate(() => window.optionWrites), 1, 'release persists once');
     for (const key of ['hoverStrength', 'selectedStrength', 'iconSaturation']) { await option(key).focus(); await page.keyboard.press('End'); }
     assert.deepEqual(await page.evaluate(() => RelatumNoteExtensions.read('file-colors').options),
-      { backgroundStrength, hoverStrength: 300, selectedStrength: 300, iconSaturation: 200 });
+      { backgroundStrength, hoverStrength: 300, selectedStrength: 300, iconSaturation: 200, showContextMenu: false });
     assert.equal(await row('Main.md').locator('.note-tree-icon').evaluate(element => getComputedStyle(element).filter), 'none');
     assert.notEqual((await appearance()).icon, 'rgb(94, 136, 189)', 'saturation increases icon color without a CSS filter');
     assert.equal(colorRequests(), beforeOptions, 'appearance changes do not query or write color records');
@@ -126,9 +185,16 @@ async function main() {
     await page.setViewportSize({ width: 1440, height: 980 });
     await page.evaluate(() => RelatumI18n.setLanguage('zh-CN'));
     await dialog.locator('[data-file-color-reset]').click();
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('file-colors').options.showContextMenu), false, 'resetting appearance keeps the menu preference');
     assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('file-colors').enabled), true);
     assert.equal(await page.evaluate(() => T.colors.get('Main.md')), 'blue', 'resetting appearance preserves file colors');
     assert.deepEqual(await dialog.locator('[data-file-color-option]').evaluateAll(items => items.map(item => item.value)), ['100', '100', '100', '100']);
+    await dialog.locator('[data-extension-action="back"]').click();
+    const beforeRestoreMenu = colorRequests();
+    await menuToggle.focus(); await page.keyboard.press('Enter');
+    assert.equal(await menuToggle.getAttribute('aria-pressed'), 'false');
+    assert.equal(await menuToggle.locator('.note-file-color-menu-slash').evaluate(element => getComputedStyle(element).display), 'none');
+    assert.equal(colorRequests(), beforeRestoreMenu);
     await dialog.locator('[data-settings-action="close"]').click();
     await page.screenshot({ path: path.join(output, 'light.png') });
     await page.evaluate(() => document.body.dataset.startTheme = 'dark'); await settle();
@@ -264,6 +330,7 @@ async function main() {
     });
     assert.equal(rafs, 0, 'idle extension has no RAF loop');
     await page.evaluate(() => RelatumNoteExtensions.reset());
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('file-colors').options.showContextMenu), true, 'extension reset restores the default menu');
     assert.equal(await page.locator(left).getAttribute('data-file-colors-enabled'), null);
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ passed: true, performance: report, idleRafs: rafs }, null, 2));

@@ -4621,7 +4621,7 @@
     if (!entry) { showContext([contextButton(tr('newNote'), () => createEntry('note', { parent: state.notebookRoot })), contextButton(tr('newFolder'), () => createEntry('folder', { parent: state.notebookRoot })), separator(), contextButton(tr('refresh'), () => triggerExternalSync({ announce: true })), contextButton(tr('openLibrary'), () => reveal(state.notebookRoot, false))], x, y); return; }
     state.selectedPath = entry.path;
     const items = [];
-    if (fileColorHost?.instance && options?.fileTree) {
+    if (fileColorHost?.instance && options?.fileTree && window.RelatumNoteExtensions.read('file-colors').options.showContextMenu) {
       items.push(createColorPalette(fileColorHost.instance.get(entry.path), color => {
         closeContextMenu(); fileColorHost?.instance?.set(entry.path, color);
       }, language() === 'en' ? 'File color' : '文件颜色'),

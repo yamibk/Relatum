@@ -12,6 +12,7 @@
 }
 
 .study-task-page-rail.ledger-page-rail {
+  right: 12px;
   grid-template-rows: minmax(0, 1fr);
 }
 

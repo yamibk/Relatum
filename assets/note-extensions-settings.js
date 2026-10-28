@@ -27,10 +27,23 @@
       const input = document.createElement('input'); input.type = 'checkbox'; input.dataset.extensionEnabled = definition.id;
       text.append(title, description); label.append(text, input); card.append(label);
       input.addEventListener('change', () => registry.set(definition.id, { enabled: input.checked }));
+      let menuToggle = null;
+      if (definition.id === 'file-colors') {
+        menuToggle = document.createElement('button'); menuToggle.type = 'button';
+        menuToggle.className = 'note-file-color-menu-toggle'; menuToggle.dataset.fileColorMenu = '';
+        menuToggle.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+          + '<path d="M12 22a10 10 0 1 1 10-10 4 4 0 0 1-4 4h-1.8a1.8 1.8 0 0 0-1.8 1.8c0 .5.2.9.5 1.2.3.3.5.7.5 1.2a1.8 1.8 0 0 1-1.8 1.8Z"/>'
+          + '<circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/>'
+          + '<circle cx="6.5" cy="12.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/>'
+          + '<path class="note-file-color-menu-slash" d="m3 3 18 18"/></svg>';
+        menuToggle.addEventListener('click', () => registry.set(definition.id,
+          { options: { showContextMenu: !registry.read(definition.id).options.showContextMenu } }));
+        card.append(menuToggle);
+      }
       const status = document.createElement('div'); status.className = 'note-extension-status'; status.setAttribute('role', 'status');
       const configure = document.createElement('button'); configure.type = 'button'; configure.className = 'note-extension-configure'; configure.dataset.extensionConfigure = definition.id;
       configure.addEventListener('click', () => open(row, true));
-      const row = { definition, input, title, description, status, configure, settings: null };
+      const row = { definition, input, title, description, status, configure, menuToggle, settings: null };
       if (definition.createSettings) card.append(configure);
       card.append(status); overview.append(card); return row;
     });
@@ -69,7 +82,14 @@
       intro.textContent = english ? 'Built-in offline extensions. Configure the tools you need.' : '随软件附带的离线扩展，按需开启与配置。';
       back.textContent = english ? '← Extensions' : '← 扩展';
       rows.forEach(row => {
-        row.input.checked = registry.read(row.definition.id).enabled;
+        const value = registry.read(row.definition.id);
+        row.input.checked = value.enabled;
+        if (row.menuToggle) {
+          row.menuToggle.setAttribute('aria-pressed', String(!value.options.showContextMenu));
+          row.menuToggle.setAttribute('aria-label', english ? 'Hide context menu colors' : '隐藏右键调色区');
+          row.menuToggle.title = value.options.showContextMenu ? (english ? 'Hide context menu colors' : '隐藏右键调色区')
+            : (english ? 'Show context menu colors' : '显示右键调色区');
+        }
         row.title.textContent = row.definition.name[index] + ' ' + (row.definition.displayVersion || row.definition.version);
         row.description.textContent = row.definition.description[index]; row.configure.textContent = english ? 'Configure' : '配置';
         errorStatus(row.status, row.definition.id); row.settings?.refresh();
@@ -426,7 +446,10 @@
       fields.set(item.id, { item, name, output, hint, input, label });
     });
     const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'note-extension-configure'; restore.dataset.fileColorReset = '';
-    restore.addEventListener('click', () => { draft = null; cancelPreview(); update(definition.defaultOptions); refresh(); });
+    restore.addEventListener('click', () => {
+      draft = null; cancelPreview();
+      update(Object.fromEntries(definition.settingsControls.map(item => [item.id, item.default]))); refresh();
+    });
     const clearing = document.createElement('section'); clearing.className = 'note-file-colors-clearing';
     const clearTitle = document.createElement('h4'), clearHint = document.createElement('p'), clearButton = document.createElement('button');
     clearButton.type = 'button'; clearButton.className = 'note-extension-configure'; clearButton.dataset.fileColorClear = '';
@@ -473,12 +496,12 @@
       clearButton.textContent = clearBusy ? (english ? 'Clearing…' : '清空中…') : (english ? 'Clear all data' : '清空所有数据'); clearButton.disabled = clearBusy;
       heading.textContent = english ? 'Usage' : '使用说明';
       const lines = english ? [
-        'Enable this extension, then right-click a file or folder in the left tree to choose a color or clear it.',
+        'Enable this extension, then right-click a file or folder in the left tree to choose a color or clear it. The palette button beside the extension switch hides this menu section without turning off existing colors; click it again to restore it.',
         'Only this item’s icon and soft row background change. Children keep their own colors.',
         'Turning the extension off or resetting Note settings preserves your colors for the next time you enable it.',
         'Renaming and moving within Relatum preserves colors. External renames follow when file notifications can be paired reliably; otherwise old colors are cleared after deletion is confirmed.',
       ] : [
-        '开启扩展后，右键左侧的文件或文件夹，选择颜色或“清除颜色”。',
+        '开启扩展后，右键左侧的文件或文件夹，选择颜色或“清除颜色”。扩展开关旁的调色盘按钮可隐藏右键调色区，已有染色继续显示；再次点击恢复。',
         '仅改变当前项目的图标和柔和行背景，子项不会继承颜色。',
         '关闭扩展或恢复笔记设置后，颜色记录仍保留，再次开启即可恢复。',
         '在 Relatum 内改名、移动会保留颜色。外部改名在文件通知能可靠配对时跟随；否则确认旧项目删除后清除旧颜色。',

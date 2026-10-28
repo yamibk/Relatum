@@ -113,9 +113,10 @@
   const fileColorPalette = { gray: [147,151,143], blue: [94,136,189], cyan: [85,166,174], green: [120,147,108],
     yellow: [217,185,91], orange: [214,150,98], red: [200,125,120], purple: [157,130,184] };
   function normalizeFileColorOptions(value) {
-    return Object.fromEntries(fileColorControls.map(item => [item.id,
+    return { ...Object.fromEntries(fileColorControls.map(item => [item.id,
       typeof value?.[item.id] === 'number' && Number.isFinite(value[item.id])
-        ? Math.round(Math.max(item.min, Math.min(item.max, value[item.id])) / item.step) * item.step : item.default]));
+        ? Math.round(Math.max(item.min, Math.min(item.max, value[item.id])) / item.step) * item.step : item.default])),
+      showContextMenu: typeof value?.showContextMenu === 'boolean' ? value.showContextMenu : true };
   }
   const fileColorProperties = Object.freeze(['background-light', 'background-dark', 'hover-light', 'hover-dark', 'selected-light', 'selected-dark']
     .map(key => '--file-color-' + key).concat(Object.keys(fileColorPalette).map(key => '--file-color-icon-' + key)));
@@ -137,7 +138,7 @@
     name: ['文件染色', 'File Colors'], defaultEnabled: false,
     description: ['为左侧文件和文件夹的图标及行背景设置柔和配色。', 'Add soft colors to file and folder icons and row backgrounds in the left tree.'],
     keywords: '文件 文件夹 染色 颜色 配色 右键 浓度 饱和度 file folder color colour palette context menu strength saturation',
-    defaultOptions: Object.fromEntries(fileColorControls.map(item => [item.id, item.default])), normalizeOptions: normalizeFileColorOptions,
+    defaultOptions: normalizeFileColorOptions(), normalizeOptions: normalizeFileColorOptions,
     settingsControls: fileColorControls, applyAppearance: applyFileColorAppearance, appearanceProperties: fileColorProperties,
     settingsSearch(value, language) { const index = language === 'en' ? 1 : 0;
       return fileColorControls.map(item => ({ key: 'option:' + item.id, name: item.name[index],

@@ -11,6 +11,12 @@
 .note-extension-settings button { font: inherit; font-size: 12px; color: inherit; cursor: pointer; }
 .note-extension-configure, .note-extension-status button { flex: none; padding: 8px 13px; border: 1px solid var(--settings-selected); border-radius: 7px; background: transparent; }
 .note-extension-configure:hover, .note-extension-status button:hover { background: var(--settings-card); }
+.note-file-color-menu-toggle { display: grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 5px; border: 1px solid var(--settings-selected); border-radius: 7px; background: transparent; }
+.note-file-color-menu-toggle:hover { background: var(--settings-card); }
+.note-file-color-menu-toggle[aria-pressed="true"] { background: var(--settings-selected); }
+.note-file-color-menu-toggle svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.note-file-color-menu-slash { display: none; }
+.note-file-color-menu-toggle[aria-pressed="true"] .note-file-color-menu-slash { display: block; }
 .note-extension-detail { display: flex; flex: 1; min-height: 0; min-width: 0; flex-direction: column; }
 .note-extension-back { align-self: flex-start; padding: 4px 0; border: 0; background: transparent; color: var(--settings-muted) !important; margin: 0 0 16px; }
 .note-extension-detail-head { display: flex; flex: none; justify-content: space-between; align-items: flex-start; gap: 20px; padding-bottom: 18px; }
