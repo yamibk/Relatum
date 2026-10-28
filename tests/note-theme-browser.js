@@ -54,7 +54,14 @@ async function run(browser, minimal) {
     await page.waitForFunction(() => document.fonts.check('400 16px "Relatum Source Serif 4"'));
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTheme:v1')), 'claude');
     assert(await page.evaluate(() => T.editor.view === originalView && T.editor.view.state.doc === originalDoc && T.editor.view.state.selection === originalSelection && T.state.editGeneration === originalGeneration));
-    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.top-bar')).backgroundColor), await page.evaluate(() => originalChrome));
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.top-bar')).backgroundColor), 'rgb(250, 249, 245)');
+    assert.equal(await page.evaluate(() => {
+      const workspace = document.body.dataset.startWorkspace;
+      document.body.dataset.startWorkspace = 'canvas';
+      const color = getComputedStyle(document.querySelector('.top-bar')).backgroundColor;
+      document.body.dataset.startWorkspace = workspace;
+      return color;
+    }), await page.evaluate(() => originalChrome), 'shared chrome only follows the note theme while Notes is active');
     assert(await page.locator('.note-live-editor-host .cm-editor').evaluate(n => getComputedStyle(n).fontFamily.includes('Relatum Source Serif 4')));
     await pause(500);
     const idle = await page.evaluate(async () => {

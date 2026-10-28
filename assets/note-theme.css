@@ -35,8 +35,9 @@ html[data-note-reduced-motion="1"] #note-settings-dialog .note-theme-popovers .r
   font-weight: 200 900; font-style: italic; font-display: swap;
 }
 
-/* The selector includes detached note portals, never the global settings or shell. */
-html[data-note-theme="claude"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-modal-host, .note-ai-popovers, .note-search-popover) {
+/* Detached note portals keep their palette; shared chrome follows only active Notes. */
+html[data-note-theme="claude"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
+html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
   --note-theme-paper: #faf9f5; --note-theme-nav: #f5f4ed; --note-theme-surface: #fff;
   --note-theme-card: #f0eee6; --note-theme-hover: #efede5; --note-theme-selected: #e8e6dc;
   --note-theme-text: #141413; --note-theme-secondary: #595850; --note-theme-muted: #737168;
@@ -48,18 +49,43 @@ html[data-note-theme="claude"] body.start-page :is(.note-workspace, #note-settin
   --border: var(--note-theme-line); --border-strong: var(--note-theme-line-strong);
   --accent: var(--note-theme-clay); --focus-ring: rgba(217,119,87,.35);
   --note-chrome-line: var(--note-theme-line);
-  --settings-bg: var(--note-theme-surface); --settings-nav: var(--note-theme-nav); --settings-card: var(--note-theme-paper);
+  --settings-bg: var(--note-theme-paper); --settings-nav: var(--note-theme-nav); --settings-card: var(--note-theme-card);
   --settings-text: var(--note-theme-text); --settings-muted: var(--note-theme-muted); --settings-selected: var(--note-theme-selected);
   color: var(--text);
 }
-html[data-note-theme="claude"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-modal-host, .note-ai-popovers, .note-search-popover) {
+html[data-note-theme="claude"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
+html[data-note-theme="claude"] body.start-page[data-start-theme="dark"][data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
   --note-theme-paper: #262624; --note-theme-nav: #1f1f1e; --note-theme-surface: #30302e;
   --note-theme-card: #343432; --note-theme-hover: #363633; --note-theme-selected: #41413c;
   --note-theme-text: #faf9f5; --note-theme-secondary: #c3c2b7; --note-theme-muted: #aaa89f;
   --note-theme-line: rgba(226,225,218,.12); --note-theme-line-strong: rgba(226,225,218,.28);
   --note-theme-link: #9fc5f4; --note-theme-code: #30302e;
 }
-html[data-note-theme="claude"] body.start-page .note-workspace { background: var(--note-theme-paper); }
+/* Retain header geometry and its finite interactions, without backdrop sampling. */
+html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) { background: var(--note-theme-paper); }
+html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > .top-bar::before {
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--note-theme-paper) 97%, transparent) 0%, color-mix(in srgb, var(--note-theme-paper) 90%, transparent) 42%, transparent 100%);
+  backdrop-filter: none; -webkit-backdrop-filter: none; mask-image: none; -webkit-mask-image: none;
+}
+html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"][data-start-background="scenic"] > .top-bar { background: transparent; }
+html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > .top-bar .start-workspace-slider { background: var(--note-theme-text); }
+html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > .top-bar .start-workspace-switch button.active { color: var(--note-theme-paper); }
+html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > .top-bar .start-speed-trigger {
+  color: var(--text-secondary); background: var(--note-theme-nav); border-color: var(--note-theme-line);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > .top-bar .start-speed-trigger:is(:hover, [aria-expanded="true"]) {
+  color: var(--text); background: var(--note-theme-hover); border-color: var(--note-theme-line-strong);
+}
+html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) .desktop-window-btn:not(.desktop-window-close):hover {
+  color: var(--text); background: var(--note-theme-hover);
+}
+html[data-note-theme="claude"] body.start-page .note-workspace {
+  --note-control-hover: color-mix(in srgb, var(--note-theme-text) 6%, transparent);
+  --note-control-active: color-mix(in srgb, var(--note-theme-text) 10%, transparent);
+  --note-control-focus: var(--note-theme-clay); --note-notebook-cutout: var(--note-theme-nav);
+  background: var(--note-theme-paper);
+}
 html[data-note-theme="claude"] body.start-page :is(.note-document-pane, .note-document-body, .note-document-head, .note-tab-bar) { background: var(--note-theme-paper); }
 html[data-note-theme="claude"] body.start-page :is(.note-tree-pane, .note-links-pane, .note-pane-head, .note-links-head, .note-tree-foot) {
   background: var(--note-theme-nav); border-color: var(--note-theme-line);
@@ -95,17 +121,30 @@ html[data-note-theme="claude"] body.start-page :is(.note-side-button.active, .no
 html[data-note-theme="claude"] body.start-page :is(.note-library-popover, .note-context-menu, .note-modal-card, .note-search-popover) {
   color: var(--text); background: var(--note-theme-surface); border-color: var(--border);
 }
+html[data-note-theme="claude"] body.start-page .note-workspace :is(.note-image-text-tools, .note-canvas-color-popup) {
+  color: var(--text); background: var(--note-theme-surface); border-color: var(--note-theme-line);
+}
 html[data-note-theme="claude"] body.start-page .note-context-menu > button:enabled:is(:hover, :focus-visible, .is-open) { background: var(--note-theme-hover); }
 html[data-note-theme="claude"] body.start-page .note-modal-field input { color: var(--text); background: var(--note-theme-paper); border-color: var(--border); }
 html[data-note-theme="claude"] body.start-page :is(.note-modal-field input:focus, .note-tree-row:focus-visible) { outline-color: var(--note-theme-clay); }
 html[data-note-theme="claude"] body.start-page #note-settings-dialog {
-  --surface: var(--settings-bg); --accent: var(--settings-text);
+  --surface: var(--note-theme-surface); --accent: var(--settings-text);
+}
+html[data-note-theme="claude"] body.start-page #note-settings-dialog :is(.relatum-settings-main, .relatum-settings-header, .relatum-settings-scroll, .relatum-settings-footer) {
+  background: var(--settings-bg);
+}
+html[data-note-theme="claude"] body.start-page #note-settings-dialog :is(.note-library-settings, .note-settings-pop) {
+  --note-settings-paper: var(--settings-bg); --note-settings-card: var(--settings-card); --note-settings-line: var(--note-theme-line);
+}
+html[data-note-theme="claude"] body.start-page #note-settings-dialog .note-ai-settings {
+  --ai-line: var(--note-theme-line); --ai-line-hover: var(--note-theme-line-strong);
 }
 html[data-note-theme="claude"] body.start-page #note-settings-dialog :is(.review-choice-popup, .review-choice-popup[data-start-theme="dark"]) {
   --text: var(--settings-text); --text-secondary: var(--settings-muted); --text-tertiary: var(--settings-muted);
   --border: var(--note-theme-line); --border-strong: var(--note-theme-line-strong);
-  color: var(--settings-text); background: var(--settings-bg);
+  color: var(--settings-text); background: var(--note-theme-surface);
 }
+html[data-note-theme="claude"] body.start-page #note-settings-dialog :is(.note-canvas-color-popup, .relatum-settings-confirm > div) { background: var(--note-theme-surface); }
 html[data-note-theme="claude"] body.start-page #note-settings-dialog .review-choice-option.is-highlighted { background: var(--settings-selected); }
 html[data-note-theme="claude"] body.start-page #note-settings-dialog .note-theme-popovers .review-choice-option.is-selected::after { color: var(--note-theme-clay); }
 html[data-note-theme="claude"] body.start-page :is(.note-ai, .note-ai-popovers) {
