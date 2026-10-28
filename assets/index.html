@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Relatum</title>
   <script src="start-page-layout.js"></script>
+  <script src="note-theme.js" data-feature="notes"></script>
   <!-- 起步页主题必须早于外部 CSS 与正文首帧恢复，否则从深色画布返回时会短暂露出
        浏览器 / WebView 的默认白底。start.js 加载后仍会按同一偏好完整初始化主题。 -->
   <script>
@@ -85,6 +86,7 @@
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="settings-dialog.css">
   <link rel="stylesheet" href="global-settings.css">
+  <link rel="stylesheet" href="note-theme.css" data-feature="notes">
   <link rel="stylesheet" href="review-controls.css" data-feature="canvas.review">
 </head>
 <body class="start-page">
@@ -1543,6 +1545,11 @@
       role="dialog" aria-label="笔记设置" hidden inert>
       <section class="note-settings-section" aria-labelledby="note-settings-appearance-title">
         <h3 id="note-settings-appearance-title">外观</h3>
+        <div class="note-settings-theme" data-i18n-managed="true" data-settings-keywords="主题 Claude theme font 字体">
+          <label for="note-theme-select" data-role="note-theme-label">主题</label>
+          <select id="note-theme-select" data-role="note-theme" aria-label="主题" aria-describedby="note-theme-hint"></select>
+          <small id="note-theme-hint">调整笔记工作区的配色与字体，深浅色沿用全局设置</small>
+        </div>
         <label class="note-settings-font">
           <span><strong>笔记正文字号</strong><output data-role="note-font-scale-value">100%</output></span>
           <span class="note-settings-range" style="--default-pos:33.333%;">

@@ -1,0 +1,133 @@
+/* Theme picker is available in both built-in styles. */
+#note-settings-dialog .note-settings-theme {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 260px);
+  align-items: center; gap: 12px 24px; margin-bottom: 12px; padding: 18px 20px;
+  border-radius: 14px; background: var(--settings-card);
+}
+#note-settings-dialog .note-settings-theme > label { font-size: 13px; font-weight: 580; }
+#note-settings-dialog .note-settings-theme > small { grid-column: 1 / -1; color: var(--settings-muted); font-size: 11px; line-height: 1.6; }
+#note-settings-dialog .note-settings-theme .review-choice { width: 100%; }
+#note-settings-dialog .note-settings-theme .review-choice-trigger {
+  --border: color-mix(in srgb, var(--settings-text) 12%, transparent);
+  --border-strong: color-mix(in srgb, var(--settings-text) 28%, transparent);
+  color: var(--settings-text); background: var(--settings-bg);
+}
+#note-settings-dialog .note-theme-popovers .review-choice-popup {
+  --text: var(--settings-text); --text-secondary: var(--settings-muted); --text-tertiary: var(--settings-muted);
+  --border: color-mix(in srgb, var(--settings-text) 12%, transparent);
+  --border-strong: color-mix(in srgb, var(--settings-text) 24%, transparent);
+  color: var(--settings-text); background: var(--settings-bg); font-size: 13px;
+}
+@media (max-width: 600px) {
+  #note-settings-dialog .note-settings-theme { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+}
+html[data-note-reduced-motion="1"] #note-settings-dialog .note-theme-popovers .review-choice-popup { animation: none; }
+html[data-note-reduced-motion="1"] #note-settings-dialog .note-settings-theme :is(.review-choice-trigger, .review-choice-chevron),
+html[data-note-reduced-motion="1"] #note-settings-dialog .note-theme-popovers .review-choice-option { transition: none; }
+
+/* Official, unmodified Adobe variable fonts. CSS does not fetch unused faces. */
+@font-face {
+  font-family: "Relatum Source Serif 4"; src: url('fonts/source-serif-4-regular.woff2') format('woff2');
+  font-weight: 200 900; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Relatum Source Serif 4"; src: url('fonts/source-serif-4-italic.woff2') format('woff2');
+  font-weight: 200 900; font-style: italic; font-display: swap;
+}
+
+/* The selector includes detached note portals, never the global settings or shell. */
+html[data-note-theme="claude"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-modal-host, .note-ai-popovers, .note-search-popover) {
+  --note-theme-paper: #faf9f5; --note-theme-nav: #f5f4ed; --note-theme-surface: #fff;
+  --note-theme-card: #f0eee6; --note-theme-hover: #efede5; --note-theme-selected: #e8e6dc;
+  --note-theme-text: #141413; --note-theme-secondary: #595850; --note-theme-muted: #737168;
+  --note-theme-line: rgba(31,31,30,.12); --note-theme-line-strong: rgba(31,31,30,.25);
+  --note-theme-clay: #d97757; --note-theme-link: #245b95; --note-theme-code: #f0eee8;
+  --note-theme-body-font: "Relatum Source Serif 4", "Microsoft YaHei", "Microsoft YaHei UI", "Noto Sans SC", "PingFang SC", Georgia, serif;
+  --bg: var(--note-theme-paper); --bg-secondary: var(--note-theme-nav); --surface: var(--note-theme-surface);
+  --text: var(--note-theme-text); --text-secondary: var(--note-theme-secondary); --text-tertiary: var(--note-theme-muted);
+  --border: var(--note-theme-line); --border-strong: var(--note-theme-line-strong);
+  --accent: var(--note-theme-clay); --focus-ring: rgba(217,119,87,.35);
+  --note-chrome-line: var(--note-theme-line);
+  --settings-bg: var(--note-theme-surface); --settings-nav: var(--note-theme-nav); --settings-card: var(--note-theme-paper);
+  --settings-text: var(--note-theme-text); --settings-muted: var(--note-theme-muted); --settings-selected: var(--note-theme-selected);
+  color: var(--text);
+}
+html[data-note-theme="claude"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-modal-host, .note-ai-popovers, .note-search-popover) {
+  --note-theme-paper: #262624; --note-theme-nav: #1f1f1e; --note-theme-surface: #30302e;
+  --note-theme-card: #343432; --note-theme-hover: #363633; --note-theme-selected: #41413c;
+  --note-theme-text: #faf9f5; --note-theme-secondary: #c3c2b7; --note-theme-muted: #aaa89f;
+  --note-theme-line: rgba(226,225,218,.12); --note-theme-line-strong: rgba(226,225,218,.28);
+  --note-theme-link: #9fc5f4; --note-theme-code: #30302e;
+}
+html[data-note-theme="claude"] body.start-page .note-workspace { background: var(--note-theme-paper); }
+html[data-note-theme="claude"] body.start-page :is(.note-document-pane, .note-document-body, .note-document-head, .note-tab-bar) { background: var(--note-theme-paper); }
+html[data-note-theme="claude"] body.start-page :is(.note-tree-pane, .note-links-pane, .note-pane-head, .note-links-head, .note-tree-foot) {
+  background: var(--note-theme-nav); border-color: var(--note-theme-line);
+}
+html[data-note-theme="claude"] body.start-page .note-document-pane { --note-font-text: var(--note-theme-body-font); }
+/* Pele's worker keeps its existing, matching sans-serif measurement stack. */
+html[data-note-theme="claude"] body.start-page .note-workspace .mermaid-diagram {
+  font-family: "Relatum Open Sans", "Microsoft YaHei", "Microsoft YaHei UI", "Segoe UI", "Noto Sans SC", Helvetica, Arial, sans-serif;
+}
+html[data-note-theme="claude"] body.start-page :is(.note-inline-title, .note-reading-content, .note-live-editor-host .cm-editor) { color: var(--text); }
+html[data-note-theme="claude"] body.start-page :is(.note-live-editor-host, .note-reading-content) {
+  --note-heading-rule: transparent; --note-quote-rule: var(--note-theme-line-strong);
+  --note-live-link: var(--note-theme-link); --note-list-bullet-color: var(--note-theme-text);
+  --note-code-bg: var(--note-theme-code);
+}
+html[data-note-theme="claude"] body.start-page .note-live-editor-host { --note-live-marker: #929087; }
+html[data-note-theme="claude"] body.start-page .note-document-status {
+  color: var(--text-secondary); background: color-mix(in srgb, var(--note-theme-paper) 94%, transparent); border-color: var(--border);
+}
+html[data-note-theme="claude"] body.start-page :is(.note-tab.active, .note-tree-rename) {
+  color: var(--text); background: var(--note-theme-paper); border-color: var(--border);
+}
+html[data-note-theme="claude"] body.start-page :is(.note-tab, .note-icon-button, .note-side-button, .note-link-card, .note-tree-row, .note-path-crumb.is-folder) { color: var(--text-secondary); }
+html[data-note-theme="claude"] body.start-page :is(.note-path-crumb.is-file, .note-tab.active, .note-side-button.active) { color: var(--text); }
+html[data-note-theme="claude"] body.start-page :is(.note-tab:hover, .note-icon-button:hover, .note-side-button:hover, .note-link-card:hover, .note-tab-close:hover, .note-tab-new:hover, .note-tab-close-all:hover) {
+  background: var(--note-theme-hover); color: var(--text);
+}
+/* File Colors owns rows with explicit user colors, including hover/selection. */
+html[data-note-theme="claude"] body.start-page .note-tree-row:not([data-file-color]):hover { background: var(--note-theme-hover); }
+html[data-note-theme="claude"] body.start-page .note-tree-row:not([data-file-color]):is(.active, .opening) { background: var(--note-theme-selected); color: var(--text); }
+html[data-note-theme="claude"] body.start-page :is(.note-tree-children, .note-outline-group) { border-left-color: var(--note-theme-line-strong); }
+html[data-note-theme="claude"] body.start-page :is(.note-side-button.active, .note-view-toggle button.active) { background: var(--note-theme-selected); }
+html[data-note-theme="claude"] body.start-page :is(.note-library-popover, .note-context-menu, .note-modal-card, .note-search-popover) {
+  color: var(--text); background: var(--note-theme-surface); border-color: var(--border);
+}
+html[data-note-theme="claude"] body.start-page .note-context-menu > button:enabled:is(:hover, :focus-visible, .is-open) { background: var(--note-theme-hover); }
+html[data-note-theme="claude"] body.start-page .note-modal-field input { color: var(--text); background: var(--note-theme-paper); border-color: var(--border); }
+html[data-note-theme="claude"] body.start-page :is(.note-modal-field input:focus, .note-tree-row:focus-visible) { outline-color: var(--note-theme-clay); }
+html[data-note-theme="claude"] body.start-page #note-settings-dialog {
+  --surface: var(--settings-bg); --accent: var(--settings-text);
+}
+html[data-note-theme="claude"] body.start-page #note-settings-dialog :is(.review-choice-popup, .review-choice-popup[data-start-theme="dark"]) {
+  --text: var(--settings-text); --text-secondary: var(--settings-muted); --text-tertiary: var(--settings-muted);
+  --border: var(--note-theme-line); --border-strong: var(--note-theme-line-strong);
+  color: var(--settings-text); background: var(--settings-bg);
+}
+html[data-note-theme="claude"] body.start-page #note-settings-dialog .review-choice-option.is-highlighted { background: var(--settings-selected); }
+html[data-note-theme="claude"] body.start-page #note-settings-dialog .note-theme-popovers .review-choice-option.is-selected::after { color: var(--note-theme-clay); }
+html[data-note-theme="claude"] body.start-page :is(.note-ai, .note-ai-popovers) {
+  --ai-surface: var(--note-theme-surface); --ai-text: var(--note-theme-text); --ai-muted: var(--note-theme-muted);
+  color: var(--ai-text);
+}
+html[data-note-theme="claude"] body.start-page .note-ai-message[data-ai-role="assistant"] .note-ai-answer { font-family: var(--note-theme-body-font); }
+html[data-note-theme="claude"] body.start-page .note-ai-message[data-ai-role="assistant"] :is(pre, code) { font-family: var(--note-font-mono, var(--font-mono)); }
+html[data-note-theme="claude"] body.start-page .note-ai-popovers .review-choice-popup { background: var(--ai-surface); color: var(--ai-text); }
+
+/* Scenic mode retains the original alpha hierarchy and geometry. */
+html[data-note-theme="claude"] body.start-page[data-start-background="scenic"] .note-workspace {
+  --note-scenic-shell: rgba(250,249,245,.48); --note-scenic-tree: rgba(245,244,237,.74);
+  --note-scenic-paper: rgba(250,249,245,.80); --note-scenic-chrome: rgba(250,249,245,.70);
+  --note-scenic-overlay: rgba(255,255,255,.92); --note-scenic-line: var(--note-theme-line);
+  background: var(--note-scenic-shell);
+}
+html[data-note-theme="claude"] body.start-page[data-start-theme="dark"][data-start-background="scenic"] .note-workspace {
+  --note-scenic-shell: rgba(31,31,30,.66); --note-scenic-tree: rgba(31,31,30,.78);
+  --note-scenic-paper: rgba(38,38,36,.84); --note-scenic-chrome: rgba(38,38,36,.76);
+  --note-scenic-overlay: rgba(48,48,46,.94);
+}
+html[data-note-theme="claude"] body.start-page[data-start-background="scenic"] :is(.note-tree-pane, .note-links-pane, .note-tree-foot) { background: var(--note-scenic-tree); }
+html[data-note-theme="claude"] body.start-page[data-start-background="scenic"] :is(.note-document-pane, .note-document-body) { background: var(--note-scenic-paper); }
+html[data-note-theme="claude"] body.start-page[data-start-background="scenic"] :is(.note-pane-head, .note-document-head, .note-tab-bar, .note-links-head) { background: var(--note-scenic-chrome); }

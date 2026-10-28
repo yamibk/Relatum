@@ -87,6 +87,8 @@
   const libraryNamePreview = $('[data-role="note-library-name-preview"]');
   const libraryNameError = $('[data-role="note-library-name-error"]');
   let settingsDialog = null, canvasStylePanel = null, guideController = null, guideLoader = null, guideSequence = 0;
+  let themeChoices = null, themeLayoutAnchor = null, themeLayoutSequence = 0;
+  const themeSelect = $('[data-role="note-theme"]');
   const GUIDE_TOPIC_KEY = 'canvas:noteGuideTopic:v1';
   let guideTopic = 'callout';
   try { const saved = localStorage.getItem(GUIDE_TOPIC_KEY); if (['callout', 'markdown', 'mermaid', 'quiz'].includes(saved)) guideTopic = saved; } catch (_) {}
@@ -940,6 +942,7 @@
   }
 
   function syncNoteSettingsFontScale() {
+    syncNoteThemeSettings();
     const preference = window.RelatumNotePreferences;
     const spacing = preference?.readGraphSpacing?.() ?? 125;
     const spacingInput = $('[data-role="note-graph-spacing"]'), spacingOutput = $('[data-role="note-graph-spacing-value"]');
@@ -972,6 +975,73 @@
     };
     if (editorInputPending()) whenEditorInputSettled().then(commit); else commit();
   }
+
+  function syncNoteThemeSettings() {
+    if (!themeSelect) return;
+    const registry = window.RelatumNoteTheme, en = language() === 'en';
+    if (themeSelect.dataset.themeLanguage !== String(en)) {
+      themeSelect.dataset.themeLanguage = String(en);
+      themeSelect.replaceChildren(...(registry?.list() || []).map(theme => new Option(theme.label[en ? 1 : 0], theme.id)));
+      const label = $('[data-role="note-theme-label"]');
+      if (label) label.textContent = en ? 'Theme' : '主题';
+      themeSelect.setAttribute('aria-label', en ? 'Theme' : '主题');
+      const hint = $('#note-theme-hint');
+      if (hint) hint.textContent = en ? 'Change the colors and fonts of Notes. Light and dark modes follow the global setting.' : '调整笔记工作区的配色与字体，深浅色沿用全局设置';
+      themeChoices?.refresh();
+    }
+    themeSelect.value = registry?.read() || 'default';
+    themeChoices?.sync();
+  }
+
+  function resetNoteTheme() {
+    if (window.RelatumNoteTheme && !window.RelatumNoteTheme.reset()) throw new Error('Could not restore note theme');
+    syncNoteThemeSettings();
+  }
+
+  // Explicit theme changes preserve a visible text anchor without an editor transaction.
+  window.addEventListener('relatum:note-theme-beforechange', () => {
+    themeLayoutAnchor = null; themeLayoutSequence++;
+    if (!noteWorkspaceVisible() || !state.current) return;
+    const view = liveEditor?.view, reading = state.viewMode === 'reading';
+    const scroller = reading ? readingHost : view?.scrollDOM || fallbackEditor;
+    const box = scroller.getBoundingClientRect();
+    let position = null, element = null, top = null;
+    if (reading) {
+      element = Array.from(readingHost.querySelector('.note-reading-content')?.children || [])
+        .find(node => node.getBoundingClientRect().bottom > box.top + 1);
+      top = element?.getBoundingClientRect().top;
+    } else if (view) {
+      position = view.posAtCoords({ x: view.contentDOM.getBoundingClientRect().left + 2, y: box.top + 16 }) ?? view.viewport.from;
+      top = view.coordsAtPos(position)?.top;
+    }
+    themeLayoutAnchor = { document: state.current, doc: view?.state.doc, view, reading, scroller, position, element, top,
+      epoch: noteVisibilityEpoch, scroll: scroller.scrollTop, sequence: themeLayoutSequence };
+  });
+  window.addEventListener('relatum:note-theme', () => {
+    syncNoteThemeSettings();
+    const anchor = themeLayoutAnchor;
+    const current = () => anchor && anchor.sequence === themeLayoutSequence && anchor.document === state.current
+      && anchor.epoch === noteVisibilityEpoch && anchor.view === liveEditor?.view
+      && anchor.doc === liveEditor?.view?.state.doc
+      && anchor.reading === (state.viewMode === 'reading') && noteWorkspaceVisible();
+    const restore = () => {
+      if (!current()) return;
+      if (!anchor.reading && anchor.view) {
+        anchor.view.requestMeasure({
+          key: anchor,
+          read: view => current() ? view.coordsAtPos(anchor.position)?.top : null,
+          write: top => { if (current() && top != null && anchor.top != null) anchor.scroller.scrollTop += top - anchor.top; },
+        });
+      } else if (anchor.element?.isConnected && anchor.top != null) {
+        anchor.scroller.scrollTop += anchor.element.getBoundingClientRect().top - anchor.top;
+      } else anchor.scroller.scrollTop = anchor.scroll;
+    };
+    restore();
+    if (window.RelatumNoteTheme.read() === 'claude' && current() && document.fonts) {
+      Promise.all([document.fonts.load('400 16px "Relatum Source Serif 4"'), document.fonts.load('italic 400 16px "Relatum Source Serif 4"')])
+        .then(restore, () => {}).finally(() => { if (themeLayoutAnchor === anchor) themeLayoutAnchor = null; });
+    } else themeLayoutAnchor = null;
+  });
 
   function applyGuideTopic(value, persist) {
     const next = ['callout', 'markdown', 'mermaid', 'quiz'].includes(value) ? value : 'callout';
@@ -1054,7 +1124,7 @@
       const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = href; document.head.append(style);
     }
     const categories = [
-      { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-laptop-minimal', panel: appearance, keywords: '字体 font size image text scale', reset: () => { pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
+      { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-laptop-minimal', panel: appearance, keywords: '主题 Claude theme 字体 font size image text scale', reset: () => { resetNoteTheme(); pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
       { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮', reset: () => { try { localStorage.removeItem(SELECTION_MATCH_HIGHLIGHT_KEY); } catch (_) {} applySelectionMatchHighlight(false, false); } },
       { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings, keywords: '排序 命名 sort name timestamp', reset: resetLibraryPreferences },
       { id: 'sidebar', label: ['侧栏', 'Sidebar'], icon: 'note-icon-panel-right-frame', panel: sidebar, keywords: '页签 显示 隐藏 顺序 拖拽 tabs visibility reorder sidebar', reset: () => sidePreferences.reset() },
@@ -1080,6 +1150,7 @@
         settingsTrigger.setAttribute('aria-expanded', 'true'); libraryTrigger.setAttribute('aria-expanded', 'true'); renderAI();
       },
       onClose({ reason }) {
+        themeChoices?.close();
         aiSequence++;
         systemSettings.setActive(false);
         extensionSettings.setActive(false);
@@ -1097,6 +1168,7 @@
         } else { aiController?.suspend(); renderAI(); }
       },
       onCategoryChange(category) {
+        themeChoices?.close();
         aiSettingsCategory = category; aiDialogReturning = false;
         if (category === 'notebooks') renderNotebookSettings();
         systemSettings.setActive(category === 'system' && !!settingsDialog?.isOpen && noteWorkspaceVisible());
@@ -1114,6 +1186,26 @@
         return true;
       },
     });
+    syncNoteThemeSettings();
+    const themePortal = document.createElement('div'); themePortal.className = 'note-theme-popovers';
+    settingsDialog.dialog.append(themePortal);
+    themeChoices = window.RelatumReviewControls.createManager(appearance, themePortal);
+    themeChoices.enhance(themeSelect);
+    const prepareThemeChoice = event => {
+      if (event.type === 'keydown' && (event.isComposing || !['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key))) return;
+      if (event.target.closest('.note-settings-theme .review-choice-trigger')) {
+        settingsDialog.finishContentMotion(); prepareWorkspacePopover('settings');
+      }
+    };
+    appearance.addEventListener('click', prepareThemeChoice, true);
+    appearance.addEventListener('keydown', prepareThemeChoice, true);
+    themeSelect.addEventListener('change', () => {
+      if (!window.RelatumNoteTheme.apply(themeSelect.value)) {
+        syncNoteThemeSettings(); settingsDialog.setStatus(language() === 'en' ? 'Could not save the theme. Please retry.' : '主题保存失败，请重试');
+      }
+    });
+    settingsDialog.dialog.querySelector('[data-settings-search]').addEventListener('input', () => themeChoices.close());
+    document.addEventListener('relatum:languagechange', () => { themeChoices.close(); syncNoteThemeSettings(); });
     settingsDialog.dialog.addEventListener('click', handleWorkspaceClick);
     settingsTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     libraryTrigger.setAttribute('aria-controls', 'note-settings-dialog');
@@ -1122,6 +1214,7 @@
   }
 
   function resetNoteSettings() {
+    resetNoteTheme();
     try { localStorage.removeItem(SELECTION_MATCH_HIGHLIGHT_KEY); } catch (error) {}
     applySelectionMatchHighlight(false, false);
     const preference = window.RelatumNotePreferences;
@@ -5496,6 +5589,7 @@
   document.addEventListener('relatum:note-focuschange', cancelTabCloseMotion);
   tabMotionPreference.addEventListener?.('change', () => {
     if (!tabMotionPreference.matches) return;
+    themeChoices?.close();
     cancelTabCloseMotion();
     treeEl.__noteFinishMotion?.(); notebookTreeEl?.__noteFinishMotion?.();
     cancelSideClose(); clearClosedNotebookTree();

@@ -198,18 +198,32 @@ class FeatureProfileTests(unittest.TestCase):
             self.assertFalse(other.resource_allowed(resource))
             self.assertNotIn(resource, features.render_html(source, other, 'index.html'))
 
-    def test_note_ai_can_load_shared_choices_without_review(self):
+    def test_notes_can_load_shared_choices_without_ai_or_review(self):
         enabled = self.only('notes', 'notes.ai')
         disabled = self.only('notes')
         source = (features.RESOURCE_ROOT / 'assets' / 'index.html').read_text(encoding='utf8')
         cold_html = features.render_html(source, enabled, 'index.html')
-        for name in ('review-controls.js', 'review-controls.css', 'note-ai.js', 'note-ai.css'):
+        for name in ('review-controls.js', 'review-controls.css'):
+            self.assertTrue(enabled.resource_allowed(name))
+            self.assertTrue(disabled.resource_allowed(name), 'note themes and extensions also use shared choices')
+            self.assertNotIn(name, cold_html, 'shared controls load through the note runtime')
+        for name in ('note-ai.js', 'note-ai.css'):
             self.assertTrue(enabled.resource_allowed(name))
             self.assertFalse(disabled.resource_allowed(name))
             self.assertNotIn(name, cold_html, 'shared control resources load only when AI is requested')
         for name in ('review.js', 'review-import.js', 'review-import-worker.js'):
             self.assertFalse(enabled.resource_allowed(name))
         self.assertFalse(enabled.write_allowed('/api/review-import'))
+
+    def test_note_theme_resources_follow_notes(self):
+        notes, other = self.only('notes'), self.only('canvas', 'canvas.library')
+        source = (features.RESOURCE_ROOT / 'assets' / 'index.html').read_text(encoding='utf8')
+        for name in ('note-theme.js', 'note-theme.css', 'fonts/source-serif-4-regular.woff2', 'fonts/source-serif-4-italic.woff2'):
+            self.assertTrue(notes.resource_allowed(name), name)
+            self.assertFalse(other.resource_allowed(name), name)
+        html = features.render_html(source, notes, 'index.html')
+        self.assertLess(html.index('src="note-theme.js"'), html.index('href="styles.css"'))
+        self.assertNotIn('note-theme.js', features.render_html(source, other, 'index.html'))
 
     def test_notes_only_uses_shared_shell(self):
         source = (features.RESOURCE_ROOT / "assets" / "index.html").read_text(encoding="utf8")

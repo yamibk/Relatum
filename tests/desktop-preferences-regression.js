@@ -29,11 +29,15 @@ function context(seed, values = {}, api = null, parent = null) {
   const layout = JSON.stringify({ order: ['career', 'notes', 'canvas', 'research'], hidden: ['notes', 'canvas', 'research', 'career'] });
   first.localStorage.setItem('canvas:workspaceLayout:v1', layout);
   first.localStorage.setItem('canvas:noteSystem:v1', system);
+  first.localStorage.setItem('canvas:noteTheme:v1', 'claude');
   const globalSystem = JSON.stringify({ preload: false, dailyRetention: 'session' });
   first.localStorage.setItem('canvas:globalSystem:v1', globalSystem);
   assert(await first.window.RelatumDesktopPreferences.flush());
   assert.equal(persisted['canvas:startTheme'], 'light');
   assert.equal(persisted['canvas:noteSystem:v1'], system);
+  assert.equal(persisted['canvas:noteTheme:v1'], 'claude');
+  const themeRestored = context({ ...seed, launchId: 'theme-restored', values: { 'canvas:noteTheme:v1': 'claude' } }, {}, api);
+  assert.equal(themeRestored.localStorage.getItem('canvas:noteTheme:v1'), 'claude', 'note theme survives a new desktop origin');
   assert.equal(persisted['canvas:globalSystem:v1'], globalSystem);
   assert.equal(persisted['canvas:workspaceLayout:v1'], layout);
   const layoutRestored = context({ ...seed, launchId: 'layout-restored', values: { 'canvas:workspaceLayout:v1': layout } }, {}, api);
