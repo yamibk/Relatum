@@ -38,11 +38,11 @@ html[data-note-reduced-motion="1"] #note-settings-dialog .note-theme-popovers .r
 /* Detached note portals keep their palette; shared chrome follows only active Notes. */
 html[data-note-theme="claude"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
 html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
-  --note-theme-paper: #faf9f5; --note-theme-nav: #f5f4ed; --note-theme-surface: #fff;
-  --note-theme-card: #f0eee6; --note-theme-hover: #efede5; --note-theme-selected: #e8e6dc;
+  --note-theme-paper: #faf9f5; --note-theme-nav: var(--note-theme-paper); --note-theme-surface: #fff;
+  --note-theme-card: var(--note-theme-paper); --note-theme-hover: #f2f1ed; --note-theme-selected: #eae9e4;
   --note-theme-text: #141413; --note-theme-secondary: #595850; --note-theme-muted: #737168;
-  --note-theme-line: rgba(31,31,30,.12); --note-theme-line-strong: rgba(31,31,30,.25);
-  --note-theme-clay: #d97757; --note-theme-link: #245b95; --note-theme-code: #f0eee8;
+  --note-theme-line: rgba(20,20,19,.08); --note-theme-line-strong: rgba(20,20,19,.18);
+  --note-theme-clay: #d97757; --note-theme-link: #245b95; --note-theme-code: #f3f2ee;
   --note-theme-body-font: "Relatum Source Serif 4", "Microsoft YaHei", "Microsoft YaHei UI", "Noto Sans SC", "PingFang SC", Georgia, serif;
   --bg: var(--note-theme-paper); --bg-secondary: var(--note-theme-nav); --surface: var(--note-theme-surface);
   --text: var(--note-theme-text); --text-secondary: var(--note-theme-secondary); --text-tertiary: var(--note-theme-muted);
@@ -62,6 +62,33 @@ html[data-note-theme="claude"] body.start-page[data-start-theme="dark"][data-sta
   --note-theme-line: rgba(239,239,239,.10); --note-theme-line-strong: rgba(239,239,239,.24);
   --note-theme-link: #9fc5f4; --note-theme-code: var(--note-theme-surface);
 }
+/* Light mode reads as one warm sheet; boundaries replace broad beige fills. */
+html[data-note-theme="claude"] body.start-page:not([data-start-theme="dark"]) .note-workspace {
+  --note-control-hover: var(--note-theme-hover); --note-control-active: var(--note-theme-selected);
+}
+html[data-note-theme="claude"] body.start-page:not([data-start-theme="dark"]) .note-notebook-root > .note-tree-row.selected-notebook {
+  color: var(--text); background: var(--note-theme-selected);
+}
+html[data-note-theme="claude"] body.start-page:not([data-start-theme="dark"]) #note-settings-dialog {
+  box-shadow: 0 24px 80px rgba(20,20,19,.14), 0 2px 12px rgba(20,20,19,.04);
+}
+html[data-note-theme="claude"] body.start-page:not([data-start-theme="dark"]) #note-settings-dialog::backdrop { background: rgba(20,20,19,.16); }
+html[data-note-theme="claude"] body.start-page:not([data-start-theme="dark"]) #note-settings-dialog :is(
+  .note-settings-theme, .note-settings-font, .note-settings-toggle, .note-graph-preload-setting,
+  .relatum-settings-guide-option, .note-sidebar-setting, .note-shortcut-row, .note-canvas-field,
+  .note-library-sort-options, .note-library-name-options) {
+  box-shadow: inset 0 0 0 1px var(--note-theme-line);
+}
+html[data-note-theme="claude"] body.start-page:not([data-start-theme="dark"]) #note-settings-dialog :is(
+  .note-settings-font, .note-settings-toggle, .note-graph-preload-setting):focus-within { background-color: var(--note-theme-hover); }
+html[data-note-theme="claude"] body.start-page:not([data-start-theme="dark"]) #note-settings-dialog .note-settings-theme .review-choice-trigger {
+  --border: var(--note-theme-line); --border-strong: var(--note-theme-line-strong);
+  background: var(--note-theme-surface);
+}
+html[data-note-theme="claude"] body.start-page:not([data-start-theme="dark"]) #note-settings-dialog .review-choice-popup {
+  box-shadow: 0 10px 28px rgba(20,20,19,.08);
+}
+html[data-note-theme="claude"] body.start-page:not([data-start-theme="dark"])[data-start-workspace="notes"] > .top-bar .start-workspace-slider { box-shadow: 0 1px 3px rgba(20,20,19,.12); }
 /* Retain header geometry and its finite interactions, without backdrop sampling. */
 html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) { background: var(--note-theme-paper); }
 html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > .top-bar::before {
@@ -159,7 +186,7 @@ html[data-note-theme="claude"] body.start-page .note-ai-popovers .review-choice-
 
 /* Scenic mode retains the original alpha hierarchy and geometry. */
 html[data-note-theme="claude"] body.start-page[data-start-background="scenic"] .note-workspace {
-  --note-scenic-shell: rgba(250,249,245,.48); --note-scenic-tree: rgba(245,244,237,.74);
+  --note-scenic-shell: rgba(250,249,245,.48); --note-scenic-tree: rgba(250,249,245,.74);
   --note-scenic-paper: rgba(250,249,245,.80); --note-scenic-chrome: rgba(250,249,245,.70);
   --note-scenic-overlay: rgba(255,255,255,.92); --note-scenic-line: var(--note-theme-line);
   background: var(--note-scenic-shell);
