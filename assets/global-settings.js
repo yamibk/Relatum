@@ -21,7 +21,7 @@
   }
   const pageLists = new Map(), pageSections = new Map(), pageAvailability = new Map();
   const definitions = [
-    ['appearance', ['外观', 'Appearance'], '<rect x="3" y="3" width="18" height="14" rx="2"/><path d="M3 21h18"/>', 'theme background 主题 背景'],
+    ['appearance', ['外观', 'Appearance'], '<rect x="3" y="3" width="18" height="14" rx="2"/><path d="M3 21h18"/>', 'theme background language 主题 背景 语言 中文 英文'],
     ['workspaces', ['工作区', 'Workspaces'], '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>', 'workspace visibility reorder 显示 隐藏 顺序 拖动'],
     ['navigation', ['导航', 'Navigation'], '<path d="M4 4h16v16H4zM9 4v16"/>', 'canvas daily navigation visibility hide search calendar speed reorder 画布 日常 显示 隐藏 搜索 日历 翻页 滑块 顺序 拖动'],
     ['daily', ['日常', 'Daily'], '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 11h18"/>', 'daily calendar focus tasks ledger 日常 日历 专注 任务 记账 倒数日'],
@@ -58,6 +58,17 @@
   take('.start-panel-theme, .start-priority-background', 'appearance');
   const themeLabel = document.createElement('strong'); themeLabel.dataset.i18nManaged = 'true';
   panels.get('appearance').querySelector('.start-panel-theme')?.prepend(themeLabel);
+  const languageSetting = document.createElement('div');
+  languageSetting.className = 'start-priority-background'; languageSetting.dataset.i18nManaged = 'true';
+  languageSetting.dataset.settingsKeywords = '界面语言 切换语言 中文 英文 language Chinese English';
+  languageSetting.innerHTML = '<div class="start-speed-head"><span></span></div><div class="start-background-switch" data-role="global-language-switch" role="group"><button type="button" data-language="zh-CN"></button><button type="button" data-language="en"></button></div>';
+  const languageSwitch = languageSetting.querySelector('[data-role="global-language-switch"]');
+  languageSwitch.querySelectorAll('button').forEach(button => {
+    button.addEventListener('click', () => {
+      if (button.dataset.language !== language()) window.RelatumI18n.setLanguage(button.dataset.language);
+    });
+  });
+  panels.get('appearance').append(languageSetting);
   const canvas = features.workspaceEnabled('canvas');
   takeToggle('library-search-toggle', 'navigation', features.enabled('canvas.library'));
   takeToggle('calendar-countdown-toggle', 'daily', features.enabled('daily.calendar'));
@@ -215,6 +226,13 @@
     trigger.title = text('全局设置', 'Settings');
     trigger.setAttribute('aria-label', text('全局设置', 'Settings'));
     themeLabel.textContent = text('主题', 'Theme');
+    languageSetting.querySelector('.start-speed-head span').textContent = text('界面语言', 'Interface language');
+    languageSwitch.setAttribute('aria-label', text('界面语言', 'Interface language'));
+    languageSwitch.querySelectorAll('button').forEach(button => {
+      const active = button.dataset.language === language();
+      button.textContent = button.dataset.language === 'en' ? text('英文', 'English') : text('中文', 'Chinese');
+      button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active));
+    });
     hint.textContent = text('勾选要显示的工作区，拖动手柄或使用箭头调整顺序。全部取消后主区域留白，仍可从顶栏设置重新开启。', 'Choose which workspaces to show. Drag handles or use arrows to reorder. With all unchecked, the main area stays blank; reopen them here from the top bar.');
     pageSections.forEach(({ title, description }, workspace) => {
       title.textContent = workspace === 'canvas' ? text('画布页面', 'Canvas pages') : text('日常页面', 'Daily pages');
