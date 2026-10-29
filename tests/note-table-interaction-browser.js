@@ -8,12 +8,14 @@ const path = require('node:path');
 const http = require('node:http');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..');
+const skin = ['claude', 'sky', 'apple'].includes(process.env.RELATUM_TEST_NOTE_THEME) ? process.env.RELATUM_TEST_NOTE_THEME : 'default';
+const themed = skin !== 'default';
 const output = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-table-interaction-'));
 const grid = '| A | B |\n| --- | --- |\n| C | D |\n| E | F |';
 const source = '123\n\n# 123\n\n' + grid;
-const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><base href="/assets/">
-<link rel="stylesheet" href="styles.css"><style>body{margin:0}.note-document-pane{height:100vh;display:flex;flex-direction:column}</style>
-</head><body class="start-page" data-start-theme="light"><main class="note-document-pane"><div class="note-document-body"><div class="note-live-editor-host" id="editor"></div></div></main>
+const html = `<!doctype html><html lang="zh-CN" data-note-theme="${skin}"><head><meta charset="utf-8"><base href="/assets/">
+<link rel="stylesheet" href="styles.css">${themed ? '<link rel="stylesheet" href="note-theme.css">' : ''}<style>body{margin:0}.note-document-pane{height:100vh;display:flex;flex-direction:column}</style>
+</head><body class="start-page" data-start-theme="light"><main class="${themed ? 'note-workspace ' : ''}note-document-pane"><div class="note-document-body"><div class="note-live-editor-host" id="editor"></div></div></main>
 <script src="markdown.js"></script><script src="markdown-table.js"></script><script src="vendor/codemirror/relatum-codemirror.min.js"></script>
 <script src="note-table-editor.js"></script><script src="note-live-editor.js"></script><script>
 window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{value:${JSON.stringify(source)},notePath:'interaction.md'});
@@ -40,6 +42,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(origin);
     await page.waitForFunction(() => window.editor && document.querySelector('.note-table'));
+    await page.evaluate(() => document.fonts.ready);
     const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
     const rows = () => page.evaluate(() => { const m = MarkdownTable.findTables(editor.snapshot().value)[0]?.model; return m ? [m.header, ...m.rows] : []; });
     const value = () => page.evaluate(() => editor.snapshot().value);
@@ -400,7 +403,8 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
       assert.equal(second.head, before.head); assert.equal(second.anchor, before.anchor);
       assert.equal(second.focus, pressed.focus, 'dragging cannot change the input owner');
       assert.equal(first.events, 'none');
-      assert.equal(first.color, theme === 'light' ? 'rgb(120, 147, 108)' : 'rgb(173, 203, 165)');
+      const dropColors = { sky: ['rgb(47, 111, 169)', 'rgb(138, 191, 240)'], apple: ['rgb(0, 102, 204)', 'rgb(10, 132, 255)'] };
+      assert.equal(first.color, (dropColors[skin] || ['rgb(120, 147, 108)', 'rgb(173, 203, 165)'])[theme === 'light' ? 0 : 1]);
       if (kind === 'row') { assert.equal(first.drop.height, 4); assert.equal(first.drop.width, first.table.width); assert.equal(first.drop.y + 2, first.table.y + first.table.height); }
       else { assert.equal(first.drop.width, 4); assert.equal(first.drop.height, first.table.height); assert.equal(first.drop.x + 2, first.table.x + first.table.width); }
       await page.screenshot({ path: path.join(output, `grip-${kind}-${theme}.png`) });
@@ -591,7 +595,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     assert.equal(await table.locator('td[aria-selected="false"]').count(), 6, 'new cells start unselected after rebuilding');
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ hits, dragEvidence, errors, selectionPerformance, textSelection: true, gridSelection: true, reorder: true, settlingBodyClick: true, responsiveBodyPaste: true }, null, 2));
-    console.log(JSON.stringify({ output, selectionPerformance, status: 'note table interaction browser checks passed' }));
+    console.log(JSON.stringify({ skin, output, selectionPerformance, status: 'note table interaction browser checks passed' }));
   } finally {
     if (browser) await browser.close();
     await new Promise(resolve => server.close(resolve));

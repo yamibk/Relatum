@@ -218,7 +218,8 @@ class FeatureProfileTests(unittest.TestCase):
     def test_note_theme_resources_follow_notes(self):
         notes, other = self.only('notes'), self.only('canvas', 'canvas.library')
         source = (features.RESOURCE_ROOT / 'assets' / 'index.html').read_text(encoding='utf8')
-        for name in ('note-theme.js', 'note-theme.css', 'fonts/source-serif-4-regular.woff2', 'fonts/source-serif-4-italic.woff2'):
+        for name in ('note-theme.js', 'note-theme.css', 'fonts/source-serif-4-regular.woff2', 'fonts/source-serif-4-italic.woff2',
+                     'fonts/inter-variable.woff2', 'fonts/inter-variable-italic.woff2'):
             self.assertTrue(notes.resource_allowed(name), name)
             self.assertFalse(other.resource_allowed(name), name)
         html = features.render_html(source, notes, 'index.html')

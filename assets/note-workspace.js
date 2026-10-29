@@ -1041,6 +1041,8 @@
       claude: ['400 16px "Relatum Source Serif 4"', 'italic 400 16px "Relatum Source Serif 4"'],
       sky: ['400 16px "Relatum Open Sans"', '700 16px "Relatum Open Sans"', 'italic 400 16px "Relatum Open Sans"', 'italic 700 16px "Relatum Open Sans"',
         '400 16px "Noto Sans SC"', '700 16px "Noto Sans SC"'],
+      apple: ['400 16px "Relatum Inter"', '600 16px "Relatum Inter"', '700 16px "Relatum Inter"', 'italic 400 16px "Relatum Inter"',
+        '400 16px "Noto Sans SC"', '600 16px "Noto Sans SC"', '700 16px "Noto Sans SC"'],
     }[window.RelatumNoteTheme.read()];
     if (themeFonts && current() && document.fonts) {
       Promise.all(themeFonts.map(font => document.fonts.load(font)))

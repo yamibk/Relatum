@@ -6,6 +6,7 @@
     Object.freeze({ id: 'default', label: Object.freeze(['默认', 'Default']) }),
     Object.freeze({ id: 'claude', label: Object.freeze(['Claude', 'Claude']) }),
     Object.freeze({ id: 'sky', label: Object.freeze(['Sky', 'Sky']) }),
+    Object.freeze({ id: 'apple', label: Object.freeze(['Apple', 'Apple']) }),
   ]);
   const normalize = id => themes.some(theme => theme.id === id) ? id : 'default';
   let current = 'default';
