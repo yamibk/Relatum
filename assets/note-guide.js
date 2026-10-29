@@ -100,6 +100,7 @@
         ['标题', 'Headings', '# ' + text('一级标题', 'Heading one') + '\n\n## ' + text('二级标题', 'Heading two'), text('使用 1–6 个 #，后面留一个空格。', 'Use one to six # characters followed by a space.')],
         ['段落与换行', 'Paragraphs and line breaks', text('第一段。\n\n第二段，行末两个空格换行。  \n下一行。', 'First paragraph.\n\nTwo trailing spaces create a line break.  \nNext line.')],
         ['强调与标记', 'Emphasis and marks', text('**粗体** · *斜体* · ~~删除线~~ · ==高亮==', '**Bold** · *Italic* · ~~Deleted~~ · ==Highlight==')],
+        ['彩色高亮', 'Highlight colors', text('==默认== · ==🔴红色== · ==🟠橙色== · ==🟡黄色== · ==🟢绿色== · ==🔵蓝色== · ==🟣紫色==', '==Default== · ==🔴Red== · ==🟠Orange== · ==🟡Yellow== · ==🟢Green== · ==🔵Blue== · ==🟣Purple==')],
         ['列表与任务', 'Lists and tasks', text('- 第一项\n- 第二项\n\n1. 有序项目\n2. 下一项\n\n- [ ] 待完成\n- [x] 已完成', '- First item\n- Second item\n\n1. Ordered item\n2. Next item\n\n- [ ] To do\n- [x] Completed')],
         ['引用', 'Quotes', '> ' + text('引用一段文字。', 'A quoted paragraph.')],
         ['链接与双链', 'Links and wiki links', text('[链接文字](https://example.com)\n\n[[笔记名称]]\n\n[[笔记名称#标题|显示名称]]', '[Link text](https://example.com)\n\n[[Note name]]\n\n[[Note name#Heading|Display name]]'), text('双链指向库内笔记；这里的预览只用于展示。', 'Wiki links point to notes in your library. This preview is only an example.')],

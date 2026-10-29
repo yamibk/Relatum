@@ -412,7 +412,7 @@
         entry.control = runtime.attach(entry.element, {
           source: entry.source, range: entry.range, getRange: options.getRange, notePath: options.notePath || '', session,
           language: () => document.documentElement.lang,
-          renderText: source => window.MarkdownMini.renderLabelResult(source, { links: true }),
+          renderText: source => window.MarkdownMini.renderLabelResult(source, { links: true, noteSyntax: true }),
           typesetMath: (node, current, layout) => typeset(node, current, layout).catch(() => () => {}),
           isCurrent: () => foreground() && !entry.element.closest('[hidden]'), onLayout: options.onLayout, onEdit: options.onEdit, onLink: options.onLink,
         });
@@ -3566,10 +3566,37 @@
     return true;
   }
 
-  function decorateInlineHighlight(from, to, mark, sourceMark) {
-    mark(from + 2, to - 2, 'note-live-highlight');
+  const highlightControllers = new WeakMap();
+  const highlightColors = window.MarkdownMini.noteSyntax.highlightColors;
+  const highlightSpans = (source, offset = 0) => window.MarkdownMini.noteSyntax.highlights(source, offset);
+  class HighlightSwatch extends WidgetType {
+    constructor(color, from, to) { super(); Object.assign(this, { color, from, to }); }
+    eq(other) { return this.color === other.color && this.from === other.from && this.to === other.to; }
+    toDOM(view) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'note-highlight-swatch';
+      button.dataset.color = this.color;
+      button.setAttribute('aria-label', document.documentElement.lang === 'en' ? 'Change highlight color' : '更改高亮颜色');
+      button.addEventListener('pointerdown', event => { event.preventDefault(); event.stopPropagation(); });
+      button.addEventListener('mousedown', event => event.preventDefault());
+      button.addEventListener('click', event => {
+        event.preventDefault(); event.stopPropagation();
+        highlightControllers.get(view)?.open({ from: this.from, to: this.to }, button.getBoundingClientRect());
+      });
+      return button;
+    }
+    ignoreEvent() { return true; }
+  }
+  function decorateInlineHighlight(view, span, mark, sourceMark, add) {
+    const { from, to, bodyFrom, bodyTo, color } = span;
+    mark(bodyFrom, bodyTo, 'note-live-highlight note-live-highlight-' + color);
     sourceMark(from, from + 2, from, to);
     sourceMark(to - 2, to, from, to);
+    const active = view.hasFocus && view.state.selection.main.empty && constructActive(view, from, to);
+    if (active && add) {
+      const widget = new HighlightSwatch(color, from, to);
+      add(from + 2, bodyFrom, bodyFrom > from + 2 ? Decoration.replace({ widget, inclusive: false })
+        : Decoration.widget({ widget, side: 1 }));
+    } else if (bodyFrom > from + 2 && add) add(from + 2, bodyFrom, Decoration.replace({ inclusive: false }));
   }
 
   const tableInlineTrees = new WeakMap();
@@ -3600,10 +3627,9 @@
     }
     const protectedAt = (from, to) => guards.some(range => range.from < to && range.to > from)
       || math.some(range => range.from < to && range.to > from);
-    const regex = /==([^=\n]+)==/g; let match;
-    while ((match = regex.exec(source))) {
-      const from = match.index, to = from + match[0].length;
-      if (!escapedAt(source, from) && !protectedAt(from, to)) decorateInlineHighlight(from, to, mark, sourceMark);
+    for (const span of highlightSpans(source)) {
+      if (!protectedAt(span.from, span.to)) decorateInlineHighlight(view, span, mark, sourceMark,
+        (from, to, decoration) => ranges.push(decoration.range(from, to)));
     }
     return Decoration.set(ranges, true);
   }
@@ -4029,9 +4055,9 @@
           else { mark(from, contentFrom, 'note-live-source-mark'); mark(to - 1, to, 'note-live-source-mark'); }
         });
 
-        matches(/==([^=\n]+)==/g, (match, from, to) => {
-          decorateInlineHighlight(from, to, mark, sourceMark);
-        });
+        for (const span of highlightSpans(text, line.from)) {
+          if (!isProtected(span.from, span.to)) decorateInlineHighlight(view, span, mark, sourceMark, add);
+        }
 
         const callout = parseCalloutSource(text);
         if (callout) {
@@ -4199,11 +4225,10 @@
     } });
     const first = state.doc.lineAt(from), last = state.doc.lineAt(to);
     for (let number = first.number; number <= last.number; number++) {
-      const line = state.doc.line(number), pattern = /==([^=\n]+)==/g; let match;
-      while ((match = pattern.exec(line.text))) {
-        const start = line.from + match.index, end = start + match[0].length;
-        if (escapedAt(line.text, match.index) || insideRange(lineProtectedRanges(state, start, end), start, end)) continue;
-        spans.push({ kind: 'highlight', from: start, to: end, bodyFrom: start + 2, bodyTo: end - 2, mark: '==' });
+      const line = state.doc.line(number);
+      for (const span of highlightSpans(line.text, line.from)) {
+        if (insideRange(lineProtectedRanges(state, span.from, span.to), span.from, span.to)) continue;
+        spans.push({ kind: 'highlight', ...span, mark: '==' });
       }
     }
     return spans.sort((a, b) => a.from - b.from || b.to - a.to);
@@ -4220,6 +4245,7 @@
       while (index + 1 < spans.length && spans[index + 1].from >= span.from && spans[index + 1].to <= span.to) children.push(spans[++index]);
       const body = formatFragment(state, Math.max(from, span.bodyFrom), Math.min(to, span.bodyTo), children, omit);
       result += !body || span.kind === omit ? body : span.kind === 'link' ? span.prefix + body + span.suffix
+        : span.kind === 'highlight' ? '==' + span.prefix + body + '=='
         : wrapFormatFragment(body, span.kind === 'inline-code' ? span.mark : INLINE_FORMATS[span.kind].mark, span.kind === 'inline-code');
       position = Math.min(to, span.to);
     }
@@ -4258,14 +4284,21 @@
 
   // Shared by CodeMirror and the native table textarea. All positions are source
   // positions; formatting only changes the selected text's requested layer.
-  function inlineFormatEdit(state, range, kind, ownedEmpty = false) {
+  function inlineFormatEdit(state, range, kind, ownedEmpty = false, color = null) {
     const format = INLINE_FORMATS[kind];
     if (!format || !ownedEmpty && !inlineFormatAllowed(state, range, kind)) return null;
     const from = range.from, to = range.to, mark = format.mark;
     const spans = inlineFormatSpans(state, from, to);
     const container = spans.filter(span => span.kind === kind && (span.bodyFrom <= from && span.bodyTo >= to
-      || span.from === from && span.to === to)).sort((a, b) => a.to - a.from - (b.to - b.from))[0];
+      || span.from === from && span.to === to || range.empty && span.from <= from && span.to >= to)).sort((a, b) => a.to - a.from - (b.to - b.from))[0];
     if (range.empty) {
+      if (color !== null) {
+        const emoji = highlightColors.find(item => item.id === color).emoji;
+        if (container) return { changes: { from: container.from + 2, to: container.bodyFrom, insert: emoji },
+          anchor: Math.max(container.from + 2 + emoji.length, from + emoji.length - container.prefix.length),
+          head: Math.max(container.from + 2 + emoji.length, from + emoji.length - container.prefix.length) };
+        return { changes: { from, insert: '==' + emoji + '==' }, anchor: from + 2 + emoji.length, head: from + 2 + emoji.length };
+      }
       if (state.doc.sliceString(Math.max(0, from - mark.length), from) === mark && state.doc.sliceString(from, from + mark.length) === mark) {
         return { changes: { from: from - mark.length, to: from + mark.length, insert: '' }, anchor: from - mark.length, head: from - mark.length };
       }
@@ -4281,8 +4314,10 @@
     const left = formatFragment(state, start, selectedFrom, scoped);
     const body = formatFragment(state, selectedFrom, selectedTo, scoped, kind);
     const right = formatFragment(state, selectedTo, end, scoped);
-    const middle = container ? body : wrapFormatFragment(body, mark, kind === 'inline-code');
-    const offsets = container ? [0, body.length] : insertedFormatSelection(middle, kind);
+    const middle = color !== null ? '==' + highlightColors.find(item => item.id === color).emoji + body + '=='
+      : container ? body : wrapFormatFragment(body, mark, kind === 'inline-code');
+    const offsets = color !== null ? [2 + highlightColors.find(item => item.id === color).emoji.length, middle.length - 2]
+      : container ? [0, body.length] : insertedFormatSelection(middle, kind);
     const a = start + left.length + offsets[0], b = start + left.length + offsets[1];
     return { changes: { from: start, to: end, insert: left + middle + right }, anchor: range.anchor <= range.head ? a : b, head: range.anchor <= range.head ? b : a };
   }
@@ -4299,8 +4334,8 @@
     return allowed;
   }
 
-  function multipleInlineFormatEdits(state, kind) {
-    const plans = state.selection.ranges.map((range, index) => ({ range, index, edit: inlineFormatEdit(state, range, kind) }));
+  function multipleInlineFormatEdits(state, kind, color = null) {
+    const plans = state.selection.ranges.map((range, index) => ({ range, index, edit: inlineFormatEdit(state, range, kind, false, color) }));
     if (plans.some(plan => !plan.edit)) return null;
     const groups = [], selections = new Array(plans.length), changes = [];
     for (const plan of plans.filter(plan => !Array.isArray(plan.edit.changes)).sort((a, b) => a.edit.changes.from - b.edit.changes.from)) {
@@ -4324,8 +4359,10 @@
           const to = container ? Math.min(range.to, container.bodyTo) : range.to;
           insert += formatFragment(state, position, from, spans);
           const body = formatFragment(state, from, to, spans, kind);
-          const middle = container ? body : wrapFormatFragment(body, INLINE_FORMATS[kind].mark, kind === 'inline-code');
-          const offsets = container ? [0, body.length] : insertedFormatSelection(middle, kind);
+          const middle = color !== null ? '==' + highlightColors.find(item => item.id === color).emoji + body + '=='
+            : container ? body : wrapFormatFragment(body, INLINE_FORMATS[kind].mark, kind === 'inline-code');
+          const offsets = color !== null ? [2 + highlightColors.find(item => item.id === color).emoji.length, middle.length - 2]
+            : container ? [0, body.length] : insertedFormatSelection(middle, kind);
           const a = group.from + offset + insert.length + offsets[0], b = group.from + offset + insert.length + offsets[1];
           selections[plan.index] = EditorSelection.range(range.anchor <= range.head ? a : b, range.anchor <= range.head ? b : a);
           insert += middle; position = to;
@@ -4358,6 +4395,180 @@
       formatInputOwners.set(view, { doc: view.state.doc, kind, position: view.state.selection.main.head });
     }
     return true;
+  }
+
+  function highlightAllowed(state, range) {
+    if (state.readOnly || !inlineFormatAllowed(state, range, 'highlight')) return false;
+    let image = false;
+    syntaxTree(state).iterate({ from: range.from, to: range.to, enter(node) {
+      if (node.name === 'Image') { image = true; return false; }
+    } });
+    if (image) return false;
+    const line = state.doc.lineAt(range.from), local = range.from - line.from;
+    const guards = lineProtectedRanges(state, range.from, range.to);
+    const inside = (from, to) => range.empty ? from < range.head && to > range.head : from <= range.from && to >= range.to;
+    if (guards.some(item => inside(item.from, item.to))) return false;
+    const code = Array.from(line.text.matchAll(/(`+)[^\n]*?\1/g), match => ({ from: match.index, to: match.index + match[0].length }));
+    if (code.concat(window.MarkdownMini.mathRanges(line.text)).some(item =>
+      range.empty ? item.from < local && item.to > local : item.from <= local && item.to >= range.to - line.from)) return false;
+    const end = state.doc.lineAt(range.to).to;
+    const commentGuards = lineProtectedRanges(state, Math.max(0, line.from - BLOCK_MATH_LIMIT), Math.min(state.doc.length, end + BLOCK_MATH_LIMIT));
+    return !scanSourceComments(state.doc, line.from, end, commentGuards)
+      .some(item => inside(item.from, item.to));
+  }
+
+  function applyHighlightColor(view, color) {
+    if (!highlightColors.some(item => item.id === color) || compositionActive(view)) return false;
+    const ranges = [];
+    for (const range of view.state.selection.ranges) {
+      if (!highlightAllowed(view.state, range)) return false;
+      if (view.state.doc.lineAt(range.from).number === view.state.doc.lineAt(range.to).number) { ranges.push(range); continue; }
+      for (let n = view.state.doc.lineAt(range.from).number; n <= view.state.doc.lineAt(range.to).number; n++) {
+        const line = view.state.doc.line(n), from = Math.max(range.from, line.from), to = Math.min(range.to, line.to);
+        if (to > from && view.state.doc.sliceString(from, to).trim()) ranges.push(EditorSelection.range(from, to));
+      }
+    }
+    if (!ranges.length) return false;
+    const state = view.state.update({ selection: EditorSelection.create(ranges) }).state;
+    const transaction = multipleInlineFormatEdits(state, 'highlight', color);
+    if (!transaction) return false;
+    view.dispatch({ ...transaction, userEvent: 'input.note-highlight', annotations: CM.isolateHistory.of('full') });
+    highlightControllers.get(view)?.ownEmptyPair();
+    return true;
+  }
+
+  // One short-lived popup per input host. No polling, global observer or retained
+  // document strings; a captured immutable document/selection rejects stale clicks.
+  function createHighlightExtension(options = {}) {
+    const plugin = ViewPlugin.fromClass(class {
+      constructor(view) {
+        this.view = view; this.menu = null; this.pair = null; this.version = 0;
+        highlightControllers.set(view, this);
+        options.register?.(this);
+        this.dismiss = () => { this.close(); this.pair = null; };
+        this.outside = event => { if (!this.menu?.contains(event.target)) this.close(); };
+        this.workspace = event => { if (event.detail.workspace !== 'notes') this.dismiss(); };
+        this.events = [[document, 'visibilitychange', this.dismiss], [window, 'canvasdesktop:visibility', this.dismiss],
+          [document, 'relatum:start-workspacechange', this.workspace], [window, 'pagehide', this.dismiss],
+          [window, 'blur', this.dismiss], [document, 'pointerdown', this.outside, true],
+          [window, 'resize', this.dismiss], [document, 'relatum:languagechange', this.dismiss],
+          [document, 'relatum:note-theme-beforechange', this.dismiss], [view.scrollDOM, 'scroll', this.dismiss]];
+        this.events.forEach(([target, name, fn, capture]) => target.addEventListener(name, fn, capture));
+      }
+      ready() {
+        return !compositionActive(this.view) && !options.pending?.() && options.active?.() !== false
+          && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
+          && this.view.dom.isConnected && !this.view.dom.closest('[hidden], [inert]');
+      }
+      close() {
+        this.version++; this.menu?.remove(); this.menu = null; this.target = null;
+        this.view.contentDOM.removeAttribute('aria-activedescendant');
+        this.view.contentDOM.removeAttribute('aria-controls');
+      }
+      open(target, rect) {
+        this.close();
+        if (!this.ready()) return;
+        const view = this.view, state = view.state;
+        this.target = { ...target, doc: state.doc, selection: state.selection };
+        const span = highlightSpans(state.doc.lineAt(target.from).text, state.doc.lineAt(target.from).from).find(item => item.from === target.from);
+        this.index = Math.max(0, highlightColors.findIndex(item => item.id === span?.color));
+        const menu = this.menu = document.createElement('div'); menu.className = 'note-highlight-menu';
+        menu.id = 'note-highlight-menu'; menu.setAttribute('role', 'listbox');
+        menu.setAttribute('aria-label', document.documentElement.lang === 'en' ? 'Highlight color' : '高亮颜色');
+        for (const [index, item] of highlightColors.entries()) {
+          const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'option');
+          button.id = menu.id + '-' + index; button.dataset.color = item.id;
+          const swatch = document.createElement('span'); swatch.className = 'note-highlight-dot'; swatch.dataset.color = item.id;
+          button.append(swatch, document.createTextNode(item[document.documentElement.lang === 'en' ? 'en' : 'zh']));
+          button.addEventListener('pointerdown', event => event.preventDefault());
+          button.addEventListener('pointerenter', () => { this.index = index; this.paint(); });
+          button.addEventListener('click', () => this.choose(item.id)); menu.appendChild(button);
+        }
+        document.body.appendChild(menu);
+        rect ||= view.coordsAtPos(state.selection.main.head);
+        if (!rect) { this.close(); return; }
+        const bounds = menu.getBoundingClientRect();
+        menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - bounds.width - 8)) + 'px';
+        menu.style.top = Math.max(8, rect.bottom + bounds.height + 6 <= window.innerHeight - 8 ? rect.bottom + 6 : rect.top - bounds.height - 6) + 'px';
+        view.contentDOM.setAttribute('aria-controls', menu.id); this.paint();
+      }
+      paint() {
+        if (!this.menu) return;
+        Array.from(this.menu.children).forEach((button, index) => button.setAttribute('aria-selected', String(index === this.index)));
+        this.view.contentDOM.setAttribute('aria-activedescendant', this.menu.children[this.index].id);
+      }
+      ownEmptyPair() {
+        const view = this.view, head = view.state.selection.main.head;
+        if (!view.state.selection.main.empty || view.state.doc.sliceString(head, head + 2) !== '==') return;
+        const line = view.state.doc.lineAt(head), prefix = /==(?:[🔴🟠🟡🟢🔵🟣]\uFE0F?)?$/u.exec(line.text.slice(0, head - line.from));
+        if (prefix) this.pair = { from: line.from + prefix.index, bodyFrom: head, close: head };
+      }
+      choose(color) {
+        const target = this.target, view = this.view;
+        if (!target || !this.ready() || target.doc !== view.state.doc || !target.selection.eq(view.state.selection)) { this.close(); return; }
+        this.close();
+        if (target.insert) {
+          const emoji = highlightColors.find(item => item.id === color).emoji, at = target.from + 2;
+          const suffix = view.state.doc.sliceString(at, at + 2) === '==' ? '' : '==';
+          view.dispatch({ changes: { from: at, insert: emoji + suffix }, selection: EditorSelection.cursor(at + emoji.length),
+            userEvent: 'input.note-highlight', annotations: CM.isolateHistory.of('full') });
+          this.pair = { from: target.from, bodyFrom: at + emoji.length, close: at + emoji.length };
+        } else {
+          applyHighlightColor(view, color);
+        }
+        view.focus();
+      }
+      keydown(event) {
+        if (event.isComposing || event.keyCode === 229 || !this.ready()) { this.dismiss(); return false; }
+        if (this.menu) {
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            this.index = (this.index + (event.key === 'ArrowDown' ? 1 : 6)) % 7; this.paint(); return true;
+          }
+          if (event.key === 'Enter' || event.key === 'Tab' && !event.shiftKey) { this.choose(highlightColors[this.index].id); return true; }
+          if (event.key === 'Escape') { this.close(); return true; }
+          if (!['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) this.close();
+        }
+        const pair = this.pair, main = this.view.state.selection.main;
+        if (!pair || !main.empty || event.ctrlKey || event.metaKey || event.altKey) return false;
+        if (event.key === '=' && main.head >= pair.close && main.head < pair.close + 2) {
+          this.view.dispatch({ selection: EditorSelection.cursor(main.head + 1), userEvent: 'select' }); return true;
+        }
+        if (event.key === 'Backspace' && main.head === pair.bodyFrom && pair.bodyFrom === pair.close) {
+          this.pair = null;
+          this.view.dispatch({ changes: { from: pair.from, to: pair.close + 2, insert: '' }, selection: EditorSelection.cursor(pair.from),
+            userEvent: 'delete.note-highlight', annotations: CM.isolateHistory.of('full') }); return true;
+        }
+        return false;
+      }
+      update(update) {
+        if (!this.ready()) { this.dismiss(); return; }
+        if (update.docChanged || update.selectionSet) this.close();
+        if (this.pair) {
+          if (update.transactions.some(tr => tr.isUserEvent('undo') || tr.isUserEvent('redo'))) this.pair = null;
+          else {
+            const pair = this.pair;
+            pair.from = update.changes.mapPos(pair.from, -1); pair.bodyFrom = update.changes.mapPos(pair.bodyFrom, -1); pair.close = update.changes.mapPos(pair.close, 1);
+            const main = update.state.selection.main;
+            if (!main.empty || main.head < pair.bodyFrom || main.head > pair.close + 1
+              || update.state.doc.sliceString(pair.from, pair.from + 2) !== '==' || update.state.doc.sliceString(pair.close, pair.close + 2) !== '==') this.pair = null;
+          }
+        }
+        if (!update.docChanged || !update.transactions.some(tr => tr.isUserEvent('input.type'))) return;
+        const { state } = update, main = state.selection.main;
+        if (!main.empty || main.head < 2 || state.selection.ranges.length !== 1 || state.doc.sliceString(main.head - 2, main.head) !== '==') return;
+        const line = state.doc.lineAt(main.head), start = main.head - 2;
+        if (escapedAt(line.text, start - line.from) || state.doc.sliceString(start - 1, start) === '='
+          || highlightSpans(line.text, line.from).some(span => span.to === main.head) || !highlightAllowed(state, main)) return;
+        const version = this.version;
+        queueMicrotask(() => { if (version === this.version && state === this.view.state && this.ready()) this.open({ from: start, insert: true }); });
+      }
+      destroy() { this.dismiss(); highlightControllers.delete(this.view); options.unregister?.(this); this.events.forEach(([target, name, fn, capture]) => target.removeEventListener(name, fn, capture)); }
+    }, { eventHandlers: {
+      keydown(event) { if (!this.keydown(event)) return false; event.preventDefault(); event.stopPropagation(); return true; },
+      compositionstart() { this.dismiss(); return false; },
+      blur() { this.close(); return false; },
+    } });
+    return Prec.highest(plugin);
   }
 
   function quotePrefix(line) { return /^(?:[ \t]{0,3}>[ \t]?)+/.exec(line)?.[0] || ''; }
@@ -4620,6 +4831,9 @@
     const imageInsertions = new Set();
     let scrollRestoreSeq = 0;
     let destroyed = false;
+    let highlightActive = true;
+    const highlightInputs = new Set();
+    const highlightLifecycle = { register: input => highlightInputs.add(input), unregister: input => highlightInputs.delete(input) };
     let pendingSourceMode = null;
     let pendingShortcutBindings = null;
     let pendingSelectionMatchHighlight = null;
@@ -5324,6 +5538,8 @@
       return true;
     };
     safeOptions.tableInlineDecorations = tableInlineDecorations;
+    safeOptions.createHighlightExtension = pending => createHighlightExtension({ ...highlightLifecycle, pending,
+      active: () => highlightActive && !destroyed && !imageTextController.active });
 
     function notifyDocChanged(view, includeValue) {
       const main = view.state.selection.main;
@@ -5369,6 +5585,7 @@
     function makeState(value, selection) {
       const extensions = [
         highlightSpecialChars(), history(), drawSelection(), dropCursor(), EditorState.allowMultipleSelections.of(true),
+        createHighlightExtension({ ...highlightLifecycle, pending: inputPending, active: () => highlightActive && !destroyed && !imageTextController.active }),
         indentOnInput(), bracketMatching(), typeof closeBrackets === 'function' ? closeBrackets() : [],
         rectangularSelection(), crosshairCursor(), highlightActiveLine(),
         selectionMatchHighlightCompartment.of(selectionMatchHighlight ? highlightSelectionMatches() : []),
@@ -5682,6 +5899,7 @@
     }
 
     function setDocument(documentState) {
+      highlightInputs.forEach(input => input.dismiss());
       for (const target of imageInsertions) target.valid = false;
       imageInsertions.clear();
       formatInputOwners.delete(view);
@@ -5828,6 +6046,7 @@
     }
 
     async function setNotePath(path, value) {
+      highlightInputs.forEach(input => input.dismiss());
       if (destroyed) return;
       const next = String(path || '');
       if (inputPending()) {
@@ -5854,6 +6073,7 @@
     }
 
     function setSourceMode(active) {
+      highlightInputs.forEach(input => input.dismiss());
       const next = !!active;
       if (inputPending()) {
         pendingSourceMode = next;
@@ -5963,6 +6183,12 @@
     }
     function queryCommand(name, context) {
       if (!validCommandContext(context)) return { enabled: false, checked: false };
+      if (name.startsWith('highlight-color:')) {
+        const color = name.slice(16);
+        return { enabled: highlightColors.some(item => item.id === color) && view.state.selection.ranges.every(range => highlightAllowed(view.state, range)),
+          checked: view.state.selection.ranges.every(range => inlineFormatSpans(view.state, range.from, range.to)
+            .some(span => span.kind === 'highlight' && span.color === color && span.bodyFrom <= range.from && span.bodyTo >= range.to)) };
+      }
       if (INLINE_FORMATS[name]) {
         const owner = formatInputOwners.get(view), main = view.state.selection.main;
         return { enabled: owner?.doc === view.state.doc && owner.kind === name && main.empty && main.head === owner.position
@@ -5995,7 +6221,8 @@
     function executeCommand(name, context, text, html) {
       if (!queryCommand(name, context).enabled) return false;
       let done;
-      if (name.startsWith('paragraph:')) done = paragraphCommand(view, name.slice(10));
+      if (name.startsWith('highlight-color:')) done = applyHighlightColor(view, name.slice(16));
+      else if (name.startsWith('paragraph:')) done = paragraphCommand(view, name.slice(10));
       else if (name.startsWith('insert:')) done = insertBlockCommand(view, name.slice(7), document.documentElement.lang === 'en', text);
       else if (name === 'cut' || name === 'paste' || name === 'paste-plain') {
         // Windows clipboard reads may contain CRLF. Selection offsets must use
@@ -6158,7 +6385,7 @@
 
     return {
       setDocument, setNotePath, setSourceMode, setShortcutBindings, setSelectionMatchHighlight, setImageTextMode, imageTextCommand, snapshot, replaceSelection, revealPosition,
-      setExtensionsActive(active) { extensionHost?.setActive(active); },
+      setExtensionsActive(active) { highlightActive = active !== false; if (!highlightActive) highlightInputs.forEach(input => input.dismiss()); extensionHost?.setActive(active); },
       calloutSession: {
         get(position, fallback) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); return spec ? calloutCollapsed(spec, coordinator) : coordinator.foldPositions.has(position) ? coordinator.foldPositions.get(position) : fallback; },
         set(position, collapsed) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); coordinator.foldPositions.set(spec ? spec.from : position, collapsed); if (spec) view.dispatch({ effects: calloutFoldEffect.of({ id: spec.id, collapsed }) }); },

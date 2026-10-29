@@ -686,7 +686,28 @@
 
   // 行内处理：顺序很重要——先 code（避免 ** 在反引号里被错误识别），再 bold，再 italic
   // 注意：输入 s 已经被 escapeHtml 过，里面没有真正的 < >
-  function renderInline(s) {
+  const HIGHLIGHT_COLORS = Object.freeze([
+    ['default', '', '默认', 'Default'], ['red', '🔴', '红色', 'Red'], ['orange', '🟠', '橙色', 'Orange'],
+    ['yellow', '🟡', '黄色', 'Yellow'], ['green', '🟢', '绿色', 'Green'], ['blue', '🔵', '蓝色', 'Blue'], ['purple', '🟣', '紫色', 'Purple'],
+  ].map(([id, emoji, zh, en]) => Object.freeze({ id, emoji, zh, en })));
+
+  // UTF-16 source ranges, shared by Notes rendering, projection and commands.
+  // The caller supplies its existing code/math/block protection boundary.
+  function noteHighlights(source, offset = 0) {
+    source = String(source);
+    const ranges = [];
+    for (const match of source.matchAll(/==([^=\n]+)==/g)) {
+      const start = match.index, end = start + match[0].length;
+      if (escapedAtSource(source, start) || escapedAtSource(source, end - 2)) continue;
+      const color = HIGHLIGHT_COLORS.find(item => item.emoji && match[1].startsWith(item.emoji));
+      const prefix = color ? color.emoji + (match[1][color.emoji.length] === '\uFE0F' ? '\uFE0F' : '') : '';
+      ranges.push({ from: offset + start, to: offset + end, bodyFrom: offset + start + 2 + prefix.length,
+        bodyTo: offset + end - 2, color: color?.id || 'default', prefix });
+    }
+    return ranges;
+  }
+
+  function renderInline(s, noteSyntax) {
     // 行内代码：`xxx` → <code>xxx</code>
     s = s.replace(/`([^`\n]+)`/g, function (_, m) {
       return '<code>' + m + '</code>';
@@ -701,7 +722,11 @@
     s = s.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, '$1<em>$2</em>');
     // 高光（荧光笔）：==文字== 默认黄；彩色高光用 {hl:red|文字}。
     // 放在最后处理，可包住前面已生成的 <strong>/<em>/<code>（它们不含 = 号）。
-    s = s.replace(/==([^=\n]+?)==/g, '<mark data-hl="yellow">$1</mark>');
+    s = s.replace(/==([^=\n]+?)==/g, function (whole, body) {
+      const span = noteSyntax && noteHighlights(whole)[0];
+      return '<mark data-hl="' + (span && span.color !== 'default' ? span.color : 'yellow') + '"'
+        + (noteSyntax ? ' class="note-highlight"' : '') + '>' + body.slice(span ? span.prefix.length : 0) + '</mark>';
+    });
     // 增强样式显式带命名空间：{hl:red|...} / {tc:red|...} / {fs:lg|...}。
     // 支持嵌套；逐轮从最内层向外包，工具栏规范顺序为 hl > tc > fs。
     for (let pass = 0; pass < 6; pass++) {
@@ -722,8 +747,8 @@
 
   // 给画布上的轻量文字框复用同一套安全行内语法。内部 renderInline 接收的是
   // 已转义文本；对外包装必须先 escape，不能让文字框绕过 MarkdownMini 的安全边界。
-  function renderInlineSafe(src) {
-    return renderInline(escapeHtml(String(src == null ? '' : src)));
+  function renderInlineSafe(src, noteSyntax) {
+    return renderInline(escapeHtml(String(src == null ? '' : src)), noteSyntax);
   }
 
   // Opt-in note grammar. Every range uses UTF-16 offsets in the original
@@ -987,7 +1012,7 @@
     }
     let guarded = source;
     for (const edit of edits.sort((a, b) => b.from - a.from)) guarded = guarded.slice(0, edit.from) + edit.value + guarded.slice(edit.to);
-    return renderInlineSafe(guarded).replace(/\x00NHTML(\d+)\x00/g, (_, index) => values[+index]);
+    return renderInlineSafe(guarded, true).replace(/\x00NHTML(\d+)\x00/g, (_, index) => values[+index]);
   }
 
   function noteTocHtml(headings) {
@@ -1529,7 +1554,7 @@
 
   // 大纲常用 2 或 4 空格缩进。按相对缩进建树，不锁死空格数，
   // 同时允许有序、无序与任务列表在不同层级混用。
-  function parseListBlock(lines, start, topLevel) {
+  function parseListBlock(lines, start, topLevel, options) {
     const root = { children: [] };
     const stack = [];
     let i = start;
@@ -1571,7 +1596,7 @@
           const taskBox = item.task == null ? ''
             : ('<span class="md-task-box" aria-hidden="true">' + (item.task ? '✓' : '') + '</span>');
           html += '<li' + taskClass + lineAttr + '>' + taskBox
-            + renderInline(escapeHtml(item.text))
+            + renderInline(escapeHtml(item.text), options?.noteSyntax)
             + (item.children.length ? renderChildren(item.children) : '')
             + '</li>';
         }
@@ -1583,13 +1608,13 @@
     return { html: renderChildren(root.children), end: i };
   }
 
-  function renderParagraphLines(lines) {
+  function renderParagraphLines(lines, options) {
     let html = '';
     lines.forEach(function (raw, index) {
       let value = String(raw || '');
       const hardBreak = /(?: {2,}|\\)$/.test(value);
       if (hardBreak) value = value.replace(/(?: {2,}|\\)$/, '');
-      html += renderInline(escapeHtml(value));
+      html += renderInline(escapeHtml(value), options?.noteSyntax);
       if (index < lines.length - 1) html += hardBreak ? '<br>' : '\n';
     });
     return html;
@@ -1610,14 +1635,14 @@
       if (++iterations > maxIterations) {
         while (i < lines.length) {
           out.push('<p' + ln(i) + ' class="md-parse-fallback">'
-            + renderInline(escapeHtml(lines[i])) + '</p>');
+            + renderInline(escapeHtml(lines[i]), options?.noteSyntax) + '</p>');
           i++;
         }
         break;
       }
       if (i === previousIndex) {
         out.push('<p' + ln(i) + ' class="md-parse-fallback">'
-          + renderInline(escapeHtml(lines[i])) + '</p>');
+          + renderInline(escapeHtml(lines[i]), options?.noteSyntax) + '</p>');
         i++;
         previousIndex = -1;
         continue;
@@ -1634,7 +1659,7 @@
         ? /^[ \t]{0,3}\x00NHEAD([1-6]):(\d+)\x00(.*)$/.exec(line) : null;
       if (noteHeading) {
         const tag = 'h' + noteHeading[1];
-        out.push('<' + tag + ' data-note-heading-from="' + noteHeading[2] + '">' + renderInline(escapeHtml(noteHeading[3])) + '</' + tag + '>');
+        out.push('<' + tag + ' data-note-heading-from="' + noteHeading[2] + '">' + renderInline(escapeHtml(noteHeading[3]), options?.noteSyntax) + '</' + tag + '>');
         i++; continue;
       }
 
@@ -1651,7 +1676,7 @@
       const heading = parseHeadingLine(line);
       if (heading) {
         const tag = 'h' + heading.level;
-        out.push('<' + tag + ln(i) + '>' + renderInline(escapeHtml(heading.text)) + '</' + tag + '>');
+        out.push('<' + tag + ln(i) + '>' + renderInline(escapeHtml(heading.text), options?.noteSyntax) + '</' + tag + '>');
         i++;
         continue;
       }
@@ -1674,7 +1699,7 @@
           out.push('<div class="md-callout' + (descriptor ? ' note-block' + (descriptor.color ? ' note-color-block' : '') : '') + '" data-callout="' + (descriptor ? descriptor.type : type) + '"' + (descriptor ? ' data-ln="' + ((lineOffset || 0) + startLn) + '"' : ln(startLn))
             + (descriptor ? ' style="' + descriptor.style + '" data-fold="' + (descriptor.foldable ? head[2] : '') + '"' : '') + '>'
             + ((!descriptor || descriptor.title) ? '<div class="md-callout-title">' + (descriptor ? descriptor.icon : calloutIcon(type))
-            + '<span class="note-callout-title-text">' + renderInline(escapeHtml(descriptor ? descriptor.title : title)) + '</span>' + (descriptor && descriptor.foldable ? foldButton(descriptor.collapsed) : '') + '</div>' : '')
+            + '<span class="note-callout-title-text">' + renderInline(escapeHtml(descriptor ? descriptor.title : title), options?.noteSyntax) + '</span>' + (descriptor && descriptor.foldable ? foldButton(descriptor.collapsed) : '') + '</div>' : '')
             + (bodyHtml ? '<div class="md-callout-body"' + (descriptor && descriptor.collapsed ? ' hidden' : '') + '>' + bodyHtml + '</div>' : '')
             + '</div>');
         } else {
@@ -1709,12 +1734,12 @@
         const cellStyle = function (idx) { return aligns[idx] ? ' style="text-align:' + aligns[idx] + '"' : ''; };
         let html = '<div class="md-scroll-x" data-md-table-ln="' + tableStartLine
           + '"><table class="md-table"><thead><tr>';
-        header.forEach(function (c, idx) { html += '<th' + cellStyle(idx) + '>' + renderInline(escapeHtml(c)) + '</th>'; });
+        header.forEach(function (c, idx) { html += '<th' + cellStyle(idx) + '>' + renderInline(escapeHtml(c), options?.noteSyntax) + '</th>'; });
         html += '</tr></thead><tbody>';
         bodyRows.forEach(function (row) {
           html += '<tr>';
           for (let k = 0; k < header.length; k++) {
-            html += '<td' + cellStyle(k) + '>' + renderInline(escapeHtml(row[k] || '')) + '</td>';
+            html += '<td' + cellStyle(k) + '>' + renderInline(escapeHtml(row[k] || ''), options?.noteSyntax) + '</td>';
           }
           html += '</tr>';
         });
@@ -1726,7 +1751,7 @@
       // 有序 / 无序 / 任务列表：连续缩进行组成一棵安全的嵌套列表。
       const listMarker = parseListMarker(line);
       if (listMarker && !listMarker.empty) {
-        const parsedList = parseListBlock(lines, i, topLevel);
+        const parsedList = parseListBlock(lines, i, topLevel, options);
         if (parsedList.end > i) {
           out.push(parsedList.html);
           i = parsedList.end;
@@ -1742,7 +1767,7 @@
         para.push(lines[i]);
         i++;
       }
-      if (para.length) out.push('<p' + ln(paraStart) + '>' + renderParagraphLines(para) + '</p>');
+      if (para.length) out.push('<p' + ln(paraStart) + '>' + renderParagraphLines(para, options) + '</p>');
     }
     return out.join('');
   }
@@ -1877,7 +1902,7 @@
       const links = options?.links ? protectLinks(code.protected) : { protected: code.protected, links: [] };
       const math = protectMath(links.protected, false);
       const escapes = protectEscapes(math.protected);
-      let html = renderInlineSafe(escapes.protected).replace(/\n/g, '<br>');
+      let html = renderInlineSafe(escapes.protected, options?.noteSyntax).replace(/\n/g, '<br>');
       html = restoreMath(html, math.maths);
       // Display math already starts/ends a line; source-line padding belongs
       // to body click mapping, not the compact label's visual line breaks.
@@ -1974,7 +1999,8 @@
     renderResult: renderResult,
     renderLabelResult: renderLabelResult,
     renderInline: renderInlineSafe,
-    noteSyntax: Object.freeze({ scan: scanNoteDocument, inline: noteInlineTokens, tocHtml: noteTocHtml, referenceKey }),
+    noteSyntax: Object.freeze({ scan: scanNoteDocument, inline: noteInlineTokens, tocHtml: noteTocHtml, referenceKey,
+      highlights: noteHighlights, highlightColors: HIGHLIGHT_COLORS }),
     escapeHtml: escapeHtml,
     highlightCode: highlightCode,
     markIntervals: markIntervals,

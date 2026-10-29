@@ -58,6 +58,7 @@
         CM.EditorView.editorAttributes.of({ class: 'note-table-cell-input' }),
         CM.EditorView.contentAttributes.of({ class: 'note-table-cell-editor', 'aria-label': label, spellcheck: 'false' }),
         CM.EditorView.lineWrapping, projection,
+        surface.controller.options.createHighlightExtension?.(() => surface.pending()) || [],
         CM.EditorView.domEventHandlers({
           keydown(event) { surface.keydown(event); return event.defaultPrevented; },
           copy(event) { surface.copy(event, false); return event.defaultPrevented; },
@@ -73,7 +74,7 @@
           if (surface.edit?.input !== input) return;
           if (update.docChanged && !input.syncing) {
             surface.edit.emptyFormat = null;
-            if (!surface.pending()) surface.commit();
+            if (!surface.pending()) surface.commit(false, update.transactions.some(tr => tr.isUserEvent('input.note-highlight') || tr.isUserEvent('delete.note-highlight')) ? 'input.note-highlight' : undefined);
           }
           if (update.docChanged || update.geometryChanged) surface.controller.measure();
         }),
@@ -988,6 +989,7 @@
       try {
         this.controller.mapBodyPosition(changes);
         this.view.dispatch({ changes, selection: this.view.state.selection.map(changes), effects: cellUpdateEffect.of(update),
+          ...(userEvent === 'input.note-highlight' ? { annotations: CM.isolateHistory.of('full') } : {}),
           userEvent: userEvent || (composed ? 'input.table-compose' : 'input.table-cell') });
       }
       finally { this.committing = false; }

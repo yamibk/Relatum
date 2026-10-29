@@ -36,7 +36,7 @@ html[data-note-reduced-motion="1"] #note-settings-dialog .note-theme-popovers .r
 }
 
 /* Detached note portals keep their palette; shared chrome follows only active Notes. */
-html[data-note-theme="claude"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
+html[data-note-theme="claude"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
 html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
   --note-theme-paper: #faf9f5; --note-theme-nav: var(--note-theme-paper); --note-theme-surface: #fff;
   --note-theme-card: var(--note-theme-paper); --note-theme-hover: #f2f1ed; --note-theme-selected: #eae9e4;
@@ -53,7 +53,7 @@ html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > :
   --settings-text: var(--note-theme-text); --settings-muted: var(--note-theme-muted); --settings-selected: var(--note-theme-selected);
   color: var(--text);
 }
-html[data-note-theme="claude"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
+html[data-note-theme="claude"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
 html[data-note-theme="claude"] body.start-page[data-start-theme="dark"][data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
   /* Match the supplied Claude content sample; keep all large panes on one black. */
   --note-theme-paper: #191919; --note-theme-nav: var(--note-theme-paper); --note-theme-surface: #242424;

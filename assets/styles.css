@@ -530,6 +530,48 @@ body.start-page:not([data-start-theme="dark"]) .note-live-editor-host .note-live
 .note-live-hl-cyan { background: rgba(78, 185, 191, .26); }
 .note-live-hl-green { background: rgba(115, 177, 106, .28); }
 .note-live-hl-gray { background: rgba(120, 120, 116, .2); }
+/* Notes-only palette shared by reading, live projection and detached pickers. */
+:is(.note-workspace, .note-document-body, .note-live-editor-host, .note-highlight-menu, .note-context-menu) {
+  --note-highlight-default: rgba(242,211,91,.42); --note-highlight-yellow: rgba(242,211,91,.42);
+  --note-highlight-red: rgba(226,112,104,.31); --note-highlight-orange: rgba(238,167,78,.35);
+  --note-highlight-green: rgba(115,177,106,.28); --note-highlight-blue: rgba(104,154,218,.27);
+  --note-highlight-purple: rgba(176,132,210,.28);
+}
+body.start-page[data-start-theme="dark"] :is(.note-workspace, .note-document-body, .note-live-editor-host, .note-highlight-menu, .note-context-menu) {
+  --note-highlight-default: rgba(242,211,91,.30); --note-highlight-yellow: rgba(242,211,91,.30);
+  --note-highlight-red: rgba(240,119,121,.34); --note-highlight-orange: rgba(245,171,90,.32);
+  --note-highlight-green: rgba(127,195,126,.29); --note-highlight-blue: rgba(117,174,237,.32);
+  --note-highlight-purple: rgba(187,145,232,.32);
+}
+.note-live-highlight-default, .note-highlight[data-hl="yellow"], .note-live-highlight-yellow { background: var(--note-highlight-yellow); }
+.note-highlight[data-hl="red"], .note-live-highlight-red { background: var(--note-highlight-red); }
+.note-highlight[data-hl="orange"], .note-live-highlight-orange { background: var(--note-highlight-orange); }
+.note-highlight[data-hl="green"], .note-live-highlight-green { background: var(--note-highlight-green); }
+.note-highlight[data-hl="blue"], .note-live-highlight-blue { background: var(--note-highlight-blue); }
+.note-highlight[data-hl="purple"], .note-live-highlight-purple { background: var(--note-highlight-purple); }
+.note-highlight-dot, .note-highlight-swatch {
+  display: inline-block; box-sizing: border-box; width: 13px; height: 13px; border-radius: 50%;
+  border: 1px solid currentColor; background: transparent; color: #8c8c87; vertical-align: -.08em; flex: 0 0 auto;
+}
+:is(.note-highlight-dot, .note-highlight-swatch)[data-color="red"] { color: #e84c60; background: currentColor; }
+:is(.note-highlight-dot, .note-highlight-swatch)[data-color="orange"] { color: #ef8a25; background: currentColor; }
+:is(.note-highlight-dot, .note-highlight-swatch)[data-color="yellow"] { color: #d6b323; background: currentColor; }
+:is(.note-highlight-dot, .note-highlight-swatch)[data-color="green"] { color: #37ae68; background: currentColor; }
+:is(.note-highlight-dot, .note-highlight-swatch)[data-color="blue"] { color: #378ade; background: currentColor; }
+:is(.note-highlight-dot, .note-highlight-swatch)[data-color="purple"] { color: #9562da; background: currentColor; }
+.note-highlight-swatch { padding: 0; margin: 0 .15em; cursor: pointer; }
+.note-highlight-swatch:focus-visible { outline: 1px solid var(--text-secondary); outline-offset: 2px; }
+.note-highlight-menu {
+  position: fixed; z-index: 10020; min-width: 124px; max-height: calc(100vh - 16px); overflow-y: auto;
+  padding: 5px; border: 1px solid var(--border, #ddd); border-radius: 9px; background: var(--note-theme-surface, var(--surface, #fff));
+  color: var(--text, #222); box-shadow: 0 6px 22px rgba(0,0,0,.13); font: 14px var(--font-ui, sans-serif);
+}
+.note-highlight-menu button {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 31px; padding: 5px 10px;
+  color: inherit; background: transparent; border: 0; border-radius: 5px; text-align: left; font: inherit; cursor: pointer;
+}
+.note-highlight-menu button[aria-selected="true"] { background: var(--note-theme-hover, rgba(128,128,128,.12)); }
+.note-context-menu button .note-highlight-dot { margin-right: 9px; }
 .note-live-tc-yellow { color: #ae7b00; } .note-live-tc-orange { color: #b76520; }
 .note-live-tc-red { color: #b34e48; } .note-live-tc-purple { color: #8054a8; }
 .note-live-tc-blue { color: #426ea8; } .note-live-tc-cyan { color: #247f85; }

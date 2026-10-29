@@ -4248,8 +4248,13 @@
     canvas: ['画布', 'Canvas'],
     cut: ['剪切', 'Cut'], copy: ['复制', 'Copy'], paste: ['粘贴', 'Paste'], 'paste-plain': ['以纯文本形式粘贴', 'Paste as plain text'],
     'select-all': ['全选', 'Select all'], paragraph: ['段落设置', 'Paragraph'], insert: ['插入', 'Insert'],
+    'highlight-color': ['高亮颜色', 'Highlight color'],
   };
   function bodyCommandLabel(name) {
+    if (name.startsWith('highlight-color:')) {
+      const color = window.MarkdownMini.noteSyntax.highlightColors.find(item => item.id === name.slice(16));
+      return color[language() === 'en' ? 'en' : 'zh'];
+    }
     const kind = name.split(':').pop();
     if (/^heading-[1-6]$/.test(kind)) return language() === 'en' ? 'Heading ' + kind.slice(-1) : kind.slice(-1) + '级标题';
     return BODY_COMMAND_LABELS[kind][language() === 'en' ? 1 : 0];
@@ -4549,10 +4554,13 @@
   function bodyCommandButton(name) {
     const button = document.createElement('button');
     button.type = 'button'; button.textContent = bodyCommandLabel(name); button.dataset.noteCommand = name;
+    if (name.startsWith('highlight-color:')) {
+      const dot = document.createElement('span'); dot.className = 'note-highlight-dot'; dot.dataset.color = name.slice(16); button.prepend(dot);
+    }
     const status = liveEditor.queryCommand(name, bodyMenuContext);
     button.disabled = !status.enabled;
-    button.setAttribute('role', name.startsWith('paragraph:') ? 'menuitemradio' : 'menuitem');
-    if (name.startsWith('paragraph:')) { button.setAttribute('aria-checked', String(status.checked)); button.classList.toggle('active', status.checked); }
+    button.setAttribute('role', /^(paragraph:|highlight-color:)/.test(name) ? 'menuitemradio' : 'menuitem');
+    if (/^(paragraph:|highlight-color:)/.test(name)) { button.setAttribute('aria-checked', String(status.checked)); button.classList.toggle('active', status.checked); }
     button.addEventListener('click', () => runBodyCommand(name));
     return button;
   }
@@ -4560,14 +4568,15 @@
     if (bodyMenuParent === parent) { if (focusFirst) menuButtons(bodyMenuSubmenu)[0]?.focus(); return; }
     closeBodySubmenu({ instant: true });
     const paragraph = parent.dataset.noteSubmenu === 'paragraph';
+    const highlight = parent.dataset.noteSubmenu === 'highlight-color';
     const commands = paragraph ? ['bullet', 'ordered', 'task', 'heading-1', 'heading-2', 'heading-3', 'heading-4', 'heading-5', 'heading-6', 'body', 'quote']
       : ['table', 'callout', 'rule', 'code-block', 'math'];
-    if (!paragraph && canvasEnabled()) commands.splice(3, 0, 'canvas');
+    if (!paragraph && !highlight && canvasEnabled()) commands.splice(3, 0, 'canvas');
     const submenu = document.createElement('div'); submenu.className = 'note-context-menu note-context-submenu';
     submenu.setAttribute('role', 'menu'); submenu.setAttribute('aria-label', parent.textContent);
-    commands.forEach((kind, index) => {
-      if ((paragraph && (index === 3 || index === 10)) || (!paragraph && index === 3)) submenu.appendChild(separator());
-      submenu.appendChild(bodyCommandButton((paragraph ? 'paragraph:' : 'insert:') + kind));
+    (highlight ? window.MarkdownMini.noteSyntax.highlightColors.map(item => item.id) : commands).forEach((kind, index) => {
+      if (!highlight && ((paragraph && (index === 3 || index === 10)) || (!paragraph && index === 3))) submenu.appendChild(separator());
+      submenu.appendChild(bodyCommandButton((highlight ? 'highlight-color:' : paragraph ? 'paragraph:' : 'insert:') + kind));
     });
     contextMenu.appendChild(submenu); bodyMenuSubmenu = submenu; bodyMenuParent = parent;
     parent.setAttribute('aria-expanded', 'true'); parent.classList.add('is-open');
@@ -4582,7 +4591,7 @@
     if (!state.active || !state.current || state.viewMode === 'reading' || state.imageTextBusy || state.assetCleanupBusy) return;
     if (contextOpen) { closeContextMenu(); return; }
     closeContextMenu({ instant: true }); bodyMenuContext = Object.assign({}, payload.context, { image: payload.image || null });
-    const items = ['paragraph', 'insert'].map((kind) => {
+    const items = ['paragraph', 'insert', 'highlight-color'].map((kind) => {
       const button = document.createElement('button'); button.type = 'button'; button.textContent = bodyCommandLabel(kind);
       button.dataset.noteSubmenu = kind; button.setAttribute('role', 'menuitem');
       button.setAttribute('aria-haspopup', 'menu'); button.setAttribute('aria-expanded', 'false');
