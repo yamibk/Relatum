@@ -251,6 +251,11 @@ async function run(browser, mode) {
       await page.screenshot({ path: path.join(artifacts, mode + '-settings-' + theme + '.png') });
       const bounds = await dialog.boundingBox(); assert.equal(Math.round(bounds.width), 1200); assert.equal(Math.round(bounds.height), 820);
       assert(Math.abs(bounds.x + bounds.width / 2 - 720) < 2, 'dialog is horizontally centered');
+      const bottomGaps = await dialog.evaluate(node => {
+        const bottom = node.getBoundingClientRect().bottom;
+        return ['.relatum-settings-sidebar', '.relatum-settings-main'].map(selector => bottom - node.querySelector(selector).getBoundingClientRect().bottom);
+      });
+      assert(bottomGaps.every(gap => Math.abs(gap) < 1), 'both settings columns fill the dialog height');
     }
     await page.evaluate(() => RelatumI18n.setLanguage('en')); await category('guide').click();
     assert.equal(await category('files').textContent(), 'Files & library');
@@ -258,6 +263,12 @@ async function run(browser, mode) {
     await page.setViewportSize({ width: 560, height: 780 });
     await page.screenshot({ path: path.join(artifacts, mode + '-settings-narrow-en.png') });
     assert(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth + 1));
+    const narrowGaps = await dialog.evaluate(node => {
+      const box = node.getBoundingClientRect(), sidebar = node.querySelector('.relatum-settings-sidebar').getBoundingClientRect();
+      const main = node.querySelector('.relatum-settings-main').getBoundingClientRect();
+      return [sidebar.top - box.top, main.top - sidebar.bottom, box.bottom - main.bottom];
+    });
+    assert(narrowGaps.every(gap => Math.abs(gap) < 1), 'narrow settings fill exactly two rows without a blank third row');
     await close();
     if (mode === 'full') {
       await page.emulateMedia({ reducedMotion: 'no-preference' });

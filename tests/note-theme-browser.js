@@ -43,8 +43,27 @@ async function run(browser, minimal) {
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTheme:v1')), 'unknown-old-theme');
     assert(!requests.some(u => /source-serif-4/.test(u)), 'default keeps new fonts cold');
     const dialog = page.locator('#note-settings-dialog'), trigger = dialog.locator('.note-settings-theme .review-choice-trigger');
-    const open = async () => { await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'appearance' })); await dialog.waitFor(); };
-    const choose = async name => { await trigger.click(); await dialog.getByRole('option', { name, exact: true }).click(); };
+    const panelLayout = async () => {
+      const layout = await dialog.evaluate(node => {
+        const box = node.getBoundingClientRect(), sidebar = node.querySelector('.relatum-settings-sidebar').getBoundingClientRect();
+        const main = node.querySelector('.relatum-settings-main').getBoundingClientRect();
+        return { mainBottom: main.bottom - box.bottom, sidebarTop: sidebar.top - box.top,
+          seam: innerWidth > 720 ? sidebar.bottom - box.bottom : main.top - sidebar.bottom,
+          sidebarHeight: sidebar.height, mainHeight: main.height };
+      });
+      assert(Math.abs(layout.mainBottom) < 1 && Math.abs(layout.sidebarTop) < 1 && Math.abs(layout.seam) < 1,
+        'settings panes fill their rows without a bottom color gap: ' + JSON.stringify(layout));
+      return layout;
+    };
+    const open = async () => {
+      await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'appearance' })); await dialog.waitFor(); await panelLayout();
+    };
+    const choose = async name => {
+      const before = await panelLayout(); await trigger.click();
+      assert.deepEqual(await panelLayout(), before, 'opening a theme popup does not resize either pane');
+      await dialog.getByRole('option', { name, exact: true }).click();
+      assert.deepEqual(await panelLayout(), before, 'closing a theme popup does not leave a grid row');
+    };
     await page.evaluate(() => {
       window.originalView = T.editor.view; window.originalDoc = T.editor.view.state.doc;
       window.originalSelection = T.editor.view.state.selection;
@@ -141,7 +160,9 @@ async function run(browser, minimal) {
         RelatumNotePreferences.applyFontScale(scale, false);
         const root = document.querySelector('.note-workspace'), pane = document.querySelector('.note-document-body');
         const style = getComputedStyle(pane), text = getComputedStyle(document.querySelector('.cm-editor'));
-        return { bg: style.backgroundColor, color: text.color, overflow: pane.getBoundingClientRect().right > root.getBoundingClientRect().right + 2, font: text.fontFamily };
+        return { bg: style.backgroundColor, paperImage: getComputedStyle(document.querySelector('.note-document-pane')).backgroundImage,
+          headBg: getComputedStyle(document.querySelector('.note-document-head')).backgroundColor,
+          color: text.color, overflow: pane.getBoundingClientRect().right > root.getBoundingClientRect().right + 2, font: text.fontFamily };
       }, { skin, mode, bg, scale });
       assert(!result.overflow, JSON.stringify({ skin, mode, bg, width, scale, result }));
       if (skin === 'claude' && bg === 'simple') {
@@ -153,11 +174,20 @@ async function run(browser, minimal) {
       }
       if (skin === 'sky') {
         if (bg === 'simple') {
-          assert.equal(result.bg, mode === 'light' ? 'rgb(248, 251, 255)' : 'rgb(22, 35, 56)');
+          if (mode === 'light') {
+            assert.equal(result.bg, 'rgba(0, 0, 0, 0)'); assert.equal(result.headBg, 'rgba(0, 0, 0, 0)');
+            assert(result.paperImage.startsWith('linear-gradient(135deg,'));
+            for (const color of ['rgb(237, 244, 252)', 'rgb(243, 247, 253)', 'rgb(233, 241, 252)']) assert(result.paperImage.includes(color));
+          } else {
+            assert.equal(result.bg, 'rgb(22, 35, 56)'); assert.equal(result.paperImage, 'none');
+          }
           const navigation = mode === 'light' ? 'rgb(232, 239, 248)' : 'rgb(16, 26, 42)';
           assert(await page.evaluate(expected => ['.note-tree-pane', '.top-bar', '.note-links-pane'].every(selector =>
             getComputedStyle(document.querySelector(selector)).backgroundColor === expected), navigation));
-        } else assert(result.bg.includes(mode === 'light' ? '0.8)' : '0.84)'), 'scenic retains paper transparency');
+        } else {
+          assert(result.bg.includes(mode === 'light' ? '0.8)' : '0.84)'), 'scenic retains paper transparency');
+          assert.equal(result.paperImage, 'none', 'scenic keeps its existing translucent surface');
+        }
         const text = await page.locator('.cm-editor').evaluate(n => ({ size: parseFloat(getComputedStyle(n).fontSize), line: parseFloat(getComputedStyle(n).lineHeight) }));
         assert(Math.abs(text.size - 16 * scale / 100) < .1);
         assert(Math.abs(text.line / text.size - 1.8) < .01);
@@ -205,7 +235,8 @@ async function run(browser, minimal) {
       });
       assert(delta < 3, 'reading anchor moves by ' + delta);
       await page.evaluate(skin => RelatumNoteTheme.apply(skin), skin); await open();
-      await trigger.click(); await pause(160);
+      const closedLayout = await panelLayout(); await trigger.click(); await pause(160);
+      assert.deepEqual(await panelLayout(), closedLayout, 'theme portal stays out of the wide dialog grid');
       await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-${skin}-${mode}-settings.png`) });
       const popup = dialog.locator('.note-theme-popovers .review-choice-popup');
       const box = await popup.boundingBox(); assert(box.x >= 0 && box.y >= 0 && box.x + box.width <= 1441);
@@ -233,7 +264,9 @@ async function run(browser, minimal) {
       assert.equal(await tools.evaluate(n => getComputedStyle(n).backgroundColor), mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(29, 45, 68)');
       await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-sky-${mode}-image-tools.png`) });
       await page.locator('[data-role="note-image-text-toggle"]').click();
-      await page.setViewportSize({ width: 650, height: 980 }); await open(); await trigger.click();
+      await page.setViewportSize({ width: 650, height: 980 }); await open();
+      const narrowLayout = await panelLayout(); await trigger.click();
+      assert.deepEqual(await panelLayout(), narrowLayout, 'theme portal stays out of the narrow dialog grid');
       const popup = await dialog.locator('.note-theme-popovers .review-choice-popup').boundingBox();
       assert(popup.x >= 0 && popup.x + popup.width <= 651);
       await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-sky-${mode}-narrow.png`) });

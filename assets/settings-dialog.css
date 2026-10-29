@@ -11,7 +11,10 @@
   box-shadow: 0 32px 100px #0003, 0 4px 18px #0001;
   font: 13px/1.5 var(--font-ui, system-ui, sans-serif);
 }
-.relatum-settings[open] { display: grid; grid-template-columns: 216px minmax(0, 1fr); }
+.relatum-settings[open] {
+  display: grid; grid-template-columns: 216px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr); grid-template-areas: "sidebar main";
+}
 .relatum-settings[hidden] { display: none; }
 .relatum-settings::backdrop { background: rgba(0,0,0,.23); opacity: 1; transition: opacity 160ms ease; }
 .relatum-settings.is-closing::backdrop { opacity: 0; transition-duration: 140ms; }
@@ -21,7 +24,7 @@
 .relatum-settings button { cursor: pointer; color: inherit; }
 .relatum-settings button:focus-visible, .relatum-settings input:focus-visible, .relatum-settings select:focus-visible { outline: 2px solid var(--settings-muted); outline-offset: 3px; }
 .relatum-settings svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
-.relatum-settings-sidebar { min-height: 0; display: flex; flex-direction: column; padding: 30px 16px 20px; background: var(--settings-nav); }
+.relatum-settings-sidebar { grid-area: sidebar; min-height: 0; display: flex; flex-direction: column; padding: 30px 16px 20px; background: var(--settings-nav); }
 .relatum-settings-sidebar h2 { font-size: 19px; font-weight: 650; letter-spacing: -.04em; margin: 0 12px 24px; }
 .relatum-settings-search { display: flex; align-items: center; gap: 7px; border-radius: 9px; background: var(--settings-bg); padding: 9px 10px; color: var(--settings-muted); }
 .relatum-settings-search svg { width: 15px; height: 15px; }
@@ -32,7 +35,7 @@
 .relatum-settings-nav button:hover { background: var(--settings-card); }
 .relatum-settings-nav button[aria-current="page"] { background: var(--settings-selected); font-weight: 620; }
 .relatum-settings-reset-all { margin-top: auto; padding: 22px 12px 0; border: 0; background: transparent; color: var(--settings-muted) !important; text-align: left; font-size: 11px !important; }
-.relatum-settings-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.relatum-settings-main { grid-area: main; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .relatum-settings-header { display: flex; flex: none; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 30px 32px 24px; }
 .relatum-settings-header p { margin: 0 0 5px; color: var(--settings-muted); font-size: 10px; letter-spacing: .1em; }
 .relatum-settings-header h3 { margin: 0; font-size: 25px; line-height: 1.2; font-weight: 620; letter-spacing: -.035em; }
@@ -167,7 +170,7 @@ body.start-page[data-start-theme="dark"] .relatum-settings {
 @keyframes relatumSettingsFeedback { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 @media (max-width: 720px) {
   .relatum-settings { width: calc(100vw - 24px); height: calc(100dvh - 24px); border-radius: 18px; }
-  .relatum-settings[open] { grid-template-columns: minmax(0,1fr); grid-template-rows: auto minmax(0,1fr); }
+  .relatum-settings[open] { grid-template-columns: minmax(0,1fr); grid-template-rows: auto minmax(0,1fr); grid-template-areas: "sidebar" "main"; }
   .relatum-settings-sidebar { padding: 18px 18px 12px; gap: 10px; }
   .relatum-settings-sidebar h2 { font-size: 17px; margin: 0; }
   .relatum-settings-nav { flex-direction: row; overflow-x: auto; margin: 0; flex: none; gap: 2px; padding: 3px; }

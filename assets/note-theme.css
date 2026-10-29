@@ -12,11 +12,13 @@
   --border-strong: color-mix(in srgb, var(--settings-text) 28%, transparent);
   color: var(--settings-text); background: var(--settings-bg);
 }
+/* Portals share the dialog's top layer without becoming a third grid item. */
+#note-settings-dialog > .note-theme-popovers { position: absolute; inset: 0; pointer-events: none; }
 #note-settings-dialog .note-theme-popovers .review-choice-popup {
   --text: var(--settings-text); --text-secondary: var(--settings-muted); --text-tertiary: var(--settings-muted);
   --border: color-mix(in srgb, var(--settings-text) 12%, transparent);
   --border-strong: color-mix(in srgb, var(--settings-text) 24%, transparent);
-  color: var(--settings-text); background: var(--settings-bg); font-size: 13px;
+  color: var(--settings-text); background: var(--settings-bg); font-size: 13px; pointer-events: auto;
 }
 @media (max-width: 600px) {
   #note-settings-dialog .note-settings-theme { grid-template-columns: minmax(0, 1fr); gap: 10px; }
@@ -244,6 +246,12 @@ html[data-note-theme="sky"] body.start-page[data-start-theme="dark"][data-start-
 /* Chrome and navigation. No geometry changes or background sampling. */
 html[data-note-theme="sky"] body.start-page .note-workspace { background: var(--note-theme-paper); }
 html[data-note-theme="sky"] body.start-page :is(.note-document-pane, .note-document-body, .note-document-head) { background: var(--note-theme-paper); }
+/* One viewport-sized paper surface keeps the title and scroller continuous. */
+html[data-note-theme="sky"] body.start-page:not([data-start-theme="dark"]):not([data-start-background="scenic"]) .note-document-pane {
+  background-image: linear-gradient(135deg, #edf4fc 0%, #f3f7fd 48%, #e9f1fc 100%);
+  background-repeat: no-repeat;
+}
+html[data-note-theme="sky"] body.start-page:not([data-start-theme="dark"]):not([data-start-background="scenic"]) :is(.note-document-head, .note-document-body) { background: transparent; }
 html[data-note-theme="sky"] body.start-page :is(.note-tree-pane, .note-links-pane, .note-pane-head, .note-links-head, .note-tree-foot, .note-tab-bar) {
   background: var(--note-theme-nav); border-color: var(--note-theme-line);
 }
