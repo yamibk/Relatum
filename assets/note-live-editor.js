@@ -5876,7 +5876,7 @@
 
     function extensionMathAt(state, from, to) {
       const line = state.doc.lineAt(from);
-      if (line.length > MAX_RICH_LINE || to > line.to) return null;
+      if (line.length > MAX_RICH_LINE || to < from || to - from > BLOCK_MATH_LIMIT) return null;
       const tree = syntaxTree(state);
       if (tree.length < to) return null;
       const protectedRanges = lineProtectedRanges(state, line.from, line.to);
@@ -5891,7 +5891,7 @@
         return math ? { from: offset + math.from + math.open.length, to: offset + math.to - math.close.length,
           outerFrom: offset + math.from, outerTo: offset + math.to, open: math.open, close: math.close } : null;
       };
-      const inline = find(line.text, line.from);
+      const inline = to <= line.to ? find(line.text, line.from) : null;
       if (inline) return inline;
       const existing = state.field(blockField, false)?.specs.find(spec => spec.kind === 'math' && spec.from <= from && spec.to >= to);
       const block = existing || scanBlockSpecs(state, line.from, line.to, [], tree).find(spec => spec.kind === 'math' && spec.from <= from && spec.to >= to);

@@ -84,7 +84,7 @@ async function main() {
         invalid: invalid.custom.map(item => item.id), independent: RelatumNoteExtensions.read('latex-input').options.custom.length === 0,
         repeated: definition.snippetProblem(item('custom-repeat', 'rrr', '$1$1')), unique: new Set(collisions.map(item => item.trigger)).size === collisions.length };
     });
-    assert.deepEqual(configChecks, { count: 128, defaultFraction: true, automatic: false, invalid: ['custom-valid'], independent: true, repeated: 'placeholder', unique: true });
+    assert.deepEqual(configChecks, { count: 128, defaultFraction: true, automatic: false, invalid: ['custom-valid'], independent: true, repeated: '', unique: true });
     const field = key => dialog.locator('[data-latex-field="' + key + '"]');
     const action = key => dialog.locator('[data-latex-action="' + key + '"]');
     await action('add').click(); await field('trigger').fill('qq'); await field('replacement').fill('\\mathbb{$1}$0'); await action('save').click();
@@ -183,6 +183,95 @@ async function main() {
       await reset(value, at); await page.keyboard.press('Tab'); assert.equal(await page.evaluate(() => T.editor.view.state.selection.main.head), target, 'tabout ' + value);
       assert.equal(await doc(), value, 'tabout does not write source');
     }
+    // 1.2: real typing, environment creation, wrapping and grouped placeholders.
+    for (const [trigger, expected] of [['text', '\\text{}'], ['bf', '\\mathbf{}'], ['rm', '\\mathrm{}'],
+      ['ee', 'e^{}'], ['ooo', '\\infty'], ['RR', '\\mathbb{R}'], ['<=', '\\leq'], ['>=', '\\geq'], ['!=', '\\neq'],
+      ['xx', '\\times'], ['**', '\\cdot'], ['<->', '\\leftrightarrow'], ['prod', '\\prod_{}^{}']]) {
+      await reset('$  $', 2); await type(trigger); assert.equal(await doc(), '$ ' + expected + ' $', '1.2 snippet ' + trigger);
+    }
+    await reset('$  $', 2); await type('par'); assert.equal(await doc(), '$ par $');
+    await page.keyboard.press('Tab'); assert.equal(await doc(), '$ \\frac{\\partial y}{\\partial x} $');
+    assert.equal(await page.evaluate(() => T.editor.view.state.sliceDoc(T.editor.view.state.selection.main.from, T.editor.view.state.selection.main.to)), 'y');
+    await reset('$  $', 2); await type('dint'); assert.equal(await doc(), '$ \\int_0^{1} \\,dx $');
+    for (const [trigger, environment] of Object.entries({ pmat: 'pmatrix', bmat: 'bmatrix', Bmat: 'Bmatrix', vmat: 'vmatrix',
+      Vmat: 'Vmatrix', matrix: 'matrix', cases: 'cases', align: 'aligned' })) {
+      await reset('$$\n\n$$', 3); await type(trigger);
+      assert.equal(await doc(), '$$\n\\begin{' + environment + '}\n\n\\end{' + environment + '}\n$$', trigger);
+      await type('a'); await page.keyboard.press('Tab');
+      assert((await doc()).includes('\na&\n'), 'created environment uses existing cell keys');
+    }
+    await reset('$  $', 2); await type('pmat'); assert.equal(await doc(), '$ \\begin{pmatrix}  \\end{pmatrix} $');
+    const quotedEmpty = '> [!note]\n> $$\n> \n> $$';
+    await reset(quotedEmpty, quotedEmpty.indexOf('\n> \n') + 3); await type('pmat');
+    assert((await doc()).includes('\\begin{pmatrix}\n> \n> \\end{pmatrix}'), 'environment retains quote prefixes');
+    await reset('$$\n\n$$', 3); await type('array'); await type('cc');
+    assert((await doc()).includes('\\begin{array}{cc}'), 'array format does not expand symbols');
+    await reset('$$\n\n$$', 3); await type('beg'); await page.keyboard.press('Tab'); await type('cases');
+    assert.equal(await doc(), '$$\n\\begin{cases}\n\n\\end{cases}\n$$', 'begin/end names mirror despite protected names');
+    await page.keyboard.press('Tab'); await type('x'); assert((await doc()).includes('\nx\n'));
+    for (const [input, expected] of [['xvec12', '\\vec{x}_{12}'], ['xdot1', '\\dot{x}_{1}'], ['xund1', '\\underline{x}_{1}']]) {
+      await reset('$  $', 2); await type(input); assert.equal(await doc(), '$ ' + expected + ' $', input);
+    }
+    const accented = '\\dot{\\vec{x}}';
+    await reset('$ ' + accented + ' $', 2 + accented.length); await type('12');
+    assert.equal(await doc(), '$ ' + accented + '_{12} $');
+    const wrapped = [];
+    for (const [key, expected] of Object.entries({ U: '\\underbrace{x+y}_{}', O: '\\overbrace{x+y}^{}',
+      B: '\\underset{}{x+y}', C: '\\cancel{x+y}', K: '\\cancelto{}{x+y}', S: '\\sqrt{x+y}' })) {
+      await reset('$ x+y $', 2);
+      await page.evaluate(() => T.editor.view.dispatch({ selection: { anchor: 2, head: 5 } }));
+      await page.keyboard.press(key);
+      assert.equal(await doc(), '$ ' + expected + ' $', 'selected math ' + key);
+      wrapped.push(expected);
+      await page.keyboard.press('Control+z'); assert.equal(await doc(), '$ x+y $', 'wrap undo');
+      await page.keyboard.press('Control+y'); assert.equal(await doc(), '$ ' + expected + ' $', 'wrap redo');
+    }
+    await reset('$$\n' + wrapped.join(' + ') + '\n$$', 4);
+    await page.waitForFunction(() => !!document.querySelector('.note-live-math-preview mjx-container'));
+    assert.equal(await page.locator('.note-live-math-preview mjx-merror, .note-live-math-preview [data-mjx-error]').count(), 0,
+      'all six wrappers, including cancel/cancelto, render with the existing offline MathJax');
+    assert(!requests.some(address => !address.startsWith(url)), 'math rendering stays offline');
+    const multi = '> [!note]\n> $$\n> a+\n> b\n> $$';
+    await reset(multi, multi.indexOf('a+'));
+    await page.evaluate(({ from, to }) => T.editor.view.dispatch({ selection: { anchor: from, head: to } }),
+      { from: multi.indexOf('a+'), to: multi.indexOf('\n> $$', multi.indexOf('a+')) });
+    await page.keyboard.press('S');
+    assert((await doc()).includes('> \\sqrt{a+\n> b}'), 'multi-line selection preserves Callout');
+    await set({ options: { visualSnippets: false } }); await reset('$ x $', 2);
+    await page.evaluate(() => T.editor.view.dispatch({ selection: { anchor: 2, head: 3 } })); await type('S');
+    assert.equal(await doc(), '$ S $'); await set({ options: { visualSnippets: true } });
+    await reset('$ () $', 3); await type('int');
+    assert.equal(await doc(), '$ \\left(\\int_{}^{}\\right) $', 'enlargement is part of expansion');
+    await page.keyboard.press('Control+z'); assert.equal(await doc(), '$ (int) $');
+    await page.keyboard.press('Control+y'); assert.equal(await doc(), '$ \\left(\\int_{}^{}\\right) $');
+    for (const value of ['$ \\left(\\right) $', '$ \\bigl(\\bigr) $', '$ \\sqrt[]{} $', '$ \\frac{}{} $', '$ (a&b) $']) {
+      const at = value.includes('sqrt') ? value.indexOf(']') : value.includes('frac') ? value.indexOf('}') :
+        value.includes('&') ? value.indexOf('b') : value.indexOf('(') + 1;
+      await reset(value, at); await type('int');
+      assert.equal((await doc()).split('\\left').length - 1, value.split('\\left').length - 1, 'do not enlarge existing sizing/parameters/alignment');
+    }
+    await set({ options: { autoEnlargeBrackets: false } }); await reset('$ () $', 3); await type('int');
+    assert.equal(await doc(), '$ (\\int_{}^{}) $'); await set({ options: { autoEnlargeBrackets: true } });
+    await set({ options: { custom: [{ id: 'custom-mirror', trigger: 'zzm', replacement: '\\frac{${1:x}}{$1}$0', boundary: 'start', enabled: true }] } });
+    await reset('$  $', 2); await type('zzm'); await type('sq'); await type('y');
+    assert.equal(await doc(), '$ \\frac{\\sqrt{y}}{\\sqrt{y}} $', 'nested expansion mirrors with its parent');
+    await page.keyboard.press('Tab'); await page.keyboard.press('Tab');
+    await reset('$  $', 2); await type('zzm');
+    await page.evaluate(() => T.editor.view.dispatch({ changes: { from: T.editor.view.state.selection.main.from,
+      to: T.editor.view.state.selection.main.to, insert: 'ab' }, selection: { anchor: T.editor.view.state.selection.main.from + 2 }, userEvent: 'input.paste' }));
+    assert.equal(await doc(), '$ \\frac{ab}{ab} $', 'paste mirrors without expanding snippets');
+    await page.keyboard.press('Control+z'); assert.equal(await doc(), '$ \\frac{x}{x} $', 'mirror undo is atomic');
+    await page.keyboard.press('Control+y'); assert.equal(await doc(), '$ \\frac{ab}{ab} $', 'mirror redo is atomic');
+    for (const replacement of ['$1$1-$2$0', '${1:x}$1-$2$0']) {
+      await set({ options: { custom: [{ id: 'custom-adjacent', trigger: 'zzj', replacement, boundary: 'start', enabled: true }] } });
+      await reset('$  $', 2); await type('zzj'); await type('ab');
+      assert.equal(await doc(), '$ abab- $', 'adjacent mirror boundaries are distinct');
+      await page.keyboard.press('Tab'); await type('c'); assert.equal(await doc(), '$ abab-c $', 'adjacent group navigation');
+    }
+    await set({ options: { custom: [{ id: 'custom-adjacent', trigger: 'zzj', replacement: '$1$2$0', boundary: 'start', enabled: true }] } });
+    await reset('$  $', 2); await type('zzj'); await type('a'); await page.keyboard.press('Tab'); await type('b');
+    assert.equal(await doc(), '$ ab $', 'adjacent independent empty groups do not select each other');
+    await set({ options: { custom: [] } });
     for (const environment of ['matrix', 'pmatrix', 'bmatrix', 'Bmatrix', 'vmatrix', 'Vmatrix', 'array', 'cases', 'align', 'aligned', 'gather']) {
       const value = '$$\n\\begin{' + environment + '}\na\n\\end{' + environment + '}\n$$', at = value.indexOf('\na\n') + 2;
       await reset(value, at); await page.keyboard.press('Tab'); await type('b'); await page.keyboard.press('Enter'); await type('c');
@@ -238,6 +327,25 @@ async function main() {
     await cdp.send('Input.insertText', { text: 'sq' });
     await page.waitForFunction(() => !T.editor.inputPending); await settle(); assert.equal(await doc(), '$ sq $', 'IME commit remains literal');
     await page.keyboard.press('Tab'); assert.equal(await doc(), '$ \\sqrt{} $', 'last deferred option wins');
+    await set({ options: { automatic: true, custom: [{ id: 'custom-ime', trigger: 'zzm',
+      replacement: '\\frac{${1:x}}{$1}$0', boundary: 'start', enabled: true }] } });
+    await reset('$  $', 2); await type('zzm');
+    await cdp.send('Input.imeSetComposition', { text: 'zhong', selectionStart: 5, selectionEnd: 5 });
+    assert((await doc()).endsWith('{x} $'), 'IME preedit does not write a mirror');
+    await cdp.send('Input.insertText', { text: '中' });
+    await page.waitForFunction(() => !T.editor.inputPending); await settle();
+    assert.equal(await doc(), '$ \\frac{中}{中} $', 'IME final value mirrors after input settles');
+    await page.keyboard.press('Control+z'); assert.equal(await doc(), '$ \\frac{x}{x} $', 'IME mirror belongs to the same undo event');
+    await reset('$  $', 2); await type('zzm');
+    await cdp.send('Input.imeSetComposition', { text: 'cancel', selectionStart: 6, selectionEnd: 6 });
+    await cdp.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
+    await page.waitForFunction(() => !T.editor.inputPending); await settle();
+    assert((await doc()).endsWith('{x} $'), 'IME cancellation does not propagate preedit text');
+    await reset('$  $', 2); await type('zzm');
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide'))); await settle();
+    await page.evaluate(() => window.dispatchEvent(new Event('pageshow'))); await settle();
+    await type('q'); assert((await doc()).endsWith('{x} $'), 'hiding discards the old mirror session');
+    await set({ options: { custom: [] } });
     await set({ enabled: false });
     await page.evaluate(() => { window.beforeToggle = { view: T.editor.view, doc: T.editor.view.state.doc, selection: T.editor.view.state.selection, top: T.editor.view.scrollDOM.scrollTop }; });
     await set({ enabled: true }); await set({ enabled: false });
@@ -261,7 +369,8 @@ async function main() {
     assert(await page.evaluate(() => T.flushSave())); assert.equal(fs.readFileSync(filename, 'utf8'), '$ \\theta $', 'normal save contains only LaTeX');
     await page.reload(); await page.waitForFunction(() => window.T?.state.current?.path === 'Main.md' && T.editor);
     assert.deepEqual(await page.evaluate(() => RelatumNoteExtensions.read('latex-input')), { enabled: true,
-      options: { automatic: true, autoFraction: true, tabout: true, matrix: true, subscripts: true, overrides: [], custom: [] } });
+      options: { automatic: true, autoFraction: true, tabout: true, matrix: true, subscripts: true,
+        visualSnippets: true, autoEnlargeBrackets: true, overrides: [], custom: [] } });
     await reset('$  $', 2); await type('sq'); assert.equal(await doc(), '$ \\sqrt{} $', 'reload restores activation');
     const legacyPreference = JSON.stringify({ version: 1, extensions: { 'latex-input': { enabled: true, options: { automatic: false } },
       'future-extension': { enabled: true, options: { keep: 'unchanged' } } } });
@@ -273,6 +382,23 @@ async function main() {
     await set({ options: { automatic: true } });
     assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('canvas:noteExtensions:v1')).extensions['future-extension']),
       { enabled: true, options: { keep: 'unchanged' } }, 'unknown extension is preserved');
+    const conflictingPreference = JSON.stringify({ version: 1, extensions: { 'latex-input': { enabled: true, options: {
+      custom: [{ id: 'custom-upgrade', trigger: 'pmat', replacement: '\\legacy{$1}$0', boundary: 'start', enabled: true }],
+      overrides: [{ id: 'sq', trigger: 'text', replacement: '\\sqrt{$1}$0', boundary: 'start', enabled: true }],
+    } } } });
+    await page.evaluate(value => localStorage.setItem('canvas:noteExtensions:v1', value), conflictingPreference);
+    await page.reload(); await page.waitForFunction(() => window.T?.editor && T.state.current?.path === 'Main.md');
+    assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteExtensions:v1')), conflictingPreference);
+    await reset('$  $', 2); await type('pmat'); assert.equal(await doc(), '$ \\legacy{} $', 'existing custom wins over new environment');
+    await reset('$  $', 2); await type('text'); assert.equal(await doc(), '$ \\sqrt{} $', 'existing override wins over new text snippet');
+    await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'extensions' })); await dialog.waitFor();
+    await configure(); await chooseSnippet('pmat');
+    assert((await dialog.locator('.note-latex-editor-head small').first().textContent()).includes('已暂停'), 'upgrade conflict is visible');
+    await field('trigger').fill('newpmat'); await action('save').click();
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.list()[0].effectiveSnippets(RelatumNoteExtensions.read('latex-input').options).find(item => item.id === 'pmat').conflict), false);
+    await page.evaluate(() => T.setNoteSettingsOpen(false)); await dialog.waitFor({ state: 'hidden' });
+    await reset('$  $', 2); await type('newpmat'); assert((await doc()).includes('\\begin{pmatrix}'));
+    await set({ options: { overrides: [], custom: [] } });
     await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'extensions' })); await dialog.waitFor();
     await configure(); await tab('snippets').click();
     await action('add').click(); await field('trigger').fill('z'.repeat(64)); await field('replacement').fill('\\boldsymbol{$1}$0'); await action('save').click();

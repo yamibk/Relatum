@@ -204,7 +204,16 @@
     const guideRows = [ ['平方根', 'Square root', 'sq → \\sqrt{…}'], ['分式', 'Fraction', 'x/ → \\frac{x}{…}'],
       ['连续命令', 'Continuous commands', '@asr → \\alpha^{2}'], ['向量', 'Vector', 'xvec → \\vec{x}'],
       ['下一占位', 'Next placeholder', 'Tab'], ['上一占位', 'Previous placeholder', 'Shift+Tab'], ['结束占位', 'End placeholders', 'Escape'],
-      ['矩阵分列', 'Matrix cell', 'Tab → &'], ['矩阵换行', 'Matrix row', 'Enter → \\\\'], ['跳出矩阵', 'Exit matrix', 'Shift+Enter'] ];
+      ['矩阵分列', 'Matrix cell', 'Tab → &'], ['矩阵换行', 'Matrix row', 'Enter → \\\\'], ['跳出矩阵', 'Exit matrix', 'Shift+Enter'],
+      ['矩阵与对齐环境', 'Matrix and alignment environments', 'pmat / bmat / Bmat / vmat / Vmat / matrix / cases / align / array'],
+      ['偏导数', 'Partial derivative', 'par + Tab → \\frac{\\partial y}{\\partial x}'],
+      ['定积分', 'Definite integral', 'dint → \\int_0^1 …\\,dx'],
+      ['联动环境名', 'Mirrored environment name', 'beg + Tab → \\begin{matrix} … \\end{matrix}'],
+      ['默认与联动占位', 'Defaults and mirrored placeholders', '${1:x} … $1 · $0'],
+      ['上下花括号与下方标注', 'Braces and annotation', '选中 / Select → U / O / B'],
+      ['划消与根号', 'Cancellation and square root', '选中 / Select → C / K / S'],
+      ['重音变量下标', 'Accented variable subscript', 'xvec12 → \\vec{x}_{12}'],
+      ['括号自动放大', 'Enlarge brackets', '(x/) → \\left(\\frac{x}{…}\\right)'] ];
     const guideElements = guideRows.map(row => { const container = make('div', '', guide); return { row, name: make('strong', '', container), code: make('code', '', container) }; });
     const guideNote = make('p', 'note-latex-guide-note', tabPages.get('guide'));
     const drafts = new Map();
@@ -235,7 +244,7 @@
     function message(key) {
       return ({ trigger: tr('触发词须为 1–64 个非空白字符，不能包含反斜杠或 $。', 'Use 1–64 non-whitespace characters without backslashes or $.'),
         replacement: tr('替换内容须为 1–4096 个字符。', 'Use 1–4096 characters for the replacement.'),
-        placeholder: tr('占位只支持 $1–$9 和 $0，每个编号只能出现一次。', 'Use $1–$9 and $0, each at most once.'),
+        placeholder: tr('使用 $1–$9、${1:默认值} 和唯一的 $0；同编号默认值须一致，默认值内不支持嵌套占位。', 'Use $1–$9, ${1:default} and one $0. Repeated defaults must agree; nested placeholders are not supported.'),
         boundary: tr('请选择匹配方式。', 'Choose a match boundary.'), duplicate: tr('该触发词已被其他片段使用。', 'Another snippet already uses this trigger.'),
         limit: tr('最多添加 128 条自定义片段。', 'Up to 128 custom snippets are supported.'), storage: tr('保存失败，请重试。', 'Could not save. Please retry.') })[key] || '';
     }
@@ -278,8 +287,8 @@
         entry.setAttribute('aria-label', item.trigger + ' · ' + definition.snippetInfo(item, language()).name + (item.enabled ? '' : tr('，已关闭', ', disabled')));
         const identity = make('span', '', entry), trigger = make('code', '', identity), name = make('small', '', identity);
         trigger.textContent = item.trigger; trigger.title = item.trigger; name.textContent = definition.snippetInfo(item, language()).name;
-        const preview = make('code', 'note-latex-preview', entry); preview.textContent = item.replacement.replace(/\$[1-9]/g, '…').replace(/\$0/g, ''); preview.title = preview.textContent;
-        entry.classList.toggle('is-disabled', !item.enabled);
+        const preview = make('code', 'note-latex-preview', entry); preview.textContent = definition.parseTemplate(item.replacement)?.preview || item.replacement; preview.title = preview.textContent;
+        entry.classList.toggle('is-disabled', !item.enabled || !!item.conflict);
         entry.addEventListener('click', () => {
           selected = item.id; panel.dataset.snippetView = 'editor'; clearMessage(); renderList();
           if (!library.getClientRects().length) fields.trigger.input.focus({ preventScroll: true });
@@ -305,6 +314,7 @@
       if (!item) { panel.dataset.snippetView = 'list'; return; }
       const draft = getDraft(item), info = definition.snippetInfo(item, language()), builtIn = definition.snippets.some(base => base.id === item.id);
       editorName.textContent = info.name; source.textContent = builtIn ? tr('内置片段', 'Built-in snippet') : tr('自定义片段', 'Custom snippet');
+      if (item.conflict) source.textContent += tr(' · 触发词与现有配置冲突，已暂停；请修改触发词。', ' · Paused: trigger conflicts with an existing snippet. Choose another trigger.');
       enabled.checked = item === fresh ? draft.enabled : item.enabled;
       Object.keys(fields).forEach(key => { if (fields[key].input.value !== draft[key]) fields[key].input.value = draft[key]; });
       ensureChoices(); choices?.sync(fields.boundary.input);
@@ -333,7 +343,7 @@
       event.preventDefault(); const item = current(); if (!item) return;
       const draft = getDraft(item), value = { id: item.id, trigger: draft.trigger, replacement: draft.replacement, boundary: draft.boundary,
         enabled: item === fresh ? draft.enabled !== false : item.enabled !== false };
-      const issue = definition.snippetProblem(value) || (entries().some(other => other.id !== item.id && other.trigger === value.trigger) ? 'duplicate' : '')
+      const issue = definition.snippetProblem(value) || (entries().some(other => other.id !== item.id && !other.conflict && other.trigger === value.trigger) ? 'duplicate' : '')
         || (item === fresh && read().custom.length >= 128 ? 'limit' : '');
       if (issue) { fail(issue); return; }
       if (!persist(value)) { fail('storage'); return; }
@@ -346,7 +356,7 @@
     restore.addEventListener('click', () => {
       const item = current(); if (!item || item === fresh) return;
       const base = definition.snippets.find(other => other.id === item.id);
-      if (base && entries().some(other => other.id !== item.id && other.trigger === base.trigger)) { fail('duplicate'); return; }
+      if (base && entries().some(other => other.id !== item.id && !other.conflict && other.trigger === base.trigger)) { fail('duplicate'); return; }
       if (!persist(item, true)) { fail('storage'); return; }
       drafts.delete(item.id); clearMessage(); signature = ''; refresh();
     });
@@ -362,7 +372,7 @@
       list.setAttribute('aria-label', tr('公式片段', 'Math snippets')); editorEmpty.textContent = tr('选择一个片段查看与编辑。', 'Choose a snippet to view and edit.');
       listBack.textContent = tr('← 片段列表', '← Snippet list'); enabledText.textContent = tr('启用', 'Enable'); dirty.textContent = tr('未保存', 'Unsaved');
       fields.trigger.name.textContent = tr('触发词', 'Trigger'); fields.replacement.name.textContent = tr('替换模板', 'Replacement'); fields.boundary.name.textContent = tr('匹配方式', 'Match boundary');
-      fieldArea.querySelector('.note-latex-placeholder-help').textContent = tr('$1–$9：占位 · $0：退出位置', '$1–$9: placeholders · $0: exit position');
+      fieldArea.querySelector('.note-latex-placeholder-help').textContent = tr('$1–$9：占位 · ${1:默认值} · 同编号联动 · $0：退出', '$1–$9: placeholders · ${1:default} · repeated numbers mirror · $0: exit');
       Array.from(fields.boundary.input.options).forEach((entry, index) => { entry.textContent = tr(['词首', '后缀', '任意位置'][index], ['Start', 'Suffix', 'Anywhere'][index]); });
       choices?.refresh(fields.boundary.input);
       save.textContent = tr('保存更改', 'Save changes'); cancel.textContent = tr('取消', 'Cancel'); error.textContent = message(errorKey);
