@@ -1,4 +1,4 @@
-/* Theme picker is available in both built-in styles. */
+/* Theme picker is available in every built-in style. */
 #note-settings-dialog .note-settings-theme {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 260px);
   align-items: center; gap: 12px 24px; margin-bottom: 12px; padding: 18px 20px;
@@ -199,3 +199,256 @@ html[data-note-theme="claude"] body.start-page[data-start-theme="dark"][data-sta
 html[data-note-theme="claude"] body.start-page[data-start-background="scenic"] :is(.note-tree-pane, .note-links-pane, .note-tree-foot) { background: var(--note-scenic-tree); }
 html[data-note-theme="claude"] body.start-page[data-start-background="scenic"] :is(.note-document-pane, .note-document-body) { background: var(--note-scenic-paper); }
 html[data-note-theme="claude"] body.start-page[data-start-background="scenic"] :is(.note-pane-head, .note-document-head, .note-tab-bar, .note-links-head) { background: var(--note-scenic-chrome); }
+
+/* Sky — cloud paper and mist-blue navigation, with an independent night palette.
+   Tokens stay on Notes and its portals; the shared shell follows only active Notes. */
+html[data-note-theme="sky"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
+html[data-note-theme="sky"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
+  --note-theme-paper: #f8fbff; --note-theme-nav: #e8eff8; --note-theme-surface: #fff;
+  --note-theme-hover: #dfeaf8; --note-theme-selected: #d2e4fa; --note-theme-code: #eaf1fa;
+  --note-theme-text: #27364b; --note-theme-secondary: #5d6e84; --note-theme-muted: #5d6e84;
+  --note-theme-line: #d7e2ef; --note-theme-line-strong: #afc5dd; --note-theme-accent: #2f6fa9;
+  --note-theme-quote: #edf3fb; --note-theme-table-head: #e6effb;
+  --note-theme-ui-font: "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", sans-serif;
+  --note-theme-body-font: "Relatum Open Sans", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --note-theme-shadow: 0 12px 32px rgba(39,54,75,.10), 0 2px 6px rgba(39,54,75,.04);
+  --note-theme-selection: rgba(86,147,209,.24);
+  --sky-hl-yellow: rgba(229,193,84,.35); --sky-hl-red: rgba(218,113,121,.25);
+  --sky-hl-orange: rgba(226,157,83,.29); --sky-hl-green: rgba(105,170,143,.26);
+  --sky-hl-blue: rgba(108,163,222,.28); --sky-hl-purple: rgba(162,139,205,.27);
+  --bg: var(--note-theme-paper); --bg-secondary: var(--note-theme-nav); --surface: var(--note-theme-surface);
+  --text: var(--note-theme-text); --text-secondary: var(--note-theme-secondary); --text-tertiary: var(--note-theme-muted);
+  --border: var(--note-theme-line); --border-strong: var(--note-theme-line-strong);
+  --accent: var(--note-theme-accent); --focus-ring: color-mix(in srgb, var(--accent) 45%, transparent);
+  --font-ui: var(--note-theme-ui-font); --note-chrome-line: var(--note-theme-line);
+  --note-control-hover: var(--note-theme-hover); --note-control-active: var(--note-theme-selected);
+  --note-control-focus: var(--note-theme-accent); --note-notebook-cutout: var(--note-theme-nav);
+  --settings-bg: var(--note-theme-paper); --settings-nav: var(--note-theme-nav); --settings-card: var(--note-theme-surface);
+  --settings-text: var(--note-theme-text); --settings-muted: var(--note-theme-muted); --settings-selected: var(--note-theme-selected);
+  color: var(--text); font-family: var(--note-theme-ui-font);
+}
+html[data-note-theme="sky"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
+html[data-note-theme="sky"] body.start-page[data-start-theme="dark"][data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
+  --note-theme-paper: #162338; --note-theme-nav: #101a2a; --note-theme-surface: #1d2d44;
+  --note-theme-hover: #20324a; --note-theme-selected: #29415f; --note-theme-code: #101b2d;
+  --note-theme-text: #dde7f5; --note-theme-secondary: #a4b4cb; --note-theme-muted: #a4b4cb;
+  --note-theme-line: #2c3b52; --note-theme-line-strong: #4c6685; --note-theme-accent: #8abff0;
+  --note-theme-quote: #1a2c43; --note-theme-table-head: #20334e;
+  --note-theme-shadow: 0 12px 36px rgba(4,11,22,.32), 0 2px 6px rgba(4,11,22,.18);
+  --note-theme-selection: rgba(108,168,229,.29);
+  --sky-hl-yellow: rgba(231,200,111,.27); --sky-hl-red: rgba(237,143,153,.28);
+  --sky-hl-orange: rgba(239,181,121,.27); --sky-hl-green: rgba(132,201,169,.25);
+  --sky-hl-blue: rgba(132,183,239,.29); --sky-hl-purple: rgba(187,165,230,.28);
+}
+
+/* Chrome and navigation. No geometry changes or background sampling. */
+html[data-note-theme="sky"] body.start-page .note-workspace { background: var(--note-theme-paper); }
+html[data-note-theme="sky"] body.start-page :is(.note-document-pane, .note-document-body, .note-document-head) { background: var(--note-theme-paper); }
+html[data-note-theme="sky"] body.start-page :is(.note-tree-pane, .note-links-pane, .note-pane-head, .note-links-head, .note-tree-foot, .note-tab-bar) {
+  background: var(--note-theme-nav); border-color: var(--note-theme-line);
+}
+html[data-note-theme="sky"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) { background: var(--note-theme-nav); }
+html[data-note-theme="sky"] body.start-page[data-start-workspace="notes"] > .top-bar::before {
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--note-theme-nav) 97%, transparent), color-mix(in srgb, var(--note-theme-nav) 90%, transparent) 42%, transparent);
+  backdrop-filter: none; -webkit-backdrop-filter: none; mask-image: none; -webkit-mask-image: none;
+}
+html[data-note-theme="sky"] body.start-page[data-start-workspace="notes"] > .top-bar .start-workspace-slider {
+  background: var(--note-theme-selected); box-shadow: inset 0 0 0 1px var(--note-theme-line-strong);
+}
+html[data-note-theme="sky"] body.start-page[data-start-workspace="notes"] > .top-bar .start-workspace-switch button.active { color: var(--text); }
+html[data-note-theme="sky"] body.start-page[data-start-workspace="notes"] > .top-bar .start-speed-trigger {
+  color: var(--text-secondary); background: var(--note-theme-paper); border-color: var(--border);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  transform: none; transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+html[data-note-theme="sky"] body.start-page[data-start-workspace="notes"] > .top-bar .start-speed-trigger:is(:hover, [aria-expanded="true"]),
+html[data-note-theme="sky"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) .desktop-window-btn:not(.desktop-window-close):hover {
+  color: var(--text); background: var(--note-theme-hover);
+}
+html[data-note-theme="sky"] body.start-page :is(.note-tab, .note-icon-button, .note-side-button, .note-link-card, .note-tree-row, .note-path-crumb.is-folder) { color: var(--text-secondary); }
+html[data-note-theme="sky"] body.start-page :is(.note-path-crumb.is-file, .note-tab.active, .note-side-button.active, .note-tree-row.active-ancestor) { color: var(--text); }
+html[data-note-theme="sky"] body.start-page :is(.note-tab, .note-link-card, .note-tree-row) { border-radius: 10px; }
+html[data-note-theme="sky"] body.start-page .note-tab { border-radius: 10px 10px 0 0; }
+html[data-note-theme="sky"] body.start-page :is(.note-icon-button, .note-side-button, .note-tab-close, .note-tab-new, .note-tab-close-all) { border-radius: 8px; }
+html[data-note-theme="sky"] body.start-page :is(.note-tab:hover, .note-icon-button:enabled:hover, .note-side-button:enabled:hover, .note-link-card:enabled:hover, .note-tab-close:enabled:hover, .note-tab-new:enabled:hover, .note-tab-close-all:enabled:hover) {
+  color: var(--text); background: var(--note-theme-hover);
+}
+html[data-note-theme="sky"] body.start-page :is(.note-tab.active, .note-tree-rename) {
+  color: var(--text); background: var(--note-theme-paper); border-color: var(--border); box-shadow: none;
+}
+/* Explicit file and notebook colors retain their own paint and icon identities. */
+html[data-note-theme="sky"] body.start-page .note-tree-row:not([data-file-color]):hover { background: var(--note-theme-hover); }
+html[data-note-theme="sky"] body.start-page .note-tree-row:not([data-file-color]):is(.active, .opening),
+html[data-note-theme="sky"] body.start-page .note-notebook-root > .note-tree-row.selected-notebook,
+html[data-note-theme="sky"] body.start-page :is(.note-side-button.active, .note-view-toggle button.active, .note-side-button[aria-pressed="true"]) {
+  color: var(--text); background: var(--note-theme-selected);
+}
+html[data-note-theme="sky"] body.start-page .note-tree-row.selected-folder:not(.active):not([data-file-color]) { color: var(--text); background: var(--note-theme-hover); }
+html[data-note-theme="sky"] body.start-page .note-tree-row.note-drop-target { box-shadow: inset 0 0 0 1px var(--note-theme-accent); }
+html[data-note-theme="sky"] body.start-page :is(.note-tree-children, .note-outline-group) { border-left-color: var(--note-theme-line-strong); }
+html[data-note-theme="sky"] body.start-page .note-document-status {
+  color: var(--text-secondary); background: color-mix(in srgb, var(--note-theme-paper) 94%, transparent); border-color: var(--border); box-shadow: none;
+}
+
+/* Typography is shared by live and reading surfaces; source stays monospaced. */
+html[data-note-theme="sky"] body.start-page .note-document-pane { --note-font-text: var(--note-theme-body-font); }
+html[data-note-theme="sky"] body.start-page :is(.note-inline-title, .note-reading-content, .note-live-editor-host .cm-editor) { color: var(--text); }
+html[data-note-theme="sky"] body.start-page .note-live-editor-host:not(.is-source-mode) > .cm-editor,
+html[data-note-theme="sky"] body.start-page .note-reading-content { line-height: 1.8; }
+html[data-note-theme="sky"] body.start-page .note-inline-title { letter-spacing: -.015em; }
+html[data-note-theme="sky"] body.start-page .note-inline-title:hover { border-bottom-color: var(--border); }
+html[data-note-theme="sky"] body.start-page .note-inline-title:focus:not(.is-invalid) { border-bottom-color: var(--note-theme-accent); }
+html[data-note-theme="sky"] body.start-page :is(.note-live-editor-host, .note-reading-content) {
+  --note-heading-rule: var(--note-theme-line); --note-quote-rule: var(--note-theme-line-strong);
+  --note-live-link: var(--note-theme-accent); --note-list-bullet-color: var(--note-theme-secondary);
+  --note-live-marker: var(--note-theme-muted); --note-live-code: var(--note-theme-accent);
+  --note-code-bg: var(--note-theme-code); --note-code-text: var(--note-theme-text);
+  --note-code-comment: #5d6e84; --note-code-keyword: #5c609e; --note-code-type: #99556d;
+  --note-code-string: #29796f; --note-code-number: #90603f; --note-code-function: #2f6fa9;
+  --note-code-meta: #90603f; --note-code-escape: #99556d; --note-code-operator: #5d6e84; --note-code-invalid: #b04454;
+  --note-live-math: #5c609e; --note-math-command: #2f6fa9; --note-math-operator: #29796f;
+  --note-math-script: #90603f; --note-math-number: #90603f; --note-math-comment: #5d6e84;
+  --note-math-bracket-0: #90603f; --note-math-bracket-1: #29796f; --note-math-bracket-2: #99556d;
+}
+html[data-note-theme="sky"] body.start-page[data-start-theme="dark"] :is(.note-live-editor-host, .note-reading-content) {
+  --note-code-comment: #a4b4cb; --note-code-keyword: #bcb9f4; --note-code-type: #dca8be;
+  --note-code-string: #91cbb7; --note-code-number: #e4bc95; --note-code-function: #8abff0;
+  --note-code-meta: #e4bc95; --note-code-escape: #dca8be; --note-code-operator: #a4b4cb; --note-code-invalid: #f3a0ab;
+  --note-live-math: #bcb9f4; --note-math-command: #8abff0; --note-math-operator: #91cbb7;
+  --note-math-script: #e4bc95; --note-math-number: #e4bc95; --note-math-comment: #a4b4cb;
+  --note-math-bracket-0: #e4bc95; --note-math-bracket-1: #91cbb7; --note-math-bracket-2: #dca8be;
+}
+html[data-note-theme="sky"] body.start-page .note-reading-content.node-text {
+  --md-h1-size: 2em; --md-h2-size: 1.6em; --md-h3-size: 1.3em; --md-h4-size: 1.1em; --md-h5-size: 1em; --md-h6-size: 1em;
+}
+html[data-note-theme="sky"] body.start-page .note-live-h1 { font-size: 2em; }
+html[data-note-theme="sky"] body.start-page .note-live-h2 { font-size: 1.6em; }
+html[data-note-theme="sky"] body.start-page .note-live-h3 { font-size: 1.3em; }
+html[data-note-theme="sky"] body.start-page .note-live-h4 { font-size: 1.1em; }
+html[data-note-theme="sky"] body.start-page :is(.note-live-heading, .note-reading-content :is(h1,h2,h3,h4,h5,h6)) { color: var(--text); font-weight: 700; letter-spacing: -.015em; }
+html[data-note-theme="sky"] body.start-page :is(.note-live-h6, .note-reading-content h6) { color: var(--text-secondary); }
+html[data-note-theme="sky"] body.start-page :is(.note-live-h1, .note-reading-content h1) { border-bottom-color: transparent; }
+html[data-note-theme="sky"] body.start-page .note-workspace .mermaid-diagram {
+  font-family: "Relatum Open Sans", "Microsoft YaHei", "Microsoft YaHei UI", "Segoe UI", "Noto Sans SC", Helvetica, Arial, sans-serif;
+}
+/* Retain CM's existing native/drawn selection split, including IME ownership. */
+html[data-note-theme="sky"] body.start-page .note-live-editor-host .cm-selectionBackground { background: var(--note-theme-selection) !important; }
+html[data-note-theme="sky"] body.start-page .note-live-editor-host .cm-line:is(.note-live-code-line, .note-live-callout-line)::selection,
+html[data-note-theme="sky"] body.start-page .note-live-editor-host .cm-line:is(.note-live-code-line, .note-live-callout-line) ::selection,
+html[data-note-theme="sky"] body.start-page:not([data-start-theme="dark"]) .note-live-editor-host .note-live-inline-code::selection,
+html[data-note-theme="sky"] body.start-page:not([data-start-theme="dark"]) .note-live-editor-host .note-live-inline-code ::selection,
+html[data-note-theme="sky"] body.start-page .note-reading-content ::selection { background: var(--note-theme-selection) !important; }
+
+/* Native CM lines keep their metrics and hit targets, including nested quotes. */
+html[data-note-theme="sky"] body.start-page .note-live-editor-host .cm-line.note-live-quote-line:not(.note-live-callout-line):not(.note-live-code-line),
+html[data-note-theme="sky"] body.start-page .note-reading-content.node-text blockquote {
+  color: var(--text-secondary); background-color: var(--note-theme-quote);
+}
+html[data-note-theme="sky"] body.start-page .note-reading-content pre.md-code { border-color: var(--border); border-radius: 10px; background: var(--note-code-bg); }
+html[data-note-theme="sky"] body.start-page .note-live-code-first { border-radius: 10px 10px 0 0; }
+html[data-note-theme="sky"] body.start-page .note-live-code-last { border-radius: 0 0 10px 10px; }
+html[data-note-theme="sky"] body.start-page .note-live-code-first.note-live-code-last { border-radius: 10px; }
+html[data-note-theme="sky"] body.start-page .note-live-editor-host .note-live-inline-code,
+html[data-note-theme="sky"] body.start-page .note-reading-content.node-text :not(pre) > code {
+  color: var(--note-theme-accent); background: var(--note-code-bg); border-radius: 4px;
+}
+html[data-note-theme="sky"] body.start-page .note-live-code-language:not(.is-copied):not(.is-copy-failed) { color: var(--text-secondary); }
+html[data-note-theme="sky"] body.start-page .note-live-code-language:not(.is-copied):not(.is-copy-failed):is(:hover, :focus-visible) {
+  color: var(--text); background: var(--note-theme-surface); box-shadow: inset 0 0 0 1px var(--border);
+}
+html[data-note-theme="sky"] body.start-page :is(.note-live-rich-block.note-table, .note-reading-content) { --note-table-line: var(--note-theme-line); --note-paper: var(--note-theme-paper); }
+html[data-note-theme="sky"] body.start-page .note-reading-content.node-text :is(th,td) { border-color: var(--border); }
+html[data-note-theme="sky"] body.start-page .note-reading-content.node-text :is(th, thead td),
+html[data-note-theme="sky"] body.start-page .note-live-rich-block.note-table tr[data-table-data-row="0"] td { background: var(--note-theme-table-head); color: var(--text); font-weight: 700; }
+html[data-note-theme="sky"] body.start-page .note-reading-content.node-text tbody tr:nth-child(even),
+html[data-note-theme="sky"] body.start-page .note-live-rich-block.note-table tr[data-table-data-row]:nth-child(odd):not([data-table-data-row="0"]) { background: color-mix(in srgb, var(--note-theme-code) 45%, transparent); }
+html[data-note-theme="sky"] body.start-page .note-live-rich-block.note-table td.is-table-selected { background: var(--note-theme-selected); }
+html[data-note-theme="sky"] body.start-page .note-live-rich-block.note-table td.is-table-editing { box-shadow: inset 0 0 0 1px var(--note-theme-accent); }
+html[data-note-theme="sky"] body.start-page .note-table-selection { border-color: var(--note-theme-accent); }
+html[data-note-theme="sky"] body.start-page .note-table-drop { background: var(--note-theme-accent); }
+html[data-note-theme="sky"] body.start-page .note-table-control:is(:hover, :focus-visible) { color: var(--text); background: var(--note-theme-selected); }
+html[data-note-theme="sky"] body.start-page .note-quiz { --note-quiz-border: var(--note-theme-line); --note-quiz-surface: var(--note-theme-quote); border-radius: 10px; }
+html[data-note-theme="sky"] body.start-page .note-workspace input[type="checkbox"] { accent-color: var(--note-theme-accent); }
+html[data-note-theme="sky"] body.start-page .note-reading-content .md-callout.note-block { border-radius: 10px; color: var(--text); }
+html[data-note-theme="sky"] body.start-page .note-live-editor-host :is(.cm-line.note-live-callout-line, .note-live-rich-block.note-block-math) { color: var(--text); }
+html[data-note-theme="sky"] body.start-page :is(.note-reading-content .md-callout.note-block, .note-live-editor-host .cm-line.note-live-callout-line, .note-live-editor-host .note-live-rich-block.note-block-math):not(.note-color-block) {
+  --callout: color-mix(in srgb, var(--note-block-accent-light, var(--note-theme-accent)) 78%, var(--text));
+  background-color: color-mix(in srgb, var(--callout) 9%, var(--note-theme-paper));
+}
+html[data-note-theme="sky"] body.start-page[data-start-theme="dark"] :is(.note-reading-content .md-callout.note-block, .note-live-editor-host .cm-line.note-live-callout-line, .note-live-editor-host .note-live-rich-block.note-block-math):not(.note-color-block) {
+  --callout: color-mix(in srgb, var(--note-block-accent-dark, var(--note-theme-accent)) 65%, var(--text));
+}
+html[data-note-theme="sky"] body.start-page .note-live-editor-host .cm-line.note-live-callout-first { border-top-left-radius: 10px; border-top-right-radius: 10px; }
+html[data-note-theme="sky"] body.start-page .note-live-editor-host .cm-line.note-live-callout-last { border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; }
+html[data-note-theme="sky"] body.start-page .note-live-image-frame.is-selected::after { border-color: var(--note-theme-accent); box-shadow: 0 0 0 2px var(--focus-ring); }
+html[data-note-theme="sky"] body.start-page .note-live-image-resize-handle { background: var(--note-theme-accent); border-color: var(--note-theme-paper); box-shadow: 0 1px 4px rgba(16,26,42,.22); }
+html[data-note-theme="sky"] body.start-page :is(.note-workspace, .note-document-body, .note-live-editor-host, .note-highlight-menu, .note-context-menu) {
+  --note-highlight-default: var(--sky-hl-yellow); --note-highlight-yellow: var(--sky-hl-yellow);
+  --note-highlight-red: var(--sky-hl-red); --note-highlight-orange: var(--sky-hl-orange);
+  --note-highlight-green: var(--sky-hl-green); --note-highlight-blue: var(--sky-hl-blue); --note-highlight-purple: var(--sky-hl-purple);
+}
+
+/* Opaque settings and portals, independent of global settings and user color chips. */
+html[data-note-theme="sky"] body.start-page :is(.note-library-popover, .note-context-menu, .note-highlight-menu, .note-modal-card, .note-search-popover, .note-image-text-tools, .note-canvas-color-popup) {
+  color: var(--text); background: var(--note-theme-surface); border-color: var(--border); border-radius: 12px; box-shadow: var(--note-theme-shadow);
+}
+html[data-note-theme="sky"] body.start-page .note-context-menu > button:enabled:is(:hover, :focus-visible, .is-open),
+html[data-note-theme="sky"] body.start-page .note-highlight-menu > button:is(:hover, :focus-visible) { background: var(--note-theme-hover); }
+html[data-note-theme="sky"] body.start-page .note-modal-field input { color: var(--text); background: var(--note-theme-paper); border-color: var(--border); }
+html[data-note-theme="sky"] body.start-page :is(.note-modal-field input:focus, .note-tree-row:focus-visible) { outline-color: var(--note-theme-accent); }
+html[data-note-theme="sky"] body.start-page #note-settings-dialog { box-shadow: 0 24px 80px rgba(16,26,42,.20), 0 2px 12px rgba(16,26,42,.06); }
+html[data-note-theme="sky"] body.start-page #note-settings-dialog::backdrop { background: rgba(16,26,42,.20); }
+html[data-note-theme="sky"] body.start-page #note-settings-dialog :is(.relatum-settings-main, .relatum-settings-header, .relatum-settings-scroll, .relatum-settings-footer) { background: var(--settings-bg); }
+html[data-note-theme="sky"] body.start-page #note-settings-dialog :is(.note-library-settings, .note-settings-pop) {
+  --note-settings-paper: var(--settings-bg); --note-settings-card: var(--settings-card); --note-settings-line: var(--note-theme-line);
+}
+html[data-note-theme="sky"] body.start-page #note-settings-dialog :is(.note-settings-theme, .note-settings-font, .note-settings-toggle, .note-graph-preload-setting, .relatum-settings-guide-option, .note-sidebar-setting, .note-shortcut-row, .note-canvas-field, .note-extension-card, .note-library-sort-options, .note-library-name-options) {
+  border-radius: 14px; box-shadow: inset 0 0 0 1px var(--note-theme-line);
+}
+html[data-note-theme="sky"] body.start-page #note-settings-dialog :is(.review-choice-popup, .review-choice-popup[data-start-theme="dark"]) {
+  --text: var(--settings-text); --text-secondary: var(--settings-muted); --text-tertiary: var(--settings-muted);
+  --border: var(--note-theme-line); --border-strong: var(--note-theme-line-strong);
+  color: var(--settings-text); background: var(--note-theme-surface); border-radius: 12px; box-shadow: var(--note-theme-shadow);
+}
+html[data-note-theme="sky"] body.start-page #note-settings-dialog :is(.note-canvas-color-popup, .relatum-settings-confirm > div) { background: var(--note-theme-surface); }
+html[data-note-theme="sky"] body.start-page #note-settings-dialog .review-choice-option.is-highlighted { background: var(--settings-selected); }
+html[data-note-theme="sky"] body.start-page #note-settings-dialog .note-theme-popovers .review-choice-option.is-selected::after { color: var(--note-theme-accent); }
+html[data-note-theme="sky"] body.start-page #note-settings-dialog .note-settings-theme .review-choice-trigger { background: var(--note-theme-surface); }
+html[data-note-theme="sky"] body.start-page :is(.note-ai, .note-ai-popovers, .note-ai-settings) {
+  --ai-surface: var(--note-theme-surface); --ai-text: var(--note-theme-text); --ai-muted: var(--note-theme-muted);
+  --ai-line: var(--note-theme-line); --ai-line-hover: var(--note-theme-line-strong); color: var(--ai-text);
+}
+html[data-note-theme="sky"] body.start-page .note-ai-message[data-ai-role="assistant"] .note-ai-answer { font-family: var(--note-theme-body-font); }
+html[data-note-theme="sky"] body.start-page .note-ai-message[data-ai-role="assistant"] :is(pre, code) { font-family: var(--note-font-mono, var(--font-mono)); }
+html[data-note-theme="sky"] body.start-page .note-ai-popovers .review-choice-popup { background: var(--ai-surface); color: var(--ai-text); box-shadow: var(--note-theme-shadow); }
+
+/* Scenic mode keeps the existing alpha hierarchy and responsive shell shape. */
+html[data-note-theme="sky"] body.start-page[data-start-background="scenic"] .note-workspace {
+  --note-scenic-shell: rgba(232,239,248,.48); --note-scenic-tree: rgba(232,239,248,.74);
+  --note-scenic-paper: rgba(248,251,255,.80); --note-scenic-chrome: rgba(232,239,248,.70);
+  --note-scenic-overlay: rgba(255,255,255,.92); --note-scenic-line: var(--note-theme-line);
+  background: var(--note-scenic-shell);
+}
+html[data-note-theme="sky"] body.start-page[data-start-theme="dark"][data-start-background="scenic"] .note-workspace {
+  --note-scenic-shell: rgba(16,26,42,.66); --note-scenic-tree: rgba(16,26,42,.78);
+  --note-scenic-paper: rgba(22,35,56,.84); --note-scenic-chrome: rgba(16,26,42,.76);
+  --note-scenic-overlay: rgba(29,45,68,.94);
+}
+html[data-note-theme="sky"] body.start-page[data-start-background="scenic"][data-start-workspace="notes"] > .top-bar { background: transparent; }
+html[data-note-theme="sky"] body.start-page[data-start-background="scenic"] :is(.note-tree-pane, .note-links-pane, .note-tree-foot) { background: var(--note-scenic-tree); }
+html[data-note-theme="sky"] body.start-page[data-start-background="scenic"] :is(.note-document-pane, .note-document-body) { background: var(--note-scenic-paper); }
+html[data-note-theme="sky"] body.start-page[data-start-background="scenic"] :is(.note-pane-head, .note-document-head, .note-tab-bar, .note-links-head) { background: var(--note-scenic-chrome); }
+html[data-note-theme="sky"] body.start-page[data-start-background="scenic"] .note-document-status { background: var(--note-scenic-overlay); }
+
+/* Short input feedback only: no idle frames, filters, or theme-wide transitions. */
+html[data-note-theme="sky"] body.start-page .note-workspace :is(.note-icon-button, .note-side-button, .note-link-card, .note-tab, .note-tree-row) {
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease;
+}
+html[data-note-theme="sky"][data-note-reduced-motion="1"] body.start-page .note-workspace :is(.note-icon-button, .note-side-button, .note-link-card, .note-tab, .note-tree-row) { transition: none; }
+html[data-note-theme="sky"][data-note-reduced-motion="1"] body.start-page[data-start-workspace="notes"] > .top-bar .start-speed-trigger,
+html[data-note-theme="sky"][data-note-reduced-motion="1"] body.start-page[data-start-workspace="notes"] > .top-bar .start-speed-trigger svg { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-note-theme="sky"] body.start-page .note-workspace :is(.note-icon-button, .note-side-button, .note-link-card, .note-tab, .note-tree-row) { transition: none; }
+  html[data-note-theme="sky"] body.start-page[data-start-workspace="notes"] > .top-bar .start-speed-trigger,
+  html[data-note-theme="sky"] body.start-page[data-start-workspace="notes"] > .top-bar .start-speed-trigger svg { transition: none; }
+}

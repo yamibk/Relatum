@@ -1037,8 +1037,13 @@
       } else anchor.scroller.scrollTop = anchor.scroll;
     };
     restore();
-    if (window.RelatumNoteTheme.read() === 'claude' && current() && document.fonts) {
-      Promise.all([document.fonts.load('400 16px "Relatum Source Serif 4"'), document.fonts.load('italic 400 16px "Relatum Source Serif 4"')])
+    const themeFonts = {
+      claude: ['400 16px "Relatum Source Serif 4"', 'italic 400 16px "Relatum Source Serif 4"'],
+      sky: ['400 16px "Relatum Open Sans"', '700 16px "Relatum Open Sans"', 'italic 400 16px "Relatum Open Sans"', 'italic 700 16px "Relatum Open Sans"',
+        '400 16px "Noto Sans SC"', '700 16px "Noto Sans SC"'],
+    }[window.RelatumNoteTheme.read()];
+    if (themeFonts && current() && document.fonts) {
+      Promise.all(themeFonts.map(font => document.fonts.load(font)))
         .then(restore, () => {}).finally(() => { if (themeLayoutAnchor === anchor) themeLayoutAnchor = null; });
     } else themeLayoutAnchor = null;
   });
