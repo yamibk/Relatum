@@ -1685,7 +1685,8 @@
       if (/^>\s?/.test(trimmed)) {
         const buf = [];
         const startLn = i;
-        while (i < lines.length && /^\s*>\s?/.test(lines[i]) && lines[i].trim() !== '') {
+        const boundary = options?.noteCalloutLines?.get((lineOffset || 0) + i);
+        while (i < lines.length && (boundary !== undefined ? (lineOffset || 0) + i <= boundary : /^\s*>\s?/.test(lines[i]) && lines[i].trim() !== '')) {
           buf.push(lines[i].replace(/^\s*>\s?/, ''));
           i++;
         }
@@ -1789,7 +1790,14 @@
     const source = normalizeSource(src);
     if (!source) return { html: '', features: { math: false, mermaid: false }, error: false };
     const options = arguments.length > 1 ? arguments[1] : null;
-    const opts = options && typeof options === 'object' ? options : {};
+    let opts = options && typeof options === 'object' ? options : {};
+    if (opts.noteBlocks && Array.isArray(opts.noteCallouts)) {
+      const header = opts.noteTags ? frontmatter(source) : null;
+      const base = header ? source.slice(0, header.to).split('\n').length - 1 : 0;
+      opts = Object.assign({}, opts, { noteCalloutLines: new Map(opts.noteCallouts
+        .filter(range => Number.isInteger(range.startLine) && Number.isInteger(range.endLine) && range.startLine >= base && range.endLine >= range.startLine)
+        .map(range => [range.startLine - base, range.endLine - base])) });
+    }
     const noteContext = opts.noteSyntax ? opts.noteContext || scanNoteDocument(source) : null;
     let headingSource = source;
     if (noteContext && !opts.noteFootnoteBody) {

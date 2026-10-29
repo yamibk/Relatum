@@ -676,6 +676,126 @@
     };
   }
 
+  // Keep Lezer's lazy quote continuation rules in reading mode too. Positions
+  // stay in the original Markdown; only the renderer's block boundaries change.
+  function readingCallouts(source) {
+    if (!/>\s*\[!/.test(source)) return [];
+    if (!noteHeadingParser) noteHeadingParser = markdownLanguage.parser.configure(plainParagraphExtension);
+    const starts = [0];
+    for (let at = source.indexOf('\n'); at >= 0; at = source.indexOf('\n', at + 1)) starts.push(at + 1);
+    const lineAt = position => {
+      let low = 0, high = starts.length;
+      while (low + 1 < high) { const mid = (low + high) >> 1; if (starts[mid] <= position) low = mid; else high = mid; }
+      return low;
+    };
+    const ranges = [];
+    noteHeadingParser.parse(source).iterate({ enter(node) {
+      if (/^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock)$/.test(node.name)) return false;
+      if (node.name === 'Blockquote' && node.to - node.from <= RICH_BLOCK_LIMIT && parseCalloutSource(source.slice(node.from, node.to))) {
+        ranges.push({ startLine: lineAt(node.from), endLine: lineAt(Math.max(node.from, node.to - 1)) });
+      }
+    } });
+    return ranges;
+  }
+
+  const calloutTrees = new WeakMap();
+  function calloutTree(specs, doc) {
+    let entries = calloutTrees.get(specs);
+    if (entries) return entries;
+    entries = []; const stack = [];
+    for (const spec of specs) {
+      if (spec.kind !== 'callout') continue;
+      while (stack.length && (stack[stack.length - 1].spec.to < spec.to || stack[stack.length - 1].spec.to <= spec.from)) stack.pop();
+      const parent = stack[stack.length - 1];
+      const entry = { spec, parent, descriptor: window.MarkdownMini.noteBlock(spec.type, spec.title, spec.suffix),
+        start: doc.lineAt(spec.from).number, end: doc.lineAt(Math.max(spec.from, spec.to - 1)).number, nested: !!parent };
+      entry.colors = Object.fromEntries(entry.descriptor.style.split(';').filter(Boolean).map(pair => pair.split(':')));
+      if (parent) { parent.nested = true; entry.chain = parent.chain.concat(entry); } else entry.chain = [entry];
+      entries.push(entry); stack.push(entry);
+    }
+    calloutTrees.set(specs, entries); return entries;
+  }
+
+  function calloutLayout(view, specs, coordinator) {
+    const entries = calloutTree(specs, view.state.doc), layout = new Map(), hiddenHeaders = new Set(), hidden = [];
+    for (const entry of entries) {
+      const parent = entry.parent && layout.get(entry.parent);
+      const header = view.state.doc.line(entry.start), active = constructActive(view, header.from, header.to);
+      const collapsed = calloutCollapsed(entry.spec, coordinator);
+      const blocked = !!parent && (parent.blocked || parent.collapsed);
+      const hideHeader = entry.descriptor.color && !entry.descriptor.title && !active && entry.start < entry.end;
+      layout.set(entry, { blocked, collapsed, hideHeader, first: entry.start, last: collapsed ? entry.start : entry.end });
+      if (!blocked && hideHeader) hiddenHeaders.add(entry.start);
+      if (!blocked && collapsed && entry.start < entry.end) hidden.push({ from: entry.start + 1, to: entry.end });
+    }
+    const visible = (number, direction) => {
+      // Collapsed ranges are disjoint (descendants of a fold are blocked).
+      let low = 0, high = hidden.length;
+      while (low < high) { const mid = (low + high) >> 1; if (hidden[mid].to < number) low = mid + 1; else high = mid; }
+      if (hidden[low] && hidden[low].from <= number) number = direction > 0 ? hidden[low].to + 1 : hidden[low].from - 1;
+      while (hiddenHeaders.has(number)) number += direction;
+      return number;
+    };
+    for (const entry of entries) {
+      const value = layout.get(entry);
+      value.first = visible(value.first, 1); value.last = visible(value.last, -1);
+    }
+    return { entries, layout, hiddenHeaders, bySpec: new Map(entries.map(entry => [entry.spec, entry])) };
+  }
+
+  // Each native line paints the complete ancestor stack. CSS backgrounds follow
+  // wrapped line height without DOM overlays, extra measurements or idle work.
+  function layeredCalloutStyle(chain, layout, fromLine, toLine = fromLine, continuationBefore = false, continuationAfter = false) {
+    const light = [], dark = [];
+    let top = 0, bottom = 0, firstCount = 0, lastCount = 0;
+    const images = (color, inset, y1, y2, first, last, radius) => {
+      const r = 'var(' + radius + ')', x = inset + 'px', y = y1 + 'px', b = y2 + 'px';
+      const height = 'calc(100% - ' + y + ' - ' + b + ')';
+      const pieces = ['linear-gradient(' + color + ',' + color + ') left calc(' + x + ' + ' + r + ') top ' + y + ' / calc(100% - ' + (inset * 2) + 'px - ' + r + ' - ' + r + ') ' + height + ' no-repeat'];
+      for (const side of ['left', 'right']) {
+        const cap = 'calc(' + y + (first ? ' + ' + r : '') + ')';
+        pieces.push('linear-gradient(' + color + ',' + color + ') ' + side + ' ' + x + ' top ' + cap + ' / ' + r + ' calc(100% - ' + y + ' - ' + b + (first ? ' - ' + r : '') + (last ? ' - ' + r : '') + ') no-repeat');
+        if (first) pieces.push('radial-gradient(circle at ' + (side === 'left' ? 'right' : 'left') + ' bottom,' + color + ' calc(' + r + ' - .5px),transparent ' + r + ') ' + side + ' ' + x + ' top ' + y + ' / ' + r + ' ' + r + ' no-repeat');
+        if (last) pieces.push('radial-gradient(circle at ' + (side === 'left' ? 'right' : 'left') + ' top,' + color + ' calc(' + r + ' - .5px),transparent ' + r + ') ' + side + ' ' + x + ' bottom ' + b + ' / ' + r + ' ' + r + ' no-repeat');
+      }
+      return pieces.join(',');
+    };
+    chain.forEach((entry, index) => {
+      const value = layout.get(entry), first = !continuationBefore && value.first >= fromLine && value.first <= toLine,
+        last = !continuationAfter && value.last >= fromLine && value.last <= toLine;
+      if (index && first && !firstCount) top += 12;
+      if (index && last && !lastCount) bottom += 12;
+      const colors = entry.colors;
+      const radius = entry.descriptor.color ? '--note-color-callout-radius' : '--note-callout-radius';
+      light.unshift(images(colors['--note-block-bg-light'], index * 16, top, bottom, first, last, radius));
+      dark.unshift(images(colors['--note-block-bg-dark'], index * 16, top, bottom, first, last, radius));
+      if (first) { firstCount++; top += 12; }
+      if (last) { lastCount++; bottom += 12; }
+    });
+    const inner = chain[chain.length - 1], value = layout.get(inner);
+    const bodyFirst = continuationBefore || fromLine === inner.start + 1 && value.first !== fromLine;
+    return '--note-callout-layers-light:' + light.join(',') + ';--note-callout-layers-dark:' + dark.join(',') + ';'
+      + '--note-callout-layer-top:' + top + 'px;'
+      + '--note-callout-layer-bottom:' + bottom + 'px;'
+      + '--note-callout-layer-body-gap:' + (bodyFirst ? '1em' : '0px') + ';'
+      + '--note-callout-layer-left:' + ((chain.length - 1) * 16 + 24) + 'px;--note-callout-layer-right:' + ((chain.length - 1) * 16 + 12) + 'px;';
+  }
+
+  function decorateNestedCalloutWidget(dom, view, spec, coordinator) {
+    const specs = view.state.field(coordinator.field, false)?.specs;
+    if (!specs) return;
+    const model = calloutLayout(view, specs, coordinator);
+    let entry;
+    for (let index = model.entries.length - 1; index >= 0; index--) {
+      const item = model.entries[index], value = model.layout.get(item);
+      if (item.spec.from <= spec.from && item.spec.to >= spec.to && item.nested && !value.blocked && !value.collapsed) { entry = item; break; }
+    }
+    if (!entry) return;
+    dom.classList.add('note-live-callout-layered');
+    dom.style.cssText += layeredCalloutStyle(entry.chain, model.layout, view.state.doc.lineAt(spec.from).number,
+      view.state.doc.lineAt(Math.max(spec.from, spec.to - 1)).number, dom.classList.contains('note-live-math-preview') || dom.classList.contains('note-live-mermaid-preview'));
+  }
+
   const frontmatterCache = new WeakMap();
   function documentFrontmatter(doc) {
     if (frontmatterCache.has(doc)) return frontmatterCache.get(doc);
@@ -1061,16 +1181,19 @@
     if (metadata) {
       for (let index = raw.length - 1; index >= 0; index--) if (raw[index].from < metadata.to) raw.splice(index, 1);
     }
-    const pool = Array.isArray(reusable) ? reusable.slice() : [];
+    const pool = Array.isArray(reusable) ? reusable.slice() : [], calloutParents = [];
     return raw.map((spec) => {
+      while (calloutParents.length && (calloutParents[calloutParents.length - 1].to < spec.to || calloutParents[calloutParents.length - 1].to <= spec.from)) calloutParents.pop();
       if (spec.kind === 'math') {
-        const parent = raw.filter(item => item.kind === 'callout' && item.from < spec.from && item.to >= spec.to).sort((a, b) => b.from - a.from)[0];
+        const parent = calloutParents[calloutParents.length - 1];
         if (parent) {
           const descriptor = window.MarkdownMini.noteBlock(parent.type, parent.title, parent.suffix);
           spec.calloutType = parent.type; spec.calloutLast = parent.to === spec.to;
           spec.colorFirst = descriptor.color && !descriptor.title && doc.lineAt(parent.from).to + 1 === spec.from;
         }
+        if (calloutParents.length > 1) spec.calloutContext = JSON.stringify(calloutParents.map(parent => [parent.from, parent.to, parent.type, parent.title, parent.suffix]));
       }
+      if (spec.kind === 'callout') calloutParents.push(spec);
       const index = pool.findIndex((old) => old.kind === spec.kind && old.from <= spec.to && old.to >= spec.from);
       const prior = index >= 0 ? pool.splice(index, 1)[0] : null;
       return completeSpec(spec, prior);
@@ -1297,7 +1420,7 @@
     constructor(spec, coordinator) { super(); this.spec = spec; this.coordinator = coordinator; this.epoch = coordinator.epoch; }
     eq(other) {
       return other.epoch === this.epoch && other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint
-        && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast;
+        && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast && other.spec.calloutContext === this.spec.calloutContext;
     }
     toDOM(view) {
       const dom = document.createElement('div');
@@ -1331,7 +1454,7 @@
     constructor(spec, coordinator) { super(); this.spec = spec; this.coordinator = coordinator; this.epoch = coordinator.epoch; }
     eq(other) {
       return other.epoch === this.epoch && other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint
-        && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast;
+        && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast && other.spec.calloutContext === this.spec.calloutContext;
     }
     get estimatedHeight() { return this.coordinator.mermaidHeights?.get(this.spec.id) || 70; }
     toDOM(view) {
@@ -1379,6 +1502,7 @@
           dom.classList.add('note-block-math'); dom.classList.toggle('note-color-block', !!descriptor.color);
           dom.classList.toggle('note-live-callout-last', !!spec.calloutLast); dom.style.cssText = descriptor.style;
         } else dom.removeAttribute('style');
+        decorateNestedCalloutWidget(dom, this.view, spec, coordinator);
         const height = coordinator.mermaidHeights?.get(spec.id);
         if (height && !dom.querySelector('.note-mermaid-stage > svg')) dom.style.minHeight = height + 'px';
         entry.control.update(fencedCodeBody(spec.renderSource || spec.source), spec.language);
@@ -1459,6 +1583,7 @@
           dom.classList.toggle('note-live-callout-last', !!spec.calloutLast);
           dom.style.cssText = descriptor.style;
         } else dom.removeAttribute('style');
+        decorateNestedCalloutWidget(dom, this.view, spec, coordinator);
         this.schedule();
       }
       detach(dom) {
@@ -2531,7 +2656,7 @@
       return position - shift;
     };
     const readingSyntax = window.MarkdownMini.noteSyntax.scan(renderedSource);
-    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteSourcePosition, noteContext: readingSyntax, renderFence: quizFence });
+    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts: readingCallouts(renderedSource), noteSourcePosition, noteContext: readingSyntax, renderFence: quizFence });
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
@@ -2658,7 +2783,8 @@
     eq(other) {
       return other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint
         && other.notePath === this.notePath && other.epoch === this.epoch && other.selected === this.selected
-        && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast && other.spec.colorFirst === this.spec.colorFirst;
+        && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast && other.spec.colorFirst === this.spec.colorFirst
+        && other.spec.calloutContext === this.spec.calloutContext;
     }
     get estimatedHeight() { return this.spec.kind === 'mermaid' ? this.coordinator.mermaidHeights?.get(this.spec.id) || 70 : -1; }
     isCurrent(view, wrap, token) {
@@ -2722,6 +2848,7 @@
           if (parent.to === this.spec.to) wrap.classList.add('note-live-callout-last');
           if (this.spec.colorFirst) wrap.classList.add('note-live-callout-first');
         }
+        decorateNestedCalloutWidget(wrap, view, this.spec, this.coordinator);
         ensureMathJax().then((math) => {
           if (!this.isCurrent(view, wrap, token)) return;
           return runWhenInputSettled(view, () => (
@@ -3708,14 +3835,18 @@
       const tree = syntaxTree(view.state);
       const quotedCodeLines = new Set();
       const inactiveCalloutHeaders = [];
+      const calloutModel = calloutLayout(view, blockSpecs, options.coordinator), layeredLines = new Map();
       blockSpecs.forEach((spec) => {
         if (spec.kind !== 'callout' || spec.to < first.from || spec.from > last.to) return;
+        const entry = calloutModel.bySpec.get(spec);
+        const presentation = calloutModel.layout.get(entry);
+        if (presentation.blocked) return;
         const startLine = view.state.doc.lineAt(spec.from);
         const endLine = view.state.doc.lineAt(Math.max(spec.from, spec.to - 1));
         // A caret in the body should not dismantle the title. Both title and
         // body stay in CodeMirror-owned line boxes, including wrapped lines.
         const headerActive = constructActive(view, startLine.from, startLine.to);
-        const descriptor = window.MarkdownMini.noteBlock(spec.type, spec.title, spec.suffix);
+        const descriptor = entry.descriptor;
         const type = descriptor.type;
         const collapsed = calloutCollapsed(spec, options.coordinator);
         const hiddenHeader = descriptor.color && !descriptor.title && !headerActive && startLine.to < spec.to;
@@ -3726,7 +3857,12 @@
           if (number === endLine.number || collapsed) className += ' note-live-callout-last';
           if (number !== startLine.number) className += ' note-live-callout-body-line';
           if (number === startLine.number + 1) className += ' note-live-callout-body-first';
-          lineClass(view.state.doc.line(number).from, className, descriptor.style);
+          if (entry.nested) {
+            if (calloutModel.hiddenHeaders.has(number)) continue;
+            let row = layeredLines.get(number);
+            if (!row) layeredLines.set(number, row = []);
+            row.push(entry);
+          } else lineClass(view.state.doc.line(number).from, className, descriptor.style);
         }
         if (headerActive && descriptor.foldable) add(startLine.to, startLine.to, Decoration.widget({ widget: new CalloutFoldWidget(spec, options.coordinator), side: 1 }));
         if (!hiddenHeader && !headerActive && startLine.number >= first.number && startLine.number <= last.number) {
@@ -3740,6 +3876,15 @@
             }));
           }
         }
+      });
+      layeredLines.forEach((chain, number) => {
+        const inner = chain[chain.length - 1], value = calloutModel.layout.get(inner), descriptor = inner.descriptor;
+        let name = 'note-live-callout-line note-live-callout-layered is-callout-' + descriptor.type + (descriptor.color ? ' note-color-block' : '');
+        if (number === value.first) name += ' note-live-callout-first';
+        if (number === value.last) name += ' note-live-callout-last';
+        if (number !== inner.start) name += ' note-live-callout-body-line';
+        const hasPreview = editableMath.some(spec => editableMathSource(spec) && view.state.doc.lineAt(Math.max(spec.from, spec.to - 1)).number === number);
+        lineClass(view.state.doc.line(number).from, name, descriptor.style + layeredCalloutStyle(chain, calloutModel.layout, number, number, false, hasPreview));
       });
       protectedRanges.forEach((range) => {
         if (/^(?:FencedCode|CodeBlock|IndentedCode)$/.test(range.kind)) {
@@ -5769,6 +5914,14 @@
             return false;
           },
           mousedown(event, view) {
+            // Focus must use the clicked body position, not a stale selection
+            // in a currently hidden nested header. Otherwise revealing that
+            // header moves the native mouse target before CM starts its drag.
+            if (!sourceMode && !view.hasFocus && !inputPending() && event.button === 0 && !event.shiftKey && !event.ctrlKey && !event.metaKey
+                && event.target.closest('.cm-line.note-live-callout-layered')) {
+              const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+              if (position != null) view.dispatch({ selection: EditorSelection.cursor(position), userEvent: 'select.pointer' });
+            }
             const tag = event.target.closest('[data-note-tag]');
             if (tag && (event.ctrlKey || event.metaKey) && !inputPending()) {
               event.preventDefault(); safeOptions.onOpenTag(tag.dataset.noteTag); return true;

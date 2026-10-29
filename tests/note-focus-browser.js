@@ -36,7 +36,8 @@ async function freePort() {
     }
     browser = await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-    await context.addInitScript(() => {
+    await context.addInitScript(theme => {
+      if (theme) localStorage.setItem('canvas:noteTheme:v1', theme);
       if (localStorage.getItem('canvas:startWorkspace:v1') === null) localStorage.setItem('canvas:startWorkspace:v1', 'notes');
       if (localStorage.getItem('canvas:noteFocusMode:v1') === null) localStorage.setItem('canvas:noteFocusMode:v1', '1');
       window.__closeCalls = 0;
@@ -55,7 +56,7 @@ async function freePort() {
           if (window.__holdClose) await new Promise(resolve => { window.__releaseClose = resolve; });
         },
       } };
-    });
+    }, process.env.RELATUM_TEST_NOTE_THEME || '');
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -69,6 +70,9 @@ async function freePort() {
     assert.equal(boot.focused, true);
     assert(boot.topHeight < 1, 'restored focus must hide the title bar before first paint');
     await page.waitForFunction(() => window.CanvasNoteWorkspace && document.querySelector('.desktop-note-focus-close'));
+    // Workspace runtime registration can finish before the visible handoff.
+    // Drag tests need the actual surface to own this point, not the boot stage.
+    await page.waitForFunction(() => document.elementFromPoint(4, 3)?.closest('#start-notes-workspace'));
     const floating = page.locator('.desktop-note-focus-close');
     const toggle = page.locator('[data-note-action="toggle-focus"]');
     const visibleFocusIcon = () => toggle.locator('svg').evaluateAll(icons =>

@@ -195,6 +195,8 @@ async function run(browser, minimal) {
         const root = document.querySelector('.note-workspace'), pane = document.querySelector('.note-document-body');
         const style = getComputedStyle(pane), text = getComputedStyle(document.querySelector('.cm-editor'));
         return { bg: style.backgroundColor, paperImage: getComputedStyle(document.querySelector('.note-document-pane')).backgroundImage,
+          appleSurface: getComputedStyle(document.querySelector('.note-document-pane'), '::before').backgroundColor,
+          appleRadius: getComputedStyle(document.querySelector('.note-document-pane'), '::before').borderRadius,
           headBg: getComputedStyle(document.querySelector('.note-document-head')).backgroundColor,
           color: text.color, overflow: pane.getBoundingClientRect().right > root.getBoundingClientRect().right + 2, font: text.fontFamily,
           graphFont: document.querySelector('.note-graph-panel') && getComputedStyle(document.querySelector('.note-graph-panel')).fontFamily };
@@ -230,11 +232,15 @@ async function run(browser, minimal) {
       }
       if (skin === 'apple') {
         assert(result.font.includes('Relatum Inter')); assert.equal(result.paperImage, 'none');
+        assert.equal(result.bg, 'rgba(0, 0, 0, 0)', 'the document surface paints once behind its transparent content');
+        assert.equal(result.appleRadius, width > 760 ? '20px' : '16px');
         if (bg === 'simple') {
-          assert.equal(result.bg, mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(28, 28, 30)');
+          assert.equal(result.appleSurface, mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(28, 28, 30)');
           const nav = mode === 'light' ? 'rgb(245, 245, 247)' : 'rgb(36, 36, 38)';
-          assert(await page.evaluate(color => ['.top-bar', '.note-tree-pane', '.note-links-pane'].every(s => getComputedStyle(document.querySelector(s)).backgroundColor === color), nav));
-        } else assert(result.bg.includes(mode === 'light' ? '0.8)' : '0.84)'), 'Apple scenic retains transparency');
+          assert(await page.evaluate(({ nav, overlay }) => ['.top-bar', '.note-tree-pane'].every(s => getComputedStyle(document.querySelector(s)).backgroundColor === nav)
+            && getComputedStyle(document.querySelector('.note-links-pane')).backgroundColor === overlay,
+          { nav, overlay: width > 1120 ? nav : mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(44, 44, 46)' }));
+        } else assert(result.appleSurface.includes(mode === 'light' ? '0.8)' : '0.84)'), 'Apple scenic retains transparency');
         const text = await page.locator('.note-live-editor-host > .cm-editor').evaluate(n => ({ size: parseFloat(getComputedStyle(n).fontSize), line: parseFloat(getComputedStyle(n).lineHeight) }));
         assert(Math.abs(text.size - 16 * scale / 100) < .1); assert(Math.abs(text.line / text.size - 1.75) < .01);
       }
@@ -415,6 +421,24 @@ async function run(browser, minimal) {
     assert.equal(fs.readFileSync(file, 'utf8'), source, 'theme changes never save note content');
     assert.deepEqual(errors, []);
     assert(requests.every(u => u.startsWith(url + '/') || u.startsWith('blob:' + url + '/') || u.startsWith('data:')), 'all runtime resources stay local');
+    await page.setViewportSize({ width: 1440, height: 980 });
+    if (await dialog.isVisible()) { await dialog.locator('[data-settings-action="close"]').click(); await dialog.waitFor({ state: 'hidden' }); }
+    await page.evaluate(() => { RelatumNoteTheme.apply('apple'); document.body.dataset.startBackground = 'simple'; });
+    if (await page.locator('.note-tab').count()) await page.locator('.note-tab-close-all').click();
+    await page.waitForFunction(() => !document.querySelector('.note-tab'));
+    for (const mode of ['light', 'dark']) {
+      await page.evaluate(mode => { document.body.dataset.startTheme = mode; }, mode); await pause(100);
+      await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-apple-${mode}-empty.png`) });
+      await open();
+      const chrome = await dialog.evaluate(n => {
+        const card = n.querySelector('.note-settings-theme'), s = getComputedStyle(card);
+        return { border: s.borderTopWidth, shadow: s.boxShadow, radius: getComputedStyle(n).borderRadius };
+      });
+      assert.deepEqual(chrome, { border: '0px', shadow: 'none', radius: '24px' });
+      await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-apple-${mode}-settings.png`) });
+      await dialog.locator('[data-settings-action="close"]').click(); await dialog.waitFor({ state: 'hidden' });
+    }
+    assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(artifacts, `${minimal ? 'minimal' : 'full'}-matrix.json`), JSON.stringify(matrix, null, 2));
     console.log((minimal ? 'minimal' : 'full') + ': passed');
   } finally { await context.close(); server.kill(); await new Promise(r => server.exitCode !== null ? r() : server.once('exit', r)); }

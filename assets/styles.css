@@ -40720,6 +40720,7 @@ body.canvas-dark .task-root-archive-root:focus-visible {
 }
 
 /* Note blocks share their palette with the native-line editor and Guide. */
+:is(.note-live-editor-host, .note-reading-content) { --note-callout-radius: 4px; --note-color-callout-radius: 7px; }
 .node-text .md-callout.note-block {
   --callout: var(--note-block-accent-light, #086ddd);
   margin: 1em 0;
@@ -40770,6 +40771,22 @@ body.canvas-dark .task-root-archive-root:focus-visible {
 .note-live-rich-block.note-block-math.note-color-block.note-live-callout-last { border-radius: 0 0 7px 7px; }
 .note-live-rich-block.note-block-math.note-color-block.note-live-callout-first { padding-top: 12px; border-top-left-radius: 7px; border-top-right-radius: 7px; }
 .note-live-rich-block.note-block-math.note-color-block.note-live-callout-first.note-live-callout-last { padding-bottom: 12px; border-radius: 7px; }
+/* Layered paint belongs to native measured lines, including wrapped text and
+   projected formulae. Never wrap editable CM lines or clip their selection. */
+body.start-page .note-live-editor-host .cm-line.note-live-callout-line.note-live-callout-layered,
+.note-live-editor-host .note-live-rich-block.note-live-callout-layered {
+  padding-top: calc(var(--note-callout-layer-top) + var(--note-callout-layer-body-gap)) !important;
+  padding-bottom: var(--note-callout-layer-bottom) !important;
+  padding-left: var(--note-callout-layer-left) !important;
+  padding-right: var(--note-callout-layer-right) !important;
+  border-radius: 0 !important;
+  background: var(--note-callout-layers-light) !important;
+  background-origin: border-box !important;
+}
+body.start-page .note-live-editor-host .cm-line.note-color-block.note-live-callout-layered.note-live-callout-body-line { line-height: 1.5; }
+body.start-page[data-start-theme="dark"] .note-live-editor-host :is(.cm-line, .note-live-rich-block).note-live-callout-layered { background: var(--note-callout-layers-dark) !important; }
+.note-reading-content .md-callout.note-block .md-callout.note-block { margin: 12px 4px 12px -8px; }
+.note-reading-content .md-callout.note-block > .md-callout-body > .md-callout.note-block:last-child { margin-bottom: 0; }
 .note-callout-title-text { min-width: 0; overflow-wrap: anywhere; }
 .note-callout-fold { display: inline-flex; flex: 0 0 18px; width: 18px; height: 20px; padding: 0; margin: 0; border: 0; border-radius: 2px; background: transparent; color: inherit; cursor: pointer; vertical-align: middle; }
 .note-callout-fold svg { width: 18px; height: 18px; transition: transform 100ms ease; }

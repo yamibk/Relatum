@@ -17,7 +17,8 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
     if (!pathname.startsWith('/assets/') || !file.startsWith(path.join(repo, 'assets') + path.sep) || !fs.existsSync(file)) { res.writeHead(404).end(); return; }
     res.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'application/octet-stream');
     let content = fs.readFileSync(file);
-    if (pathname === '/assets/note-live-editor.js') content = content.toString().replace('window.RelatumNoteLiveEditor = { create, renderMarkdown };', 'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__calloutResourceTest = {createBlockField, scanBlockSpecs, focusEffect, calloutFoldEffect};');
+    if (pathname === '/assets/note-live-editor.js') content = content.toString().replace(/(window.RelatumNoteLiveEditor = \{ create, renderMarkdown(?:, typesetMath)? \};)/,
+      '$1 window.__calloutResourceTest = {createBlockField, scanBlockSpecs, focusEffect, calloutFoldEffect};');
     res.end(content);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

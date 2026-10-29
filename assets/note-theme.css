@@ -486,7 +486,8 @@ html[data-note-theme="apple"] body.start-page[data-start-workspace="notes"] > :i
   --note-theme-paper: #fff; --note-theme-nav: #f5f5f7; --note-theme-surface: #fff;
   --note-theme-hover: #ededf0; --note-theme-selected: #e8f0fc; --note-theme-code: #f5f5f7;
   --note-theme-text: #1d1d1f; --note-theme-secondary: #6e6e73; --note-theme-muted: #6e6e73;
-  --note-theme-line: #d2d2d7; --note-theme-line-strong: #b6b6bd; --note-theme-accent: #0066cc;
+  --note-theme-line: #e5e5ea; --note-theme-line-strong: #b6b6bd; --note-theme-accent: #0066cc;
+  --note-theme-table-line: #d2d2d7;
   --note-theme-quote: #f5f5f7; --note-theme-table-head: #f0f0f2; --note-theme-table-stripe: #fafafa;
   --note-theme-ui-font: "Relatum Inter", "Noto Sans SC", "Segoe UI", "Microsoft YaHei UI", sans-serif;
   --note-theme-body-font: var(--note-theme-ui-font); --font-ui: var(--note-theme-ui-font);
@@ -510,7 +511,8 @@ html[data-note-theme="apple"] body.start-page[data-start-theme="dark"][data-star
   --note-theme-paper: #1c1c1e; --note-theme-nav: #242426; --note-theme-surface: #2c2c2e;
   --note-theme-hover: #343436; --note-theme-selected: #193653; --note-theme-code: #242426;
   --note-theme-text: #f5f5f7; --note-theme-secondary: #aeaeb2; --note-theme-muted: #aeaeb2;
-  --note-theme-line: #3a3a3c; --note-theme-line-strong: #636366; --note-theme-accent: #0a84ff;
+  --note-theme-line: #38383a; --note-theme-line-strong: #636366; --note-theme-accent: #0a84ff;
+  --note-theme-table-line: #3a3a3c;
   --note-theme-quote: #242426; --note-theme-table-head: #2c2c2e; --note-theme-table-stripe: #222224;
   --note-theme-shadow: 0 12px 32px rgba(0,0,0,.26), 0 2px 6px rgba(0,0,0,.14);
   --note-theme-selection: rgba(10,132,255,.30); --focus-ring: rgba(10,132,255,.38);
@@ -520,11 +522,45 @@ html[data-note-theme="apple"] body.start-page[data-start-theme="dark"][data-star
   --apple-hl-blue: rgba(10,132,255,.30); --apple-hl-purple: rgba(191,90,242,.28);
 }
 
-/* Desktop chrome retains its geometry and uses static, opaque surfaces. */
-html[data-note-theme="apple"] body.start-page .note-workspace { background: var(--note-theme-paper); }
-html[data-note-theme="apple"] body.start-page :is(.note-document-pane, .note-document-body, .note-document-head) { background: var(--note-theme-paper); }
+/* One inset document surface, with quiet sidebars belonging to the workspace.
+   The decoration never clips menus, selection, table controls or focus chrome. */
+html[data-note-theme="apple"] body.start-page .note-workspace { --note-chrome-line: transparent; background: var(--note-theme-nav); }
+html[data-note-theme="apple"] body.start-page .note-document-pane { margin: 0 12px 12px; isolation: isolate; background: transparent; }
+html[data-note-theme="apple"] body.start-page .note-document-pane::before {
+  content: ""; position: absolute; z-index: -1; pointer-events: none; top: 40px; right: 0; bottom: 0; left: 0;
+  border-radius: 20px; background: var(--note-theme-paper); box-shadow: 0 2px 12px rgba(29,29,31,.035);
+}
+html[data-note-theme="apple"] body.start-page :is(.note-document-body, .note-document-head) { background: transparent; }
+html[data-note-theme="apple"] body.start-page .note-document-body { border-radius: 0 0 20px 20px; }
 html[data-note-theme="apple"] body.start-page :is(.note-tree-pane, .note-links-pane, .note-pane-head, .note-links-head, .note-tree-foot, .note-tab-bar) {
-  background: var(--note-theme-nav); border-color: var(--border);
+  background: var(--note-theme-nav); border-color: transparent; box-shadow: none;
+}
+html[data-note-theme="apple"] body.start-page .note-links-pane { right: 12px; bottom: 12px; border-radius: 16px; }
+html[data-note-theme="apple"] body.start-page .note-tab-bar { align-items: center; padding: 4px 0; gap: 6px; }
+html[data-note-theme="apple"] body.start-page .note-tab-list { align-items: center; gap: 4px; }
+html[data-note-theme="apple"] body.start-page .note-tab-actions { align-items: center; }
+html[data-note-theme="apple"] body.start-page .note-tab { height: 30px; border: 0; }
+html[data-note-theme="apple"] body.start-page .note-tab.active { box-shadow: 0 1px 4px rgba(29,29,31,.06); }
+html[data-note-theme="apple"] body.start-page .note-tree-pane > .note-pane-head { padding-inline: 8px; }
+html[data-note-theme="apple"] body.start-page .note-tree-foot { margin: 0 8px 12px; padding: 12px 8px; }
+html[data-note-theme="apple"] body.start-page .note-document-head { border-radius: 20px 20px 0 0; }
+html[data-note-theme="apple"] body.start-page[data-start-theme="dark"] .note-document-pane::before { box-shadow: 0 2px 12px rgba(0,0,0,.10); }
+@media (min-width: 1121px) {
+  html[data-note-theme="apple"] body.start-page .note-document-pane::before { right: calc(var(--note-side-width) + 8px); }
+  html[data-note-theme="apple"] body.start-page .note-workspace .note-links-pane { width: var(--note-side-width); }
+}
+@media (max-width: 1120px) {
+  html[data-note-theme="apple"] body.start-page .note-links-pane { top: 40px; background: var(--note-theme-surface); box-shadow: var(--note-theme-shadow); }
+  html[data-note-theme="apple"] body.start-page .note-links-head { border-radius: 16px 16px 0 0; background: transparent; }
+}
+@media (max-width: 760px) {
+  html[data-note-theme="apple"] body.start-page .note-document-pane { width: auto; margin: 0 8px 8px; }
+  html[data-note-theme="apple"] body.start-page .note-document-pane::before { border-radius: 16px; }
+  html[data-note-theme="apple"] body.start-page .note-document-head { border-radius: 16px 16px 0 0; }
+  html[data-note-theme="apple"] body.start-page .note-document-body { border-radius: 0 0 16px 16px; }
+  html[data-note-theme="apple"] body.start-page .note-tree-pane { top: 8px; left: 8px; bottom: 8px; border-radius: 16px; box-shadow: var(--note-theme-shadow); }
+  html[data-note-theme="apple"] body.start-page .note-tree-pane > .note-pane-head { border-radius: 16px 16px 0 0; }
+  html[data-note-theme="apple"] body.start-page .note-links-pane { right: 8px; bottom: 8px; }
 }
 html[data-note-theme="apple"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) { background: var(--note-theme-nav); }
 html[data-note-theme="apple"] body.start-page[data-start-workspace="notes"] > .top-bar::before {
@@ -548,7 +584,7 @@ html[data-note-theme="apple"] body.start-page :is(.note-tab, .note-icon-button, 
 html[data-note-theme="apple"] body.start-page :is(.note-path-crumb.is-file, .note-tab.active, .note-side-button.active, .note-tree-row.active-ancestor) { color: var(--text); }
 html[data-note-theme="apple"] body.start-page :is(.note-tree-row, .note-icon-button, .note-side-button, .note-tab-close, .note-tab-new, .note-tab-close-all) { border-radius: 8px; }
 html[data-note-theme="apple"] body.start-page .note-link-card { border-radius: 12px; }
-html[data-note-theme="apple"] body.start-page .note-tab { border-radius: 8px 8px 0 0; }
+html[data-note-theme="apple"] body.start-page .note-tab { border-radius: 9px; }
 html[data-note-theme="apple"] body.start-page :is(.note-tab.active, .note-side-button.active, .note-path-crumb.is-file) { font-weight: 500; }
 html[data-note-theme="apple"] body.start-page :is(.note-tab:hover, .note-icon-button:enabled:hover, .note-side-button:enabled:hover, .note-link-card:enabled:hover, .note-tab-close:enabled:hover, .note-tab-new:enabled:hover, .note-tab-close-all:enabled:hover) { background: var(--note-theme-hover); color: var(--text); }
 html[data-note-theme="apple"] body.start-page :is(.note-tab.active, .note-tree-rename) { color: var(--text); background: var(--note-theme-paper); border-color: var(--border); }
@@ -559,8 +595,8 @@ html[data-note-theme="apple"] body.start-page .note-notebook-root > .note-tree-r
 html[data-note-theme="apple"] body.start-page :is(.note-side-button.active, .note-view-toggle button.active, .note-side-button[aria-pressed="true"]) { color: var(--text); background: var(--note-theme-selected); }
 html[data-note-theme="apple"] body.start-page .note-tree-row.selected-folder:not(.active):not([data-file-color]) { color: var(--text); background: var(--note-theme-hover); }
 html[data-note-theme="apple"] body.start-page .note-tree-row.note-drop-target { box-shadow: inset 0 0 0 1px var(--note-theme-accent); }
-html[data-note-theme="apple"] body.start-page :is(.note-tree-children, .note-outline-group) { border-left-color: var(--note-theme-line); }
-html[data-note-theme="apple"] body.start-page .note-document-status { color: var(--text-secondary); background: color-mix(in srgb, var(--note-theme-paper) 94%, transparent); border-color: var(--border); }
+html[data-note-theme="apple"] body.start-page :is(.note-tree-children, .note-outline-group) { border-left-color: transparent; }
+html[data-note-theme="apple"] body.start-page .note-document-status { color: var(--text-secondary); background: color-mix(in srgb, var(--note-theme-paper) 94%, transparent); border-color: transparent; border-radius: 8px; }
 
 /* Match live/reading typography without affecting source, nested cell editors or diagrams. */
 html[data-note-theme="apple"] body.start-page .note-document-pane { --note-font-text: var(--note-theme-body-font); }
@@ -619,9 +655,9 @@ html[data-note-theme="apple"] body.start-page .note-live-code-language:not(.is-c
 html[data-note-theme="apple"] body.start-page .note-live-code-language:not(.is-copied):not(.is-copy-failed):is(:hover, :focus-visible) { color: var(--text); background: var(--note-theme-hover); }
 
 /* Round actual outer cells; keep the table host unclipped for grips and overlays. */
-html[data-note-theme="apple"] body.start-page :is(.note-live-rich-block.note-table, .note-reading-content) { --note-table-line: var(--note-theme-line); --note-paper: var(--note-theme-paper); }
+html[data-note-theme="apple"] body.start-page :is(.note-live-rich-block.note-table, .note-reading-content) { --note-table-line: var(--note-theme-table-line); --note-paper: var(--note-theme-paper); }
 html[data-note-theme="apple"] body.start-page .note-reading-content.node-text table.md-table { border-collapse: separate; border-spacing: 0; }
-html[data-note-theme="apple"] body.start-page .note-reading-content.node-text :is(th,td) { border-color: var(--border); border-width: 0 1px 1px 0; padding: 7px 10px; }
+html[data-note-theme="apple"] body.start-page .note-reading-content.node-text :is(th,td) { border-color: var(--note-theme-table-line); border-width: 0 1px 1px 0; padding: 7px 10px; }
 html[data-note-theme="apple"] body.start-page .note-reading-content.node-text tr > :first-child { border-left-width: 1px; }
 html[data-note-theme="apple"] body.start-page .note-reading-content.node-text thead tr:first-child > :is(th,td) { border-top-width: 1px; }
 html[data-note-theme="apple"] body.start-page .note-reading-content.node-text :is(th,thead td),
@@ -648,6 +684,7 @@ html[data-note-theme="apple"] body.start-page .note-table-alignment button:focus
 html[data-note-theme="apple"] body.start-page .note-quiz { --note-quiz-border: var(--note-theme-line); --note-quiz-surface: var(--note-theme-quote); border-radius: 12px; }
 html[data-note-theme="apple"] body.start-page .note-workspace input[type="checkbox"] { accent-color: var(--note-theme-accent); }
 html[data-note-theme="apple"] body.start-page .note-reading-content .md-callout.note-block { border-radius: 12px; color: var(--text); }
+html[data-note-theme="apple"] body.start-page :is(.note-live-editor-host, .note-reading-content) { --note-callout-radius: 12px; --note-color-callout-radius: 12px; }
 html[data-note-theme="apple"] body.start-page .note-live-editor-host :is(.cm-line.note-live-callout-line, .note-live-rich-block.note-block-math) { color: var(--text); }
 html[data-note-theme="apple"] body.start-page :is(.note-reading-content .md-callout.note-block, .note-live-editor-host .cm-line.note-live-callout-line, .note-live-editor-host .note-live-rich-block.note-block-math):not(.note-color-block) {
   --note-callout-bg: color-mix(in srgb, var(--note-callout-accent) 7%, var(--note-theme-paper));
@@ -675,11 +712,15 @@ html[data-note-theme="apple"] body.start-page .note-context-menu > button:enable
 html[data-note-theme="apple"] body.start-page .note-highlight-menu > button:is(:hover, :focus-visible) { background: var(--note-theme-hover); }
 html[data-note-theme="apple"] body.start-page .note-modal-field input { color: var(--text); background: var(--note-theme-paper); border-color: var(--border); }
 html[data-note-theme="apple"] body.start-page :is(.note-modal-field input:focus, .note-tree-row:focus-visible) { outline-color: var(--note-theme-accent); }
-html[data-note-theme="apple"] body.start-page #note-settings-dialog { border-radius: 20px; box-shadow: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.06); }
+html[data-note-theme="apple"] body.start-page #note-settings-dialog { border: 0; border-radius: 24px; box-shadow: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.06); }
 html[data-note-theme="apple"] body.start-page #note-settings-dialog::backdrop { background: rgba(0,0,0,.20); }
 html[data-note-theme="apple"] body.start-page #note-settings-dialog :is(.relatum-settings-main, .relatum-settings-header, .relatum-settings-scroll, .relatum-settings-footer) { background: var(--settings-bg); }
 html[data-note-theme="apple"] body.start-page #note-settings-dialog :is(.note-library-settings, .note-settings-pop) { --note-settings-paper: var(--settings-bg); --note-settings-card: var(--settings-card); --note-settings-line: var(--note-theme-line); }
-html[data-note-theme="apple"] body.start-page #note-settings-dialog :is(.note-settings-theme, .note-settings-font, .note-settings-toggle, .note-graph-preload-setting, .relatum-settings-guide-option, .note-sidebar-setting, .note-shortcut-row, .note-canvas-field, .note-extension-card, .note-library-sort-options, .note-library-name-options) { border-radius: 14px; box-shadow: inset 0 0 0 1px var(--note-theme-line); }
+html[data-note-theme="apple"] body.start-page #note-settings-dialog :is(.note-settings-theme, .note-settings-font, .note-settings-toggle, .note-graph-preload-setting, .relatum-settings-guide-option, .note-sidebar-setting, .note-shortcut-row, .note-canvas-field, .note-extension-card, .note-library-sort-options, .note-library-name-options) { border: 0; border-radius: 16px; background: var(--settings-card); box-shadow: none; }
+html[data-note-theme="apple"] body.start-page #note-settings-dialog :is(.relatum-settings-sidebar, .relatum-settings-header, .relatum-settings-footer) { border-color: transparent; }
+html[data-note-theme="apple"] body.start-page #note-settings-dialog :is(.relatum-settings-nav-button, .relatum-settings-search, input:not([type="range"]):not([type="checkbox"]), select, textarea, .review-choice-trigger) { border-radius: 10px; }
+html[data-note-theme="apple"] body.start-page #note-settings-dialog .review-choice-trigger { border-color: transparent; background: var(--note-theme-code); box-shadow: none; }
+html[data-note-theme="apple"] body.start-page #note-settings-dialog .note-settings-theme .review-choice-trigger { background: var(--note-theme-code); }
 html[data-note-theme="apple"] body.start-page #note-settings-dialog :is(.review-choice-popup, .review-choice-popup[data-start-theme="dark"]) {
   --text: var(--settings-text); --text-secondary: var(--settings-muted); --text-tertiary: var(--settings-muted);
   --border: var(--note-theme-line); --border-strong: var(--note-theme-line-strong);
@@ -688,7 +729,6 @@ html[data-note-theme="apple"] body.start-page #note-settings-dialog :is(.review-
 html[data-note-theme="apple"] body.start-page #note-settings-dialog :is(.note-canvas-color-popup, .relatum-settings-confirm > div) { background: var(--note-theme-surface); }
 html[data-note-theme="apple"] body.start-page #note-settings-dialog .review-choice-option.is-highlighted { background: var(--settings-selected); }
 html[data-note-theme="apple"] body.start-page #note-settings-dialog .note-theme-popovers .review-choice-option.is-selected::after { color: var(--note-theme-accent); }
-html[data-note-theme="apple"] body.start-page #note-settings-dialog .note-settings-theme .review-choice-trigger { background: var(--note-theme-surface); }
 html[data-note-theme="apple"] body.start-page #note-settings-dialog :is(button, input, select):focus-visible { outline-color: var(--note-theme-accent); }
 html[data-note-theme="apple"] body.start-page :is(.note-ai, .note-ai-popovers, .note-ai-settings) {
   --ai-surface: var(--note-theme-surface); --ai-text: var(--note-theme-text); --ai-muted: var(--note-theme-muted);
@@ -710,8 +750,8 @@ html[data-note-theme="apple"] body.start-page[data-start-theme="dark"][data-star
 }
 html[data-note-theme="apple"] body.start-page[data-start-background="scenic"][data-start-workspace="notes"] > .top-bar { background: transparent; }
 html[data-note-theme="apple"] body.start-page[data-start-background="scenic"] :is(.note-tree-pane, .note-links-pane, .note-tree-foot) { background: var(--note-scenic-tree); }
-html[data-note-theme="apple"] body.start-page[data-start-background="scenic"] :is(.note-document-pane, .note-document-body) { background: var(--note-scenic-paper); }
-html[data-note-theme="apple"] body.start-page[data-start-background="scenic"] :is(.note-pane-head, .note-document-head, .note-tab-bar, .note-links-head) { background: var(--note-scenic-chrome); }
+html[data-note-theme="apple"] body.start-page[data-start-background="scenic"] .note-document-pane::before { background: var(--note-scenic-paper); }
+html[data-note-theme="apple"] body.start-page[data-start-background="scenic"] :is(.note-pane-head, .note-tab-bar, .note-links-head) { background: var(--note-scenic-chrome); }
 html[data-note-theme="apple"] body.start-page[data-start-background="scenic"] .note-document-status { background: var(--note-scenic-overlay); }
 html[data-note-theme="apple"] body.start-page .note-workspace :is(.note-icon-button, .note-side-button, .note-link-card, .note-tab, .note-tree-row) { transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease; }
 html[data-note-theme="apple"][data-note-reduced-motion="1"] body.start-page .note-workspace :is(.note-icon-button, .note-side-button, .note-link-card, .note-tab, .note-tree-row),
