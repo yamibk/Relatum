@@ -14,6 +14,7 @@ async function run(browser, minimal) {
   fs.mkdirSync(path.join(data, 'notes/Main.assets'));
   fs.writeFileSync(path.join(data, 'notes/Main.assets/sky.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200" viewBox="0 0 600 200"><rect width="600" height="200" fill="#e8eff8"/><circle cx="470" cy="52" r="24" fill="#f8fbff"/><path d="M0 184L160 60L290 170L400 100L600 200H0Z" fill="#afc5dd"/><path d="M0 200L260 110L420 200Z" fill="#5d6e84"/></svg>');
   fs.writeFileSync(path.join(data, 'notes/Diagram.md'), '# Diagram\n\n```mermaid\ngraph LR\n A[English] --> B[中文]\n```\n');
+  fs.writeFileSync(path.join(data, 'notes/Nested.md'), '# Nested notes · 嵌套提示\n\n> [!NOTE] A quiet thought · 想法\n> One warm sheet, room for ideas.\n>\n> > [!TIP] A smaller discovery · 发现\n> > Nested content keeps its rounded corners.\n>\n> Back to the outer note.\n\n> [!Lavender] Explicit user color\n> This color belongs to the note.\n');
   const catalog = JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json')));
   const profile = minimal ? ['--launch-profile', JSON.stringify({ version: 1, features: Object.fromEntries(catalog.features.map(f => [f.id, f.id === 'notes'])) })] : [];
   const number = await port(), url = 'http://127.0.0.1:' + number;
@@ -77,7 +78,7 @@ async function run(browser, minimal) {
     await page.waitForFunction(() => document.fonts.check('400 16px "Relatum Source Serif 4"'));
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTheme:v1')), 'claude');
     assert(await page.evaluate(() => T.editor.view === originalView && T.editor.view.state.doc === originalDoc && T.editor.view.state.selection === originalSelection && T.state.editGeneration === originalGeneration));
-    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.top-bar')).backgroundColor), 'rgb(250, 249, 245)');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.top-bar')).backgroundColor), 'rgb(243, 242, 238)');
     assert.equal(await page.evaluate(() => {
       const workspace = document.body.dataset.startWorkspace;
       document.body.dataset.startWorkspace = 'canvas';
@@ -180,10 +181,11 @@ async function run(browser, minimal) {
         RelatumGlobalSettings.open();
         const dialog = document.querySelector('#global-settings-dialog');
         const snapshot = () => [getComputedStyle(dialog).backgroundColor, getComputedStyle(dialog).color, getComputedStyle(dialog).fontFamily];
-        const apple = snapshot(); RelatumNoteTheme.apply('default'); const original = snapshot(); RelatumNoteTheme.apply('apple');
-        RelatumGlobalSettings.close({ instant: true }); return { apple, original };
+        const apple = snapshot(); RelatumNoteTheme.apply('claude'); const claude = snapshot(); RelatumNoteTheme.apply('default'); const original = snapshot(); RelatumNoteTheme.apply('apple');
+        RelatumGlobalSettings.close({ instant: true }); return { apple, claude, original };
       });
       assert.deepEqual(globalColors.apple, globalColors.original, 'note theme leaves global settings independent');
+      assert.deepEqual(globalColors.claude, globalColors.original, 'Claude leaves global settings independent');
     }
     // 96 combinations per shell cover skins, mode, background, viewport and font scale.
     const matrix = [];
@@ -195,20 +197,32 @@ async function run(browser, minimal) {
         const root = document.querySelector('.note-workspace'), pane = document.querySelector('.note-document-body');
         const style = getComputedStyle(pane), text = getComputedStyle(document.querySelector('.cm-editor'));
         return { bg: style.backgroundColor, paperImage: getComputedStyle(document.querySelector('.note-document-pane')).backgroundImage,
-          appleSurface: getComputedStyle(document.querySelector('.note-document-pane'), '::before').backgroundColor,
-          appleRadius: getComputedStyle(document.querySelector('.note-document-pane'), '::before').borderRadius,
+          paperSurface: getComputedStyle(document.querySelector('.note-document-pane'), '::before').backgroundColor,
+          paperRadius: getComputedStyle(document.querySelector('.note-document-pane'), '::before').borderRadius,
           headBg: getComputedStyle(document.querySelector('.note-document-head')).backgroundColor,
           color: text.color, overflow: pane.getBoundingClientRect().right > root.getBoundingClientRect().right + 2, font: text.fontFamily,
           graphFont: document.querySelector('.note-graph-panel') && getComputedStyle(document.querySelector('.note-graph-panel')).fontFamily };
       }, { skin, mode, bg, scale });
       assert(!result.overflow, JSON.stringify({ skin, mode, bg, width, scale, result }));
       if (!minimal) assert.equal(result.graphFont, await page.evaluate(() => getComputedStyle(document.body).fontFamily), skin + ' preserves graph typography in the current language');
-      if (skin === 'claude' && bg === 'simple') {
-        const expected = mode === 'light' ? 'rgb(250, 249, 245)' : 'rgb(25, 25, 25)';
-        assert.equal(result.bg, expected);
-        assert(await page.evaluate(expected =>
-          ['.note-tree-pane', '.top-bar', '.note-links-pane'].every(selector =>
-            getComputedStyle(document.querySelector(selector)).backgroundColor === expected), expected), 'Claude chrome and document use one paper surface');
+      if (skin === 'claude') {
+        assert.equal(result.bg, 'rgba(0, 0, 0, 0)', 'Claude paints the paper once behind transparent content');
+        assert.equal(result.headBg, 'rgba(0, 0, 0, 0)');
+        assert.equal(result.paperImage, 'none');
+        assert.equal(result.paperRadius, width > 760 ? '20px' : '16px');
+        if (bg === 'simple') {
+          assert.equal(result.paperSurface, mode === 'light' ? 'rgb(250, 249, 245)' : 'rgb(25, 25, 25)');
+          const nav = mode === 'light' ? 'rgb(243, 242, 238)' : 'rgb(21, 21, 21)';
+          assert(await page.evaluate(({ nav, overlay }) => ['.note-tree-pane', '.top-bar'].every(s => getComputedStyle(document.querySelector(s)).backgroundColor === nav)
+            && getComputedStyle(document.querySelector('.note-links-pane')).backgroundColor === overlay,
+          { nav, overlay: width > 1120 ? nav : mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(36, 36, 36)' }));
+        } else assert(result.paperSurface.includes(mode === 'light' ? '0.8)' : '0.84)'), 'Claude scenic retains paper transparency');
+        const rules = await page.evaluate(() => ['.note-tree-pane', '.note-tree-pane > .note-pane-head', '.note-tab-bar', '.note-links-head', '.note-tree-foot'].map(selector => {
+          const style = getComputedStyle(document.querySelector(selector));
+          return { selector, bottom: style.borderBottomColor, right: style.borderRightColor };
+        }));
+        assert(rules.every(rule => [rule.bottom, rule.right].every(color => color === 'rgba(0, 0, 0, 0)')), JSON.stringify({ mode, bg, width, rules }));
+        assert.equal(await page.locator('.note-document-pane').evaluate(n => getComputedStyle(n, '::before').pointerEvents), 'none');
       }
       if (skin === 'sky') {
         if (bg === 'simple') {
@@ -233,14 +247,14 @@ async function run(browser, minimal) {
       if (skin === 'apple') {
         assert(result.font.includes('Relatum Inter')); assert.equal(result.paperImage, 'none');
         assert.equal(result.bg, 'rgba(0, 0, 0, 0)', 'the document surface paints once behind its transparent content');
-        assert.equal(result.appleRadius, width > 760 ? '20px' : '16px');
+        assert.equal(result.paperRadius, width > 760 ? '20px' : '16px');
         if (bg === 'simple') {
-          assert.equal(result.appleSurface, mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(28, 28, 30)');
+          assert.equal(result.paperSurface, mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(28, 28, 30)');
           const nav = mode === 'light' ? 'rgb(245, 245, 247)' : 'rgb(36, 36, 38)';
           assert(await page.evaluate(({ nav, overlay }) => ['.top-bar', '.note-tree-pane'].every(s => getComputedStyle(document.querySelector(s)).backgroundColor === nav)
             && getComputedStyle(document.querySelector('.note-links-pane')).backgroundColor === overlay,
           { nav, overlay: width > 1120 ? nav : mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(44, 44, 46)' }));
-        } else assert(result.appleSurface.includes(mode === 'light' ? '0.8)' : '0.84)'), 'Apple scenic retains transparency');
+        } else assert(result.paperSurface.includes(mode === 'light' ? '0.8)' : '0.84)'), 'Apple scenic retains transparency');
         const text = await page.locator('.note-live-editor-host > .cm-editor').evaluate(n => ({ size: parseFloat(getComputedStyle(n).fontSize), line: parseFloat(getComputedStyle(n).lineHeight) }));
         assert(Math.abs(text.size - 16 * scale / 100) < .1); assert(Math.abs(text.line / text.size - 1.75) < .01);
       }
@@ -292,6 +306,28 @@ async function run(browser, minimal) {
       const reading = await page.locator('.note-reading-content').evaluate(n => ({ font: getComputedStyle(n).fontFamily, rule: getComputedStyle(n.querySelector('h1')).borderBottomColor,
         size: parseFloat(getComputedStyle(n).fontSize), line: parseFloat(getComputedStyle(n).lineHeight) }));
       assert(reading.font.includes({ claude: 'Relatum Source Serif 4', sky: 'Relatum Open Sans', apple: 'Relatum Inter' }[skin])); assert.equal(reading.rule, 'rgba(0, 0, 0, 0)');
+      if (skin === 'claude') {
+        if (!minimal) {
+          await page.locator('.note-reading-content .note-quiz-carrier').scrollIntoViewIfNeeded();
+          await page.locator('.note-reading-content .note-quiz').waitFor();
+        }
+        const corners = await page.locator('.note-reading-content').evaluate(n => {
+          const style = selector => getComputedStyle(n.querySelector(selector));
+          return { code: style('pre.md-code').borderRadius, table: style('thead td').borderTopLeftRadius,
+            last: style('tbody tr:last-child td:last-child').borderBottomRightRadius,
+            callout: style('.md-callout').borderRadius, quiz: n.querySelector('.note-quiz') ? style('.note-quiz').borderRadius : null };
+        });
+        assert.deepEqual(corners, { code: '12px', table: '12px', last: '12px', callout: '12px', quiz: minimal ? null : '12px' });
+        const block = page.locator('.note-reading-content .note-color-block');
+        const color = await block.evaluate(n => getComputedStyle(n).backgroundColor);
+        const highlights = await page.locator('.note-highlight').evaluateAll(nodes => nodes.map(n => getComputedStyle(n).backgroundColor));
+        await page.evaluate(() => RelatumNoteTheme.apply('default'));
+        assert.equal(await block.evaluate(n => getComputedStyle(n).backgroundColor), color);
+        assert.deepEqual(await page.locator('.note-highlight').evaluateAll(nodes => nodes.map(n => getComputedStyle(n).backgroundColor)), highlights, 'Claude keeps the existing highlight palette');
+        await page.evaluate(() => RelatumNoteTheme.apply('claude'));
+        await page.locator('.note-reading-content h3').scrollIntoViewIfNeeded();
+        await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-claude-${mode}-blocks.png`) });
+      }
       if (skin === 'sky' || skin === 'apple') {
         assert(Math.abs(reading.line / reading.size - (skin === 'apple' ? 1.75 : 1.8)) < .01);
         const syntax = await page.locator('.note-reading-content').evaluate(n => {
@@ -331,7 +367,7 @@ async function run(browser, minimal) {
       const box = await popup.boundingBox(); assert(box.x >= 0 && box.y >= 0 && box.x + box.width <= 1441);
       await page.keyboard.press('Escape'); await dialog.locator('[data-settings-action="close"]').click(); await dialog.waitFor({ state: 'hidden' });
     }
-    for (const skin of ['sky', 'apple']) for (const mode of ['light', 'dark']) {
+    for (const skin of ['claude', 'sky', 'apple']) for (const mode of ['light', 'dark']) {
       await page.evaluate(skin => RelatumNoteTheme.apply(skin), skin);
       await page.evaluate(async mode => {
         document.body.dataset.startTheme = mode; await T.setViewMode('live');
@@ -339,6 +375,13 @@ async function run(browser, minimal) {
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       }, mode);
       await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-${skin}-${mode}-live.png`) });
+      if (skin === 'claude') {
+        const table = await page.locator('.note-table').first().evaluate(n => ({ overflow: getComputedStyle(n).overflow,
+          first: getComputedStyle(n.querySelector('td')).borderTopLeftRadius,
+          last: getComputedStyle(n.querySelector('tr:last-child td:last-child')).borderBottomRightRadius,
+          scroll: getComputedStyle(n.querySelector('.note-table-scroll')).overflowX }));
+        assert.deepEqual(table, { overflow: 'visible', first: '12px', last: '12px', scroll: 'auto' });
+      }
       if (skin === 'apple') {
         const table = await page.locator('.note-table').first().evaluate(n => {
           const first = n.querySelector('td'), last = n.querySelector('tr:last-child td:last-child');
@@ -356,7 +399,7 @@ async function run(browser, minimal) {
       const cellEditor = page.locator('.note-table .note-table-cell-input'); await cellEditor.waitFor();
       const cellLine = await cellEditor.evaluate(n => parseFloat(getComputedStyle(n).lineHeight) / parseFloat(getComputedStyle(n).fontSize));
       assert(Math.abs(cellLine - 1.55) < .01, 'body typography preserves the cell editor line metrics');
-      assert.equal(await cellEditor.evaluate(n => getComputedStyle(n).fontWeight), skin === 'apple' ? '600' : '700', 'header editing retains the rendered glyph widths');
+      assert.equal(await cellEditor.evaluate(n => getComputedStyle(n).fontWeight), { claude: '400', apple: '600', sky: '700' }[skin], 'header editing retains the rendered glyph widths');
       await page.keyboard.press('Escape');
       await page.evaluate(() => { const pos = T.editor.view.state.doc.toString().indexOf('![Sky'); T.editor.revealPosition(pos); });
       await page.locator('.note-live-image-frame img').waitFor();
@@ -365,7 +408,7 @@ async function run(browser, minimal) {
       await page.locator('.note-live-image-frame').click({ position: { x: 30, y: 30 } });
       await page.locator('[data-role="note-image-text-toggle"]').click();
       const tools = page.locator('[data-role="note-image-text-tools"]'); await tools.waitFor();
-      assert.equal(await tools.evaluate(n => getComputedStyle(n).backgroundColor), mode === 'light' ? 'rgb(255, 255, 255)' : (skin === 'apple' ? 'rgb(44, 44, 46)' : 'rgb(29, 45, 68)'));
+      assert.equal(await tools.evaluate(n => getComputedStyle(n).backgroundColor), mode === 'light' ? 'rgb(255, 255, 255)' : { claude: 'rgb(36, 36, 36)', apple: 'rgb(44, 44, 46)', sky: 'rgb(29, 45, 68)' }[skin]);
       await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-${skin}-${mode}-image-tools.png`) });
       await page.locator('[data-role="note-image-text-toggle"]').click();
       await page.setViewportSize({ width: 650, height: 980 }); await open();
@@ -375,7 +418,15 @@ async function run(browser, minimal) {
       assert(popup.x >= 0 && popup.x + popup.width <= 651);
       await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-${skin}-${mode}-narrow.png`) });
       await page.keyboard.press('Escape'); await dialog.locator('[data-settings-action="close"]').click(); await dialog.waitFor({ state: 'hidden' });
+      if (skin === 'claude') await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-claude-${mode}-narrow-workspace.png`) });
       await page.setViewportSize({ width: 1440, height: 980 });
+      if (skin === 'claude') {
+        await page.locator('[data-role="note-tree"] .note-tree-row[data-note-path="Main.md"]').click({ button: 'right' });
+        const menu = page.locator('.note-context-menu:visible'); await menu.waitFor();
+        assert.equal(await menu.evaluate(n => getComputedStyle(n).borderRadius), '14px');
+        await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-claude-${mode}-menu.png`) });
+        await page.keyboard.press('Escape');
+      }
     }
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.waitForFunction(() => !RelatumNoteSystem.motion.matches);
@@ -398,6 +449,8 @@ async function run(browser, minimal) {
     await page.evaluate(() => RelatumNoteTheme.apply('default'));
     assert.equal(await coloredRow.evaluate(n => getComputedStyle(n).backgroundColor), color, 'theme does not override file colors');
     await page.evaluate(() => RelatumNoteTheme.apply('sky'));
+    assert.equal(await coloredRow.evaluate(n => getComputedStyle(n).backgroundColor), color);
+    await page.evaluate(() => RelatumNoteTheme.apply('claude'));
     assert.equal(await coloredRow.evaluate(n => getComputedStyle(n).backgroundColor), color);
     await page.evaluate(() => RelatumNoteTheme.apply('apple'));
     assert.equal(await coloredRow.evaluate(n => getComputedStyle(n).backgroundColor), color);
@@ -423,19 +476,26 @@ async function run(browser, minimal) {
     assert(requests.every(u => u.startsWith(url + '/') || u.startsWith('blob:' + url + '/') || u.startsWith('data:')), 'all runtime resources stay local');
     await page.setViewportSize({ width: 1440, height: 980 });
     if (await dialog.isVisible()) { await dialog.locator('[data-settings-action="close"]').click(); await dialog.waitFor({ state: 'hidden' }); }
-    await page.evaluate(() => { RelatumNoteTheme.apply('apple'); document.body.dataset.startBackground = 'simple'; });
+    await page.evaluate(async () => { RelatumNoteTheme.apply('claude'); document.body.dataset.startBackground = 'simple'; await T.openNote('Nested.md'); });
+    for (const mode of ['light', 'dark']) for (const view of ['live', 'reading']) {
+      await page.evaluate(async ({ mode, view }) => { document.body.dataset.startTheme = mode; await T.setViewMode(view); }, { mode, view });
+      await pause(200);
+      if (view === 'reading') assert.equal(await page.locator('.note-reading-content .md-callout .md-callout').evaluate(n => getComputedStyle(n).borderRadius), '12px');
+      else assert.equal(await page.locator('.note-live-editor-host').evaluate(n => getComputedStyle(n).getPropertyValue('--note-callout-radius').trim()), '12px');
+      await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-claude-${mode}-nested-${view}.png`) });
+    }
     if (await page.locator('.note-tab').count()) await page.locator('.note-tab-close-all').click();
     await page.waitForFunction(() => !document.querySelector('.note-tab'));
-    for (const mode of ['light', 'dark']) {
-      await page.evaluate(mode => { document.body.dataset.startTheme = mode; }, mode); await pause(100);
-      await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-apple-${mode}-empty.png`) });
+    for (const skin of ['claude', 'apple']) for (const mode of ['light', 'dark']) {
+      await page.evaluate(({ skin, mode }) => { RelatumNoteTheme.apply(skin); document.body.dataset.startTheme = mode; }, { skin, mode }); await pause(100);
+      await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-${skin}-${mode}-empty.png`) });
       await open();
       const chrome = await dialog.evaluate(n => {
         const card = n.querySelector('.note-settings-theme'), s = getComputedStyle(card);
         return { border: s.borderTopWidth, shadow: s.boxShadow, radius: getComputedStyle(n).borderRadius };
       });
       assert.deepEqual(chrome, { border: '0px', shadow: 'none', radius: '24px' });
-      await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-apple-${mode}-settings.png`) });
+      await page.screenshot({ path: path.join(artifacts, `${minimal ? 'minimal' : 'full'}-${skin}-${mode}-settings.png`) });
       await dialog.locator('[data-settings-action="close"]').click(); await dialog.waitFor({ state: 'hidden' });
     }
     assert.deepEqual(errors, []);
