@@ -47,10 +47,11 @@ const cases = [
       const canvas = path.join(root, 'canvases', 'test.canvas');
       fs.writeFileSync(canvas, JSON.stringify({ nodes: [], edges: [] }));
       const quizFixture = ['notes-quiz', 'notes-quiz-off'].includes(name);
+      const cardsFixture = name === 'notes';
       const noteFixture = (!choices || choices.notes) && (quizFixture || ['full', 'notes', 'notes-mermaid', 'notes-mermaid-mixed-off'].includes(name));
       if (noteFixture) {
         fs.mkdirSync(path.join(root, 'notes'));
-        fs.writeFileSync(path.join(root, 'notes', 'Diagram.md'), quizFixture ? '# 选择题\n\n```quiz\n哪项正确？\n- [ ] 错误\n- [x] 正确\n```\n\n正文' : '# 图表\n\n```mermaid\nflowchart LR\n A[开始] --> B[完成]\n```\n\n正文', 'utf8');
+        fs.writeFileSync(path.join(root, 'notes', 'Diagram.md'), quizFixture ? '# 选择题\n\n```quiz\n哪项正确？\n- [ ] 错误\n- [x] 正确\n```\n\n正文' : cardsFixture ? '# 卡片组\n\n```cards\n### [book] 本地概念卡\n笔记权限下的卡片正文。\n```\n\n正文' : '# 图表\n\n```mermaid\nflowchart LR\n A[开始] --> B[完成]\n```\n\n正文', 'utf8');
       }
       if (name === 'career') {
         fs.mkdirSync(path.join(root, 'notes'));
@@ -113,7 +114,12 @@ const cases = [
         await sleep(2400); // includes the existing idle prewarm jobs
         if (noteFixture) {
           await page.waitForSelector('.note-live-editor-host .cm-editor');
-          if (quizFixture) {
+          if (cardsFixture) {
+            await page.waitForSelector('.note-cards-block .note-card');
+            assert(requests.some(url => url.endsWith('/note-cards.js')));
+            assert(requests.some(url => url.endsWith('/note-cards.css')));
+            assert(!requests.some(url => /note-mermaid|note-quiz|mathjax/.test(url)), 'plain cards do not load optional runtimes');
+          } else if (quizFixture) {
             if (enabled('notes.quiz')) { await page.waitForSelector('.note-live-rich-block.is-quiz .note-quiz'); await page.locator('.note-quiz [data-quiz-option="1"]').click(); assert.equal(await page.locator('.note-quiz').getAttribute('data-quiz-state'), 'correct'); }
             else { assert.equal(await page.locator('.note-quiz').count(), 0); assert(!requests.some(url => url.includes('note-quiz')), 'disabled quizzes stay cold'); }
           } else if (enabled('notes.mermaid')) await page.waitForSelector('.note-live-rich-block.is-mermaid [data-note-mermaid-rendered] svg');

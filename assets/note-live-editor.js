@@ -387,6 +387,27 @@
       + '<template class="note-quiz-raw">' + escape(block.source) + '</template><pre class="note-quiz-fallback" hidden>'
       + escape('```quiz\n' + block.source + '\n```') + '</pre></div>';
   }
+  // Cards share the existing fence selection/edit/clipboard machinery. Block
+  // IDs and height caches remain separate; Mermaid's renderer is never loaded.
+  const editableFence = spec => !!spec && (spec.kind === 'mermaid' || spec.kind === 'cards');
+  function noteFence(block) {
+    return block.language === 'cards' ? window.RelatumNoteCards?.render(block.source)?.html ?? null : quizFence(block);
+  }
+  function attachNoteCards(root, options = {}) {
+    if (options.source === undefined && !root.matches('.note-cards')) {
+      const bindings = Array.from(root.querySelectorAll('.note-cards'), card => attachNoteCards(card, options));
+      return { resume() { bindings.forEach(binding => binding.resume()); }, destroy() { bindings.forEach(binding => binding.destroy()); } };
+    }
+    return window.RelatumNoteCards.attach(root, Object.assign({
+      async typeset(node, current) {
+        const nodes = node.matches('.note-cards') ? [node] : Array.from(node.querySelectorAll('.note-cards'));
+        const math = await ensureMathJax();
+        if (!current()) return;
+        try { await math.typesetPromise(nodes); }
+        finally { if (!current()) math.typesetClear?.(nodes); }
+      },
+    }, options));
+  }
   function attachNoteQuiz(root, options) {
     const entries = new Map(); let disposed = false, pageActive = true, isolatedSession = null, observer = null, mutation = null;
     const foreground = () => !disposed && pageActive && root.isConnected && quizEnabled() && !root.closest('[hidden]')
@@ -800,7 +821,7 @@
     if (!entry) return;
     dom.classList.add('note-live-callout-layered');
     dom.style.cssText += layeredCalloutStyle(entry.chain, model.layout, view.state.doc.lineAt(spec.from).number,
-      view.state.doc.lineAt(Math.max(spec.from, spec.to - 1)).number, dom.classList.contains('note-live-math-preview') || dom.classList.contains('note-live-mermaid-preview'));
+      view.state.doc.lineAt(Math.max(spec.from, spec.to - 1)).number, dom.classList.contains('note-live-math-preview') || dom.classList.contains('note-live-mermaid-preview') || dom.classList.contains('note-live-cards-preview'));
   }
 
   const frontmatterCache = new WeakMap();
@@ -1076,7 +1097,7 @@
           const quote = window.MarkdownMini.quoteLine(firstLine.text);
           const opener = fenceStart(quote.text);
           if (!opener) return false;
-          const kind = opener.language === 'quiz' && quizEnabled() ? 'quiz' : opener.language === 'derive' ? 'derive' : mermaidEnabled() && MERMAID_LANGS.has(opener.language) ? 'mermaid' : '';
+          const kind = opener.language === 'cards' && window.RelatumNoteCards ? 'cards' : opener.language === 'quiz' && quizEnabled() ? 'quiz' : opener.language === 'derive' ? 'derive' : mermaidEnabled() && MERMAID_LANGS.has(opener.language) ? 'mermaid' : '';
           const limit = kind === 'mermaid' ? MERMAID_LIMIT : RICH_BLOCK_LIMIT;
           if (!kind || node.to - firstLine.from > limit || !isFenceEnd(window.MarkdownMini.stripQuote(lastLine.text, quote.depth), opener)) return false;
           if (!rangeHasLongLine(doc, node.from, node.to)) {
@@ -1084,6 +1105,7 @@
             const source = doc.sliceString(from, node.to);
             const renderSource = quote.depth ? source.split('\n').map(line => window.MarkdownMini.stripQuote(line, quote.depth)).join('\n') : source;
             if (kind === 'mermaid' && !fencedCodeBody(renderSource).trim()) return false;
+            if (kind === 'cards' && !window.RelatumNoteCards.parse(fencedCodeBody(renderSource)).valid) return false;
             push({ from, to: node.to, kind, source, language: opener.language, renderSource });
           }
           return false;
@@ -1476,13 +1498,14 @@
     const epoch = coordinator.epoch, doc = view.state.doc;
     const current = () => dom.isConnected && !dom.closest('[hidden]') && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
       && epoch === coordinator.epoch && view.state.doc === doc && !compositionActive(view)
-      && coordinator.spec(view, id)?.kind === 'mermaid';
+      && editableFence(coordinator.spec(view, id));
     view.requestMeasure({ key: dom, read() { return current() ? dom.getBoundingClientRect().height / view.scaleY : 0; },
       write(height) {
         if (!height || !current()) return;
         Promise.resolve().then(() => {
           if (!current()) return;
-          const heights = coordinator.mermaidHeights ||= new Map(), previous = heights.get(id);
+          const key = coordinator.spec(view, id).kind === 'cards' ? 'cardsHeights' : 'mermaidHeights';
+          const heights = coordinator[key] ||= new Map(), previous = heights.get(id);
           if (previous != null && Math.abs(previous - height) < .5) return;
           heights.delete(id); heights.set(id, height);
           while (heights.size > 32) heights.delete(heights.keys().next().value);
@@ -1494,7 +1517,7 @@
   }
 
   class MermaidEditPreviewWidget extends WidgetType {
-    constructor(spec, coordinator) { super(); this.spec = spec; this.coordinator = coordinator; this.epoch = coordinator.epoch; this.layoutHeight = coordinator.mermaidHeights?.get(spec.id) || 70; }
+    constructor(spec, coordinator) { super(); this.spec = spec; this.coordinator = coordinator; this.epoch = coordinator.epoch; this.layoutHeight = coordinator[spec.kind === 'cards' ? 'cardsHeights' : 'mermaidHeights']?.get(spec.id) || 70; }
     eq(other) {
       return other.epoch === this.epoch && other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint
         && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast && other.spec.calloutContext === this.spec.calloutContext
@@ -1503,7 +1526,7 @@
     get estimatedHeight() { return this.layoutHeight; }
     toDOM(view) {
       const dom = document.createElement('div'); dom.contentEditable = 'false';
-      dom.addEventListener('mousedown', event => { if (!event.button) event.preventDefault(); });
+      dom.addEventListener('mousedown', event => { if (!event.button && !event.target.closest('a')) event.preventDefault(); });
       this.updateDOM(dom, view); return dom;
     }
     updateDOM(dom, view) {
@@ -1524,7 +1547,7 @@
           entry = { owner: this, dom, spec, epoch: coordinator.epoch, control: null };
           this.entries.set(dom, entry); dom.__relatumMermaidPreview = entry;
           dom.innerHTML = safeIsolatedResult(spec.renderSource || spec.source).html;
-          entry.control = attachNoteMermaid(dom, { mode: 'live', editing: true, historyKey: entry.epoch + ':' + spec.id,
+          entry.control = (spec.kind === 'cards' ? attachNoteCards : attachNoteMermaid)(dom, { mode: 'live', editing: true, onLink: coordinator.onCardsLink, source: fencedCodeBody(spec.renderSource || spec.source), historyKey: entry.epoch + ':' + spec.id,
             isCurrent: () => {
               if (this.disposed || entry.epoch !== coordinator.epoch || this.entries.get(dom) !== entry || compositionActive(this.view)) return false;
               const value = this.view.state.field(coordinator.field, false), current = value?.byId.get(entry.spec.id);
@@ -1539,8 +1562,8 @@
           });
         }
         entry.spec = spec;
-        dom.className = 'note-live-rich-block is-mermaid note-live-mermaid-preview';
-        dom.setAttribute('aria-label', document.documentElement.lang === 'en' ? 'Diagram preview' : '图表预览');
+        dom.className = spec.kind === 'cards' ? 'note-live-rich-block is-cards note-live-cards-preview' : 'note-live-rich-block is-mermaid note-live-mermaid-preview';
+        dom.setAttribute('aria-label', spec.kind === 'cards' ? (document.documentElement.lang === 'en' ? 'Cards preview' : '卡片组预览') : (document.documentElement.lang === 'en' ? 'Diagram preview' : '图表预览'));
         if (spec.calloutType) {
           const descriptor = window.MarkdownMini.noteBlock(spec.calloutType);
           dom.classList.add('note-block-math'); dom.classList.toggle('note-color-block', !!descriptor.color);
@@ -1548,7 +1571,7 @@
         } else dom.removeAttribute('style');
         decorateNestedCalloutWidget(dom, this.view, spec, coordinator);
         const height = coordinator.mermaidHeights?.get(spec.id);
-        if (height && !dom.querySelector('.note-mermaid-stage > svg')) dom.style.minHeight = height + 'px';
+        if (spec.kind !== 'cards' && height && !dom.querySelector('.note-mermaid-stage > svg')) dom.style.minHeight = height + 'px';
         entry.control.update(fencedCodeBody(spec.renderSource || spec.source), spec.language);
       }
       detach(dom) {
@@ -2638,7 +2661,7 @@
     if (!markdownMini || typeof markdownMini.renderResult !== 'function') {
       return { html: '', features: { math: false, mermaid: false }, error: true };
     }
-    return markdownMini.renderResult(source, Object.assign({ localImages: true, noteTags: true, noteBlocks: true, noteSyntax: true, mermaid: mermaidEnabled() }, options));
+    return markdownMini.renderResult(source, Object.assign({ localImages: true, noteTags: true, noteBlocks: true, noteSyntax: true, mermaid: mermaidEnabled(), renderFence: noteFence }, options));
   }
 
   function releaseReadingDocument(host) {
@@ -2647,6 +2670,7 @@
     host.__relatumReadingMermaid?.destroy();
     delete host.__relatumReadingMermaid;
     host.__relatumReadingQuiz?.destroy(); delete host.__relatumReadingQuiz;
+    host.__relatumReadingCards?.destroy(); delete host.__relatumReadingCards;
     if (host.__relatumReadingCode) host.__relatumReadingCode.destroy();
     delete host.__relatumReadingCode;
     host.querySelectorAll('[data-canvas-source]').forEach(frame => frame.__noteCanvas?.destroy());
@@ -2700,7 +2724,7 @@
       return position - shift;
     };
     const readingSyntax = window.MarkdownMini.noteSyntax.scan(renderedSource);
-    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts: readingCallouts(renderedSource), noteSourcePosition, noteContext: readingSyntax, renderFence: quizFence });
+    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts: readingCallouts(renderedSource), noteSourcePosition, noteContext: readingSyntax, renderFence: noteFence });
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
@@ -2733,7 +2757,7 @@
       let collapsed = session ? session.get(position, block.dataset.fold === '-') : block.dataset.fold === '-';
       const refresh = () => { if (body) body.hidden = collapsed; button.setAttribute('aria-expanded', String(!collapsed)); button.setAttribute('aria-label', collapsed ? 'Expand callout' : 'Collapse callout'); };
       refresh();
-      button.addEventListener('click', () => { collapsed = !collapsed; if (session) session.set(position, collapsed); refresh(); host.__relatumReadingQuiz?.sync(); typesetVisibleMath(); });
+      button.addEventListener('click', () => { collapsed = !collapsed; if (session) session.set(position, collapsed); refresh(); host.__relatumReadingQuiz?.sync(); host.__relatumReadingCards?.resume(); typesetVisibleMath(); });
     });
     // Notes present every table row as data, including the first Markdown row.
     content.querySelectorAll('table th').forEach((header) => {
@@ -2804,6 +2828,7 @@
     if (content.querySelector('.note-quiz-carrier')) host.__relatumReadingQuiz = attachNoteQuiz(content, {
       notePath, isCurrent: current, onLink: safeOptions.onOpenExternal,
     });
+    if (content.querySelector('.note-cards')) host.__relatumReadingCards = attachNoteCards(content, { isCurrent: current, onLink: safeOptions.onOpenExternal });
     host.__relatumReadingCode = prepareReadingCode(content, current);
     if (result.features && result.features.mermaid && mermaidEnabled()) {
       window.RelatumNoteMermaid?.reserve?.(content, { mode: 'reading' });
@@ -2829,7 +2854,7 @@
         return from + Math.min(offset, closer);
       }
     }
-    if (spec && (spec.kind === 'mermaid' || spec.kind === 'derive' || spec.kind === 'quiz')) {
+    if (spec && (editableFence(spec) || spec.kind === 'derive' || spec.kind === 'quiz')) {
       const newline = source.indexOf('\n');
       if (newline >= 0) return from + newline + 1 + window.MarkdownMini.quoteLine(source.slice(newline + 1).split('\n', 1)[0]).prefix.length;
     }
@@ -2845,7 +2870,7 @@
   class MermaidBlockWidget extends WidgetType {
     constructor(spec, notePath, options, coordinator, selected) {
       super(); Object.assign(this, { spec, notePath, options, coordinator, selected: !!selected, epoch: coordinator.epoch });
-      this.layoutHeight = coordinator.mermaidHeights?.get(spec.id) || 70;
+      this.layoutHeight = coordinator[spec.kind === 'cards' ? 'cardsHeights' : 'mermaidHeights']?.get(spec.id) || 70;
     }
     eq(other) {
       return other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint && other.spec.source === this.spec.source
@@ -2858,10 +2883,10 @@
       const entry = dom.__relatumMermaidBlock = { widget: this, control: null };
       dom.innerHTML = safeIsolatedResult(this.spec.renderSource || this.spec.source).html;
       dom.addEventListener('mousedown', event => {
-        if (event.target.closest('[data-note-mermaid-control]')) return;
+        if (event.target.closest('[data-note-mermaid-control], a')) return;
         if (event.button !== 0 && event.button !== 2) return;
         event.preventDefault(); event.stopPropagation();
-        const widget = entry.widget, diagram = dom.querySelector('.mermaid-diagram'), rect = diagram?.getBoundingClientRect();
+        const widget = entry.widget, diagram = dom.querySelector('.mermaid-diagram, .note-cards'), rect = diagram?.getBoundingClientRect();
         if (event.button === 0 && rect && (event.clientY < rect.top || event.clientY > rect.bottom)) {
           widget.options.onMermaidBodyRequest(widget.spec.id, event.clientY < rect.top ? 'before' : 'after'); return;
         }
@@ -2870,14 +2895,14 @@
       });
       dom.addEventListener('dblclick', event => { event.preventDefault(); event.stopPropagation(); });
       dom.addEventListener('keydown', event => {
-        if (event.key !== 'Enter' || event.target.closest('[data-note-mermaid-control]')) return;
+        if (event.key !== 'Enter' || event.target.closest('[data-note-mermaid-control], a')) return;
         event.preventDefault(); event.stopPropagation(); entry.widget.options.onMermaidEdit(entry.widget.spec.id);
       });
       const current = () => {
         const widget = entry.widget, spec = widget.coordinator.spec(view, widget.spec.id);
         return dom.isConnected && widget.coordinator.epoch === widget.epoch && spec?.source === widget.spec.source && !compositionActive(view);
       };
-      entry.control = attachNoteMermaid(dom, { mode: 'live', historyKey: this.epoch + ':' + this.spec.id,
+      entry.control = (this.spec.kind === 'cards' ? attachNoteCards : attachNoteMermaid)(dom, { mode: 'live', onLink: target => this.options.onOpenExternal(normalizedImageTarget(target)), source: fencedCodeBody(this.spec.renderSource || this.spec.source), historyKey: this.epoch + ':' + this.spec.id,
         isCurrent: current, whenSettled: () => runWhenInputSettled(view, () => true),
         onLayout: () => runWhenInputSettled(view, () => {
           if (!current()) return;
@@ -2890,10 +2915,11 @@
       const entry = dom.__relatumMermaidBlock, old = entry?.widget;
       if (!old || old.spec.id !== this.spec.id || old.epoch !== this.epoch || old.notePath !== this.notePath) return false;
       entry.widget = this;
-      dom.className = 'note-live-rich-block is-mermaid note-mermaid-block';
+      dom.className = this.spec.kind === 'cards' ? 'note-live-rich-block is-cards note-cards-block' : 'note-live-rich-block is-mermaid note-mermaid-block';
       dom.classList.toggle('is-selected', this.selected);
-      dom.setAttribute('aria-label', document.documentElement.lang === 'en'
-        ? 'Diagram: click to select, double-click or Enter to edit' : '图表：单击选择，双击或 Enter 编辑源码');
+      dom.setAttribute('aria-label', this.spec.kind === 'cards'
+        ? (document.documentElement.lang === 'en' ? 'Cards: click to select, double-click or Enter to edit' : '卡片组：单击选择，双击或 Enter 编辑源码')
+        : (document.documentElement.lang === 'en' ? 'Diagram: click to select, double-click or Enter to edit' : '图表：单击选择，双击或 Enter 编辑源码'));
       if (this.spec.calloutType) {
         const descriptor = window.MarkdownMini.noteBlock(this.spec.calloutType);
         dom.classList.add('note-block-math'); dom.classList.toggle('note-color-block', !!descriptor.color);
@@ -2901,7 +2927,7 @@
       } else dom.removeAttribute('style');
       decorateNestedCalloutWidget(dom, view, this.spec, this.coordinator);
       const height = this.coordinator.mermaidHeights?.get(this.spec.id);
-      if (height && !dom.querySelector('.note-mermaid-stage > svg')) dom.style.minHeight = height + 'px';
+      if (this.spec.kind !== 'cards' && height && !dom.querySelector('.note-mermaid-stage > svg')) dom.style.minHeight = height + 'px';
       entry.control?.update(fencedCodeBody(this.spec.renderSource || this.spec.source), this.spec.language);
       return true;
     }
@@ -3355,8 +3381,8 @@
     specs.forEach((spec) => {
       // Opening a menu or switching native focus must not collapse an active
       // diagram source. Leaving its source range (or explicit Esc) ends editing.
-      if (!focused && !composing && !(spec.kind === 'mermaid' && previous?.has(spec.id))) return;
-      if (spec.kind === 'mermaid') {
+      if (!focused && !composing && !(editableFence(spec) && previous?.has(spec.id))) return;
+      if (editableFence(spec)) {
         const main = state.selection.main;
         // Whole-block and cross-block ranges select rendered diagrams. A text
         // range within an already open source editor keeps that editor open.
@@ -3372,7 +3398,7 @@
   function selectedBlockMermaidIds(specs, state) {
     const main = state.selection.main;
     return new Set(state.selection.ranges.length === 1 && !main.empty
-      ? specs.filter(spec => spec.kind === 'mermaid' && main.from === spec.from && main.to === spec.to).map(spec => spec.id) : []);
+      ? specs.filter(spec => editableFence(spec) && main.from === spec.from && main.to === spec.to).map(spec => spec.id) : []);
   }
 
   function selectedBlockImageIds(specs, state) {
@@ -3395,7 +3421,7 @@
   }
 
   function blockWidget(spec, path, options, coordinator, selected) {
-    if (spec.kind === 'mermaid') return new MermaidBlockWidget(spec, path, options, coordinator, selected);
+    if (editableFence(spec)) return new MermaidBlockWidget(spec, path, options, coordinator, selected);
     if (spec.kind === 'quiz') return new QuizBlockWidget(spec, path, options, coordinator, selected);
     if (spec.kind === 'canvas') return new CanvasBlockWidget(spec, path, options, coordinator, selected);
     return spec.kind === 'table' && options.tableController && spec.tableModel
@@ -3408,7 +3434,7 @@
     // to deliver native input without a keydown to the selected image text box.
     const imageTextInput = spec.kind === 'image' && spec.from === 0 && spec.to === state.doc.length
       && options.imageTextController?.active;
-    return !imageTextInput && (spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz' || spec.kind === 'table' || spec.kind === 'mermaid');
+    return !imageTextInput && (spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz' || spec.kind === 'table' || editableFence(spec));
   }
 
   function blockAtomicRange(spec, state) {
@@ -3495,7 +3521,7 @@
       && activeIds.has(spec.id) && !projection.hidden.has(spec.id) && editableMathSource(spec)).map(spec => Decoration.widget({
       widget: new MathEditPreviewWidget(spec, coordinator), block: true, side: 1, blockId: spec.id, mathPreview: true,
     }).range(spec.to));
-    const mermaidPreviews = (specs, activeIds, projection) => specs.filter(spec => spec.kind === 'mermaid'
+    const mermaidPreviews = (specs, activeIds, projection) => specs.filter(spec => editableFence(spec)
       && activeIds.has(spec.id) && !projection.hidden.has(spec.id) && fencedCodeBody(spec.renderSource || spec.source).trim()).map(spec => Decoration.widget({
       widget: new MermaidEditPreviewWidget(spec, coordinator), block: true, side: 1, blockId: spec.id, mermaidPreview: true,
     }).range(spec.to));
@@ -3573,12 +3599,12 @@
 
         const byId = specs === value.specs ? value.byId : new Map(specs.map((spec) => [spec.id, spec]));
         const activeIds = activeBlockIds(specs, transaction.state, focused, false, value.activeIds);
-        mermaidEdits.forEach(id => { if (byId.get(id)?.kind === 'mermaid' && focused) activeIds.add(id); });
+        mermaidEdits.forEach(id => { if (editableFence(byId.get(id)) && focused) activeIds.add(id); });
         const selectedImageIds = selectedBlockImageIds(specs, transaction.state);
         const selectedMermaidIds = selectedBlockMermaidIds(specs, transaction.state);
         const refresh = new Set();
         quizLayouts.forEach(id => { if (byId.get(id)?.kind === 'quiz') refresh.add(id); });
-        mermaidLayouts.forEach(id => { if (byId.get(id)?.kind === 'mermaid') refresh.add(id); });
+        mermaidLayouts.forEach(id => { if (editableFence(byId.get(id))) refresh.add(id); });
         if (foldChanged) specs.forEach(spec => refresh.add(spec.id));
         if (selectionChanged || focused !== value.focused) {
           // Only entering/leaving a header can change its block projection.
@@ -4054,7 +4080,7 @@
         if (/^(?:FencedCode|CodeBlock|IndentedCode)$/.test(range.kind)) {
           // A projected diagram or quiz owns the entire fence. Decorating its
           // hidden first line leaves an empty code-colored stripe above it.
-          if (blockSpecs.some(spec => (spec.kind === 'mermaid' || spec.kind === 'quiz') && blockIsProjected(spec, blockValue.activeIds)
+          if (blockSpecs.some(spec => (editableFence(spec) || spec.kind === 'quiz') && blockIsProjected(spec, blockValue.activeIds)
               && spec.from <= range.from && spec.to >= range.to)) return;
           const blockFirst = view.state.doc.lineAt(range.from).number;
           const blockLast = view.state.doc.lineAt(Math.max(range.from, range.to - 1)).number;
@@ -4951,7 +4977,7 @@
     const metadata = documentFrontmatter(state.doc);
     if (metadata && position >= metadata.from && position <= metadata.to) return true;
     const line = state.doc.lineAt(position);
-    return scanBlockSpecs(state, line.from, line.to, []).some(spec => spec.from <= position && spec.to >= position && /^(?:math|mermaid|derive|quiz|canvas|image|table)$/.test(spec.kind));
+    return scanBlockSpecs(state, line.from, line.to, []).some(spec => spec.from <= position && spec.to >= position && /^(?:math|mermaid|cards|derive|quiz|canvas|image|table)$/.test(spec.kind));
   }
   function noteTab(view, backward) {
     if (compositionActive(view) || view.state.readOnly) return true;
@@ -5537,6 +5563,7 @@
     safeOptions.imageTextController = imageTextController;
     safeOptions.imageTextSizer = imageTextSizer;
     safeOptions.coordinator = coordinator;
+    coordinator.onCardsLink = target => safeOptions.onOpenExternal(normalizedImageTarget(target));
     safeOptions.decorateBlock = decorateNestedCalloutWidget;
     safeOptions.renderTableCell = (value) => safeIsolatedResult(window.MarkdownTable.serialize({ header: [value], rows: [], align: [''] }),
       { noteContext: documentNoteSyntax, noteFootnoteBody: true });
@@ -5618,7 +5645,7 @@
           || !view.dom.isConnected || host.closest('[hidden]')
           || host.closest('.note-workspace') && document.body.dataset.startWorkspace !== 'notes') return null;
       const spec = coordinator.spec(view, id);
-      return spec?.kind === 'mermaid' ? spec : null;
+      return editableFence(spec) ? spec : null;
     }
     function routeMermaid(id, callback) {
       const operation = ++mermaidOperation, epoch = coordinator.epoch, path = currentPath;
@@ -5662,7 +5689,7 @@
     function finishMermaidEdit(view) {
       if (sourceMode || inputPending()) return false;
       const blocks = view.state.field(blockField, false);
-      const spec = blocks?.specs.find(spec => spec.kind === 'mermaid' && blocks.activeIds.has(spec.id));
+      const spec = blocks?.specs.find(spec => editableFence(spec) && blocks.activeIds.has(spec.id));
       if (!spec) return false;
       safeOptions.onMermaidSelect(spec.id); return true;
     }
@@ -5670,7 +5697,7 @@
       const spec = selectedMermaid(view); if (!spec || view.state.readOnly) return false;
       cancelMermaidOperation();
       view.dispatch({ changes: { from: spec.from, to: spec.to }, selection: EditorSelection.cursor(spec.from),
-        userEvent: 'delete.mermaid', annotations: CM.isolateHistory.of('full'), scrollIntoView: true });
+        userEvent: 'delete.' + spec.kind, annotations: CM.isolateHistory.of('full'), scrollIntoView: true });
       return true;
     }
     function copySelectedMermaid(event, view, cut) {
@@ -5684,7 +5711,7 @@
     function enterMermaidBoundary(view, backward) {
       if (sourceMode || inputPending() || view.state.selection.ranges.length !== 1 || !view.state.selection.main.empty) return false;
       const head = view.state.selection.main.head, line = view.state.doc.lineAt(head), blocks = view.state.field(blockField, false);
-      const spec = blocks?.specs.find(spec => spec.kind === 'mermaid' && !blocks.activeIds.has(spec.id) && (backward
+      const spec = blocks?.specs.find(spec => editableFence(spec) && !blocks.activeIds.has(spec.id) && (backward
         ? head === spec.to || head === spec.to + 1 && head === line.from
         : head === spec.from || head === spec.from - 1 && head === line.to));
       if (!spec) return false;
@@ -5693,7 +5720,7 @@
     function mermaidBodyBoundary(view) {
       if (sourceMode || inputPending() || view.state.selection.ranges.length !== 1 || !view.state.selection.main.empty) return null;
       const head = view.state.selection.main.head, blocks = view.state.field(blockField, false);
-      const spec = blocks?.specs.find(spec => spec.kind === 'mermaid' && !blocks.activeIds.has(spec.id) && (head === spec.from || head === spec.to));
+      const spec = blocks?.specs.find(spec => editableFence(spec) && !blocks.activeIds.has(spec.id) && (head === spec.from || head === spec.to));
       return spec ? { id: spec.id, side: head === spec.from ? 'before' : 'after' } : null;
     }
     function enterTableBoundary(view, backward) {
@@ -6058,6 +6085,11 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (update.geometryChanged && !inputSession.pending()) host.querySelectorAll('.note-cards-block, .note-live-cards-preview').forEach(dom => {
+            const entry = dom.__relatumMermaidBlock || dom.__relatumMermaidPreview;
+            const spec = entry?.widget?.spec || entry?.spec;
+            if (spec) measureMermaid(update.view, dom, coordinator, spec.id);
+          });
           if (update.docChanged && quizSession) {
             const ranges = []; update.changes.iterChangedRanges((from, to) => ranges.push({ from, to }));
             quizSession.map(currentPath, (position, assoc) => update.changes.mapPos(position, assoc), ranges);
@@ -6378,6 +6410,7 @@
       coordinator.epoch += 1;
       coordinator.folds.clear(); coordinator.foldPositions.clear(); coordinator.records = [];
       coordinator.mermaidHeights?.clear();
+      coordinator.cardsHeights?.clear();
       coordinator.quizHeights?.clear();
       imageTextController.setActive(false);
       if (pendingSourceMode !== null) { sourceMode = pendingSourceMode; pendingSourceMode = null; }
@@ -6731,6 +6764,9 @@
       scrollRestoreSeq++;
       const target = clamp(position, 0, view.state.doc.length);
       const effects = [];
+      const blocks = view.state.field(blockField, false);
+      const visual = blocks?.specs.find(spec => spec.kind === 'cards' && spec.from <= target && spec.to >= target);
+      if (visual) effects.push(focusEffect.of(true), mermaidEditEffect.of(visual.id));
       if (options?.unfold) for (const spec of coordinator.records) {
         if (spec.kind === 'callout' && spec.from <= target && spec.to >= target) {
           coordinator.foldPositions.set(spec.from, false); effects.push(calloutFoldEffect.of({ id: spec.id, collapsed: false }));
@@ -6890,7 +6926,7 @@
     richBlockEditPosition,
   };
   window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath };
-  Object.assign(window.RelatumNoteLiveEditor, { quizFence, attachQuiz: attachNoteQuiz,
+  Object.assign(window.RelatumNoteLiveEditor, { quizFence, renderFence: noteFence, attachCards: attachNoteCards, attachQuiz: attachNoteQuiz,
     remapQuiz(source, destination) { quizSession?.remap(source, destination); } });
   window.RelatumNoteLiveEditor.releaseReadingDocument = releaseReadingDocument;
 })();

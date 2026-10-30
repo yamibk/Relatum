@@ -91,7 +91,7 @@
   const themeSelect = $('[data-role="note-theme"]');
   const GUIDE_TOPIC_KEY = 'canvas:noteGuideTopic:v1';
   let guideTopic = 'callout';
-  try { const saved = localStorage.getItem(GUIDE_TOPIC_KEY); if (['callout', 'markdown', 'mermaid', 'quiz'].includes(saved)) guideTopic = saved; } catch (_) {}
+  try { const saved = localStorage.getItem(GUIDE_TOPIC_KEY); if (['callout', 'markdown', 'mermaid', 'quiz', 'cards'].includes(saved)) guideTopic = saved; } catch (_) {}
   let liveEditor = null;
   let noteBrowser = null, browserLoader = null, browserSequence = 0, browserIntent = false;
   let browserFolderIndex = null, browserFolderSize = -1, browserFolderPaths = [];
@@ -1051,7 +1051,7 @@
   });
 
   function applyGuideTopic(value, persist) {
-    const next = ['callout', 'markdown', 'mermaid', 'quiz'].includes(value) ? value : 'callout';
+    const next = ['callout', 'markdown', 'mermaid', 'quiz', 'cards'].includes(value) ? value : 'callout';
     guideTopic = next;
     if (persist) try { if (localStorage.getItem(GUIDE_TOPIC_KEY) !== next) localStorage.setItem(GUIDE_TOPIC_KEY, next); } catch (_) {}
     settingsPop?.querySelectorAll('[name="note-guide-topic"]').forEach(input => { input.checked = input.value === next; });
@@ -1089,6 +1089,7 @@
       markdown: ['常用排版与笔记语法', 'Everyday formatting and note syntax'],
       mermaid: ['用文字绘制常用图表', 'Create diagrams using text'],
       quiz: ['交互单选题与答案解析', 'Interactive questions and explanations'],
+      cards: ['并列概念、图标与轻量卡片排版', 'Concept cards, icons and lightweight layouts'],
     };
     function translateGuideOptions() {
       const focusedTopic = guide.contains(document.activeElement) ? document.activeElement.value : '';
@@ -1097,7 +1098,7 @@
         const label = document.createElement('label'); label.className = 'relatum-settings-guide-option';
         const input = document.createElement('input'); input.type = 'radio'; input.name = 'note-guide-topic'; input.value = id; input.checked = guideTopic === id;
         const body = document.createElement('span'), title = document.createElement('strong'), description = document.createElement('small');
-        title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz' }[id]; description.textContent = names[language() === 'en' ? 1 : 0];
+        title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: language() === 'en' ? 'Cards' : '卡片组' }[id]; description.textContent = names[language() === 'en' ? 1 : 0];
         body.append(title, description); label.append(input, body); guide.append(label);
       });
       const hint = document.createElement('p'); hint.textContent = language() === 'en' ? 'Choose what the Guide sidebar displays. Changes apply immediately.' : '选择右侧“引导”面板展示的内容，更改立即生效。'; guide.append(hint);
@@ -4827,7 +4828,8 @@
     guideLoader.then(() => {
       if (sequence !== guideSequence || !noteWorkspaceVisible() || guideContent.hidden || !root.classList.contains('links-overlay-open')) return;
       guideController ||= window.RelatumNoteGuide.create({ host: guideContent, language, isCurrent: () => noteWorkspaceVisible() && !guideContent.hidden && root.classList.contains('links-overlay-open'), whenSettled: whenEditorInputSettled, notify: showToast,
-        quizFence: block => window.RelatumNoteLiveEditor.quizFence(block), attachQuiz: (host, options) => window.RelatumNoteLiveEditor.attachQuiz(host, options) });
+        quizFence: block => window.RelatumNoteLiveEditor.quizFence(block), renderFence: block => window.RelatumNoteLiveEditor.renderFence(block),
+        attachCards: (host, options) => window.RelatumNoteLiveEditor.attachCards(host, options), attachQuiz: (host, options) => window.RelatumNoteLiveEditor.attachQuiz(host, options) });
       guideController.show(guideTopic);
     }).catch(error => { if (sequence === guideSequence && noteWorkspaceVisible()) showToast(error.message, 'error'); });
   }

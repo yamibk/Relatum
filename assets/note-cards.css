@@ -1,0 +1,18 @@
+/* Intrinsic width follows the note column, including sidebar changes. */
+.note-cards { container-type: inline-size; width: 100%; min-width: 0; color: var(--text); }
+.note-cards > .note-cards-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@container (width < 560px) { .note-cards > .note-cards-grid { grid-template-columns: minmax(0, 1fr); } }
+.note-cards .note-card { box-sizing: border-box; min-width: 0; padding: 16px; border: 1px solid var(--border, rgba(128,128,128,.2)); border-radius: 12px; background: var(--note-theme-paper, var(--bg)); overflow-wrap: anywhere; }
+.note-cards .note-card-icon { display: block; width: 20px; height: 20px; margin-bottom: 8px; color: var(--text-secondary); }
+.note-cards .note-card-title { margin: 0; color: var(--text); font-size: 1em; font-weight: 600; line-height: 1.4; }
+.note-cards .note-card-body { margin-top: 6px; font-size: .9em; line-height: 1.6; color: var(--text-secondary); }
+.note-cards .note-card-body:empty { display: none; }
+.note-cards .note-card-body > :is(p,ul,ol) { margin: 0 0 .65em; }
+.note-cards .note-card-body > :last-child { margin-bottom: 0; }
+.note-cards .note-card-body :is(ul,ol) { padding-left: 1.4em; }
+.note-cards .note-card-body li { margin: 0; }
+.note-cards a[href] { color: var(--note-live-link, #4183c4); text-decoration: underline; }
+.note-cards code { font-family: "Cascadia Mono", Consolas, monospace; font-size: .9em; }
+.note-live-rich-block.is-cards { width: 100%; margin: 0; padding-block: 4px; }
+.note-cards-block { position: relative; cursor: default; }
+.note-cards-block.is-selected { outline: 2px solid var(--note-theme-accent, #4183c4); outline-offset: -2px; border-radius: 12px; }

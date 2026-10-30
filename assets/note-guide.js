@@ -19,7 +19,7 @@
   function create(options) {
     const { host } = options, positions = new Map();
     host.dataset.i18nManaged = 'true';
-    let topic = '', renderedLanguage = '', active = false, sequence = 0, diagrams = null, quizzes = null, feedbackTimer = 0;
+    let topic = '', renderedLanguage = '', active = false, sequence = 0, diagrams = null, quizzes = null, cardsControl = null, feedbackTimer = 0;
     const english = () => options.language() === 'en';
     const text = (zh, en) => english() ? en : zh;
     const current = () => active && options.isCurrent();
@@ -32,7 +32,7 @@
         const content = document.createElement('div'); content.className = 'node-text'; content.dataset.noteGuidePreview = 'true';
         if (image) {
           content.innerHTML = '<svg viewBox="0 0 260 90" role="img" aria-label="' + text('图片示例', 'Image example') + '" style="width:100%;border-radius:9px;background:rgba(128,128,128,.08)"><path d="m0 90 80-60 50 40 45-30 85 50" fill="currentColor" opacity=".16"/><circle cx="204" cy="23" r="10" fill="currentColor" opacity=".25"/></svg>';
-        } else content.innerHTML = window.MarkdownMini.renderResult(preview, { noteBlocks: true, noteSyntax: true, localImages: true, mermaid: mermaidEnabled(), renderFence: options.quizFence }).html;
+        } else content.innerHTML = window.MarkdownMini.renderResult(preview, { noteBlocks: true, noteSyntax: true, localImages: true, mermaid: mermaidEnabled(), renderFence: options.renderFence || options.quizFence }).html;
         item.append(content);
       }
       if (detail) { const small = document.createElement('small'); small.textContent = detail; item.append(small); }
@@ -156,21 +156,32 @@
       if (!current() || topic !== 'quiz' || !quizEnabled() || quizzes || !options.attachQuiz) return;
       quizzes = options.attachQuiz(host, { isolated: true, notePath: 'guide:quiz', isCurrent: () => current() && topic === 'quiz', whenSettled: options.whenSettled });
     }
-    function suspend() { active = false; sequence++; clearTimeout(feedbackTimer); diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; }
+    function cards() {
+      const intro = document.createElement('p'); intro.textContent = text('在 cards 围栏中用 ### 写卡片标题，用独立一行 --- 分隔卡片。单击选中整组，双击或 Enter 编辑源码，Esc 收起；宽处两列，窄处一列。', 'Inside a cards fence, start each card with ### and separate cards with a line containing ---. Click to select, double-click or Enter to edit, and Esc to close. Cards use two columns when space allows.'); host.append(intro);
+      heading('概念卡片', 'Concept cards');
+      example('```cards\n' + text('### [zap] 提高供电效率\n减少转换损耗，优化**电力分配**。\n\n---\n\n### [shield] 提升可靠性\n降低故障风险，保证关键系统持续运行。', '### [zap] Improve efficiency\nReduce losses and improve **power distribution**.\n\n---\n\n### [shield] Improve reliability\nReduce failure risks and keep key systems running.') + '\n```');
+      heading('列表与公式', 'Lists and math');
+      example('```cards\n' + text('### 学习要点\n- 电压与电流\n- 欧姆定律 $I=U/R$\n\n[参考资料](https://example.com)', '### Study notes\n- Voltage and current\n- Ohm’s law $I=U/R$\n\n[Reference](https://example.com)') + '\n```');
+      heading('可选图标', 'Optional icons');
+      const names = document.createElement('p'); names.textContent = window.RelatumNoteCards.icons.join(' · '); host.append(names);
+      const detail = document.createElement('p'); detail.textContent = text('标题前写 [图标名]，省略时不占位；未知名称显示为标题文字。支持段落、列表、强调、行内代码、普通链接和行内公式；不支持图片、表格、块公式或嵌套卡片。', 'Add [icon-name] before a title, or omit it. Unknown names remain title text. Supports paragraphs, lists, emphasis, inline code, regular links and inline math; images, tables, display math and nested cards are not supported.'); host.append(detail);
+    }
+    function suspend() { active = false; sequence++; clearTimeout(feedbackTimer); diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; cardsControl?.destroy(); cardsControl = null; }
     function show(next) {
       active = true;
       const lang = options.language();
       if (topic !== next || renderedLanguage !== lang) {
         if (topic) positions.set(topic, host.scrollTop);
-        sequence++; diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; clearTimeout(feedbackTimer);
+        sequence++; diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; cardsControl?.destroy(); cardsControl = null; clearTimeout(feedbackTimer);
         topic = next; renderedLanguage = lang; host.replaceChildren(); host.dataset.language = lang; host.dataset.guideTopic = topic;
         const head = document.createElement('header'); head.className = 'note-guide-topic-head';
-        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz' }[topic];
+        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: text('卡片组', 'Cards') }[topic];
         const settings = document.createElement('button'); settings.type = 'button'; settings.dataset.noteAction = 'guide-settings'; settings.textContent = text('切换内容', 'Change topic'); head.append(title, settings); host.append(head);
-        if (topic === 'markdown') markdown(); else if (topic === 'mermaid') mermaid(); else if (topic === 'quiz') quiz(); else callouts();
+        if (topic === 'markdown') markdown(); else if (topic === 'mermaid') mermaid(); else if (topic === 'quiz') quiz(); else if (topic === 'cards') cards(); else callouts();
         host.scrollTop = positions.get(topic) || 0;
       }
       attachDiagrams(); attachQuizzes();
+      if (topic === 'cards' && !cardsControl && options.attachCards) cardsControl = options.attachCards(host, { isCurrent: () => current() && topic === 'cards', whenSettled: options.whenSettled });
     }
     function onClick(event) {
       // A tutorial never opens links or creates missing wiki-linked notes.

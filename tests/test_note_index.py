@@ -55,6 +55,22 @@ class NoteIndexTests(unittest.TestCase):
                 self.query(invalid)
         self.assertEqual(self.query('" OR 1=1 -- "')['total'], 0)
 
+    def test_cards_keep_search_offsets_and_fence_metadata_rules(self):
+        source = '# 正文标题\n\n```cards\n### [book] 检索卡片\n卡片独有文字 #不登记 [[不登记双链]]\n```\n'
+        self.write('Cards.md', source)
+        item = self.query('卡片独有文字')['items'][0]
+        start, end = item['sourceRange']
+        selected = source.encode('utf-16-le')[start * 2:end * 2].decode('utf-16-le')
+        self.assertEqual(selected, '卡片独有文字')
+        self.assertEqual(item['tags'], [])
+        loaded = self.store.load('Cards.md')
+        changed = source.replace('独有文字', '修改文字')
+        self.store.save('Cards.md', changed, loaded['revision'])
+        self.assertEqual(self.store.load('Cards.md')['content'], changed)
+        self.assertEqual((self.root / 'Cards.md').read_bytes(), changed.encode('utf-8'))
+        from notes_library import _wiki_mentions
+        self.assertEqual(_wiki_mentions(source), [])
+
     def test_projection_excludes_hidden_payloads_and_keeps_code(self):
         overlay = _image_text_comment([dict(id='label', text='可见图上文字 ABC', x=.5, y=.5, size='md', color='black')])
         source = '---\nprivate: SECRET_FRONTMATTER\n---\n<!--SECRET_COMMENT-->\n%%SECRET_PERCENT%%\n![图](image.png)' + overlay + '\n`<!--CODE_VISIBLE-->`\n```html\n<!--FENCE_VISIBLE-->\n```\n![data](data:image/png;base64,SECRET_DATA)\n'
