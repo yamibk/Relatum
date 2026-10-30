@@ -159,9 +159,9 @@
     function cards() {
       const intro = document.createElement('p'); intro.textContent = text('在 cards 围栏中用 ### 写卡片标题，用独立一行 --- 分隔卡片。单击选中整组，双击或 Enter 编辑源码，Esc 收起；宽处两列，窄处一列。', 'Inside a cards fence, start each card with ### and separate cards with a line containing ---. Click to select, double-click or Enter to edit, and Esc to close. Cards use two columns when space allows.'); host.append(intro);
       heading('概念卡片', 'Concept cards');
-      example('```cards\n' + text('### [zap] 提高供电效率\n减少转换损耗，优化**电力分配**。\n\n---\n\n### [shield] 提升可靠性\n降低故障风险，保证关键系统持续运行。', '### [zap] Improve efficiency\nReduce losses and improve **power distribution**.\n\n---\n\n### [shield] Improve reliability\nReduce failure risks and keep key systems running.') + '\n```');
+      example('```cards\n' + text('### [book] 整理学习笔记\n用自己的话概括**核心概念**，记录疑问与实例。\n\n---\n\n### [target] 推进工作任务\n明确**下一步行动**，记录截止时间与预期成果。', '### [book] Organize study notes\nSummarize **key concepts** in your own words, and record questions and examples.\n\n---\n\n### [target] Move work forward\nDefine the **next action**, deadline and expected outcome.') + '\n```');
       heading('列表与公式', 'Lists and math');
-      example('```cards\n' + text('### 学习要点\n- 电压与电流\n- 欧姆定律 $I=U/R$\n\n[参考资料](https://example.com)', '### Study notes\n- Voltage and current\n- Ohm’s law $I=U/R$\n\n[Reference](https://example.com)') + '\n```');
+      example('```cards\n' + text('### 本周计划\n- 阅读并整理一篇资料\n- 完成一项重要任务\n- 留出时间回顾与复盘\n\n完成进度：$3/5=60\\%$。\n\n[参考资料](https://example.com)', '### Weekly plan\n- Read and summarize one resource\n- Complete one important task\n- Set aside time to review and reflect\n\nProgress: $3/5=60\\%$.\n\n[Reference](https://example.com)') + '\n```');
       heading('可选图标', 'Optional icons');
       const names = document.createElement('p'); names.textContent = window.RelatumNoteCards.icons.join(' · '); host.append(names);
       const detail = document.createElement('p'); detail.textContent = text('标题前写 [图标名]，省略时不占位；未知名称显示为标题文字。支持段落、列表、强调、行内代码、普通链接和行内公式；不支持图片、表格、块公式或嵌套卡片。', 'Add [icon-name] before a title, or omit it. Unknown names remain title text. Supports paragraphs, lists, emphasis, inline code, regular links and inline math; images, tables, display math and nested cards are not supported.'); host.append(detail);
