@@ -28,6 +28,8 @@
 
 ## 验证
 
+候选菜单虽然挂在 `document.body`，其滚动列表仍复用笔记正文的滚动条变量与样式：透明轨道、细圆角滑块、无两端箭头，深浅色沿用笔记配色。Chromium 分支恢复标准属性为 `auto`，让既有 `::-webkit-scrollbar` 细节生效；其他引擎沿用标准 thin 回退。无新增滚动控制器或监听。专项浏览器启动保留原生滚动条绘制，避免 headless 默认隐藏导致截图漏验。
+
 - `python -m unittest tests.test_note_link_completion tests.test_note_index_api`：匹配、范围、各排序、全库重名、根路径优先、保留大小写的显示位置、转义字符实际解析、删除后复核、50 项限制、零文件 I/O、输入和权限边界。
 - `node tests/note-link-completion-browser.js`：真实 API/Edge，临时笔记和 WebView 偏好；实时预览、源码、表格、中文 Chromium 合成输入、手动候选会话、键盘/鼠标、独立历史、别名/后缀、主题/窄窗、设置持久化/恢复/失败回滚、迟到响应和重试。
 - `python tests/note-link-completion-performance.py --counts 10000 50000 --output <临时报告>`：一次性真实 Markdown 库，记录目录/正文全部索引后的热查询 p50/p95、并发查询时的原子保存延迟；对热查询安装目录扫描和正文读取失败探针。

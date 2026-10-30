@@ -28,7 +28,8 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
       try { if ((await fetch(url + '/api/runtime')).ok) break; } catch (_) {}
       assert.equal(service.exitCode, null, 'isolated API stays running'); await sleep(100);
     }
-    browser = await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
+    browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'],
+      ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
     const page = await browser.newPage({ viewport: { width: 1300, height: 900 }, reducedMotion: 'reduce' });
     page.on('pageerror', error => errors.push(error.stack));
     page.on('request', request => { if (request.url().endsWith('/api/note-query') && request.method() === 'POST') queries.push(request.postDataJSON()); });

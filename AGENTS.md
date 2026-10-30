@@ -466,6 +466,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 ### `notes/` 托管 Markdown 笔记库
 
+双链候选菜单挂在 body，滚动列表须与 `.note-workspace` 共用 `--note-scroll-thumb` 深浅色变量及细圆角、透明轨道、无箭头的滚动条样式；不要只给工作区后代设样式而漏掉菜单。Chromium 分支将标准滚动条属性恢复为 auto，以启用既有 WebKit 伪元素细节，其他引擎保留 thin 回退；不新增滚动脚本。补全浏览器专项保留实际滚动条绘制以便截图检查。
+
 最近文件与双链候选使用本机会话访问记录，查询时按 NFC/casefold 路径合并别名并取最大访问时间，不受输入顺序影响，不在启动时清洗或改写偏好。旧记录可能同时含同一文件大小写不同的路径；最近查询的临时 `visits` 表与补全的 `link_visits` 表都使用冲突时取较大时间的 UPSERT，不能改回普通 INSERT（会返回 503/“读取失败”）或以最后一条覆盖（会倒退访问时间）。启动器与完整模式有独立偏好，只有某种启动方式失败不一定是权限问题；优先检查该会话最近记录的规范化冲突。回归包含索引及 HTTP 专项、双链排序，`tests/note-search-browser.js launcher-mixed` 使用树状/笔记/日常图片组合及重复旧记录验证最近与全文搜索，全部使用隔离数据。无需新数据库、缓存重建或修改用户配置。
 
 双向链接文件补全由 `assets/note-link-completion.js` 共用于实时预览、源码和表格单元格，输入第二个 `[` 即查询，后续输入合并 150ms；最多 50 候选、约 8 行视窗，上下键/Enter/Tab/鼠标确认，Esc 关闭，关闭自动显示后用 Ctrl/Cmd+Space 开启并继续筛选。设置位于“编辑”，`canvas:noteLinkCompletion:v1` 默认 `{automatic:true,scope:'all',sort:'smart',includeBody:false}`，另支持当前本/当前目录及子目录、最近打开/最近修改/自然名称排序；启动不回写，失败回滚，分类及全部恢复包含偏好，桌面沿用 `canvas:` 快照。`POST /api/note-query` 的 `mode:'link-completion'` 复用既有 FTS/短字符项及 SQLite 快照，默认仅查名称和路径，正文可选且命中排尾；空输入按真实访问时间而非访问/修改取较新值。短名称须依全库原解析规则核对，根路径精确匹配优先，同名必要时写完整库内路径；接受前用同模式 `selectedPath` 只读复核，保留别名/后缀并单次撤销。代码、公式、注释、前言、嵌入及别名/后缀区域不触发，中文候选交接后再查，无匹配不创建文件；只推荐 Markdown 笔记且排除当前笔记。菜单归 notes 权限、支持四主题与深浅/窄窗，切文档/视图/工作区、设置、失焦、隐藏和最小化取消请求及旧响应；不新增数据库/迁移、全库前端缓存、轮询或常驻绘制。接口与验证见 `docs/note-link-completion-2026-10-30.md`，专项为 `tests/test_note_link_completion.py`、`tests/note-link-completion-browser.js` 和隔离大库脚本 `tests/note-link-completion-performance.py`；离线 CodeMirror 仍为原锁版本，新增补全/tooltip 导出后按原维护脚本重建并校准供应清单哈希。
