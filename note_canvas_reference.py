@@ -45,6 +45,7 @@ def _closing(value: str, start: int, opener: str, closer: str) -> int:
 def references(text: str) -> list[dict]:
     result = []
     fence = None
+    fence_depth = 0
     html = False
     html_comment = False
     percent_comment = False
@@ -54,9 +55,16 @@ def references(text: str) -> list[dict]:
     offset = 0
     for number, original in enumerate(text.splitlines(keepends=True)):
         line = original.rstrip("\r\n")
+        prefix = re.match(r"^(?:[ \t]{0,3}>[ \t]?)+", line)
+        line_offset = offset + (prefix.end() if prefix else 0)
+        if prefix:
+            line = line[prefix.end():]
+        depth = prefix[0].count('>') if prefix else 0
         stripped = line.strip()
         if offset >= header_end:
             marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+            if fence and depth < fence_depth:
+                fence = None
             if fence:
                 if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not marker[2].strip():
                     fence = None
@@ -68,6 +76,7 @@ def references(text: str) -> list[dict]:
                     percent_comment = not percent_comment
             elif marker:
                 fence = marker[1]
+                fence_depth = depth
             elif "%%" in line:
                 percent_comment = bool(line.count("%%") % 2)
             elif "<!--" in line or re.match(r"^ {0,3}<(?:[A-Za-z/!?])", line):
@@ -90,9 +99,9 @@ def references(text: str) -> list[dict]:
                             raw_target = match[1]
                             target = re.sub(r'\\([()])', r'\1', raw_target)
                             target_at = end_label + 2 + line[end_label + 2:end].index(raw_target)
-                            result.append({"from": offset + start, "to": offset + end + 1,
-                                "targetFrom": offset + target_at, "targetTo": offset + target_at + len(raw_target),
-                                "labelFrom": offset + start + 2, "labelTo": offset + end_label,
+                            result.append({"from": line_offset + start, "to": line_offset + end + 1,
+                                "targetFrom": line_offset + target_at, "targetTo": line_offset + target_at + len(raw_target),
+                                "labelFrom": line_offset + start + 2, "labelTo": line_offset + end_label,
                                 "label": line[start + 2:end_label], "target": target})
         offset += len(original)
     return result

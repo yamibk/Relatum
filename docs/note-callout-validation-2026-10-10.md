@@ -1,5 +1,7 @@
 # 笔记 Callout、纯色块与引导验收
 
+当前容器一致性升级、37 色（含 white）、70 个引导示例与最新隔离验证见 [笔记容器升级说明](note-containers-2026-10-30.md)。下文按日期保留原参数及历史验证，不作为此次全部测试均通过的声明。
+
 ## 范围
 
 笔记实时预览、阅读模式和右栏引导共用 `assets/markdown.js` 的只读 `MarkdownMini.noteBlockCatalog`。调用 `renderResult(source, {noteBlocks:true})` 才启用笔记扩展；普通画布调用保留既有标题、图标和外观。没有新增 HTTP 接口、正文迁移或第三方运行时。

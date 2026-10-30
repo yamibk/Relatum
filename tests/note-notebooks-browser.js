@@ -415,8 +415,8 @@ async function freePort() {
     page.on('request', request => { if (/mathjax|tex-chtml/i.test(request.url())) guideMathRequests++; });
     await page.locator('[data-note-action="side-guide"]').click();
     await settleSide();
-    assert.equal(await page.locator('.note-guide-example').count(), 66);
-    assert.equal(await page.locator('.note-guide .note-color-block').count(), 42);
+    assert.equal(await page.locator('.note-guide-example').count(), 70);
+    assert.equal(await page.locator('.note-guide .note-color-block').count(), 46);
     const guideFold = page.locator('.note-guide .note-block[data-callout="blue"][data-fold="-"] > .md-callout-title > .note-callout-fold').last();
     assert.equal(await guideFold.getAttribute('aria-expanded'), 'false');
     await guideFold.click();

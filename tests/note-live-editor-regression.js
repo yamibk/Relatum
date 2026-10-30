@@ -119,6 +119,16 @@ function decorationRecords(set, length) {
 }
 
 const liveProbe = loadLiveDecorationProbe();
+for (const prefix of ['> ', '> > ', '> > > ']) {
+  const source = prefix + '[!white]\n' + prefix + '| A | B |\n' + prefix + '| --- | --- |\n' + prefix + '| 1 | 2 |\n' + prefix + '\n' + prefix + '![image](a.png)';
+  const specs = liveProbe.RelatumNoteLiveSyntax.scanBlockSpecsFromString(source);
+  const table = specs.find(spec => spec.kind === 'table'), image = specs.find(spec => spec.kind === 'image');
+  assert.deepStrictEqual(Array.from(table.tableModel.header), ['A', 'B']);
+  assert.strictEqual(source.slice(table.from, table.to), table.source);
+  assert.strictEqual(table.renderSource, '| A | B |\n| --- | --- |\n| 1 | 2 |');
+  assert.strictEqual(image.renderSource, '![image](a.png)');
+  assert.strictEqual(image.container.prefix, prefix);
+}
 
 // Consecutive pasted images share hidden newline boundaries. Exercise the
 // actual atomic facet after incremental updates, including its traversal order.

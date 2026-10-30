@@ -74,6 +74,7 @@
         example(source, source, type.aliases.length ? text('别名：', 'Aliases: ') + type.aliases.join(', ') : study[type.name]?.[english() ? 1 : 0] || '');
       });
       heading('标题与折叠', 'Titles and folding');
+      example('> [!gray] # 123\n> # 123', undefined, text('标记同一行是标题，只支持行内格式；下一行正文的 # 才是 Markdown 标题。', 'The marker line is an inline-formatted title; a heading belongs on a following body line.'));
       example('> [!note] ' + text('自定义标题', 'Custom title') + '\n> ' + body);
       ['+', '-'].forEach(suffix => example('> [!' + (suffix === '+' ? 'tip' : 'warning') + ']' + suffix + ' ' + (suffix === '+' ? text('默认展开', 'Expanded by default') : text('默认折叠', 'Collapsed by default')) + '\n> ' + body));
       heading('学习组合', 'Study combinations');
@@ -84,6 +85,8 @@
       ['> [!info]\n> $$a^2+b^2$$\n> ' + body, '> [!info]\n> $$\n> a^2+b^2\n> $$\n> ' + body, '> [!info]\n> \\[\n> E=mc^2\n> \\]\n> ' + body].forEach(source => example(source, null));
       heading('纯色块', 'Color blocks');
       const colorBody = text('纯色块正文。', 'Color block content.');
+      example('> [!white]\n> # ' + text('白色卡片', 'White card') + '\n>\n> **' + text('正文', 'Content') + '**', undefined, text('白底细边框，深色随主题适配；没有默认标题或图标。', 'White with a fine border; adapts to the dark theme, without a default title or icon.'));
+      example('> [!white]\n> | A | B |\n> | --- | --- |\n> | 1 | 2 |', undefined, text('表格每行保留 > 前缀，编辑仍属于当前色块。', 'Keep the > prefix on every table row; edits stay inside the color block.'));
       const titled = '> [!Lavender] ' + text('自定义标题', 'Custom title') + '\n> ' + colorBody;
       example(titled, titled, text('颜色名不区分大小写；没有 + 或 - 时不可折叠。', 'Color names are case-insensitive. Without + or -, blocks do not fold.'));
       ['+', '-'].forEach(suffix => {

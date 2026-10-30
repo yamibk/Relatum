@@ -163,11 +163,11 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
       const metrics=blocks.map(block=>({type:block.dataset.callout,title:block.querySelector('.note-callout-title-text')?.textContent||'',icon:!!block.querySelector('svg'),radius:getComputedStyle(block).borderRadius,border:getComputedStyle(block).borderLeftWidth,bg:getComputedStyle(block).backgroundColor}));
       container.remove(); return {types,colors,metrics};
     });
-    assert.equal(catalog.colors.length,36);
+    assert.equal(catalog.colors.length,37);
     catalog.metrics.slice(0,catalog.types.length).forEach((block,index)=>{
       const name=catalog.types[index]; assert.equal(block.title,name[0].toUpperCase()+name.slice(1)); assert(block.icon); assert.equal(block.radius,'4px'); assert.equal(block.border,'0px');
     });
-    catalog.metrics.slice(catalog.types.length).forEach(block=>{assert(!block.title && !block.icon); assert.equal(block.radius,'7px'); assert.equal(block.border,'0px');});
+    catalog.metrics.slice(catalog.types.length).forEach(block=>{assert(!block.title && !block.icon); assert.equal(block.radius,'7px'); assert.equal(block.border,block.type === 'white' ? '1px' : '0px');});
     for (const theme of ['light','dark']) {
       await page.setViewportSize({width:520,height:1000});
       await page.evaluate(theme=>{document.body.dataset.startTheme=theme;document.documentElement.style.setProperty('--note-font-scale','1.35');},theme); await settle();

@@ -329,9 +329,12 @@
 
   function parseStandaloneImage(text) {
     const markdownMini = window.MarkdownMini;
-    return markdownMini && typeof markdownMini.parseImageBlock === 'function'
-      ? markdownMini.parseImageBlock(text)
-      : (markdownMini && typeof markdownMini.parseImage === 'function' ? markdownMini.parseImage(text) : null);
+    const container = /^[ \t]{0,3}>/.test(String(text || '')) ? markdownMini?.noteContainerSource(text) : null;
+    const source = container?.depth ? container.text : text;
+    const parsed = markdownMini && typeof markdownMini.parseImageBlock === 'function'
+      ? markdownMini.parseImageBlock(source)
+      : (markdownMini && typeof markdownMini.parseImage === 'function' ? markdownMini.parseImage(source) : null);
+    return parsed && container?.depth ? Object.assign(parsed, { container }) : parsed;
   }
 
   const canvasEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.canvas');
@@ -584,7 +587,7 @@
     constructor(spec, path, options, coordinator, selected) {
       super(); Object.assign(this, { spec, path, options, coordinator, selected });
     }
-    eq(other) { return this.spec.id === other.spec.id && this.spec.from === other.spec.from && this.spec.source === other.spec.source && this.path === other.path && this.selected === other.selected; }
+    eq(other) { return this.spec.id === other.spec.id && this.spec.from === other.spec.from && this.spec.source === other.spec.source && this.path === other.path && this.selected === other.selected && this.spec.calloutContext === other.spec.calloutContext; }
     configuration(view, frame) {
       const resolve = () => {
         const current = this.coordinator.spec(view, this.spec.id);
@@ -600,7 +603,7 @@
         measure: () => { if (view.dom.isConnected && !compositionActive(view)) view.requestMeasure(); },
         resize: (width, height) => {
           const current = resolve(); if (!current || compositionActive(view)) return;
-          const replacement = window.MarkdownMini.serializeImage(parseStandaloneImage(current.source), { width, height });
+          const replacement = window.MarkdownMini.wrapNoteContainer(window.MarkdownMini.serializeImage(parseStandaloneImage(current.source), { width, height }), current.container);
           view.dispatch({ changes: { from: current.from, to: current.to, insert: replacement },
             selection: EditorSelection.range(current.from, current.from + replacement.length), userEvent: 'input.note-canvas-size' });
         },
@@ -614,6 +617,7 @@
       const parsed = parseStandaloneImage(this.spec.source), width = parsed.width || 640, height = parsed.height || width * 9 / 16;
       frame.style.cssText = `display:block;width:${width}px;max-width:100%;aspect-ratio:${width}/${height};border-radius:7px`;
       frame.classList.toggle('is-selected', !!this.selected);
+      decorateNestedCalloutWidget(wrap, view, this.spec, this.coordinator);
       const holder = { widget: this, destroyed: false, observer: null }; wrap.__canvasWidget = holder;
       holder.observer = new IntersectionObserver(entries => {
         if (!entries.some(entry => entry.isIntersecting) || holder.destroyed) return;
@@ -630,6 +634,7 @@
       const previous = parseStandaloneImage(holder.widget.spec.source), next = parseStandaloneImage(this.spec.source);
       if (!previous || !next || window.MarkdownMini.canvasTarget(this.path, previous.target).toLowerCase() !== window.MarkdownMini.canvasTarget(this.path, next.target).toLowerCase()) return false;
       holder.widget = this; holder.adapter?.update(this.configuration(view, wrap.firstChild));
+      decorateNestedCalloutWidget(wrap, view, this.spec, this.coordinator);
       wrap.firstChild.classList.toggle('is-selected', !!this.selected); return true;
     }
     destroy(wrap) { const holder = wrap?.__canvasWidget; if (holder) { holder.destroyed = true; holder.observer.disconnect(); holder.adapter?.destroy(); } }
@@ -668,14 +673,8 @@
 
   function parseCalloutSource(source) {
     const first = String(source || '').split(/\r?\n/, 1)[0];
-    const match = /^\s*(?:>\s*)+\[!([A-Za-z][\w-]*)\]([+-]?)\s*(.*)$/.exec(first);
-    if (!match) return null;
-    return {
-      type: match[1].toLowerCase(),
-      suffix: match[2] || '',
-      title: match[3].trim(),
-      collapsed: match[2] === '-',
-    };
+    const quote = window.MarkdownMini.quoteLine(first);
+    return quote.depth ? window.MarkdownMini.parseNoteBlockHeader(quote.text) : null;
   }
 
   // Keep Lezer's lazy quote continuation rules in reading mode too. Positions
@@ -750,8 +749,8 @@
   function layeredCalloutStyle(chain, layout, fromLine, toLine = fromLine, continuationBefore = false, continuationAfter = false) {
     const light = [], dark = [];
     let top = 0, bottom = 0, firstCount = 0, lastCount = 0;
-    const images = (color, inset, y1, y2, first, last, radius) => {
-      const r = 'var(' + radius + ')', x = inset + 'px', y = y1 + 'px', b = y2 + 'px';
+    const images = (color, inset, y1, y2, first, last, radius, inner = false) => {
+      const r = inner ? 'calc(var(' + radius + ') - 1px)' : 'var(' + radius + ')', x = inset + 'px', y = y1 + 'px', b = y2 + 'px';
       const height = 'calc(100% - ' + y + ' - ' + b + ')';
       const pieces = ['linear-gradient(' + color + ',' + color + ') left calc(' + x + ' + ' + r + ') top ' + y + ' / calc(100% - ' + (inset * 2) + 'px - ' + r + ' - ' + r + ') ' + height + ' no-repeat'];
       for (const side of ['left', 'right']) {
@@ -769,8 +768,12 @@
       if (index && last && !lastCount) bottom += 12;
       const colors = entry.colors;
       const radius = entry.descriptor.color ? '--note-color-callout-radius' : '--note-callout-radius';
-      light.unshift(images(colors['--note-block-bg-light'], index * 16, top, bottom, first, last, radius));
-      dark.unshift(images(colors['--note-block-bg-dark'], index * 16, top, bottom, first, last, radius));
+      const paint = (color, border) => entry.descriptor.input === 'white'
+        ? images(color, index * 16 + 1, top + (first ? 1 : 0), bottom + (last ? 1 : 0), first, last, radius, true) + ','
+          + images(border, index * 16, top, bottom, first, last, radius)
+        : images(color, index * 16, top, bottom, first, last, radius);
+      light.unshift(paint(colors['--note-block-bg-light'], 'var(--note-theme-line, #E5E5E5)'));
+      dark.unshift(paint(colors['--note-block-bg-dark'], 'var(--note-theme-line, #444444)'));
       if (first) { firstCount++; top += 12; }
       if (last) { lastCount++; bottom += 12; }
     });
@@ -784,13 +787,15 @@
   }
 
   function decorateNestedCalloutWidget(dom, view, spec, coordinator) {
+    dom.classList.remove('note-live-callout-layered');
     const specs = view.state.field(coordinator.field, false)?.specs;
     if (!specs) return;
     const model = calloutLayout(view, specs, coordinator);
     let entry;
     for (let index = model.entries.length - 1; index >= 0; index--) {
       const item = model.entries[index], value = model.layout.get(item);
-      if (item.spec.from <= spec.from && item.spec.to >= spec.to && item.nested && !value.blocked && !value.collapsed) { entry = item; break; }
+      if (item.spec.from <= spec.from && item.spec.to >= spec.to && !value.blocked && !value.collapsed
+          && (item.nested || item.descriptor.input === 'white' || spec.kind !== 'math')) { entry = item; break; }
     }
     if (!entry) return;
     dom.classList.add('note-live-callout-layered');
@@ -980,7 +985,7 @@
       fingerprint: spec.kind === 'table' && prior?.source === source ? prior.fingerprint : sourceFingerprint(source),
       ...(spec.kind === 'table' && window.MarkdownTable ? { tableModel: spec.tableModel
         || (prior?.source === source ? prior.tableModel : null)
-        || window.MarkdownTable.parse(source, { ensureBodyRow: false }).model } : {}),
+        || window.MarkdownTable.parse(spec.renderSource || source, { ensureBodyRow: false }).model } : {}),
     });
   }
 
@@ -1034,6 +1039,10 @@
     const metadata = documentFrontmatter(doc);
     if (metadata) protectedBlocks.push(metadata);
     const push = (spec) => {
+      if (spec.kind !== 'callout' && window.MarkdownMini.quoteLine(spec.source).depth) {
+        spec.container = window.MarkdownMini.noteContainerSource(spec.source);
+        spec.renderSource = spec.container.text;
+      }
       if (spec.kind === 'table') {
         const sameStart = raw.find((item) => item.kind === 'table' && item.from === spec.from);
         if (sameStart) { Object.assign(sameStart, spec); return; }
@@ -1049,12 +1058,16 @@
       enter(node) {
         if (node.name === 'Table') {
           if (node.to - node.from > RICH_BLOCK_LIMIT) return false;
-          const source = doc.sliceString(node.from, node.to);
-          if (source.length <= RICH_BLOCK_LIMIT && !rangeHasLongLine(doc, node.from, node.to)) push({ from: node.from, to: node.to, kind: 'table', source });
+          const first = doc.lineAt(node.from), quote = window.MarkdownMini.quoteLine(first.text);
+          const from = quote.depth && first.from + quote.prefix.length === node.from ? first.from : node.from;
+          const source = doc.sliceString(from, node.to);
+          if (source.length <= RICH_BLOCK_LIMIT && !rangeHasLongLine(doc, from, node.to)) push({ from, to: node.to, kind: 'table', source });
           return false;
         }
         if (node.name === 'HorizontalRule') {
-          push({ from: node.from, to: node.to, kind: 'rule', source: doc.sliceString(node.from, node.to) });
+          const first = doc.lineAt(node.from), quote = window.MarkdownMini.quoteLine(first.text);
+          const from = quote.depth && first.from + quote.prefix.length === node.from ? first.from : node.from;
+          push({ from, to: node.to, kind: 'rule', source: doc.sliceString(from, node.to) });
           return false;
         }
         if (node.name === 'FencedCode') {
@@ -1088,7 +1101,7 @@
         }
         if (node.name === 'Image') {
           const line = doc.lineAt(node.from);
-          if (node.to <= line.to && !doc.sliceString(line.from, node.from).trim() && !doc.sliceString(node.to, line.to).trim()) {
+          if (node.to <= line.to && !window.MarkdownMini.quoteLine(doc.sliceString(line.from, node.from)).text.trim() && !doc.sliceString(node.to, line.to).trim()) {
             const image = parseStandaloneImage(line.text);
             if (image && image.target && previewableImage(image.target) && line.length <= MAX_RICH_LINE && (!canvasImage(image) || canvasEnabled())) {
               push({
@@ -1125,22 +1138,25 @@
       if (line.length > MAX_RICH_LINE) { number += 1; continue; }
       // Lezer's GFM grammar and our shared grammar differ on literal pipes in
       // code/math. Use the same bounded table parser as the renderer/writer,
-      // outside code, HTML and quoted blocks, so cell edits cannot lose their grid.
-      const tableSyntax = window.MarkdownTable;
-      if (tableSyntax && line.from <= end && number < doc.lines && !/^\s*(?:>|[-+*]\s|\d+[.)]\s)/.test(line.text)
-          && tableSyntax.rowHasDelimiter(line.text) && tableSyntax.isSeparatorLine(doc.line(number + 1).text)) {
-        const lines = [line.text, doc.line(number + 1).text];
+      // outside code and HTML, retaining quoted rows in their source container.
+      const tableSyntax = window.MarkdownTable, tableQuote = window.MarkdownMini.quoteLine(line.text);
+      const tableLine = window.MarkdownMini.stripQuote(line.text, tableQuote.depth);
+      if (tableSyntax && line.from <= end && number < doc.lines && !/^\s*(?:[-+*]\s|\d+[.)]\s)/.test(tableLine)
+          && window.MarkdownMini.quoteLine(doc.line(number + 1).text).depth === tableQuote.depth
+          && tableSyntax.rowHasDelimiter(tableLine) && tableSyntax.isSeparatorLine(window.MarkdownMini.stripQuote(doc.line(number + 1).text, tableQuote.depth))) {
+        const lines = [tableLine, window.MarkdownMini.stripQuote(doc.line(number + 1).text, tableQuote.depth)];
         let next = number + 2, length = lines[0].length + lines[1].length + 1;
         while (next <= doc.lines && length <= RICH_BLOCK_LIMIT) {
           const candidate = doc.line(next);
-          if (candidate.length > MAX_RICH_LINE || !candidate.text.trim() || !tableSyntax.rowHasDelimiter(candidate.text)) break;
-          length += candidate.length + 1; lines.push(candidate.text); next++;
+          const text = window.MarkdownMini.stripQuote(candidate.text, tableQuote.depth);
+          if (candidate.length > MAX_RICH_LINE || window.MarkdownMini.quoteLine(candidate.text).depth !== tableQuote.depth || !text.trim() || !tableSyntax.rowHasDelimiter(text)) break;
+          length += candidate.length + 1; lines.push(text); next++;
         }
         if (length <= RICH_BLOCK_LIMIT) {
           const parsed = tableSyntax.parseLines(lines, 0, { ensureBodyRow: false });
           if (parsed.ok && parsed.endLine === lines.length) {
             const tableTo = doc.line(number + lines.length - 1).to;
-            if (tableTo >= start) push({ from: line.from, to: tableTo, kind: 'table', source: doc.sliceString(line.from, tableTo) });
+            if (tableTo >= start && tableTo - line.from <= RICH_BLOCK_LIMIT) push({ from: line.from, to: tableTo, kind: 'table', source: doc.sliceString(line.from, tableTo) });
             number += lines.length; continue;
           }
         }
@@ -1187,14 +1203,14 @@
     const pool = Array.isArray(reusable) ? reusable.slice() : [], calloutParents = [];
     return raw.map((spec) => {
       while (calloutParents.length && (calloutParents[calloutParents.length - 1].to < spec.to || calloutParents[calloutParents.length - 1].to <= spec.from)) calloutParents.pop();
-      if (spec.kind === 'math') {
+      if (spec.kind !== 'callout') {
         const parent = calloutParents[calloutParents.length - 1];
         if (parent) {
           const descriptor = window.MarkdownMini.noteBlock(parent.type, parent.title, parent.suffix);
           spec.calloutType = parent.type; spec.calloutLast = parent.to === spec.to;
           spec.colorFirst = descriptor.color && !descriptor.title && doc.lineAt(parent.from).to + 1 === spec.from;
         }
-        if (calloutParents.length > 1) spec.calloutContext = JSON.stringify(calloutParents.map(parent => [parent.from, parent.to, parent.type, parent.title, parent.suffix]));
+        if (calloutParents.length) spec.calloutContext = JSON.stringify(calloutParents.map(parent => [parent.from, parent.to, parent.type, parent.title, parent.suffix]));
       }
       if (spec.kind === 'callout') calloutParents.push(spec);
       const index = pool.findIndex((old) => old.kind === spec.kind && old.from <= spec.to && old.to >= spec.from);
@@ -1294,6 +1310,21 @@
     if (!old?.tableModel || edit.epoch !== coordinator.epoch || old.tableModel !== edit.baseModel
         || old.from !== edit.from || old.to !== edit.to || old.source !== edit.source) return null;
     const width = old.tableModel.header.length;
+    const content = source => old.container ? window.MarkdownMini.noteContainerSource(source, old.container.depth).text : source;
+    const finish = next => {
+      if (old.container) {
+        next.container = window.MarkdownMini.noteContainerSource(next.source, old.container.depth);
+        next.renderSource = next.container.text;
+      }
+      return { edit, specs: previous.map(spec => {
+        if (spec === old) return next;
+        const mapped = Object.assign({}, spec, { from: transaction.changes.mapPos(spec.from, -1), to: transaction.changes.mapPos(spec.to, 1) });
+        if (spec.kind === 'callout' && spec.from <= old.from && spec.to >= old.to) {
+          mapped.source = transaction.state.doc.sliceString(mapped.from, mapped.to);
+        }
+        return mapped;
+      }) };
+    };
     if (edit.kind === 'alignment') {
       const line = transaction.startState.doc.line(transaction.startState.doc.lineAt(old.from).number + 1);
       if (line.from !== edit.lineFrom || line.to !== edit.lineTo || line.to > old.to
@@ -1301,9 +1332,9 @@
           || !edit.columns.length || new Set(edit.columns).size !== edit.columns.length
           || edit.columns.some(col => !Number.isInteger(col) || col < 0 || col >= width)
           || typeof edit.insert !== 'string' || edit.insert.replace(/:/g, '') !== line.text.replace(/:/g, '')
-          || !window.MarkdownTable.isSeparatorLine(edit.insert)
+          || !window.MarkdownTable.isSeparatorLine(content(edit.insert))
           || !transaction.newSelection.eq(transaction.startState.selection.map(transaction.changes))) return null;
-      const tokens = window.MarkdownTable.splitRow(edit.insert);
+      const tokens = window.MarkdownTable.splitRow(content(edit.insert));
       const align = tokens.map(token => token.startsWith(':') ? token.endsWith(':') ? 'center' : 'left' : token.endsWith(':') ? 'right' : '');
       if (align.length !== width || align.some((value, col) => value !== (edit.columns.includes(col) ? edit.align : old.tableModel.align[col]))) return null;
       let count = 0, valid = true;
@@ -1316,8 +1347,7 @@
       const next = Object.assign({}, old, { from, to, source: transaction.state.doc.sliceString(from, to), tableModel,
         fingerprint: 'table-align:' + nextTableCellVersion++, cellDelta: null,
         alignmentDelta: { previous: old.tableModel, columns: edit.columns } });
-      return { edit, specs: previous.map(spec => spec === old ? next : Object.assign({}, spec, {
-        from: transaction.changes.mapPos(spec.from, -1), to: transaction.changes.mapPos(spec.to, 1) })) };
+      return finish(next);
     }
     if (!Number.isInteger(edit.row) || edit.row < 0 || edit.row > old.tableModel.rows.length
         || !Number.isInteger(edit.col) || edit.col < 0 || edit.col >= width || !Array.isArray(edit.cells) || edit.cells.length !== width) return null;
@@ -1328,7 +1358,8 @@
     const first = transaction.startState.doc.lineAt(old.from);
     const line = transaction.startState.doc.line(first.number + (edit.row ? edit.row + 1 : 0));
     if (line.from !== edit.lineFrom || line.to !== edit.lineTo || line.to > old.to
-        || window.MarkdownTable.serializeRow(edit.cells, width) !== edit.insert) return null;
+        || window.MarkdownTable.serializeRow(edit.cells, width) !== content(edit.insert)
+        || (old.container && window.MarkdownMini.noteContainerSource(edit.insert, old.container.depth).prefixes[0] !== window.MarkdownMini.noteContainerSource(line.text, old.container.depth).prefixes[0])) return null;
     let count = 0, valid = true;
     transaction.changes.iterChanges((from, to, fromB, toB, inserted) => {
       count++; if (from !== line.from || to !== line.to || inserted.sliceString(0) !== edit.insert) valid = false;
@@ -1336,7 +1367,7 @@
     if (!valid || count !== 1) return null;
     const from = transaction.changes.mapPos(old.from, -1), to = transaction.changes.mapPos(old.to, 1);
     if (to - from > RICH_BLOCK_LIMIT || edit.insert.length > MAX_RICH_LINE) return null;
-    const rows = old.tableModel.rows.slice(), cells = window.MarkdownTable.splitRow(edit.insert, width);
+    const rows = old.tableModel.rows.slice(), cells = window.MarkdownTable.splitRow(content(edit.insert), width);
     if (edit.row) rows[edit.row - 1] = cells;
     const tableModel = { header: edit.row ? old.tableModel.header : cells, rows, align: old.tableModel.align };
     const source = transaction.state.doc.sliceString(from, to);
@@ -1344,8 +1375,7 @@
     // hashing the entire known table for every character and survives rescans.
     const next = Object.assign({}, old, { from, to, source, tableModel, fingerprint: 'table-cell:' + nextTableCellVersion++,
       cellDelta: { previous: old.tableModel, row: edit.row, col: edit.col } });
-    return { edit, specs: previous.map(spec => spec === old ? next : Object.assign({}, spec, {
-      from: transaction.changes.mapPos(spec.from, -1), to: transaction.changes.mapPos(spec.to, 1) })) };
+    return finish(next);
   }
 
   function validatedLocalCellViewUpdate(update, field) {
@@ -2059,8 +2089,8 @@
       const markdownMini = window.MarkdownMini;
       if (!current || !current.parsed.imageTextEditable || !markdownMini
           || typeof markdownMini.serializeImageBlock !== 'function') return false;
-      const replacement = markdownMini.serializeImageBlock(current.parsed, items);
-      if (!replacement || replacement === current.parsed.source) return false;
+      const replacement = markdownMini.wrapNoteContainer(markdownMini.serializeImageBlock(current.parsed, items), current.parsed.container);
+      if (!replacement || replacement === view.state.doc.sliceString(current.from, current.to)) return false;
       if (imageTextController) imageTextController.prepareRange(current.from, current.from + replacement.length, selectedId || '');
       view.dispatch({
         changes: { from: current.from, to: current.to, insert: replacement },
@@ -2569,8 +2599,8 @@
       commit(width) {
         const current = resolveRange(), markdownMini = window.MarkdownMini; if (!current) return;
         const resized = markdownMini.serializeImage(current.parsed.image || current.parsed, { width });
-        const replacement = current.parsed.imageTextItems ? markdownMini.serializeImageBlock(current.parsed, current.parsed.imageTextItems, resized) : resized;
-        if (!replacement || replacement === current.parsed.source) { applyImageDimensions(frame, current.parsed); view.requestMeasure(); return; }
+        const replacement = markdownMini.wrapNoteContainer(current.parsed.imageTextItems ? markdownMini.serializeImageBlock(current.parsed, current.parsed.imageTextItems, resized) : resized, current.parsed.container);
+        if (!replacement || replacement === view.state.doc.sliceString(current.from, current.to)) { applyImageDimensions(frame, current.parsed); view.requestMeasure(); return; }
         view.dispatch({ changes: { from: current.from, to: current.to, insert: replacement },
           selection: EditorSelection.range(current.from, current.from + replacement.length), scrollIntoView: true, userEvent: 'input.image-text' });
         view.focus();
@@ -2703,7 +2733,7 @@
       let collapsed = session ? session.get(position, block.dataset.fold === '-') : block.dataset.fold === '-';
       const refresh = () => { if (body) body.hidden = collapsed; button.setAttribute('aria-expanded', String(!collapsed)); button.setAttribute('aria-label', collapsed ? 'Expand callout' : 'Collapse callout'); };
       refresh();
-      button.addEventListener('click', () => { collapsed = !collapsed; if (session) session.set(position, collapsed); refresh(); host.__relatumReadingQuiz?.sync(); });
+      button.addEventListener('click', () => { collapsed = !collapsed; if (session) session.set(position, collapsed); refresh(); host.__relatumReadingQuiz?.sync(); typesetVisibleMath(); });
     });
     // Notes present every table row as data, including the first Markdown row.
     content.querySelectorAll('table th').forEach((header) => {
@@ -2743,6 +2773,34 @@
     host.replaceChildren(content);
     host.classList.toggle('is-failed', !!result.error);
     const current = () => host.dataset.noteReadingEpoch === epoch && content.isConnected;
+    let mathQueue = Promise.resolve();
+    function typesetVisibleMath() {
+      if (!result.features?.math || !current() || host.closest('[hidden]')) return;
+      // Split only at hidden descendants, so MathJax never walks folded bodies.
+      // No observer is needed: opening a fold explicitly reuses this queue.
+      const roots = [];
+      const visit = element => {
+        if (element.hidden || element.matches('pre,code,template,script,style,mjx-container')) return;
+        if (element.querySelector('[hidden]')) { for (const child of element.children) visit(child); return; }
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, { acceptNode(node) {
+          return node.parentElement.closest('pre,code,template,script,style,mjx-container') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+        } });
+        let text = '', node; while ((node = walker.nextNode())) text += node.textContent;
+        if (window.MarkdownMini.mathRanges(text).length || /\\(?:begin|ref|eqref)\{/.test(text)) roots.push(element);
+      };
+      visit(content);
+      if (!roots.length) return;
+      mathQueue = mathQueue.then(async () => {
+        if (!current() || host.closest('[hidden]')) return;
+        const math = await ensureMathJax();
+        if (!current() || host.closest('[hidden]')) return;
+        roots.length = 0; visit(content);
+        const visible = roots.filter(root => root.isConnected && !root.closest('[hidden]'));
+        if (!visible.length) return;
+        await math.typesetPromise(visible);
+        if (!current() && typeof math.typesetClear === 'function') math.typesetClear(visible);
+      }).catch(() => { if (current()) host.classList.add('is-failed'); });
+    }
     if (content.querySelector('.note-quiz-carrier')) host.__relatumReadingQuiz = attachNoteQuiz(content, {
       notePath, isCurrent: current, onLink: safeOptions.onOpenExternal,
     });
@@ -2751,14 +2809,7 @@
       window.RelatumNoteMermaid?.reserve?.(content, { mode: 'reading' });
       host.__relatumReadingMermaid = attachNoteMermaid(content, { mode: 'reading', isCurrent: current });
     }
-    if (result.features && result.features.math) {
-      ensureMathJax().then((math) => {
-        if (!current()) return;
-        return math.typesetPromise([content]).finally(() => {
-          if (!current() && typeof math.typesetClear === 'function') math.typesetClear([content]);
-        });
-      }).catch(() => { if (current()) host.classList.add('is-failed'); });
-    }
+    Promise.resolve().then(typesetVisibleMath);
     return result;
   }
 
@@ -2899,6 +2950,7 @@
     toDOM(view) {
       const wrap = document.createElement('div');
       wrap.className = 'note-live-rich-block is-' + this.spec.kind;
+      decorateNestedCalloutWidget(wrap, view, this.spec, this.coordinator);
       const token = {};
       this.token = token;
 
@@ -3003,6 +3055,7 @@
     get estimatedHeight() { return this.layoutHeight; }
     toDOM(view) {
       const wrap = document.createElement('div'); wrap.className = 'note-live-rich-block is-quiz';
+      decorateNestedCalloutWidget(wrap, view, this.spec, this.coordinator);
       const token = {}; this.token = token;
       const holder = { widget: this, token, control: null }; wrap.__relatumQuizWidget = holder;
       wrap.innerHTML = quizFence({ language: 'quiz', source: fencedCodeBody(this.spec.renderSource || this.spec.source), from: this.spec.from, to: this.spec.to });
@@ -3173,7 +3226,12 @@
     }
     // Keep the immutable document reference. Scrolling/selection must not copy a
     // potentially huge fence just to compare or display its tiny language badge.
-    get code() { return fencedCodeBody(this.doc.sliceString(this.from, this.to)); }
+    get code() {
+      const line = this.doc.lineAt(this.from);
+      return fencedCodeBody(window.MarkdownMini.quoteLine(line.text).depth
+        ? window.MarkdownMini.noteContainerSource(this.doc.sliceString(line.from, this.to)).text
+        : this.doc.sliceString(this.from, this.to));
+    }
     eq(other) { return other.label === this.label && other.doc === this.doc && other.from === this.from && other.to === this.to; }
     toDOM() {
       this.copyControl = codeCopyControl(this.label, () => this.code);
@@ -3963,7 +4021,7 @@
           if (number === endLine.number || collapsed) className += ' note-live-callout-last';
           if (number !== startLine.number) className += ' note-live-callout-body-line';
           if (number === startLine.number + 1) className += ' note-live-callout-body-first';
-          if (entry.nested) {
+          if (entry.nested || descriptor.input === 'white') {
             if (calloutModel.hiddenHeaders.has(number)) continue;
             let row = layeredLines.get(number);
             if (!row) layeredLines.set(number, row = []);
@@ -4008,8 +4066,9 @@
             if (number === blockLast) className += ' note-live-code-last';
             const codeLine = view.state.doc.line(number), quote = window.MarkdownMini.quoteLine(codeLine.text);
             const callout = quote.depth && blockSpecs.some(spec => spec.kind === 'callout' && spec.from <= codeLine.from && spec.to >= codeLine.to);
-            if (quote.depth && !callout) {
-              className += ' note-live-quote-code'; quotedCodeLines.add(codeLine.from);
+            if (quote.depth) {
+              if (!callout) className += ' note-live-quote-code';
+              quotedCodeLines.add(codeLine.from);
               lineClass(codeLine.from, className, '--note-quote-depth:' + quote.depth);
               sourceMark(codeLine.from, codeLine.from + quote.prefix.length, codeLine.from, codeLine.from + quote.prefix.length, 'quote');
             } else lineClass(codeLine.from, className);
@@ -4026,7 +4085,7 @@
               }
             }
             const openingLine = view.state.doc.line(blockFirst);
-            const opener = fenceStart(openingLine.text);
+            const opener = fenceStart(window.MarkdownMini.quoteLine(openingLine.text).text);
             if (!constructActive(view, range.from, range.to) && opener && openingLine.from >= first.from && openingLine.to <= last.to) {
               add(openingLine.to, openingLine.to, Decoration.widget({
                 widget: new CodeLanguageWidget(opener.label, view.state.doc, range.from, range.to),
@@ -5478,6 +5537,7 @@
     safeOptions.imageTextController = imageTextController;
     safeOptions.imageTextSizer = imageTextSizer;
     safeOptions.coordinator = coordinator;
+    safeOptions.decorateBlock = decorateNestedCalloutWidget;
     safeOptions.renderTableCell = (value) => safeIsolatedResult(window.MarkdownTable.serialize({ header: [value], rows: [], align: [''] }),
       { noteContext: documentNoteSyntax, noteFootnoteBody: true });
     safeOptions.renderTableClipboard = (source) => {
@@ -5524,7 +5584,13 @@
         if (!spec) return;
         const doc = view.state.doc;
         let position, changes;
-        if (side === 'after') {
+        if (spec.container?.depth) {
+          const prefix = spec.container.prefix;
+          const insert = side === 'after' ? '\n' + prefix + '\n' + prefix : prefix + '\n' + prefix + '\n';
+          const at = side === 'after' ? spec.to : spec.from;
+          changes = { from: at, insert };
+          position = at + (side === 'after' ? insert.length : prefix.length);
+        } else if (side === 'after') {
           const tail = doc.sliceString(spec.to);
           if (/^\n?$/.test(tail)) {
             const insert = tail ? '\n' : '\n\n';
@@ -6116,10 +6182,12 @@
           },
           keyup() { pastePlain = false; return false; },
           focus(event, view) {
+            if (event.target !== view.contentDOM) return false;
             if (!inputSession.pending()) view.dispatch({ effects: focusEffect.of(true) });
             return false;
           },
           blur(event, view) {
+            if (event.target !== view.contentDOM) return false;
             pastePlain = false;
             if (inputSession.pending()) inputSession.end(view);
             else view.dispatch({ effects: focusEffect.of(false) });

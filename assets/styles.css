@@ -40758,6 +40758,8 @@ body.canvas-dark .task-root-archive-root:focus-visible {
 .note-live-editor-host .cm-line.note-live-callout-line.note-color-block,
 .note-live-rich-block.note-block-math.note-color-block { background: var(--note-block-bg-light); }
 .node-text .md-callout.note-color-block { border-radius: 7px; }
+.node-text .md-callout.note-color-block[data-callout="white"] { border: 1px solid var(--note-theme-line, #e5e5e5); }
+body.start-page[data-start-theme="dark"] .node-text .md-callout.note-color-block[data-callout="white"] { border-color: var(--note-theme-line, #444); }
 .node-text .md-callout.note-color-block > .md-callout-title,
 .note-live-callout-title-widget.note-color-block { color: inherit; font-weight: 600; }
 .node-text .md-callout.note-color-block:not(:has(> .md-callout-title)) > .md-callout-body > p:first-child { margin-top: 0; }

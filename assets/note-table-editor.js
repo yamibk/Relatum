@@ -430,14 +430,15 @@
     }
     eq(other) {
       return other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint && other.spec.source === this.spec.source
-        && other.notePath === this.notePath && other.epoch === this.epoch;
+        && other.notePath === this.notePath && other.epoch === this.epoch && other.spec.calloutContext === this.spec.calloutContext;
     }
-    toDOM(view) { return new TableSurface(this, view).wrap; }
+    toDOM(view) { const dom = new TableSurface(this, view).wrap; this.controller.options.decorateBlock?.(dom, view, this.spec, this.coordinator); return dom; }
     updateDOM(dom) {
       const surface = dom.__noteTableSurface;
       if (!surface || surface.widget.spec.id !== this.spec.id || surface.widget.epoch !== this.epoch
           || surface.widget.notePath !== this.notePath) return false;
       surface.sync(this);
+      this.controller.options.decorateBlock?.(dom, surface.view, this.spec, this.coordinator);
       return true;
     }
     destroy(dom) { if (dom.__noteTableSurface) dom.__noteTableSurface.destroy(); }
@@ -975,7 +976,14 @@
     }
     whenSettled() { return this.pending() ? new Promise((resolve) => this.waiters.push(resolve)) : Promise.resolve(true); }
     open(row, col, point) {
-      if (!this.current()) return;
+      const current = this.current(); if (!current) return;
+      // Focus entering the nested editor must not activate a stale parent
+      // caret in a hidden Callout header and replace this input underneath it.
+      if (current.container && !this.edit && (this.view.state.selection.main.head < current.from || this.view.state.selection.main.head > current.to)) {
+        this.view.dispatch({ selection: CM.EditorSelection.cursor(current.from), userEvent: 'select.pointer' });
+        this.controller.route(this, surface => surface.open(row, col, point));
+        return;
+      }
       this.activeColumn = col;
       if (this.edit && this.edit.row === row && this.edit.col === col) {
         this.edit.input.focus(); if (point) { const offset = this.inputPoint(point).offset; this.edit.input.setSelectionRange(offset, offset); } return;
@@ -1026,7 +1034,8 @@
       const next = cells.slice(); next[col] = value;
       const first = this.view.state.doc.lineAt(current.from);
       const line = this.view.state.doc.line(first.number + (row ? row + 1 : 0));
-      const insert = syntax.serializeRow(next, this.model.header.length);
+      const prefix = current.container ? window.MarkdownMini.noteContainerSource(line.text, current.container.depth).prefixes[0] : '';
+      const insert = prefix + syntax.serializeRow(next, this.model.header.length);
       if (line.text === insert) return;
       const changes = this.view.state.changes({ from: line.from, to: line.to, insert });
       const update = { id: current.id, epoch: this.widget.epoch, from: current.from, to: current.to, source: current.source,
@@ -1058,7 +1067,24 @@
     }
     write(model, userEvent) {
       const current = this.current(); if (!current) return false;
-      const source = model ? syntax.serialize(model) : '';
+      const normalized = model ? syntax.serialize(model) : '';
+      // Preserve unchanged physical rows (including spacing) when a structural
+      // command inserts, deletes or moves rows. New rows inherit the container.
+      const before = (current.renderSource || current.source).split('\n');
+      const key = line => JSON.stringify(syntax.splitRow(line).map(value => syntax.isSeparatorLine(line) ? value.replace(/-+/g, '-') : value));
+      const rowsByKey = new Map();
+      before.forEach((line, index) => {
+        const value = key(line);
+        if (!rowsByKey.has(value)) rowsByKey.set(value, { indices: [], next: 0 });
+        rowsByKey.get(value).indices.push(index);
+      });
+      const raw = current.source.split('\n');
+      const source = model ? normalized.split('\n').map((line, index) => {
+        const bucket = rowsByKey.get(key(line));
+        if (bucket && bucket.next < bucket.indices.length) return raw[bucket.indices[bucket.next++]];
+        const prefix = current.container ? (current.container.prefixes[index] ?? current.container.prefix) : '';
+        return prefix + line;
+      }).join('\n') : '';
       if (current.source === source) return true;
       const changes = this.view.state.changes({ from: current.from, to: current.to, insert: source });
       this.controller.mapBodyPosition(changes);

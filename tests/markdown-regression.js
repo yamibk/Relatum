@@ -21,8 +21,15 @@ assert(Markdown && Markdown.structure && typeof Markdown.renderResult === 'funct
 
 const noteCatalog = Markdown.noteBlockCatalog;
 assert(Object.isFrozen(noteCatalog) && Object.isFrozen(noteCatalog.colors));
-assert.equal(noteCatalog.colors.length, 36);
+assert.equal(noteCatalog.colors.length, 37);
 assert.equal(noteCatalog.types.length, 17);
+assert(Markdown.renderResult('> [!gray] # 123', { noteBlocks: true }).html.includes('># 123</span>'));
+assert(Markdown.renderResult('> [!gray]\n> # 123', { noteBlocks: true }).html.includes('<h1>123</h1>'));
+assert.deepEqual(Markdown.parseNoteBlockHeader('[!WhItE]- **Title**'), { type: 'white', suffix: '-', title: '**Title**', collapsed: true });
+const container = Markdown.noteContainerSource('> > | A | B |\n>>| --- | --- |\n> > | 1 | 2 |', 2);
+assert.equal(container.text, '| A | B |\n| --- | --- |\n| 1 | 2 |');
+assert.equal(Markdown.wrapNoteContainer(container.text, container), '> > | A | B |\n>>| --- | --- |\n> > | 1 | 2 |');
+assert.equal(container.offsets[1], '> > | A | B |\n>>'.length);
 for (const type of noteCatalog.types) {
   for (const name of [type.name, ...type.aliases]) {
     const rendered = Markdown.renderResult('> [!' + name.toUpperCase() + ']\n> content', {noteBlocks:true});

@@ -501,21 +501,23 @@
     } catch (_) { return ''; }
   }
   function canvasReferences(source) {
-    const refs = [], header = frontmatter(String(source)); let fence = '', html = false, htmlComment = false, percentComment = false, offset = 0;
+    const refs = [], header = frontmatter(String(source)); let fence = '', fenceDepth = 0, html = false, htmlComment = false, percentComment = false, offset = 0;
     String(source).split(/(?<=\n)/).forEach((original, index) => {
-      const line = original.replace(/[\r\n]+$/, ''), trimmed = line.trim(), marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      const physical = original.replace(/[\r\n]+$/, ''), quote = quoteLine(physical);
+      const line = quote.text, trimmed = line.trim(), marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
       if (!header || offset >= header.to) {
+        if (fence && quote.depth < fenceDepth) fence = '';
         if (fence) { if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = ''; }
         else if (html) { if (htmlComment && line.includes('-->') || !htmlComment && !trimmed) html = htmlComment = false; }
         else if (percentComment) { if ((line.match(/%%/g) || []).length % 2) percentComment = false; }
-        else if (marker) fence = marker[1];
+        else if (marker) { fence = marker[1]; fenceDepth = quote.depth; }
         else if (line.includes('%%')) percentComment = !!((line.match(/%%/g) || []).length % 2);
         else if (line.includes('<!--') || /^ {0,3}<[A-Za-z/!?]/.test(line)) {
           if (line.includes('<!--')) html = htmlComment = !line.slice(line.indexOf('<!--') + 4).includes('-->');
           else html = !!trimmed;
         } else if (/^ {0,3}!\[/.test(line)) {
           const parsed = parseImage(line);
-          if (isCanvasImage(parsed)) refs.push({ from: offset, to: offset + line.length, parsed });
+          if (isCanvasImage(parsed)) refs.push({ from: offset + quote.prefix.length, to: offset + physical.length, parsed });
         }
       }
       offset += original.length;
@@ -1469,6 +1471,33 @@
     return value;
   }
 
+  // A view of quoted source, never a replacement for the saved Markdown.
+  // Keep every physical line and its exact prefix for transactional writes.
+  function noteContainerSource(source, depth) {
+    const rows = String(source || '').split('\n');
+    const count = depth == null ? quoteLine(rows[0]).depth : depth;
+    const prefixes = [], offsets = []; let offset = 0;
+    const lines = rows.map(row => {
+      let at = 0;
+      for (let index = 0; index < count; index++) {
+        const match = /^[ \t]{0,3}>[ \t]?/.exec(row.slice(at));
+        if (!match) break;
+        at += match[0].length;
+      }
+      prefixes.push(row.slice(0, at)); offsets.push(offset + at); offset += row.length + 1;
+      return row.slice(at);
+    });
+    return { text: lines.join('\n'), lines, prefixes, offsets, depth: count, prefix: prefixes[0] || '> '.repeat(count) };
+  }
+  function wrapNoteContainer(source, container) {
+    if (!container?.depth) return source;
+    return String(source).split('\n').map((line, index) => (container.prefixes[index] ?? container.prefix) + line).join('\n');
+  }
+  function parseNoteBlockHeader(source) {
+    const match = /^\[!([A-Za-z][\w-]*)\]([+-]?)[ \t]*(.*)$/.exec(String(source || '').trimStart());
+    return match ? { type: match[1].toLowerCase(), suffix: match[2], title: match[3].trim(), collapsed: match[2] === '-' } : null;
+  }
+
   // Local Lucide subset; license: assets/vendor/lucide/LICENSE.txt.
   const NOTE_ICONS = Object.freeze({
     note: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
@@ -1507,8 +1536,8 @@
     ['yellow','C3AF6F','warm'],['lemon','C7BF80','warm'],['amber','C5A16A','warm'],['orange','C29B79','warm'],['apricot','D2B393','warm'],['peach','D4B0A0','warm'],['coral','C68F83','warm'],['terracotta','B68B79','warm'],
     ['cream','E1D5AE','warm'],['beige','C7B89E','warm'],['brown','947665','warm'],
     ['red','B98282','pink'],['rose','BD96A3','pink'],['pink','CEAAB9','pink'],['mauve','AB97AF','pink'],['lavender','ABA4CC','pink'],['purple','9584B0','pink'],
-    ['gray','969B9F','neutral'],['silver','AFB7BA','neutral'],['stone','A6A095','neutral'],['sand','BFB299','neutral'],['charcoal','626B6B','neutral'],
-  ].map(([name, hex, group]) => Object.freeze({ name, group, base: '#' + hex, light: mixedColor('#' + hex, '#FFFFFF', .16), dark: mixedColor('#' + hex, '#181A19', .22), example: '> [!' + name + ']\n> ' + name })));
+    ['gray','969B9F','neutral'],['silver','AFB7BA','neutral'],['stone','A6A095','neutral'],['sand','BFB299','neutral'],['charcoal','626B6B','neutral'],['white','FFFFFF','neutral'],
+  ].map(([name, hex, group]) => Object.freeze({ name, group, base: '#' + hex, light: name === 'white' ? '#FFFFFF' : mixedColor('#' + hex, '#FFFFFF', .16), dark: name === 'white' ? 'var(--note-theme-surface, #242424)' : mixedColor('#' + hex, '#181A19', .22), example: '> [!' + name + ']\n> ' + name })));
   const NOTE_TYPES = Object.freeze(Object.keys(NOTE_ICONS).map((name) => Object.freeze({ name, aliases: Object.freeze(Object.keys(CALLOUT_ALIAS).filter((alias) => CALLOUT_ALIAS[alias] === name)), example: '> [!' + name + ']\n> ' + name.charAt(0).toUpperCase() + name.slice(1) })));
   function noteBlock(type, title, suffix) {
     const input = String(type || 'note').toLowerCase();
@@ -1690,7 +1719,8 @@
           buf.push(lines[i].replace(/^\s*>\s?/, ''));
           i++;
         }
-        const head = /^\[!(\w+)\]([+-]?)\s*(.*)$/.exec(buf[0] || '');
+        const parsedHeader = options?.noteBlocks ? parseNoteBlockHeader(buf[0]) : null;
+        const head = options?.noteBlocks ? parsedHeader && [null, parsedHeader.type, parsedHeader.suffix, parsedHeader.title] : /^\[!(\w+)\]([+-]?)\s*(.*)$/.exec(buf[0] || '');
         if (head) {
           const descriptor = options && options.noteBlocks ? noteBlock(head[1], head[3].trim(), head[2]) : null;
           let type = head[1].toLowerCase();
@@ -2029,6 +2059,7 @@
     quoteLine: quoteLine,
     stripQuote: stripQuote,
     noteBlock: noteBlock,
+    parseNoteBlockHeader, noteContainerSource, wrapNoteContainer,
     foldButton: foldButton,
     noteBlockCatalog: Object.freeze({ types: NOTE_TYPES, colors: NOTE_COLORS }),
   };
