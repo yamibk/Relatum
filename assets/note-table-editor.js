@@ -65,7 +65,11 @@
             this.decorations = surface.controller.options.tableInlineDecorations(update.view);
           }
         }
-      }, { decorations: plugin => plugin.decorations });
+      }, { decorations: plugin => plugin.decorations,
+        provide: plugin => CM.EditorView.atomicRanges.of(view => view.plugin(plugin)?.decorations.update({
+          filter: (from, to, value) => !!value.spec.relatumAtomic,
+        }) || CM.Decoration.none),
+      });
       this.view = new CM.EditorView({ parent: cell, state: CM.EditorState.create({ doc: value, extensions: [
         CM.EditorView.editorAttributes.of({ class: 'note-table-cell-input' }),
         CM.EditorView.contentAttributes.of({ class: 'note-table-cell-editor', 'aria-label': label, spellcheck: 'false' }),
@@ -86,7 +90,8 @@
           if (surface.edit?.input !== input) return;
           if (update.docChanged && !input.syncing) {
             surface.edit.emptyFormat = null;
-            if (!surface.pending()) surface.commit(false, update.transactions.some(tr => tr.isUserEvent('input.note-highlight') || tr.isUserEvent('delete.note-highlight')) ? 'input.note-highlight' : undefined);
+            if (!surface.pending()) surface.commit(false, update.transactions.some(tr => tr.isUserEvent('input.note-highlight') || tr.isUserEvent('delete.note-highlight')) ? 'input.note-highlight'
+              : update.transactions.some(tr => tr.isUserEvent('input.table-break')) ? 'input.table-break' : undefined);
           }
           if (update.docChanged || update.geometryChanged) surface.controller.measure();
         }),
@@ -1044,7 +1049,7 @@
       try {
         this.controller.mapBodyPosition(changes);
         this.view.dispatch({ changes, selection: this.view.state.selection.map(changes), effects: cellUpdateEffect.of(update),
-          ...(userEvent === 'input.note-highlight' ? { annotations: CM.isolateHistory.of('full') } : {}),
+          ...(/^(?:input\.note-highlight|input\.table-break)$/.test(userEvent) ? { annotations: CM.isolateHistory.of('full') } : {}),
           userEvent: userEvent || (composed ? 'input.table-compose' : 'input.table-cell') });
       }
       finally { this.committing = false; }
@@ -1139,6 +1144,14 @@
       if (this.edit && this.edit.input.contains(event.target)) {
         if (mod && event.key === 'Enter') {
           event.preventDefault(); this.controller.options.onTableBodyRequest(this.widget.spec.id, event.shiftKey ? 'before' : 'after'); return;
+        }
+        if (event.key === 'Enter' && event.shiftKey) {
+          event.preventDefault();
+          const input = this.edit.input;
+          input.view.dispatch(Object.assign({}, input.view.state.replaceSelection('<br>'), {
+            annotations: CM.isolateHistory.of('full'), userEvent: 'input.table-break', scrollIntoView: true,
+          }));
+          return;
         }
         if (event.key === 'Tab' || event.key === 'Enter') {
           event.preventDefault(); const { row, col } = this.edit;

@@ -36,6 +36,50 @@ const html = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><base href
       }, text);
       await settle(); await cell.click(); await settle();
     }
+    await reset('ab'); await select(1);
+    await input.press('Shift+Enter'); await settle();
+    assert.equal(await value(), 'a<br>b');
+    assert.equal(await input.getAttribute('aria-label'), '第 1 行，第 1 列');
+    assert.equal(await input.locator('br').count(), 1, 'the active cell shows a real line break');
+    assert.equal(await input.evaluate(node => node.__noteCellInput.selectionStart), 5);
+    const breakGeometry = await input.evaluate(node => {
+      const view = node.__noteCellInput.view;
+      return [view.coordsAtPos(1).top, view.coordsAtPos(5).top];
+    });
+    assert(breakGeometry[1] > breakGeometry[0], 'the caret after the break is on the next visual line');
+    const withBreak = await source();
+    assert.equal(withBreak.split('\n').length, 3, 'a cell break never creates a physical table row');
+    await input.press('Control+z'); await settle();
+    assert.equal(await source(), '| ab | other |\n| --- | --- |\n| next | last |', 'one undo removes the break');
+    await page.keyboard.press('Control+Shift+z'); await settle();
+    assert.equal(await source(), withBreak, 'redo restores the break');
+    await cell.click(); await select(5); await input.press('ArrowLeft');
+    assert.equal(await input.evaluate(node => node.__noteCellInput.selectionStart), 1, 'arrows skip the hidden break tag');
+    await input.press('Delete'); await settle(); assert.equal(await value(), 'ab', 'Delete removes the entire break');
+    await input.press('Shift+Enter'); await input.press('Shift+Enter'); await page.keyboard.type('X'); await settle();
+    assert.equal(await value(), 'a<br><br>Xb', 'consecutive breaks keep typing in the same cell');
+    await select(5); await input.press('Backspace'); await settle(); assert.equal(await value(), 'a<br>Xb');
+    await input.press('Escape');
+    assert.equal(await cell.locator('br').count(), 1, 'inactive rendering preserves the break');
+    await page.evaluate(value => editor.setDocument({ value, notePath: 'inline.md', anchor: 0, head: 0 }), withBreak);
+    await settle(); await cell.click(); assert.equal(await input.locator('br').count(), 1, 'reopening preserves cell breaks');
+    await reset('abcd'); await input.evaluate(node => node.__noteCellInput.setSelectionRange(1, 3));
+    await input.press('Shift+Enter'); await settle(); assert.equal(await value(), 'a<br>d', 'a break replaces only the selected text');
+    await reset('`<br>` \\<br>'); assert.equal(await input.locator('br').count(), 0, 'code and escaped HTML stay literal');
+    await reset('\\$257,000 tail'); await select(11); await settle();
+    assert.equal(await input.locator('.is-escape').count(), 0, 'cell escape marker hides away from the caret');
+    await select(1); await settle(); assert.equal(await input.locator('.is-escape').count(), 1);
+    await input.press('Escape'); await settle(); assert.equal(await cell.locator('.is-escape').count(), 0);
+    await page.evaluate(() => editor.setDocument({ value: '## \\$257,000–$327,000\n\nplain \\*star\\* and \\q\n\n`\\$code`', notePath: 'inline.md' }));
+    await settle();
+    assert.equal(await page.locator('#host .is-escape').count(), 0, 'unfocused body hides escape markers');
+    const escapedSource = await source();
+    await page.evaluate(() => { editor.view.focus(); editor.view.dispatch({ selection: { anchor: 4 } }); });
+    await settle(); assert.equal(await page.locator('#host .is-escape').count(), 1);
+    await page.evaluate(() => editor.view.dispatch({ selection: { anchor: editor.view.state.doc.length } }));
+    await settle(); assert.equal(await page.locator('#host .is-escape').count(), 0);
+    await page.evaluate(() => editor.setSourceMode(true)); await settle();
+    assert.equal(await source(), escapedSource, 'hiding escapes never changes Markdown');
     const examples = [['**abc**', 'strong', 3], ['__abc__', 'strong', 3], ['*abc*', 'emphasis', 2], ['_abc_', 'emphasis', 2],
       ['~~abc~~', 'strike', 3], ['==abc==', 'highlight', 3], ['`abc`', 'inline-code', 2]];
     for (const [text, kind, position] of examples) {

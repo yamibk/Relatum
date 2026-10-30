@@ -780,6 +780,14 @@ body.start-page[data-start-theme="dark"] :is(.note-workspace, .note-document-bod
 }
 .note-live-image-frame.is-inline img { max-height: 180px; }
 .note-live-image-frame.is-block img { max-height: min(65vh, 720px); box-shadow: 0 10px 30px rgba(30,30,26,.08); }
+.note-live-image-frame.has-svg-auto-size:not(.has-explicit-size) img {
+  width: min(var(--note-svg-natural-width, 300px), calc(min(65vh, 720px) * var(--note-svg-ratio, 2)));
+  height: auto;
+  aspect-ratio: auto var(--note-svg-ratio, 2);
+}
+.note-live-image-frame.is-inline.has-svg-auto-size:not(.has-explicit-size) img {
+  width: min(var(--note-svg-natural-width, 300px), calc(180px * var(--note-svg-ratio, 2)));
+}
 .note-live-image-frame.has-explicit-size img { width: 100%; max-height: none; height: auto; }
 .note-live-image-frame.has-explicit-box img { height: 100%; object-fit: contain; }
 .note-live-image-frame.is-selected::after {
@@ -2267,6 +2275,11 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 .note-code-toolbar .note-live-code-language { position: static; flex: 0 0 auto; max-width: none; }
 .note-reading-content .md-local-image { position: relative; display: grid; justify-items: start; width: fit-content; max-width: 100%; margin: 1em 0; overflow: hidden; border-radius: 8px; }
 .note-reading-content .md-local-image img { display: block; max-width: 100%; max-height: min(72vh, 900px); border-radius: 8px; }
+.note-reading-content .md-local-image.has-svg-auto-size:not(.has-explicit-size) img {
+  width: min(var(--note-svg-natural-width, 300px), calc(min(72vh, 900px) * var(--note-svg-ratio, 2)));
+  height: auto;
+  aspect-ratio: auto var(--note-svg-ratio, 2);
+}
 .note-reading-content .md-local-image.has-explicit-size img { width: 100%; max-height: none; height: auto; }
 .note-reading-content .md-local-image.has-explicit-box img { height: 100%; object-fit: contain; }
 .note-reading-content .md-local-image-fallback { color: var(--text-tertiary); font-size: 12px; }

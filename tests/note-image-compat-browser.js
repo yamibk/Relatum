@@ -53,6 +53,9 @@ window.show=(value,mode='live')=>{
   for (const name of ['电路(1).png', '电路 空格(1).png', 'plain.png']) fs.writeFileSync(path.join(notes, 'images', name), png);
   fs.writeFileSync(path.join(notes, 'other', 'plain.png'), png);
   for (const name of ['矢量 (1).svg', 'vector.svg']) fs.writeFileSync(path.join(notes, 'images', name), svg);
+  fs.writeFileSync(path.join(notes, 'images', 'percent.svg'), svg.replace('viewBox=', 'width="100%" viewBox='));
+  fs.writeFileSync(path.join(notes, 'images', 'portrait.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 100 400"><rect width="100" height="400" fill="#78936c"/></svg>');
+  fs.writeFileSync(path.join(notes, 'images', 'fixed.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1260" viewBox="0 0 1000 1260"><rect width="1000" height="1260" fill="#78936c"/></svg>');
   fs.writeFileSync(path.join(notes, 'bad.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>window.svgExecuted=1</script></svg>');
   const oversized = Buffer.from(png); oversized.writeUInt32BE(40000, 16);
   fs.writeFileSync(path.join(notes, 'oversized.png'), oversized);
@@ -119,6 +122,28 @@ window.show=(value,mode='live')=>{
       }
       await page.screenshot({ path: path.join(root, `image-svg-${mode}.png`) });
     }
+    const svgSource = '![percent](images/percent.svg)\n\ninline ![percent](images/percent.svg) tail\n\n![[images/portrait.svg]]\n\n![fixed](images/fixed.svg)\n\n![explicit|160](images/percent.svg)';
+    for (const mode of ['live', 'reading']) {
+      for (const width of [1280, 420]) {
+        await page.setViewportSize({ width, height: 1800 });
+        await page.evaluate(({ svgSource, mode }) => show(svgSource, mode), { svgSource, mode });
+        await page.waitForFunction(() => {
+          const images = [...document.querySelectorAll('.note-live-image-frame img, .md-local-image img')];
+          return images.length === 5 && images.every(image => image.naturalWidth > 0 && image.getBoundingClientRect().width > 0);
+        });
+        const dimensions = await page.locator('.note-live-image-frame img,.md-local-image img').evaluateAll(images => images.map(image => {
+          const rect = image.getBoundingClientRect();
+          return { alt: image.alt, width: rect.width, height: rect.height, ratio: image.naturalWidth / image.naturalHeight };
+        }));
+        for (const size of dimensions) {
+          assert(size.width > 0 && size.height > 0 && size.width <= width, mode + ' SVG has bounded nonzero dimensions');
+          assert(Math.abs(size.width / size.height - size.ratio) < .03, mode + ' SVG preserves its ratio');
+        }
+        assert(Math.abs(dimensions[4].width - 160) < 1, 'explicit Markdown sizing wins over natural SVG sizing');
+        await page.screenshot({ path: path.join(root, `svg-percent-${mode}-${width}.png`) });
+      }
+    }
+    await page.setViewportSize({ width: 1280, height: 1800 });
     await page.evaluate(value => show(value, 'source'), source);
     assert.equal(await page.locator('.note-live-image-frame img, .md-local-image img').count(), 0);
     await page.evaluate(() => show('`![图](images/a.png)`\n\n![图]\\(images/a.png)'));
@@ -147,7 +172,7 @@ window.show=(value,mode='live')=>{
       await page.evaluate(lifecycle => {
         if (lifecycle === 'replace') show('![正常](images/plain.png)');
         else if (lifecycle === 'minimize') { document.documentElement.dataset.desktopMinimized = '1'; window.dispatchEvent(new Event('canvasdesktop:visibility')); }
-        else if (lifecycle === 'workspace') { document.getElementById('reader').hidden = true; document.getElementById('editor').hidden = true; document.dispatchEvent(new Event('relatum:start-workspacechange')); }
+        else if (lifecycle === 'workspace') { document.getElementById('reader').hidden = true; document.getElementById('editor').hidden = true; document.dispatchEvent(new CustomEvent('relatum:start-workspacechange', { detail: { workspace: 'canvas' } })); }
         else window.dispatchEvent(new Event('pagehide'));
       }, lifecycle);
       await page.waitForFunction(() => probes.at(-1).aborted);

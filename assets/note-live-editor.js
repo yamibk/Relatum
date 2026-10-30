@@ -2020,6 +2020,18 @@
   function prepareLocalImage(image, frame, url, target, isCurrent) {
     image.__noteImageCleanup?.();
     let disposed = false, requested = false, cancelProbe = null;
+    const svg = /\.svg$/i.test(target);
+    frame.classList.toggle('has-svg-auto-size', svg);
+    frame.style.removeProperty('--note-svg-natural-width');
+    frame.style.removeProperty('--note-svg-ratio');
+    const loaded = () => {
+      if (disposed || !svg || !image.naturalWidth || !image.naturalHeight) return;
+      // Percentage-sized SVGs have a ratio but no intrinsic width. Give the
+      // fit-content frame a definite, bounded image width to break that cycle.
+      frame.style.setProperty('--note-svg-natural-width', image.naturalWidth + 'px');
+      frame.style.setProperty('--note-svg-ratio', image.naturalWidth / image.naturalHeight);
+    };
+    image.addEventListener('load', loaded);
     const current = () => !disposed && image.__noteImageCleanup === cleanup && image.isConnected && frame.isConnected && (!isCurrent || isCurrent());
     const foreground = () => !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
       && !frame.closest('[hidden]') && (!frame.closest('.note-workspace') || document.body.dataset.startWorkspace === 'notes');
@@ -2058,7 +2070,7 @@
       }).catch(() => {}).finally(finish);
     };
     function cleanup() {
-      disposed = true; cancelProbe?.(); image.removeEventListener('error', failed);
+      disposed = true; cancelProbe?.(); image.removeEventListener('error', failed); image.removeEventListener('load', loaded);
       if (image.__noteImageCleanup === cleanup) delete image.__noteImageCleanup;
     }
     image.__noteImageCleanup = cleanup;
@@ -3872,7 +3884,7 @@
   function decorateInlineText(node, mark, sourceMark) {
     if (!node) return false;
     if (inlineTextClasses[node.name]) mark(node.from, node.to, inlineTextClasses[node.name]);
-    else if (node.name === 'Escape') mark(node.from, Math.min(node.to, node.from + 1), 'note-live-source-mark is-escape');
+    else if (node.name === 'Escape') sourceMark(node.from, Math.min(node.to, node.from + 1), node.from, node.to, 'escape');
     else {
       const pattern = node.name === 'EmphasisMark' ? /^(?:StrongEmphasis|Emphasis)$/
         : node.name === 'StrikethroughMark' ? /^Strikethrough$/ : node.name === 'CodeMark' ? /^InlineCode$/ : null;
@@ -3919,7 +3931,7 @@
   const tableInlineTrees = new WeakMap();
   function tableInlineDecorations(view) {
     const ranges = [], guards = [], source = view.state.doc.toString();
-    if (!/[\\`*_~=]/.test(source)) return Decoration.none;
+    if (!/[\\`*_~=]|<br\s*\/?>/i.test(source)) return Decoration.none;
     const mark = (from, to, name) => { if (to > from) ranges.push(Decoration.mark({ class: name }).range(from, to)); };
     const sourceMark = (from, to, unitFrom, unitTo, role) => {
       if (constructActive(view, unitFrom, unitTo)) mark(from, to, 'note-live-source-mark' + (role ? ' is-' + role : ''));
@@ -3934,6 +3946,11 @@
       const offset = element.from;
       const visit = node => {
         if (math.some(range => range.from <= offset + node.from && range.to >= offset + node.to)) return;
+        if (node.name === 'HTMLTag' && /^<br\s*\/?>$/i.test(source.slice(offset + node.from, offset + node.to))) {
+          ranges.push(Decoration.replace({ widget: new NoteBreakWidget(), inclusive: false, relatumAtomic: true })
+            .range(offset + node.from, offset + node.to));
+          return;
+        }
         if (/^(?:InlineCode|Link|Image|Autolink|HTMLTag)$/.test(node.name)) guards.push({ from: offset + node.from, to: offset + node.to });
         decorateInlineText(node, (from, to, name) => mark(offset + from, offset + to, name),
           (from, to, unitFrom, unitTo, role) => sourceMark(offset + from, offset + to, offset + unitFrom, offset + unitTo, role));

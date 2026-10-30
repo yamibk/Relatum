@@ -6,6 +6,8 @@
 - 上方列手柄与下方追加条的高度限制在表格真实外框留白内；保持全列宽/全表宽，符号居中，左右控件不变。正文和真实空行优先命中，手柄仍支持选择、拖动、取消与重排。测试根据实际控件中心取点，不使用固定纵向偏移。
 - 表后紧邻段落行首 Backspace 进入末行末格末尾；表前紧邻段落行尾 Delete 进入首格开头。焦点交接不改变正文或增加历史；多余空行先正常删除，非空选区、源码与显式网格删除仍按原行为。原生 `beforeinput` 删除入口共享保护，候选输入期间不强制交接。
 - 当前格 Enter 在末行增行时保留当前列；末格 Tab 增行后进入首列。
+- Shift+Enter 在当前格插入 `<br>`，光标进入下一显示行，源码仍为单条表格记录；连续换行、选区替换、方向键跨过隐藏标签、Backspace/Delete 整段删除及一次撤销/重做使用原父历史。格内换行一直显示为换行，代码和转义的 `<br>` 保持字面内容。
+- 正文和格内合法转义的反斜杠共用源码标记显隐：光标/选区触及转义对才显示淡色反斜杠，离开或失焦即隐藏；代码、公式及源码模式保留原文。
 - 单元格保持原生光标及原生文字选择。父 CodeMirror 的 drawSelection 样式曾把嵌套 `.cm-line` 光标设为透明，而格内没有绘制替代光标；现在只对格内内容层和行恢复 `currentColor !important`，不修改 vendor 或增加绘制循环。
 
 ## 剪贴板
@@ -17,6 +19,8 @@
 主要实现位于 `assets/note-live-editor.js`、`assets/note-table-editor.js` 和 `assets/styles.css`。不新增公开 API、偏好、存储格式、依赖、观察器或常驻 RAF。
 
 ## 验证
+
+2026-10-30 换行及转义补充：`note-table-inline-browser.js` 验证真实光标纵坐标、连续换行、隐藏标签导航/删除、一次历史、转义显隐和源码往返；`note-table-browser.js` 新增隔离库实际保存 `<br>`、阅读显示、切笔记及重开编辑。两项与原 `note-table-editing-browser.js` 的 8 组矩阵通过。未重新打包或运行 EXE。
 
 使用宿主提供的 Playwright、Edge 和 Python，沿用 `RELATUM_PLAYWRIGHT`、`RELATUM_EDGE_PATH`、`RELATUM_PYTHON`。所有正文和保存数据均为临时合成数据，未访问真实笔记库，未重新打包。
 

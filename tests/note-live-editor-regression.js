@@ -606,14 +606,30 @@ const escapeView = {
   __relatumCompositionActive: false,
   hasFocus: false,
 };
+const inactiveEscapes = decorationRecords(
+  liveProbe.__relatumLiveTest.createInlineDecorations(escapeView, escapeBlockField, () => 'escapes.md', escapeOptions),
+  escapeState.doc.length,
+);
+assert(!inactiveEscapes.some(item => /(?:^|\s)is-escape(?:\s|$)/.test(item.spec.class || '')),
+  'an unfocused editor must hide Markdown escape markers');
+assert(inactiveEscapes.some(item => item.from === 0 && item.to === 1 && !item.spec.class && !item.spec.widget),
+  'only the valid escape backslash is replaced, preserving the literal character');
+escapeView.hasFocus = true;
 const escapeDecorations = decorationRecords(
   liveProbe.__relatumLiveTest.createInlineDecorations(escapeView, escapeBlockField, () => 'escapes.md', escapeOptions),
   escapeState.doc.length,
-).filter((item) => /(?:^|\s)is-escape(?:\s|$)/.test(item.spec.class || ''));
+).filter(item => /(?:^|\s)is-escape(?:\s|$)/.test(item.spec.class || ''));
 assert(escapeDecorations.some((item) => item.from === 0 && item.to === 1),
-  'a valid Markdown escape must gray only its backslash marker');
+  'a caret touching a valid escape reveals only its backslash marker');
 assert.strictEqual(escapeDecorations.length, 1,
   'invalid escapes, inline code, and fenced code must not receive Markdown escape styling');
+escapeView.state = liveProbe.RelatumCodeMirror.EditorState.create({
+  doc: escapeSource, selection: { anchor: escapeState.doc.length },
+  extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage }), escapeBlockField],
+});
+assert(!decorationRecords(liveProbe.__relatumLiveTest.createInlineDecorations(escapeView, escapeBlockField, () => 'escapes.md', escapeOptions),
+  escapeState.doc.length).some(item => /(?:^|\s)is-escape(?:\s|$)/.test(item.spec.class || '')),
+  'moving the caret away hides the escape marker without changing the document');
 
 const syntax = sandbox.window.RelatumNoteLiveSyntax;
 assert(syntax, 'Live Preview syntax probe must be exported');

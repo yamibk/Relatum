@@ -431,6 +431,18 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await workspace.evaluate(() => __noteTableTest.openNote('Table.md'));
     assert.equal(await workspace.evaluate(() => __noteTableTest.editor.snapshot().value), alignedSaved);
     assert.equal(await workspaceCell.evaluate(node => getComputedStyle(node).textAlign), 'right');
+    await workspaceCell.click(); await workspaceInput.fill('line1');
+    await workspaceInput.press('End'); await workspaceInput.press('Shift+Enter'); await workspace.keyboard.type('line2');
+    await workspace.evaluate(() => __noteTableTest.flushSave());
+    const breakSaved = fs.readFileSync(path.join(dataRoot, 'notes', 'Table.md'), 'utf8');
+    assert(breakSaved.includes('line1<br>line2'), 'cell breaks save as inline Markdown without splitting table rows');
+    await workspace.evaluate(() => __noteTableTest.setViewMode('reading'));
+    assert.equal(await workspace.locator('.note-reading-content .md-table tr').first().locator('td,th').first().locator('br').count(), 1);
+    await workspace.evaluate(async () => {
+      await __noteTableTest.setViewMode('live'); await __noteTableTest.openNote('Other.md'); await __noteTableTest.openNote('Table.md');
+    });
+    assert.equal(await workspace.evaluate(() => __noteTableTest.editor.snapshot().value), breakSaved);
+    await workspaceCell.click(); assert.equal(await workspaceInput.locator('br').count(), 1, 'saved cell reopens with a visual break');
     await workspaceCell.click();
     await workspace.locator('.note-table-alignment:visible [data-table-align="left"]').click();
     await workspaceCell.click();

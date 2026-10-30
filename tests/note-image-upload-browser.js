@@ -321,7 +321,7 @@ async function bounded(task, label, timeout = 15000) {
     }
     const checkSvgIntake = async () => {
       await page.evaluate(() => uploadTest.openNote('Images.md'));
-      const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200"><rect width="400" height="200" fill="#78936c"/></svg>';
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 400 200"><rect width="400" height="200" fill="#78936c"/></svg>';
       for (const [mode, type, mime] of [['live', 'drop', ''], ['source', 'drop', ''], ['live', 'paste', 'image/svg+xml']]) {
         await page.evaluate(mode => uploadTest.setViewMode(mode), mode);
         await reset('# SVG\n\n');
@@ -343,10 +343,12 @@ async function bounded(task, label, timeout = 15000) {
           await uploadTest.setViewMode('live');
         });
         await bounded(() => page.waitForFunction(() => [...document.querySelectorAll('.note-live-image-frame img')]
-          .some(image => image.src.includes('.svg') && image.naturalWidth / image.naturalHeight === 2)), 'reopened SVG displays');
+          .some(image => image.src.includes('.svg') && image.naturalWidth / image.naturalHeight === 2
+            && image.getBoundingClientRect().width > 0 && image.getBoundingClientRect().height > 0)), 'reopened SVG displays');
         await page.evaluate(() => uploadTest.setViewMode('reading'));
         await bounded(() => page.waitForFunction(() => [...document.querySelectorAll('.md-local-image img')]
-          .some(image => image.src.includes('.svg') && image.naturalWidth / image.naturalHeight === 2)), 'reading SVG displays');
+          .some(image => image.src.includes('.svg') && image.naturalWidth / image.naturalHeight === 2
+            && image.getBoundingClientRect().width > 0 && image.getBoundingClientRect().height > 0)), 'reading SVG displays');
         await page.evaluate(() => uploadTest.setViewMode('live'));
         console.log(mode + ' SVG ' + type + ', save and reopen: ok');
       }
