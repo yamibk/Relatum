@@ -917,7 +917,7 @@ body.start-page[data-start-theme="dark"] :is(.note-workspace, .note-document-bod
 .note-live-rich-block.is-table th,
 .note-live-rich-block.is-table td { padding: 7px 10px; border: 1px solid rgba(49,49,45,.12); text-align: left; }
 .note-live-rich-block.is-table th { background: rgba(53,62,52,.045); font-weight: 680; }
-.note-live-rich-block.note-table { position: relative; width: 100%; margin: 0; padding: .6em 0; cursor: default; overflow: visible; }
+.note-live-rich-block.note-table { position: relative; width: 100%; margin: 0; padding: 4px 0; cursor: default; overflow: visible; }
 .note-live-rich-block.note-table.has-table-selection:focus-visible { outline: none; }
 .note-table-scroll { overflow-x: auto; padding: 0 0 2px; }
 .note-live-rich-block.note-table table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; }
@@ -964,6 +964,10 @@ body.start-page[data-start-theme="dark"] :is(.note-workspace, .note-document-bod
   box-sizing: border-box; text-align: inherit; overflow-wrap: anywhere; caret-color: var(--text);
 }
 .note-table .note-table-cell-input .cm-line { padding: 0; }
+/* The parent's drawSelection theme hides native carets on descendant lines.
+   Cell views deliberately use native selection/carets and no drawn cursor. */
+.note-table .note-table-cell-input .cm-content.note-table-cell-editor,
+.note-table .note-table-cell-input .cm-line { caret-color: currentColor !important; }
 .note-table .note-table-cell-input img.cm-widgetBuffer {
   display: inline; margin: 0; max-width: none; max-height: none; border-radius: 0; box-shadow: none;
 }

@@ -3252,7 +3252,7 @@
     // to deliver native input without a keydown to the selected image text box.
     const imageTextInput = spec.kind === 'image' && spec.from === 0 && spec.to === state.doc.length
       && options.imageTextController?.active;
-    return !imageTextInput && (spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz');
+    return !imageTextInput && (spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz' || spec.kind === 'table');
   }
 
   function blockAtomicRange(spec, state) {
@@ -5374,6 +5374,11 @@
     safeOptions.coordinator = coordinator;
     safeOptions.renderTableCell = (value) => safeIsolatedResult(window.MarkdownTable.serialize({ header: [value], rows: [], align: [''] }),
       { noteContext: documentNoteSyntax, noteFootnoteBody: true });
+    safeOptions.renderTableClipboard = (source) => {
+      const template = document.createElement('template');
+      template.innerHTML = safeIsolatedResult(source, { noteContext: documentNoteSyntax, noteFootnoteBody: true }).html;
+      return template.content.querySelector('table')?.outerHTML || '';
+    };
     safeOptions.releaseTableCell = releaseImageFailures;
     safeOptions.prepareTableCell = (surface, content, result, source) => {
       const jump = event => {
@@ -5429,6 +5434,9 @@
       };
       tableController.routeBody(run);
     };
+    function enterTableBoundary(view, backward) {
+      return !sourceMode && !inputPending() && !!tableController?.enterBoundary(view, backward);
+    }
     const notePath = () => currentPath;
     const blockField = createBlockField(notePath, safeOptions, coordinator, inputSession);
     const mathPreviewPlugin = createMathEditPreviewPlugin(coordinator);
@@ -5760,8 +5768,8 @@
           return [transaction, { selection: EditorSelection.cursor(task.contentFrom), sequential: true }];
         }),
         Prec.highest(keymap.of([
-          { key: 'Backspace', run: (view) => deleteImageObject(view, true) || !sourceMode && deleteListPrefix(view) },
-          { key: 'Delete', run: (view) => deleteImageObject(view, false) },
+          { key: 'Backspace', run: (view) => deleteImageObject(view, true) || enterTableBoundary(view, true) || !sourceMode && deleteListPrefix(view) },
+          { key: 'Delete', run: (view) => deleteImageObject(view, false) || enterTableBoundary(view, false) },
           { key: 'Enter', run: () => imageTextKeyCommand('edit') },
           { key: 'Escape', run: () => imageTextKeyCommand('clear-selection') },
           { key: 'ArrowLeft', run: (view) => imageTextKeyCommand('move', { dx: -1, dy: 0 }) || moveSelectedMediaCaret(view, true) || !sourceMode && moveBeforeTask(view) },
@@ -5841,6 +5849,10 @@
         // consume the event while the caret still points at hidden source.
         Prec.highest(EditorView.domEventHandlers({
           beforeinput(event, view) {
+            if (!event.isComposing && /^deleteContent(?:Backward|Forward)$/.test(event.inputType)
+                && enterTableBoundary(view, event.inputType === 'deleteContentBackward')) {
+              event.preventDefault(); return true;
+            }
             if (!sourceMode && tableController && !inputPending() && event.inputType.startsWith('insert')) {
               const boundary = tableController.boundary(view);
               if (boundary) safeOptions.onTableBodyRequest(boundary.id, boundary.side);

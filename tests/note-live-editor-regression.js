@@ -102,9 +102,10 @@ function loadLiveDecorationProbe() {
   context.window = context;
   context.document = {};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'assets', 'markdown.js'), 'utf8'), context);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'assets', 'markdown-table.js'), 'utf8'), context);
   const instrumented = editorSource.replace(
     'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath };',
-    'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, toggleInlineFormat, inlineFormatEdit, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension };',
+    'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, toggleInlineFormat, inlineFormatEdit, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension, projectedTableExtension };',
   );
   assert.notStrictEqual(instrumented, editorSource, 'the test-only decoration probe must attach to the Live Preview export');
   vm.runInNewContext(instrumented, context);
@@ -177,14 +178,15 @@ const liveProbe = loadLiveDecorationProbe();
 // Compact block boundaries must change layout without absorbing adjacent
 // composition text. Exercise the real StateField and ChangeSet mapping.
 for (const block of ['$$x^2$$', '$$\n\\frac{a}{b}\n$$', '![[fixture.png|240]]', '![diagram.canvas|240x180](canvases/diagram.canvas)', '---', '***', '___',
-  '```quiz\nQuestion?\n- [ ] No\n- [x] Yes\n```']) {
+  '```quiz\nQuestion?\n- [ ] No\n- [x] Yes\n```', '| A | B |\n| --- | --- |\n| C | D |']) {
   const coordinator = {};
   const field = liveProbe.__relatumLiveTest.createBlockField(() => 'compact.md', {}, coordinator, { pending: () => true });
   // A blank line distinguishes --- from a Setext heading underline.
   const original = 'before\n' + (block === '---' ? '\n' : '') + block + '\nafter';
   const initial = liveProbe.RelatumCodeMirror.EditorState.create({
     doc: original,
-    extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage }), field],
+    extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage,
+      extensions: [liveProbe.__relatumLiveTest.projectedTableExtension] }), field],
   });
   const record = state => decorationRecords(state.field(field).decorations, state.doc.length)[0];
   assert.strictEqual(record(initial).spec.inclusive, true, 'compact blocks must cover their visual boundary lines');

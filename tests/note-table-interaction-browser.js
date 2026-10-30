@@ -180,7 +180,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     await dragPoints(await cellPoint(0, 0), await cellPoint(1, 1));
     await page.screenshot({ path: path.join(output, 'internal-selection.png') });
     await page.keyboard.press('Control+c');
-    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'A\tB\nC\tD');
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), '| A | B |\n| --- | --- |\n| C | D |');
     await page.keyboard.press('Delete'); await settle(); assert.deepEqual(await rows(), [['E', 'F']]);
     await page.keyboard.press('Control+z'); await settle(); assert.deepEqual(await rows(), [['A', 'B'], ['C', 'D'], ['E', 'F']]);
 
@@ -188,7 +188,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     await reset(source + '\n\n后文');
     await dragPoints(await cellPoint(1, 1), await cellPoint(0, 0));
     await page.keyboard.press('Control+c');
-    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'A\tB\nC\tD');
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), '| A | B |\n| --- | --- |\n| C | D |');
     await page.keyboard.press('Delete'); await settle(); assert.deepEqual(await rows(), [['E', 'F']]);
     await page.keyboard.press('Control+z'); await settle(); assert.deepEqual(await rows(), [['A', 'B'], ['C', 'D'], ['E', 'F']]);
 
@@ -261,7 +261,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
       await page.mouse.move(end.x, end.y, { steps: 10 }); await page.mouse.up(); await settle();
       assert.equal(await table.locator('td.is-table-selected').count(), 9);
       await page.keyboard.press('Control+c');
-      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), (await rows()).map(row => row.join('\t')).join('\n'));
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), await page.evaluate(() => MarkdownTable.serialize(document.querySelector('.note-table').__noteTableSurface.model)));
       assert.equal(await value(), haloGrid);
     }
     for (const editing of [false, true]) for (const region of ['blank', 'border', 'empty']) {
@@ -318,27 +318,27 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     // Insertion-style reordering, including row zero and column alignment.
     await reset(source + '\n\n后文');
     let handle = await grip('row', 0), handleBox = await handle.boundingBox(), last = await cell(2, 0).boundingBox();
-    await dragPoints({ x: handleBox.x + 11, y: handleBox.y + 11 }, { x: last.x + 30, y: last.y + last.height - 2 });
+    await dragPoints({ x: handleBox.x + 11, y: handleBox.y + handleBox.height / 2 }, { x: last.x + 30, y: last.y + last.height - 2 });
     assert.deepEqual(await rows(), [['C', 'D'], ['E', 'F'], ['A', 'B']]);
     await page.keyboard.press('Control+z'); await settle(); assert.deepEqual(await rows(), [['A', 'B'], ['C', 'D'], ['E', 'F']]);
     // Reordering immediately after a text commit must form a separate undo unit.
     await reset(source + '\n\n后文'); await cell(0, 0).click(); await input.fill('edited');
     handle = await grip('row', 0); handleBox = await handle.boundingBox(); last = await cell(2, 0).boundingBox();
-    await dragPoints({ x: handleBox.x + 11, y: handleBox.y + 11 }, { x: last.x + 30, y: last.y + last.height - 2 });
+    await dragPoints({ x: handleBox.x + 11, y: handleBox.y + handleBox.height / 2 }, { x: last.x + 30, y: last.y + last.height - 2 });
     await page.keyboard.press('Control+z'); await settle(); assert.deepEqual(await rows(), [['edited', 'B'], ['C', 'D'], ['E', 'F']]);
     await reset('| A | B | C |\n| :--- | :---: | ---: |\n| D | E | F |\n\n后文');
     handle = await grip('column', 0); handleBox = await handle.boundingBox(); last = await cell(0, 2).boundingBox();
-    await dragPoints({ x: handleBox.x + 11, y: handleBox.y + 11 }, { x: last.x + last.width - 2, y: last.y + 20 });
+    await dragPoints({ x: handleBox.x + 11, y: handleBox.y + handleBox.height / 2 }, { x: last.x + last.width - 2, y: last.y + 20 });
     assert.deepEqual(await rows(), [['B', 'C', 'A'], ['E', 'F', 'D']]);
     assert.deepEqual(await page.evaluate(() => MarkdownTable.findTables(editor.snapshot().value)[0].model.align), ['center', 'right', 'left']);
     await page.keyboard.press('Control+z'); await settle(); assert.deepEqual(await rows(), [['A', 'B', 'C'], ['D', 'E', 'F']]);
     const beforeCancel = await value(); handle = await grip('column', 1); handleBox = await handle.boundingBox();
-    await page.mouse.move(handleBox.x + 11, handleBox.y + 11); await page.mouse.down(); await page.mouse.move(20, 20); await page.mouse.up();
+    await page.mouse.move(handleBox.x + 11, handleBox.y + handleBox.height / 2); await page.mouse.down(); await page.mouse.move(20, 20); await page.mouse.up();
     await settle();
     assert.deepEqual(await rows(), [['B', 'A', 'C'], ['E', 'D', 'F']], 'outside the table but inside the window still snaps along the column axis');
     await page.keyboard.press('Control+z'); await settle(); assert.equal(await value(), beforeCancel);
     handle = await grip('column', 1); handleBox = await handle.boundingBox();
-    await dragPoints({ x: handleBox.x + 11, y: handleBox.y + 11 }, { x: -20, y: 20 });
+    await dragPoints({ x: handleBox.x + 11, y: handleBox.y + handleBox.height / 2 }, { x: -20, y: 20 });
     assert.equal(await value(), beforeCancel, 'release outside the window cancels');
 
     // Cancelled drags must not swallow the next real edge click.
@@ -352,11 +352,11 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     await page.keyboard.down('Shift'); await (await grip('row', 1)).click(); await page.keyboard.up('Shift');
     assert.equal(await table.locator('td.is-table-selected').count(), 4);
     handle = await grip('row', 0); handleBox = await handle.boundingBox(); last = await cell(2, 0).boundingBox();
-    await dragPoints({ x: handleBox.x + 11, y: handleBox.y + 11 }, { x: last.x + 30, y: last.y + last.height - 1 });
+    await dragPoints({ x: handleBox.x + 11, y: handleBox.y + handleBox.height / 2 }, { x: last.x + 30, y: last.y + last.height - 1 });
     assert.deepEqual(await rows(), [['E', 'F'], ['A', 'B'], ['C', 'D']], 'a selected consecutive group moves as one range');
     await page.keyboard.press('Control+z'); await settle(); assert.deepEqual(await rows(), [['A', 'B'], ['C', 'D'], ['E', 'F']]);
     const beforeEscape = await value(); handle = await grip('row', 0); handleBox = await handle.boundingBox();
-    await page.mouse.move(handleBox.x + 11, handleBox.y + 11); await page.mouse.down(); await page.mouse.move(last.x + 30, last.y + last.height - 1);
+    await page.mouse.move(handleBox.x + 11, handleBox.y + handleBox.height / 2); await page.mouse.down(); await page.mouse.move(last.x + 30, last.y + last.height - 1);
     await page.keyboard.press('Escape'); await page.mouse.up(); await settle();
     assert.equal(await value(), beforeEscape, 'Escape cancels a reorder without a transaction');
 
@@ -367,7 +367,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     await page.keyboard.down('Shift'); await (await grip('column', 1)).click(); await page.keyboard.up('Shift');
     assert.equal(await table.locator('td.is-table-selected').count(), 4);
     handle = await grip('column', 1); handleBox = await handle.boundingBox(); last = await cell(0, 2).boundingBox();
-    await dragPoints({ x: handleBox.x + 11, y: handleBox.y + 11 }, { x: last.x + last.width - 1, y: last.y + 20 });
+    await dragPoints({ x: handleBox.x + 11, y: handleBox.y + handleBox.height / 2 }, { x: last.x + last.width - 1, y: last.y + 20 });
     assert.deepEqual(await rows(), [['C', 'A', 'B'], ['F', 'D', 'E']]);
     assert.deepEqual(await page.evaluate(() => MarkdownTable.findTables(editor.snapshot().value)[0].model.align), ['right', 'left', 'center']);
     await page.keyboard.press('Control+z'); await settle(); assert.equal(await value(), beforeColumnGroup);
@@ -421,7 +421,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     const tallRows = Array.from({ length: 24 }, (_, index) => '| 行' + index + ' | 值' + index + ' |').join('\n');
     await reset('| A | B |\n| --- | --- |\n' + tallRows + '\n\n后文');
     handle = await grip('row', 0); handleBox = await handle.boundingBox();
-    await page.mouse.move(handleBox.x + 11, handleBox.y + 11); await page.mouse.down(); await page.mouse.move(710, 592, { steps: 8 });
+    await page.mouse.move(handleBox.x + 11, handleBox.y + handleBox.height / 2); await page.mouse.down(); await page.mouse.move(710, 592, { steps: 8 });
     await page.waitForFunction(() => editor.view.scrollDOM.scrollTop > 40);
     const scrollPreview = await dragState();
     assert(scrollPreview.visible); assert(scrollPreview.gap > 0);
@@ -431,7 +431,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     // Force a genuinely wide table, rather than relying on text min-width.
     await table.locator('.note-table-scroll').evaluate(node => { node.style.width = '500px'; node.querySelector('table').style.width = '1600px'; }); await settle();
     handle = await grip('column', 0); handleBox = await handle.boundingBox();
-    await page.mouse.move(handleBox.x + 11, handleBox.y + 11); await page.mouse.down(); await page.mouse.move(710, 10, { steps: 8 });
+    await page.mouse.move(handleBox.x + 11, handleBox.y + handleBox.height / 2); await page.mouse.down(); await page.mouse.move(710, 10, { steps: 8 });
     await page.waitForFunction(() => document.querySelector('.note-table-scroll').scrollLeft > 40);
     assert.equal(await page.evaluate(() => editor.view.scrollDOM.scrollTop), 0, 'column reorders never scroll vertically');
     assert((await dragState()).visible);
@@ -442,7 +442,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     // heights and CSS pixels after wrapping, font and viewport changes.
     await reset('| ' + '长文本 '.repeat(35) + ' | B |\n| --- | --- |\n| C | D |\n| E | F |\n\n后文');
     handle = await grip('row', 2); handleBox = await handle.boundingBox();
-    await page.mouse.move(handleBox.x + 11, handleBox.y + 11); await page.mouse.down();
+    await page.mouse.move(handleBox.x + 11, handleBox.y + handleBox.height / 2); await page.mouse.down();
     await page.mouse.move(20, 10, { steps: 8 }); await settle();
     await page.setViewportSize({ width: 720, height: 900 });
     await page.evaluate(() => { document.getElementById('editor').style.fontSize = '135%'; editor.view.requestMeasure(); }); await settle();
@@ -458,9 +458,9 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     for (const reason of ['noop', 'threshold', 'capture', 'blur', 'source', 'document']) {
       await reset(source + '\n\n后文'); const original = await value();
       handle = await grip('row', 1); handleBox = await handle.boundingBox();
-      await page.mouse.move(handleBox.x + 11, handleBox.y + 11); await page.mouse.down();
+      await page.mouse.move(handleBox.x + 11, handleBox.y + handleBox.height / 2); await page.mouse.down();
       await page.mouse.move(reason === 'threshold' ? handleBox.x + 13 : 20,
-        reason === 'noop' || reason === 'threshold' ? handleBox.y + 11 : 10);
+        reason === 'noop' || reason === 'threshold' ? handleBox.y + handleBox.height / 2 : 10);
       if (reason === 'capture') await table.evaluate(node => { const s = node.__noteTableSurface; s.grip.releasePointerCapture(s.gesture.id); });
       if (reason === 'blur') await page.evaluate(() => window.dispatchEvent(new Event('blur')));
       if (reason === 'source') await page.evaluate(() => editor.setSourceMode(true));
@@ -477,7 +477,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
       await cdp.send('Input.imeSetComposition', { text: 'han', selectionStart: 3, selectionEnd: 3 });
       const host = await input.elementHandle();
       handle = await grip('row', 0); handleBox = await handle.boundingBox(); last = await cell(2, 0).boundingBox();
-      await page.mouse.move(handleBox.x + 11, handleBox.y + 11); await page.mouse.down();
+      await page.mouse.move(handleBox.x + 11, handleBox.y + handleBox.height / 2); await page.mouse.down();
       await page.mouse.move(20, last.y + last.height + 35, { steps: 8 }); await settle();
       assert(await host.evaluate(area => area.isConnected && document.activeElement === area), 'candidate host stays focused and mounted during a grip drag');
       assert.equal((await rows())[0][0], 'A', 'preedit is not document content');
@@ -544,13 +544,19 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
       await reset(source + '\n\n');
       await page.evaluate(() => { document.getElementById('editor').style.fontSize = '135%'; editor.view.requestMeasure(); }); await settle();
       const r = await table.boundingBox(), c = await page.locator('.cm-content').first().boundingBox();
-      await page.mouse.click(c.x + 2, r.y + r.height + 20); await cdp.send('Input.insertText', { text: '正文中文' });
+      await page.mouse.click(c.x + 2, r.y + r.height + 20);
+      const expectedBody = await page.evaluate(() => {
+        const doc = editor.view.state.doc, at = editor.view.state.selection.main.head;
+        return { line: doc.lineAt(at).text, value: doc.sliceString(0, at) + '正文中文粘贴正文' + doc.sliceString(at) };
+      });
+      assert.equal(expectedBody.line, '', 'the actual clicked blank line owns body input');
+      await cdp.send('Input.insertText', { text: '正文中文' });
       await page.evaluate(() => navigator.clipboard.writeText('粘贴正文'));
       await page.keyboard.press('Control+v'); await settle();
       assert.deepEqual(await rows(), [['A', 'B'], ['C', 'D'], ['E', 'F']]);
-      assert((await value()).endsWith('正文中文粘贴正文'));
+      assert.equal(await value(), expectedBody.value, 'body input preserves other real blank lines');
       await page.evaluate(() => { editor.setSourceMode(true); editor.setSourceMode(false); }); await settle();
-      assert((await value()).endsWith('正文中文粘贴正文'));
+      assert.equal(await value(), expectedBody.value);
     }
     const largeTable = ['before', '', '| ' + Array(8).fill('cell').join(' | ') + ' |',
       '| ' + Array(8).fill('---').join(' | ') + ' |',

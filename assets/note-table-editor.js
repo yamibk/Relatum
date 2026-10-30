@@ -37,6 +37,18 @@
       y: closest ? (closest.top + closest.bottom) / 2 : y };
   }
 
+  // Floating edge controls may overlap a real paragraph after compact block
+  // projection. Its text/blank line keeps pointer priority over those controls.
+  function bodyLineHit(view, point) {
+    const block = view.lineBlockAtHeight(point.clientY - view.documentTop);
+    const at = view.domAtPos(block.from);
+    const line = (at.node.nodeType === 1 ? at.node : at.node.parentElement).closest('.cm-line');
+    if (!line || line.closest('.cm-content') !== view.contentDOM) return null;
+    const rect = line.getBoundingClientRect();
+    if (point.clientY < rect.top || point.clientY >= rect.bottom || point.clientX < rect.left || point.clientX > rect.right) return null;
+    return line;
+  }
+
   const reconcileCell = CM.StateEffect.define();
   class CellInput {
     constructor(surface, cell, value, label) {
@@ -159,6 +171,25 @@
         const surface = Array.from(surfaces).find(candidate => { const spec = candidate.current(); return spec && head >= spec.from && head <= spec.to; });
         if (surface) this.route(surface, latest => latest.open(0, 0));
       },
+      enterBoundary(view, backward) {
+        const { state } = view, main = state.selection.main;
+        if (state.selection.ranges.length !== 1 || !main.empty) return false;
+        const head = main.head, line = state.doc.lineAt(head);
+        for (const surface of surfaces) {
+          const spec = surface.current(); if (!spec) continue;
+          const adjacent = backward
+            ? head === spec.to || head === spec.to + 1 && head === line.from
+            : head === spec.from || head === spec.from - 1 && head === line.to;
+          if (!adjacent) continue;
+          this.route(surface, latest => {
+            latest.cancelGesture(); latest.cancelReorderIntent(); latest.hideEdges();
+            latest.open(backward ? latest.model.rows.length : 0, backward ? latest.model.header.length - 1 : 0);
+            if (latest.edit && !backward) latest.edit.input.setSelectionRange(0, 0);
+          });
+          return true;
+        }
+        return false;
+      },
       routeBody(callback, view, position) {
         const seq = ++operation;
         this.bodyPosition = position == null ? null : { seq, position };
@@ -202,8 +233,9 @@
           // Observe the surrounding paper too, so an outer-edge handle can be
           // approached without first hitting a narrow strip inside a cell.
           const pointer = event => {
-            if (Array.from(surfaces).some(candidate => candidate.gesture)) return;
-            surfaces.forEach(candidate => candidate.hover(event));
+            if (!surfaces.size || Array.from(surfaces).some(candidate => candidate.gesture)) return;
+            const body = bodyLineHit(surface.view, event);
+            surfaces.forEach(candidate => candidate.hover(event, body));
           };
           const leave = () => surfaces.forEach(candidate => { if (!candidate.gesture) candidate.hideEdges(); });
           scrollers.set(scroller, { handler, pointer, leave });
@@ -574,7 +606,8 @@
       if (height !== undefined) node.style.height = height + 'px';
     }
     hideEdges() { this.add.hidden = true; this.grip.hidden = true; }
-    hover(event) {
+    hover(event, body) {
+      if (body) { this.hideEdges(); return; }
       if (this.wrap.contains(event.target) && event.target.closest('.note-table-control')) return;
       const g = this.geometry(), x = event.clientX, y = event.clientY, band = 20, outside = 32, size = 26;
       this.hideEdges();
@@ -592,14 +625,17 @@
         label = text('在右侧新增列', 'Add column on the right');
       } else if (edge === 'bottom') {
         kind = 'row'; index = g.rows.length; control = this.add;
-        left = g.rect.left; top = g.rect.bottom; width = g.rect.width; height = size;
+        // Use only the widget's real gutter. A compact neighbour may start a
+        // paragraph immediately beyond it; the old 26px target covered that line.
+        left = g.rect.left; top = g.rect.bottom; width = g.rect.width; height = Math.min(size, g.wrap.bottom - g.rect.bottom);
         label = text('在下方新增行', 'Add row below');
       } else if (edge === 'left') {
         kind = 'row'; index = this.hit(event, true).row; control = this.grip;
         left = g.rect.left - size; top = g.rows[index].top; width = size; height = g.rows[index].height;
       } else if (edge === 'top') {
         kind = 'column'; index = this.hit(event, true).col; control = this.grip;
-        left = g.cols[index].left; top = g.rect.top - size; width = g.cols[index].width; height = size;
+        height = Math.min(size, g.rect.top - g.wrap.top);
+        left = g.cols[index].left; top = g.rect.top - height; width = g.cols[index].width;
       }
       if (!control) return;
       control.hidden = false; control.dataset.tableKind = kind; control.dataset.tableIndex = index;
@@ -715,6 +751,16 @@
     pointerDown(event) {
       event.stopPropagation(); if (event.button !== 0) return;
       this.cancelGesture(); this.suppressClick = false;
+      const body = bodyLineHit(this.view, event);
+      if (body) {
+        event.preventDefault(); this.hideEdges(); this.suppressClick = true;
+        const position = this.view.posAtCoords({ x: event.clientX, y: event.clientY });
+        this.controller.routeBody(position => {
+          if (position == null) return;
+          this.view.dispatch({ selection: CM.EditorSelection.cursor(position), userEvent: 'select.pointer' }); this.view.focus();
+        }, this.view, position);
+        return;
+      }
       const control = event.target.closest('.note-table-control');
       if (control === this.add) { event.preventDefault(); return; }
       const cell = event.target.closest('td[data-table-row]');
@@ -1027,12 +1073,12 @@
       if (edit.contentDirty && this.current() && this.shape === (this.model.rows.length + 1) + ':' + this.model.header.length) this.renderCell(edit.cell, edit.row, edit.col);
     }
     close() { if (this.pending()) return; this.commit(); this.removeEditor(); }
-    insert(kind, index) {
+    insert(kind, index, column = 0) {
       this.close(); const rows = matrix(this.model), align = this.model.align.slice();
       if (kind === 'row') rows.splice(index, 0, new Array(align.length).fill(''));
       else { rows.forEach((row) => row.splice(index, 0, '')); align.splice(index, 0, ''); }
       this.selection = null;
-      if (this.write(modelOf(rows, align), 'input.table-structure')) this.open(kind === 'row' ? index : 0, kind === 'column' ? index : 0);
+      if (this.write(modelOf(rows, align), 'input.table-structure')) this.open(kind === 'row' ? index : 0, kind === 'column' ? index : column);
     }
     action(action) {
       const s = this.bounds(), edit = this.edit;
@@ -1074,7 +1120,7 @@
           let r = row, c = col;
           if (event.key === 'Enter') r += event.shiftKey ? -1 : 1;
           else { c += event.shiftKey ? -1 : 1; if (c >= cols) { c = 0; r++; } if (c < 0) { c = cols - 1; r--; } }
-          if (r >= count) this.insert('row', count);
+          if (r >= count) this.insert('row', count, c);
           else if (r >= 0) this.open(r, c);
           else this.open(0, 0);
         } else if (event.key === 'Escape') { event.preventDefault(); this.close(); this.wrap.focus({ preventScroll: true }); }
@@ -1104,9 +1150,14 @@
     copy(event, cut) {
       event.stopPropagation(); if (!this.selection || this.pending()) return;
       event.preventDefault(); const s = this.bounds(), rows = matrix(this.model);
-      const value = rows.slice(s.r0, s.r1 + 1).map((row) => row.slice(s.c0, s.c1 + 1).join('\t')).join('\n');
+      const selected = rows.slice(s.r0, s.r1 + 1).map((row) => row.slice(s.c0, s.c1 + 1));
+      const value = syntax.serialize(modelOf(selected, this.model.align.slice(s.c0, s.c1 + 1)));
       try { if (!event.clipboardData) return; event.clipboardData.setData('text/plain', value); }
       catch (_) { return; }
+      try {
+        const html = this.controller.options.renderTableClipboard?.(value);
+        if (html) event.clipboardData.setData('text/html', html);
+      } catch (_) { /* Markdown alone is sufficient, including for safe cutting. */ }
       if (cut) {
         if (this.selection.kind === 'table') { this.selection = null; this.write(null, 'delete.table-structure'); this.view.focus(); }
         else if (this.selection.kind === 'row') this.action('delete-row');
