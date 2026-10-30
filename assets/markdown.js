@@ -109,7 +109,7 @@
         if (fence && quote.depth < fence.depth) fence = null;
         if (fence) {
           blocked.push({ from: offset, to: offset + line.length });
-          if (isFenceClose(text, fence)) fence = null;
+          if (quote.depth === fence.depth && isFenceClose(text, fence)) fence = null;
         } else {
           const opening = parseFenceLine(text);
           if (opening) { fence = Object.assign({ depth: quote.depth }, opening); blocked.push({ from: offset, to: offset + line.length }); }
@@ -507,7 +507,8 @@
       const line = quote.text, trimmed = line.trim(), marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
       if (!header || offset >= header.to) {
         if (fence && quote.depth < fenceDepth) fence = '';
-        if (fence) { if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = ''; }
+        // Extra quote markers inside a fence are literal code, not containers.
+        if (fence) { if (quote.depth === fenceDepth && marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = ''; }
         else if (html) { if (htmlComment && line.includes('-->') || !htmlComment && !trimmed) html = htmlComment = false; }
         else if (percentComment) { if ((line.match(/%%/g) || []).length % 2) percentComment = false; }
         else if (marker) { fence = marker[1]; fenceDepth = quote.depth; }

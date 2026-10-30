@@ -131,6 +131,16 @@ const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><bas
     assert((await snapshot()).includes('> ![图.canvas|400x200](canvases/test.canvas)'));
     await read(); assert.equal(await page.locator('#reading .note-live-image-frame').count(), 1);
 
+    for (const sample of JSON.parse(fs.readFileSync(path.join(__dirname, 'note-canvas-reference-cases.json'), 'utf8')).slice(0, 3)) {
+      await load(sample.source);
+      assert.equal(await page.locator('#editor .is-canvas').count(), sample.count, 'live fences protect literal embeds');
+      await read();
+      assert.equal(await page.locator('#reading .note-live-image-frame').count(), sample.count, 'reading fences protect literal embeds');
+      assert((await page.locator('#reading pre').allTextContents()).some(text => text.includes('![A.canvas](canvases/A.canvas)')),
+        'reading keeps the literal canvas reference inside code');
+      assert.equal(await snapshot(), sample.source, 'view changes keep source bytes');
+    }
+
     await load('> [!white]\n> ```quiz\n> 选择题\n>\n> - [ ] A\n> - [x] B\n> ```\n\n外文');
     await page.waitForSelector('#editor .note-quiz');
     assert.equal(await page.locator('#editor .is-quiz.note-live-callout-layered').count(), 1);

@@ -66,7 +66,8 @@ def references(text: str) -> list[dict]:
             if fence and depth < fence_depth:
                 fence = None
             if fence:
-                if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not marker[2].strip():
+                # Extra quote markers are literal code within the open fence.
+                if depth == fence_depth and marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not marker[2].strip():
                     fence = None
             elif html:
                 if (html_comment and "-->" in line) or (not html_comment and not stripped):

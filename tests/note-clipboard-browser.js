@@ -115,6 +115,14 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
       assert.equal(await value(), literal.slice(0, at) + fixture.copied + literal.slice(at), 'code destination stays literal');
     }
     const mixed = 'prose\n\n```tex\ncode\n```', inline = String.raw`\\(x\\)`;
+    for (const prefix of ['', '> ']) for (const menu of [false, true]) {
+      const code = prefix + '```md\n' + prefix + '> ```\n' + prefix + inline + '\n' + prefix + '```';
+      const payload = code + '\n\n' + inline, expected = code + '\n\n' + String.raw`\(x\)`;
+      await set('');
+      if (menu) await menuPaste(payload); else await paste(payload);
+      assert.equal(await value(), expected, 'a quoted fence example never rewrites literal code or masks following math');
+      await page.keyboard.press('Control+z'); assert.equal(await value(), '', 'the protected paste is still one undo');
+    }
     for (const menu of [false, true]) {
       await set(mixed);
       await page.evaluate(() => {

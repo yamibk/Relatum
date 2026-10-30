@@ -32,6 +32,13 @@ const unchanged = [
   '\\\\(' + 'x'.repeat(4096) + '\\\\)', '\\\\[' + 'x'.repeat(32768) + '\\\\]',
 ];
 for (const text of unchanged) assert.equal(normalize(text), text, text);
+for (const [prefix, marker] of [['', '```'], ['> ', '~~~'], ['> > ', '````']]) {
+  const code = prefix + marker + 'md\n' + prefix + '> ' + marker + '\n' + prefix + formula + '\n' + prefix + marker;
+  assert.equal(normalize(code + '\n\n' + formula), code + '\n\n' + standard,
+    'quoted fence examples stay literal and do not suppress later prose normalization');
+  assert.equal(normalize(formula, { before: prefix + marker + 'md\n' + prefix + '> ' + marker + '\n' + prefix, after: '\n' + prefix + marker }), formula,
+    'pasting after a quoted fence example remains inside code');
+}
 for (const [before, after] of [
   ['```\n', '\n```'], ['~~~\n', ''], ['`prefix ', ' suffix`'], ['<!-- ', ' -->'], ['%% ', ' %%'],
   ['---\nexample: ', '\n---'], ['[link](https://example.test/', ')'], ['[ref]: ', '\n'], ['    ', ''],
