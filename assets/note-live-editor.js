@@ -6000,6 +6000,17 @@
     safeOptions.tableInlineDecorations = tableInlineDecorations;
     safeOptions.createHighlightExtension = pending => createHighlightExtension({ ...highlightLifecycle, pending,
       active: () => highlightActive && !destroyed && !imageTextController.active });
+    const linkCompletionExtension = (pending, cell = false, whenSettled = whenInputSettled) => options.linkCompletion && window.RelatumNoteLinkCompletion
+      ? window.RelatumNoteLinkCompletion.createExtension({ ...options.linkCompletion, notePath: () => currentPath, pending, whenSettled,
+        allowed: (input, from, to) => {
+          if (destroyed || imageTextController.active) return false;
+          if (cell) return true;
+          const state = input.state, metadata = documentFrontmatter(state.doc);
+          if (metadata && from < metadata.to || insideRange(lineProtectedRanges(state, from, to), from, to)) return false;
+          return !insideRange(scanSourceComments(state.doc, from, to, lineProtectedRanges(state, from, to)), from, to)
+            && !extensionMathAt(state, from, to);
+        } }) : [];
+    safeOptions.createLinkCompletionExtension = (pending, whenSettled) => linkCompletionExtension(pending, true, whenSettled);
 
     function notifyDocChanged(view, includeValue) {
       const main = view.state.selection.main;
@@ -6046,6 +6057,7 @@
       const extensions = [
         highlightSpecialChars(), history(), drawSelection(), dropCursor(), EditorState.allowMultipleSelections.of(true),
         createHighlightExtension({ ...highlightLifecycle, pending: inputPending, active: () => highlightActive && !destroyed && !imageTextController.active }),
+        linkCompletionExtension(inputPending),
         indentOnInput(), bracketMatching(), typeof closeBrackets === 'function' ? closeBrackets() : [],
         rectangularSelection(), crosshairCursor(), highlightActiveLine(),
         selectionMatchHighlightCompartment.of(selectionMatchHighlight ? highlightSelectionMatches() : []),
@@ -6398,6 +6410,7 @@
     }
 
     function setDocument(documentState) {
+      window.RelatumNoteLinkCompletion?.closeAll();
       cancelMermaidOperation();
       highlightInputs.forEach(input => input.dismiss());
       for (const target of imageInsertions) target.valid = false;
@@ -6547,6 +6560,7 @@
     }
 
     async function setNotePath(path, value) {
+      window.RelatumNoteLinkCompletion?.closeAll();
       highlightInputs.forEach(input => input.dismiss());
       if (destroyed) return;
       const next = String(path || '');
@@ -6574,6 +6588,7 @@
     }
 
     function setSourceMode(active) {
+      window.RelatumNoteLinkCompletion?.closeAll();
       cancelMermaidOperation();
       highlightInputs.forEach(input => input.dismiss());
       const next = !!active;

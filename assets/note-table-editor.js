@@ -75,6 +75,8 @@
         CM.EditorView.contentAttributes.of({ class: 'note-table-cell-editor', 'aria-label': label, spellcheck: 'false' }),
         CM.EditorView.lineWrapping, projection,
         surface.controller.options.createHighlightExtension?.(() => surface.pending()) || [],
+        surface.controller.options.createLinkCompletionExtension?.(() => surface.pending(), () => surface.whenSettled()) || [],
+        CM.markdown({ base: CM.markdownLanguage }),
         CM.EditorView.domEventHandlers({
           keydown(event) { surface.keydown(event); return event.defaultPrevented; },
           copy(event) { surface.copy(event, false); return event.defaultPrevented; },
@@ -90,7 +92,8 @@
           if (surface.edit?.input !== input) return;
           if (update.docChanged && !input.syncing) {
             surface.edit.emptyFormat = null;
-            if (!surface.pending()) surface.commit(false, update.transactions.some(tr => tr.isUserEvent('input.note-highlight') || tr.isUserEvent('delete.note-highlight')) ? 'input.note-highlight'
+            if (!surface.pending()) surface.commit(false, update.transactions.some(tr => tr.isUserEvent('input.note-link-completion')) ? 'input.note-link-completion'
+              : update.transactions.some(tr => tr.isUserEvent('input.note-highlight') || tr.isUserEvent('delete.note-highlight')) ? 'input.note-highlight'
               : update.transactions.some(tr => tr.isUserEvent('input.table-break')) ? 'input.table-break' : undefined);
           }
           if (update.docChanged || update.geometryChanged) surface.controller.measure();
@@ -1049,7 +1052,7 @@
       try {
         this.controller.mapBodyPosition(changes);
         this.view.dispatch({ changes, selection: this.view.state.selection.map(changes), effects: cellUpdateEffect.of(update),
-          ...(/^(?:input\.note-highlight|input\.table-break)$/.test(userEvent) ? { annotations: CM.isolateHistory.of('full') } : {}),
+          ...(/^(?:input\.note-highlight|input\.table-break|input\.note-link-completion)$/.test(userEvent) ? { annotations: CM.isolateHistory.of('full') } : {}),
           userEvent: userEvent || (composed ? 'input.table-compose' : 'input.table-cell') });
       }
       finally { this.committing = false; }

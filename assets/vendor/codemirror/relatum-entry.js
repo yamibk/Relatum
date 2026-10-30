@@ -20,12 +20,12 @@ import { vhdl } from '@codemirror/legacy-modes/mode/vhdl';
 import { structuredText, spice } from './note-languages.js';
 
 export { Compartment, EditorSelection, EditorState, Prec, RangeSetBuilder, StateEffect, StateField, Transaction } from '@codemirror/state';
-export { BlockType, Decoration, Direction, EditorView, MatchDecorator, ViewPlugin, WidgetType, crosshairCursor, drawSelection, dropCursor, highlightActiveLine, highlightSpecialChars, keymap, placeholder, rectangularSelection } from '@codemirror/view';
+export { BlockType, Decoration, Direction, EditorView, MatchDecorator, ViewPlugin, WidgetType, crosshairCursor, drawSelection, dropCursor, highlightActiveLine, highlightSpecialChars, keymap, placeholder, rectangularSelection, showTooltip, tooltips } from '@codemirror/view';
 export { HighlightStyle, LanguageDescription, LanguageSupport, StreamLanguage, bracketMatching, defaultHighlightStyle, forceParsing, indentOnInput, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 export { commonmarkLanguage, markdown, markdownLanguage, markdownKeymap, deleteMarkupBackward, insertNewlineContinueMarkup } from '@codemirror/lang-markdown';
 export { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory, redo, selectAll, undo } from '@codemirror/commands';
 export { closeSearchPanel, highlightSelectionMatches, openSearchPanel, searchKeymap } from '@codemirror/search';
-export { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
+export { closeBrackets, closeBracketsKeymap, autocompletion, startCompletion, closeCompletion, completionStatus, selectedCompletion, moveCompletionSelection, acceptCompletion } from '@codemirror/autocomplete';
 export { highlightTree } from '@lezer/highlight';
 
 const support = language => new LanguageSupport(language);

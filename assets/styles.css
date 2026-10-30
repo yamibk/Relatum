@@ -571,6 +571,31 @@ body.start-page[data-start-theme="dark"] :is(.note-workspace, .note-document-bod
   color: inherit; background: transparent; border: 0; border-radius: 5px; text-align: left; font: inherit; cursor: pointer;
 }
 .note-highlight-menu button[aria-selected="true"] { background: var(--note-theme-hover, rgba(128,128,128,.12)); }
+body.start-page .cm-tooltip.note-link-completion,
+body.start-page .cm-tooltip.note-link-completion-status {
+  width: min(440px, calc(100vw - 24px)); box-sizing: border-box; padding: 6px;
+  color: var(--note-theme-text, var(--text)); background: var(--note-theme-surface, var(--surface));
+  border: 1px solid var(--note-theme-line-strong, var(--border-strong)); border-radius: 12px;
+  box-shadow: var(--note-theme-shadow, 0 8px 26px rgba(0,0,0,.13)); font: 13px/1.4 var(--font-ui);
+}
+body.start-page .cm-tooltip.note-link-completion > ul { max-height: min(384px, 52vh); overflow-y: auto; padding: 0; font: inherit; }
+body.start-page .note-link-completion > ul > li { padding: 6px 9px; border-radius: 7px; white-space: normal; min-height: 44px; box-sizing: border-box; }
+body.start-page .note-link-completion > ul > li[aria-selected] { color: inherit; background: var(--note-theme-selected, var(--bg-secondary)); }
+body.start-page .note-link-completion :is(.cm-completionLabel, .cm-completionDetail) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.start-page .note-link-completion .cm-completionLabel { font-weight: 600; }
+body.start-page .note-link-completion .cm-completionDetail { font: inherit; font-size: 11px; opacity: .7; margin: 2px 0 0; }
+.note-link-completion-excerpt { display: block; font-size: 11px; opacity: .75; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-top: 3px; }
+.note-link-completion-more::after, .note-link-completion-incomplete::before { display: block; padding: 5px 9px; font-size: 11px; opacity: .7; }
+.note-link-completion-more::after { content: '继续输入以缩小范围'; }
+.note-link-completion-incomplete::before { content: '笔记索引仍在准备，当前显示已有结果'; }
+html[lang="en"] .note-link-completion-more::after { content: 'Keep typing to narrow the results'; }
+html[lang="en"] .note-link-completion-incomplete::before { content: 'Indexing is in progress; showing available results'; }
+body.start-page .cm-tooltip.note-link-completion-status { padding: 12px; display: flex; gap: 8px; align-items: center; }
+.note-link-completion-status button { flex: none; font: inherit; color: inherit; background: var(--note-theme-hover, var(--bg-secondary)); border: 1px solid var(--border); border-radius: 6px; padding: 4px 9px; cursor: pointer; }
+.note-link-completion-settings { margin-top: 26px; }
+.note-link-completion-settings h4 { font-size: 14px; margin: 0 0 14px; }
+.note-link-completion-setting { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, 220px); gap: 16px; align-items: center; margin: 14px 0; }
+@media (max-width: 600px) { .note-link-completion-setting { grid-template-columns: minmax(0, 1fr); gap: 8px; } }
 .note-context-menu button .note-highlight-dot { margin-right: 9px; }
 .note-live-tc-yellow { color: #ae7b00; } .note-live-tc-orange { color: #b76520; }
 .note-live-tc-red { color: #b34e48; } .note-live-tc-purple { color: #8054a8; }

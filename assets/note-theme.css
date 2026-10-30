@@ -55,7 +55,7 @@ html:is([data-note-theme="sky"], [data-note-theme="apple"]) {
 html:is([data-note-theme="sky"], [data-note-theme="apple"]) body.start-page .note-graph-panel {
   --font-ui: var(--note-theme-graph-controls-font); font-family: var(--note-theme-graph-font);
 }
-html[data-note-theme="claude"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
+html[data-note-theme="claude"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover, .note-link-completion, .note-link-completion-status),
 html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
   --note-theme-paper: #faf9f5; --note-theme-nav: #f3f2ee; --note-theme-surface: #fff;
   --note-theme-card: var(--note-theme-nav); --note-theme-hover: #eeede8; --note-theme-selected: #eae9e4;
@@ -74,7 +74,7 @@ html[data-note-theme="claude"] body.start-page[data-start-workspace="notes"] > :
   --settings-text: var(--note-theme-text); --settings-muted: var(--note-theme-muted); --settings-selected: var(--note-theme-selected);
   color: var(--text);
 }
-html[data-note-theme="claude"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
+html[data-note-theme="claude"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover, .note-link-completion, .note-link-completion-status),
 html[data-note-theme="claude"] body.start-page[data-start-theme="dark"][data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
   /* Quiet neutral blacks separate the paper without introducing tinted panels. */
   --note-theme-paper: #191919; --note-theme-nav: #151515; --note-theme-surface: #242424;
@@ -295,7 +295,7 @@ html[data-note-theme="claude"][data-note-reduced-motion="1"] body.start-page .no
 
 /* Sky — cloud paper and mist-blue navigation, with an independent night palette.
    Tokens stay on Notes and its portals; the shared shell follows only active Notes. */
-html[data-note-theme="sky"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
+html[data-note-theme="sky"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover, .note-link-completion, .note-link-completion-status),
 html[data-note-theme="sky"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
   --note-theme-paper: #f8fbff; --note-theme-nav: #e8eff8; --note-theme-surface: #fff;
   --note-theme-hover: #dfeaf8; --note-theme-selected: #d2e4fa; --note-theme-code: #eaf1fa;
@@ -320,7 +320,7 @@ html[data-note-theme="sky"] body.start-page[data-start-workspace="notes"] > :is(
   --settings-text: var(--note-theme-text); --settings-muted: var(--note-theme-muted); --settings-selected: var(--note-theme-selected);
   color: var(--text); font-family: var(--note-theme-ui-font);
 }
-html[data-note-theme="sky"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover),
+html[data-note-theme="sky"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover, .note-link-completion, .note-link-completion-status),
 html[data-note-theme="sky"] body.start-page[data-start-theme="dark"][data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
   --note-theme-paper: #162338; --note-theme-nav: #101a2a; --note-theme-surface: #1d2d44;
   --note-theme-hover: #20324a; --note-theme-selected: #29415f; --note-theme-code: #101b2d;
@@ -555,7 +555,7 @@ html[data-note-theme="sky"][data-note-reduced-motion="1"] body.start-page[data-s
 
 /* Apple — neutral desktop surfaces and restrained blue interaction feedback.
    All tokens belong to Notes; shared chrome follows only the active workspace. */
-html[data-note-theme="apple"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover, .note-table-alignment),
+html[data-note-theme="apple"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover, .note-table-alignment, .note-link-completion, .note-link-completion-status),
 html[data-note-theme="apple"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
   --note-theme-paper: #fff; --note-theme-nav: #f5f5f7; --note-theme-surface: #fff;
   --note-theme-hover: #ededf0; --note-theme-selected: #e8f0fc; --note-theme-code: #f5f5f7;
@@ -580,7 +580,7 @@ html[data-note-theme="apple"] body.start-page[data-start-workspace="notes"] > :i
   --settings-text: var(--note-theme-text); --settings-muted: var(--note-theme-muted); --settings-selected: var(--note-theme-selected);
   color: var(--text); font-family: var(--note-theme-ui-font); font-optical-sizing: auto;
 }
-html[data-note-theme="apple"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover, .note-table-alignment),
+html[data-note-theme="apple"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover, .note-table-alignment, .note-link-completion, .note-link-completion-status),
 html[data-note-theme="apple"] body.start-page[data-start-theme="dark"][data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
   --note-theme-paper: #1c1c1e; --note-theme-nav: #242426; --note-theme-surface: #2c2c2e;
   --note-theme-hover: #343436; --note-theme-selected: #193653; --note-theme-code: #242426;

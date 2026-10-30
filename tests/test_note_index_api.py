@@ -34,6 +34,8 @@ class NoteIndexApiTests(unittest.TestCase):
             self.assertEqual(code, 200); self.assertEqual(first['total'], 65)
             code, second = self.fixture.request('/api/note-query', {'q': 'needle', 'cursor': first['cursor']})
             self.assertEqual(code, 200); self.assertEqual(len(second['items']), 15)
+            code, links = self.fixture.request('/api/note-query', {'mode': 'link-completion', 'q': 'N', 'sourcePath': 'N000.md'})
+            self.assertEqual(code, 200); self.assertEqual(len(links['items']), 50)
             for route in ('/api/note-index-state', '/api/note-changes?since=0', '/api/note-children', '/api/note-tags', '/api/note-links?path=N000.md'):
                 self.assertEqual(self.fixture.request(route)[0], 200, route)
 

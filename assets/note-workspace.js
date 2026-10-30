@@ -88,6 +88,7 @@
   const libraryNameError = $('[data-role="note-library-name-error"]');
   let settingsDialog = null, canvasStylePanel = null, guideController = null, guideLoader = null, guideSequence = 0;
   let themeChoices = null, themeLayoutAnchor = null, themeLayoutSequence = 0;
+  let linkCompletionSettings = null;
   const themeSelect = $('[data-role="note-theme"]');
   const GUIDE_TOPIC_KEY = 'canvas:noteGuideTopic:v1';
   let guideTopic = 'callout';
@@ -942,6 +943,7 @@
   }
 
   function syncNoteSettingsFontScale() {
+    linkCompletionSettings?.refresh();
     syncNoteThemeSettings();
     const preference = window.RelatumNotePreferences;
     const spacing = preference?.readGraphSpacing?.() ?? 125;
@@ -1133,7 +1135,7 @@
     }
     const categories = [
       { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-laptop-minimal', panel: appearance, keywords: '主题 Claude theme 字体 font size image text scale', reset: () => { resetNoteTheme(); pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
-      { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮', reset: () => { try { localStorage.removeItem(SELECTION_MATCH_HIGHLIGHT_KEY); } catch (_) {} applySelectionMatchHighlight(false, false); } },
+      { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮 双向链接 补全 候选 搜索 正文 排序 wiki link completion suggestions scope search content sort', reset: resetEditingSettings },
       { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings, keywords: '排序 命名 sort name timestamp', reset: resetLibraryPreferences },
       { id: 'sidebar', label: ['侧栏', 'Sidebar'], icon: 'note-icon-panel-right-frame', panel: sidebar, keywords: '页签 显示 隐藏 顺序 拖拽 tabs visibility reorder sidebar', reset: () => sidePreferences.reset() },
       { id: 'guide', label: ['引导', 'Guide'], icon: 'note-icon-file-text', panel: guide, keywords: 'callout markdown mermaid 教程 语法 syntax tutorial', reset: resetGuide },
@@ -1152,12 +1154,13 @@
     ];
     settingsDialog = window.RelatumSettingsDialog.create({ content: settingsPop, categories, language,
       onSearch(query) { if (aiEnabled() && !aiSettingsHost.querySelector('[data-ai-field]') && /deepseek|api|模型|预设|提示词|思考|强度|温度|连接|接口|地址|流式|输出|超时|token|top.?p|model|preset|prompt|temperature|stream|timeout|effort|base.?url|\bkey\b|\bai\b/.test(query)) return ensureAI().then(ai => ai.prepareSettings()); },
-      async resetAll() { await resetNotebookVisibility(); resetNoteSettings(); noteSystem.reset(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); if (window.RelatumNoteExtensions.reset()) extensionSettings.reset(); if (canvasEnabled()) resetCanvas(); await resetAI(); },
+      async resetAll() { resetNoteSettings(); await resetNotebookVisibility(); noteSystem.reset(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); if (window.RelatumNoteExtensions.reset()) extensionSettings.reset(); if (canvasEnabled()) resetCanvas(); await resetAI(); },
       onOpen() {
         state.settingsOpen = true; aiDialogReturning = false;
         settingsTrigger.setAttribute('aria-expanded', 'true'); libraryTrigger.setAttribute('aria-expanded', 'true'); renderAI();
       },
       onClose({ reason }) {
+        linkCompletionSettings?.close();
         themeChoices?.close();
         aiSequence++;
         systemSettings.setActive(false);
@@ -1176,6 +1179,7 @@
         } else { aiController?.suspend(); renderAI(); }
       },
       onCategoryChange(category) {
+        linkCompletionSettings?.close();
         themeChoices?.close();
         aiSettingsCategory = category; aiDialogReturning = false;
         if (category === 'notebooks') renderNotebookSettings();
@@ -1199,6 +1203,10 @@
     settingsDialog.dialog.append(themePortal);
     themeChoices = window.RelatumReviewControls.createManager(appearance, themePortal);
     themeChoices.enhance(themeSelect);
+    linkCompletionSettings = window.RelatumNoteLinkCompletion?.createSettings(editing, { portal: themePortal,
+      onOpen() { settingsDialog.finishContentMotion(); prepareWorkspacePopover('settings'); },
+      onError() { settingsDialog.setStatus(language() === 'en' ? 'Could not save link completion settings. Please retry.' : '双向链接补全设置保存失败，请重试'); },
+    });
     const prepareThemeChoice = event => {
       if (event.type === 'keydown' && (event.isComposing || !['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key))) return;
       if (event.target.closest('.note-settings-theme .review-choice-trigger')) {
@@ -1212,8 +1220,8 @@
         syncNoteThemeSettings(); settingsDialog.setStatus(language() === 'en' ? 'Could not save the theme. Please retry.' : '主题保存失败，请重试');
       }
     });
-    settingsDialog.dialog.querySelector('[data-settings-search]').addEventListener('input', () => themeChoices.close());
-    document.addEventListener('relatum:languagechange', () => { themeChoices.close(); syncNoteThemeSettings(); });
+    settingsDialog.dialog.querySelector('[data-settings-search]').addEventListener('input', () => { themeChoices.close(); linkCompletionSettings?.close(); });
+    document.addEventListener('relatum:languagechange', () => { themeChoices.close(); syncNoteThemeSettings(); linkCompletionSettings?.refresh(); });
     settingsDialog.dialog.addEventListener('click', handleWorkspaceClick);
     settingsTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     libraryTrigger.setAttribute('aria-controls', 'note-settings-dialog');
@@ -1221,10 +1229,18 @@
     document.addEventListener('relatum:languagechange', () => { translateGuideOptions(); translateSidebar(); systemSettings.refresh(); extensionSettings.refresh(); renderNotebookSettings(); aiController?.setLanguage(); settingsDialog.setLanguage(); });
   }
 
-  function resetNoteSettings() {
-    resetNoteTheme();
-    try { localStorage.removeItem(SELECTION_MATCH_HIGHLIGHT_KEY); } catch (error) {}
+  function resetEditingSettings() {
+    if (window.RelatumNoteLinkCompletion && !window.RelatumNoteLinkCompletion.reset()) {
+      throw new Error(language() === 'en' ? 'Could not reset link completion settings.' : '双向链接补全设置恢复失败');
+    }
+    linkCompletionSettings?.refresh();
+    try { localStorage.removeItem(SELECTION_MATCH_HIGHLIGHT_KEY); } catch (_) {}
     applySelectionMatchHighlight(false, false);
+    return true;
+  }
+  function resetNoteSettings() {
+    resetEditingSettings();
+    resetNoteTheme();
     const preference = window.RelatumNotePreferences;
     preference?.resetGraphSpacing?.();
     preference?.resetGraphPreload?.();
@@ -1957,6 +1973,8 @@
         liveEditor = window.RelatumNoteLiveEditor.create(editorHost, {
           value: '', notePath: '', sourceMode: state.viewMode === 'source', shortcutBindings: state.shortcutBindings,
           selectionMatchHighlight: state.selectionMatchHighlight,
+          linkCompletion: { query: (body, options) => post('/api/note-query', body, options), recent: () => Object.fromEntries(recentFiles),
+            active: () => noteWorkspaceVisible() && !state.settingsOpen && state.viewMode !== 'reading' && !browserResultsActive() && !!state.current },
           extensionsActive: false,
           onDocChanged: (meta) => markChanged(meta),
           onSaveRequest: () => flushSave(),
@@ -2439,12 +2457,14 @@
     document.documentElement.classList.remove('note-boot-pending');
   }
   function closeWorkspacePopovers() {
+    window.RelatumNoteLinkCompletion?.closeAll();
     aiController?.closePopovers();
     closeContextMenu({ instant: true });
     setNoteSettingsOpen(false, { restoreFocus: false, instant: true });
     setLibraryPanel('', { restoreFocus: false, instant: true });
   }
   function prepareWorkspacePopover(kind) {
+    window.RelatumNoteLinkCompletion?.closeAll();
     noteBrowser?.closePopovers({ instant: true });
     if (kind !== 'ai') aiController?.closePopovers();
     if (kind !== 'context') closeContextMenu({ instant: true });

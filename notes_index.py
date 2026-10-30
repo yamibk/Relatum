@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import os
 import sqlite3
 import threading
@@ -644,9 +645,125 @@ class NoteIndex:
                 names.setdefault(row['lookup'], json.loads(row['payload'])['target'])
             return (result, names) if with_names else result
 
+    def link_completion(self, body):
+        """Bounded, literal link lookup. Never reads files or changes the index."""
+        query = body.get('q', '')
+        if not isinstance(query, str) or len(query) > 512:
+            raise ValueError('搜索内容最多 512 个字符')
+        words = list(dict.fromkeys(normalize(query).split()))
+        if len(words) > 32:
+            raise ValueError('每次最多搜索 32 个关键词')
+        source = body.get('sourcePath', '')
+        scope = body.get('scope', {'kind': 'all'})
+        sorting = body.get('sort', 'smart')
+        include_body = body.get('includeBody', False)
+        selected = body.get('selectedPath')
+        recent = body.get('recent', {})
+        if not isinstance(source, str) or not source:
+            raise ValueError('需要当前笔记路径')
+        if not isinstance(scope, dict) or scope.get('kind') not in ('all', 'notebook', 'folder'):
+            raise ValueError('查询范围无效')
+        if sorting not in ('smart', 'recent', 'modified', 'name') or type(include_body) is not bool:
+            raise ValueError('补全选项无效')
+        if not isinstance(recent, dict) or len(recent) > 200 or any(
+                not isinstance(p, str) or len(p) > 4096 or type(at) not in (int, float)
+                or not 0 <= at <= 8640000000000000 or not math.isfinite(at) for p, at in recent.items()):
+            raise ValueError('最近记录无效')
+        where, args = ["b.deleted=0", "e.kind='note'", 'e.key!=?'], [normalize(source)]
+        if scope['kind'] == 'notebook':
+            where.append('b.key=?'); args.append(normalize(scope.get('path', '')))
+        elif scope['kind'] == 'folder':
+            folder = normalize(scope.get('path', ''))
+            if folder:
+                where.append('e.key>=? AND e.key<?'); args.extend((folder + '/', folder + '/\U0010ffff'))
+            else:
+                where.append("b.key=''")
+        if selected is not None:
+            if not isinstance(selected, str):
+                raise ValueError('目标路径无效')
+            where.append('e.key=?'); args.append(normalize(selected))
+        for table, values, short in (
+                ('text_fts', [w for w in words if len(w) >= 3], False),
+                ('short_fts', [w for w in words if len(w) < 3], True)):
+            if values:
+                # short_fts uses detail=none: column filters are unavailable.
+                # Validate metadata hits below, without fetching body/source maps.
+                where.append('e.id IN (SELECT rowid FROM ' + table + ' WHERE ' + table + ' MATCH ?)')
+                args.append(match_expression(values, short=short))
+        metadata_match = ' AND '.join('(instr(e.title,?)>0 OR instr(e.search_path,?)>0)' for _ in words) or '1'
+        metadata_args = [value for word in words for value in (word, word)]
+        title_match = ' AND '.join('instr(e.title,?)>0' for _ in words) or '1'
+        if words and not include_body:
+            where.append('(' + metadata_match + ')'); args.extend(metadata_args)
+        with self.read() as conn:
+            conn.execute('CREATE TEMP TABLE link_visits(path TEXT PRIMARY KEY,at REAL)')
+            conn.executemany('INSERT OR REPLACE INTO link_visits VALUES(?,?)',
+                             [(normalize(path), at) for path, at in recent.items()])
+            parent = str(PurePosixPath(source).parent)
+            parent = '' if parent == '.' else normalize(parent)
+            rank, rank_args = [], []
+            if words:
+                rank.append('CASE WHEN ' + metadata_match + ' THEN 0 ELSE 1 END')
+                rank_args.extend(metadata_args)
+            if sorting == 'smart' and words:
+                rank.append('CASE WHEN e.title=? THEN 0 WHEN substr(e.title,1,length(?))=? THEN 1 WHEN '
+                            + title_match + ' THEN 2 WHEN ' + metadata_match + ' THEN 3 ELSE 4 END')
+                clean = normalize(query.strip())
+                rank_args.extend([clean, clean, clean] + words + metadata_args)
+                rank.extend(['CASE WHEN e.parent=? THEN 0 ELSE 1 END', 'CASE WHEN b.key=? THEN 0 ELSE 1 END'])
+                rank_args.extend([parent, normalize(book_root(source))])
+            if sorting in ('smart', 'recent'):
+                rank.extend(['CASE WHEN v.at IS NULL THEN 1 ELSE 0 END', 'v.at DESC', 'e.modified DESC'])
+            elif sorting == 'modified':
+                rank.append('e.modified DESC')
+            rank.extend(['e.name COLLATE NOTE_NATURAL', 'e.key'])
+            order = ','.join(rank)
+            joins = ' FROM entries e JOIN books b ON b.id=e.book LEFT JOIN link_visits v ON v.path=e.key WHERE '
+            # Fetch only 51 compact headers. Bodies are read for the final body
+            # matches only, not every candidate, and no source map is needed.
+            rows = conn.execute('SELECT e.id,e.path,e.name,e.title,e.search_path,e.modified,e.parent,b.root'
+                + joins + ' AND '.join(where) + ' ORDER BY ' + order + ' LIMIT 51', args + rank_args).fetchall()
+            items = []
+            for row in rows[:50]:
+                name_hit = all(word in row['title'] for word in words)
+                metadata_hit = all(word in row['title'] or word in row['search_path'] for word in words)
+                stem = PurePosixPath(row['path']).stem
+                lookup = normalize(stem)
+                # Mirror wiki resolution exactly: root paths win over unique
+                # basename matches, including outside the selected scope.
+                exact = conn.execute("SELECT e.id FROM entries e JOIN books b ON b.id=e.book WHERE "
+                    "e.kind='note' AND b.deleted=0 AND e.path_stem_key=? LIMIT 1", (lookup,)).fetchone()
+                if exact:
+                    short_ok = exact[0] == row['id']
+                else:
+                    count, target = conn.execute("SELECT COUNT(*),MIN(e.id) FROM entries e JOIN books b ON b.id=e.book "
+                        "WHERE e.kind='note' AND b.deleted=0 AND e.stem_key=?", (lookup,)).fetchone()
+                    short_ok = count == 1 and target == row['id']
+                target = stem if short_ok else str(PurePosixPath(row['path']).with_suffix(''))
+                # Percent escapes protect wiki delimiters and existing percent
+                # sequences; the resolver already decodes them once.
+                target = target.replace('%', '%25').replace('#', '%23').replace('^', '%5E').replace('[', '%5B').replace(']', '%5D')
+                location = str(PurePosixPath(row['path']).parent)
+                location = '' if location == '.' else location
+                item = {'path': row['path'], 'title': row['name'], 'location': location,
+                        'notebook': row['root'], 'insertTarget': target,
+                        'match': 'name' if name_hit else 'path' if metadata_hit else 'body',
+                        'titleHighlights': literal_ranges(row['name'], words),
+                        'pathHighlights': literal_ranges(location, words)}
+                if not metadata_hit:
+                    positions = ','.join('COALESCE(NULLIF(instr(body,?),0),2147483647)' for _ in words)
+                    first = 'MIN(' + positions + ')' if len(words) > 1 else positions
+                    item['excerpt'] = conn.execute('SELECT substr(body,MAX(1,(' + first + ')-35),140) FROM entries WHERE id=?',
+                                                   words + [row['id']]).fetchone()[0]
+                items.append(item)
+            generation = int(conn.execute("SELECT value FROM settings WHERE key='directory_generation'").fetchone()[0])
+            return {'items': items, 'hasMore': len(rows) > 50, 'generation': generation}
+
     def query(self, body):
         if not isinstance(body, dict):
             raise ValueError('查询格式无效')
+        if body.get('mode') == 'link-completion':
+            return self.link_completion(body)
         mode = body.get('mode', 'paths' if 'paths' in body else 'tags' if 'tag' in body else 'search')
         if mode not in ('paths', 'tags', 'recent', 'search'):
             raise ValueError('查询类型无效')

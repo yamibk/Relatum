@@ -1107,6 +1107,10 @@ class NotesStore:
         if not isinstance(body, dict) or ('paths' in body and 'tag' in body):
             raise NotesError('查询格式无效')
         body = dict(body)
+        if body.get('mode') == 'link-completion':
+            body['sourcePath'] = self.normalize_path(body.get('sourcePath'))
+            if body.get('selectedPath') is not None:
+                body['selectedPath'] = self.normalize_path(body['selectedPath'])
         if 'paths' in body:
             if not isinstance(body['paths'], list) or len(body['paths']) > 50:
                 raise NotesError('每次最多查询 50 篇笔记')

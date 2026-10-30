@@ -7,7 +7,7 @@ dependency graph and registry integrity values used for this vendor snapshot.
 ## Snapshot
 
 - `relatum-codemirror.min.js`
-  - SHA-256: `BB10BD37DDB94075A57C688C538219BAA75882E98925FF7BF4CF63A71155670E`
+  - SHA-256: `92064034C1CDE8CD7C43DDDAA9F4E8A0007FF983FA14E639D7EB6BF4049F07B3`
   - Direct packages: `@codemirror/state@6.7.1`, `@codemirror/view@6.43.9`,
     `@codemirror/language@6.12.4`, `@codemirror/lang-markdown@6.5.2`,
     `@codemirror/lang-cpp@6.0.3`, `@codemirror/lang-python@6.2.1`,

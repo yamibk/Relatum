@@ -313,6 +313,7 @@
       "scripts": [
         "markdown-table.js",
         "note-table-editor.js",
+        "note-link-completion.js",
         "note-workspace.js",
         "note-theme.js",
         "note-theme.css",
