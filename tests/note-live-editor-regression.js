@@ -178,7 +178,7 @@ const liveProbe = loadLiveDecorationProbe();
 // Compact block boundaries must change layout without absorbing adjacent
 // composition text. Exercise the real StateField and ChangeSet mapping.
 for (const block of ['$$x^2$$', '$$\n\\frac{a}{b}\n$$', '![[fixture.png|240]]', '![diagram.canvas|240x180](canvases/diagram.canvas)', '---', '***', '___',
-  '```quiz\nQuestion?\n- [ ] No\n- [x] Yes\n```', '| A | B |\n| --- | --- |\n| C | D |']) {
+  '```quiz\nQuestion?\n- [ ] No\n- [x] Yes\n```', '| A | B |\n| --- | --- |\n| C | D |', '```mermaid\nflowchart LR\nA-->B\n```']) {
   const coordinator = {};
   const field = liveProbe.__relatumLiveTest.createBlockField(() => 'compact.md', {}, coordinator, { pending: () => true });
   // A blank line distinguishes --- from a Setext heading underline.
@@ -220,7 +220,7 @@ for (const block of ['$$x^2$$', '$$\n\\frac{a}{b}\n$$', '![[fixture.png|240]]', 
   const coordinator = {};
   const field = liveProbe.__relatumLiveTest.createBlockField(() => 'mermaid.md', {}, coordinator, { pending: () => false });
   const state = liveProbe.RelatumCodeMirror.EditorState.create({
-    doc: 'before\n\n```mermaid\ngraph TD; A-->B\n```\n\nafter',
+    doc: 'before\n\n```derive\nx = 1\n```\n\nafter',
     extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage }), field],
   });
   assert.strictEqual(decorationRecords(state.field(field).decorations, state.doc.length)[0].spec.inclusive, false,
@@ -803,7 +803,7 @@ assert(editorSource.includes("measurer.className = 'note-image-text-box note-ima
   && stylesSource.includes('.note-image-text-measurer'),
   'image text editing and display must share one measured typography box instead of switching widths and heights');
 assert(editorSource.includes("key: 'ArrowLeft'") && editorSource.includes("key: 'Shift-ArrowDown'")
-  && editorSource.includes("key: 'Enter', run: () => imageTextKeyCommand('edit')"),
+  && editorSource.includes("key: 'Enter', run: view => imageTextKeyCommand('edit') || editSelectedMermaid(view)"),
   'selected image text must support keyboard editing and precise or accelerated nudging');
 assert(editorSource.includes("span.addEventListener('mousedown', (event) => this.reveal(view, event))")
   && editorSource.includes("span.setAttribute('aria-label', '点击编辑公式源码')")

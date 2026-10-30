@@ -87,6 +87,8 @@
   const viewportScanEffect = StateEffect.define();
   const viewportParseRequestEffect = StateEffect.define();
   const quizLayoutEffect = StateEffect.define();
+  const mermaidEditEffect = StateEffect.define();
+  const mermaidLayoutEffect = StateEffect.define();
   let nextBlockSpecId = 1;
   let nextTableCellVersion = 1;
   const noteSyntaxContexts = new WeakMap();
@@ -1067,8 +1069,9 @@
           if (!rangeHasLongLine(doc, node.from, node.to)) {
             const from = quote.depth ? firstLine.from : node.from;
             const source = doc.sliceString(from, node.to);
-            push({ from, to: node.to, kind, source, language: opener.language,
-              renderSource: quote.depth ? source.split('\n').map(line => window.MarkdownMini.stripQuote(line, quote.depth)).join('\n') : source });
+            const renderSource = quote.depth ? source.split('\n').map(line => window.MarkdownMini.stripQuote(line, quote.depth)).join('\n') : source;
+            if (kind === 'mermaid' && !fencedCodeBody(renderSource).trim()) return false;
+            push({ from, to: node.to, kind, source, language: opener.language, renderSource });
           }
           return false;
         }
@@ -1440,23 +1443,34 @@
   }
 
   function measureMermaid(view, dom, coordinator, id) {
-    view.requestMeasure({ key: dom, read() { return dom.isConnected ? dom.getBoundingClientRect().height : 0; },
+    const epoch = coordinator.epoch, doc = view.state.doc;
+    const current = () => dom.isConnected && !dom.closest('[hidden]') && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
+      && epoch === coordinator.epoch && view.state.doc === doc && !compositionActive(view)
+      && coordinator.spec(view, id)?.kind === 'mermaid';
+    view.requestMeasure({ key: dom, read() { return current() ? dom.getBoundingClientRect().height / view.scaleY : 0; },
       write(height) {
-        if (!height) return;
-        const heights = coordinator.mermaidHeights ||= new Map();
-        heights.delete(id); heights.set(id, height);
-        while (heights.size > 32) heights.delete(heights.keys().next().value);
+        if (!height || !current()) return;
+        Promise.resolve().then(() => {
+          if (!current()) return;
+          const heights = coordinator.mermaidHeights ||= new Map(), previous = heights.get(id);
+          if (previous != null && Math.abs(previous - height) < .5) return;
+          heights.delete(id); heights.set(id, height);
+          while (heights.size > 32) heights.delete(heights.keys().next().value);
+          // Invalidate CM's height map after leaving its measurement write phase.
+          view.dispatch({ effects: mermaidLayoutEffect.of(id) });
+        });
       },
     });
   }
 
   class MermaidEditPreviewWidget extends WidgetType {
-    constructor(spec, coordinator) { super(); this.spec = spec; this.coordinator = coordinator; this.epoch = coordinator.epoch; }
+    constructor(spec, coordinator) { super(); this.spec = spec; this.coordinator = coordinator; this.epoch = coordinator.epoch; this.layoutHeight = coordinator.mermaidHeights?.get(spec.id) || 70; }
     eq(other) {
       return other.epoch === this.epoch && other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint
-        && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast && other.spec.calloutContext === this.spec.calloutContext;
+        && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast && other.spec.calloutContext === this.spec.calloutContext
+        && other.layoutHeight === this.layoutHeight;
     }
-    get estimatedHeight() { return this.coordinator.mermaidHeights?.get(this.spec.id) || 70; }
+    get estimatedHeight() { return this.layoutHeight; }
     toDOM(view) {
       const dom = document.createElement('div'); dom.contentEditable = 'false';
       dom.addEventListener('mousedown', event => { if (!event.button) event.preventDefault(); });
@@ -2775,6 +2789,75 @@
     return from;
   }
 
+  // Diagram interaction belongs to the editor, independently of asynchronous
+  // drawing. Selection updates reuse the mounted adapter and its SVG.
+  class MermaidBlockWidget extends WidgetType {
+    constructor(spec, notePath, options, coordinator, selected) {
+      super(); Object.assign(this, { spec, notePath, options, coordinator, selected: !!selected, epoch: coordinator.epoch });
+      this.layoutHeight = coordinator.mermaidHeights?.get(spec.id) || 70;
+    }
+    eq(other) {
+      return other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint && other.spec.source === this.spec.source
+        && other.notePath === this.notePath && other.epoch === this.epoch && other.selected === this.selected && other.layoutHeight === this.layoutHeight
+        && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast && other.spec.calloutContext === this.spec.calloutContext;
+    }
+    get estimatedHeight() { return this.layoutHeight; }
+    toDOM(view) {
+      const dom = document.createElement('div'); dom.contentEditable = 'false'; dom.tabIndex = 0;
+      const entry = dom.__relatumMermaidBlock = { widget: this, control: null };
+      dom.innerHTML = safeIsolatedResult(this.spec.renderSource || this.spec.source).html;
+      dom.addEventListener('mousedown', event => {
+        if (event.target.closest('[data-note-mermaid-control]')) return;
+        if (event.button !== 0 && event.button !== 2) return;
+        event.preventDefault(); event.stopPropagation();
+        const widget = entry.widget, diagram = dom.querySelector('.mermaid-diagram'), rect = diagram?.getBoundingClientRect();
+        if (event.button === 0 && rect && (event.clientY < rect.top || event.clientY > rect.bottom)) {
+          widget.options.onMermaidBodyRequest(widget.spec.id, event.clientY < rect.top ? 'before' : 'after'); return;
+        }
+        if (event.button === 0 && event.detail > 1) widget.options.onMermaidEdit(widget.spec.id);
+        else widget.options.onMermaidSelect(widget.spec.id);
+      });
+      dom.addEventListener('dblclick', event => { event.preventDefault(); event.stopPropagation(); });
+      dom.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || event.target.closest('[data-note-mermaid-control]')) return;
+        event.preventDefault(); event.stopPropagation(); entry.widget.options.onMermaidEdit(entry.widget.spec.id);
+      });
+      const current = () => {
+        const widget = entry.widget, spec = widget.coordinator.spec(view, widget.spec.id);
+        return dom.isConnected && widget.coordinator.epoch === widget.epoch && spec?.source === widget.spec.source && !compositionActive(view);
+      };
+      entry.control = attachNoteMermaid(dom, { mode: 'live', historyKey: this.epoch + ':' + this.spec.id,
+        isCurrent: current, whenSettled: () => runWhenInputSettled(view, () => true),
+        onLayout: () => runWhenInputSettled(view, () => {
+          if (!current()) return;
+          dom.style.removeProperty('min-height'); measureMermaid(view, dom, entry.widget.coordinator, entry.widget.spec.id);
+        }),
+      });
+      this.updateDOM(dom, view); return dom;
+    }
+    updateDOM(dom, view) {
+      const entry = dom.__relatumMermaidBlock, old = entry?.widget;
+      if (!old || old.spec.id !== this.spec.id || old.epoch !== this.epoch || old.notePath !== this.notePath) return false;
+      entry.widget = this;
+      dom.className = 'note-live-rich-block is-mermaid note-mermaid-block';
+      dom.classList.toggle('is-selected', this.selected);
+      dom.setAttribute('aria-label', document.documentElement.lang === 'en'
+        ? 'Diagram: click to select, double-click or Enter to edit' : '图表：单击选择，双击或 Enter 编辑源码');
+      if (this.spec.calloutType) {
+        const descriptor = window.MarkdownMini.noteBlock(this.spec.calloutType);
+        dom.classList.add('note-block-math'); dom.classList.toggle('note-color-block', !!descriptor.color);
+        dom.classList.toggle('note-live-callout-last', !!this.spec.calloutLast); dom.style.cssText = descriptor.style;
+      } else dom.removeAttribute('style');
+      decorateNestedCalloutWidget(dom, view, this.spec, this.coordinator);
+      const height = this.coordinator.mermaidHeights?.get(this.spec.id);
+      if (height && !dom.querySelector('.note-mermaid-stage > svg')) dom.style.minHeight = height + 'px';
+      entry.control?.update(fencedCodeBody(this.spec.renderSource || this.spec.source), this.spec.language);
+      return true;
+    }
+    destroy(dom) { dom.__relatumMermaidBlock?.control.destroy(); delete dom.__relatumMermaidBlock; }
+    ignoreEvent(event) { return event.type !== 'contextmenu'; }
+  }
+
   class RichBlockWidget extends WidgetType {
     constructor(spec, notePath, options, coordinator, selected) {
       super(); this.spec = spec; this.notePath = notePath; this.options = options; this.coordinator = coordinator;
@@ -2786,7 +2869,6 @@
         && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast && other.spec.colorFirst === this.spec.colorFirst
         && other.spec.calloutContext === this.spec.calloutContext;
     }
-    get estimatedHeight() { return this.spec.kind === 'mermaid' ? this.coordinator.mermaidHeights?.get(this.spec.id) || 70 : -1; }
     isCurrent(view, wrap, token) {
       if (this.token !== token || !wrap.isConnected || this.coordinator.epoch !== this.epoch) return false;
       const current = this.coordinator.spec(view, this.spec.id);
@@ -2817,9 +2899,6 @@
     toDOM(view) {
       const wrap = document.createElement('div');
       wrap.className = 'note-live-rich-block is-' + this.spec.kind;
-      if (this.spec.kind === 'mermaid' && this.coordinator.mermaidHeights?.has(this.spec.id)) {
-        wrap.style.minHeight = this.coordinator.mermaidHeights.get(this.spec.id) + 'px';
-      }
       const token = {};
       this.token = token;
 
@@ -2883,7 +2962,7 @@
           wrap.classList.add('is-collapsed');
           wrap.querySelectorAll('.md-callout-body').forEach((body) => { body.hidden = true; });
         }
-        const hasMermaid = this.spec.kind === 'mermaid' || !!(result.features && result.features.mermaid);
+        const hasMermaid = !!(result.features && result.features.mermaid);
         const hasMath = this.spec.kind === 'derive' || !!(result.features && result.features.math);
         if (hasMermaid && mermaidEnabled()) {
           this.mermaidControl = attachNoteMermaid(wrap, { mode: 'live',
@@ -3213,11 +3292,29 @@
     schedule(); return { destroy };
   }
 
-  function activeBlockIds(specs, state, focused, composing) {
+  function activeBlockIds(specs, state, focused, composing, previous) {
     const active = new Set();
-    if (!focused && !composing) return active;
-    specs.forEach((spec) => { if (selectionTouches(state.selection, spec.from, spec.to)) active.add(spec.id); });
+    specs.forEach((spec) => {
+      // Opening a menu or switching native focus must not collapse an active
+      // diagram source. Leaving its source range (or explicit Esc) ends editing.
+      if (!focused && !composing && !(spec.kind === 'mermaid' && previous?.has(spec.id))) return;
+      if (spec.kind === 'mermaid') {
+        const main = state.selection.main;
+        // Whole-block and cross-block ranges select rendered diagrams. A text
+        // range within an already open source editor keeps that editor open.
+        if (state.selection.ranges.length !== 1 || main.from < spec.from || main.to > spec.to
+            || main.from === spec.from && main.to === spec.to || !main.empty && !previous?.has(spec.id)) return;
+        if (main.empty && (main.head === spec.from || main.head === spec.to) && !previous?.has(spec.id)) return;
+      }
+      if (selectionTouches(state.selection, spec.from, spec.to)) active.add(spec.id);
+    });
     return active;
+  }
+
+  function selectedBlockMermaidIds(specs, state) {
+    const main = state.selection.main;
+    return new Set(state.selection.ranges.length === 1 && !main.empty
+      ? specs.filter(spec => spec.kind === 'mermaid' && main.from === spec.from && main.to === spec.to).map(spec => spec.id) : []);
   }
 
   function selectedBlockImageIds(specs, state) {
@@ -3240,6 +3337,7 @@
   }
 
   function blockWidget(spec, path, options, coordinator, selected) {
+    if (spec.kind === 'mermaid') return new MermaidBlockWidget(spec, path, options, coordinator, selected);
     if (spec.kind === 'quiz') return new QuizBlockWidget(spec, path, options, coordinator, selected);
     if (spec.kind === 'canvas') return new CanvasBlockWidget(spec, path, options, coordinator, selected);
     return spec.kind === 'table' && options.tableController && spec.tableModel
@@ -3252,7 +3350,7 @@
     // to deliver native input without a keydown to the selected image text box.
     const imageTextInput = spec.kind === 'image' && spec.from === 0 && spec.to === state.doc.length
       && options.imageTextController?.active;
-    return !imageTextInput && (spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz' || spec.kind === 'table');
+    return !imageTextInput && (spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz' || spec.kind === 'table' || spec.kind === 'mermaid');
   }
 
   function blockAtomicRange(spec, state) {
@@ -3361,16 +3459,17 @@
         const specs = scanBlockSpecs(state, 0, parsedTo, coordinator.records);
         const byId = new Map(specs.map((spec) => [spec.id, spec]));
         const selectedImageIds = selectedBlockImageIds(specs, state);
+        const selectedMermaidIds = selectedBlockMermaidIds(specs, state);
         const projection = projectionState(specs);
         const projected = projectedSpecs(specs, new Set(), projection);
         const hidden = calloutProjections(projection, state, false);
         const decorations = Decoration.set(projected.map((spec) => Decoration.replace({
           widget: blockWidget(spec, notePath(), options, coordinator,
-            selectedImageIds.has(spec.id)),
+            selectedImageIds.has(spec.id) || selectedMermaidIds.has(spec.id)),
           block: true, inclusive: compactBlockProjection(spec, state, options), blockId: spec.id,
         }).range(spec.from, spec.to)).concat(hidden), true);
         const atomic = Decoration.set(projected.map(spec => blockAtomicRange(spec, state)).concat(hidden.filter(range => !range.value.spec.colorHeader)), true);
-        return { specs, byId, activeIds: new Set(), selectedImageIds, focused: false, decorations, atomic };
+        return { specs, byId, activeIds: new Set(), selectedImageIds, selectedMermaidIds, focused: false, decorations, atomic };
       },
       update(value, transaction) {
         let focused = value.focused;
@@ -3410,13 +3509,18 @@
         const inputReconciled = inputReconcileRanges !== undefined;
         const selectionChanged = !!transaction.selection;
         const quizLayouts = transaction.effects.filter(effect => effect.is(quizLayoutEffect)).map(effect => effect.value);
-        if (!transaction.docChanged && !selectionChanged && focused === value.focused && !notePathChanged && !imageTextModeChanged && !viewportRefreshed && !foldChanged && !quizLayouts.length) return value;
+        const mermaidEdits = transaction.effects.filter(effect => effect.is(mermaidEditEffect)).map(effect => effect.value);
+        const mermaidLayouts = transaction.effects.filter(effect => effect.is(mermaidLayoutEffect)).map(effect => effect.value);
+        if (!transaction.docChanged && !selectionChanged && focused === value.focused && !notePathChanged && !imageTextModeChanged && !viewportRefreshed && !foldChanged && !quizLayouts.length && !mermaidEdits.length && !mermaidLayouts.length) return value;
 
         const byId = specs === value.specs ? value.byId : new Map(specs.map((spec) => [spec.id, spec]));
-        const activeIds = activeBlockIds(specs, transaction.state, focused, false);
+        const activeIds = activeBlockIds(specs, transaction.state, focused, false, value.activeIds);
+        mermaidEdits.forEach(id => { if (byId.get(id)?.kind === 'mermaid' && focused) activeIds.add(id); });
         const selectedImageIds = selectedBlockImageIds(specs, transaction.state);
+        const selectedMermaidIds = selectedBlockMermaidIds(specs, transaction.state);
         const refresh = new Set();
         quizLayouts.forEach(id => { if (byId.get(id)?.kind === 'quiz') refresh.add(id); });
+        mermaidLayouts.forEach(id => { if (byId.get(id)?.kind === 'mermaid') refresh.add(id); });
         if (foldChanged) specs.forEach(spec => refresh.add(spec.id));
         if (selectionChanged || focused !== value.focused) {
           // Only entering/leaving a header can change its block projection.
@@ -3445,6 +3549,8 @@
         activeIds.forEach((id) => { if (!value.activeIds.has(id)) refresh.add(id); });
         value.selectedImageIds.forEach((id) => { if (!selectedImageIds.has(id)) refresh.add(id); });
         selectedImageIds.forEach((id) => { if (!value.selectedImageIds.has(id)) refresh.add(id); });
+        value.selectedMermaidIds.forEach(id => { if (!selectedMermaidIds.has(id)) refresh.add(id); });
+        selectedMermaidIds.forEach(id => { if (!value.selectedMermaidIds.has(id)) refresh.add(id); });
         if (imageTextModeChanged) specs.forEach(spec => {
           if (spec.kind === 'image' && spec.from === 0 && spec.to === transaction.state.doc.length) refresh.add(spec.id);
         });
@@ -3469,7 +3575,7 @@
             filter(from, to, decoration) { return !refresh.has(decoration.spec.blockId); },
             add: projected.map((spec) => Decoration.replace({
               widget: blockWidget(spec, notePath(), options, coordinator,
-                selectedImageIds.has(spec.id)),
+                selectedImageIds.has(spec.id) || selectedMermaidIds.has(spec.id)),
               block: true, inclusive: compactBlockProjection(spec, transaction.state, options), blockId: spec.id,
             }).range(spec.from, spec.to)).concat(hidden,
               mathPreviews(specs, activeIds, projection).filter(range => refresh.has(range.value.spec.blockId)),
@@ -3481,7 +3587,7 @@
             add: projected.map(spec => blockAtomicRange(spec, transaction.state)).concat(hidden.filter(range => !range.value.spec.colorHeader)), sort: true,
           });
         }
-        return { specs, byId, activeIds, selectedImageIds, focused, decorations, atomic, localCellEdit: localCell?.edit };
+        return { specs, byId, activeIds, selectedImageIds, selectedMermaidIds, focused, decorations, atomic, localCellEdit: localCell?.edit };
       },
       provide: (field) => [
         EditorView.decorations.from(field, (value) => value.decorations),
@@ -5434,6 +5540,96 @@
       };
       tableController.routeBody(run);
     };
+    let mermaidOperation = 0;
+    const cancelMermaidOperation = () => { mermaidOperation++; };
+    const mermaidVisibility = () => { if (document.hidden || document.documentElement.dataset.desktopMinimized === '1') cancelMermaidOperation(); };
+    window.addEventListener('blur', cancelMermaidOperation);
+    window.addEventListener('pagehide', cancelMermaidOperation);
+    window.addEventListener('canvasdesktop:visibility', mermaidVisibility);
+    document.addEventListener('visibilitychange', mermaidVisibility);
+    function currentMermaid(id) {
+      if (destroyed || sourceMode || document.hidden || document.documentElement.dataset.desktopMinimized === '1'
+          || !view.dom.isConnected || host.closest('[hidden]')
+          || host.closest('.note-workspace') && document.body.dataset.startWorkspace !== 'notes') return null;
+      const spec = coordinator.spec(view, id);
+      return spec?.kind === 'mermaid' ? spec : null;
+    }
+    function routeMermaid(id, callback) {
+      const operation = ++mermaidOperation, epoch = coordinator.epoch, path = currentPath;
+      const valid = () => operation === mermaidOperation && epoch === coordinator.epoch && path === currentPath;
+      const run = () => { const spec = valid() && currentMermaid(id); if (spec) callback(spec, valid); };
+      if (inputPending()) whenInputSettled().then(run); else run();
+    }
+    safeOptions.onMermaidSelect = id => routeMermaid(id, spec => {
+      view.dispatch({ selection: EditorSelection.range(spec.from, spec.to), userEvent: 'select.pointer' }); view.focus();
+    });
+    safeOptions.onMermaidEdit = (id, end = false) => routeMermaid(id, (spec, valid) => {
+      // Unproject before resolving a native text caret inside the source.
+      view.dispatch({ selection: EditorSelection.cursor(spec.from), effects: [focusEffect.of(true), mermaidEditEffect.of(spec.id)] }); view.focus();
+      const doc = view.state.doc;
+      requestAnimationFrame(() => {
+        const current = valid() && view.state.doc === doc && !inputPending() && currentMermaid(id);
+        if (!current) return;
+        const last = view.state.doc.lineAt(Math.max(current.from, current.to - 1));
+        const at = end ? view.state.doc.line(Math.max(1, last.number - 1)).to : richBlockEditPosition(current);
+        view.dispatch({ selection: EditorSelection.cursor(clamp(at, current.from, current.to)), scrollIntoView: true }); view.focus();
+      });
+    });
+    safeOptions.onMermaidBodyRequest = (id, side) => routeMermaid(id, spec => {
+      const doc = view.state.doc; let position, changes;
+      if (side === 'before') {
+        if (!spec.from) { changes = { from: 0, insert: '\n\n' }; position = 0; }
+        else position = doc.lineAt(spec.from - 1).to;
+      } else if (spec.to === doc.length) { changes = { from: doc.length, insert: '\n\n' }; position = doc.length + 2; }
+      else position = spec.to + 1;
+      view.dispatch({ ...(changes ? { changes, userEvent: 'input.mermaid-boundary' } : {}), selection: EditorSelection.cursor(position), scrollIntoView: true }); view.focus();
+    });
+    function selectedMermaid(view) {
+      if (sourceMode || inputPending()) return null;
+      const blocks = view.state.field(blockField, false), id = blocks?.selectedMermaidIds.values().next().value;
+      return id ? blocks.byId.get(id) : null;
+    }
+    function editSelectedMermaid(view) {
+      const spec = selectedMermaid(view); if (!spec) return false;
+      safeOptions.onMermaidEdit(spec.id); return true;
+    }
+    function finishMermaidEdit(view) {
+      if (sourceMode || inputPending()) return false;
+      const blocks = view.state.field(blockField, false);
+      const spec = blocks?.specs.find(spec => spec.kind === 'mermaid' && blocks.activeIds.has(spec.id));
+      if (!spec) return false;
+      safeOptions.onMermaidSelect(spec.id); return true;
+    }
+    function deleteSelectedMermaid(view) {
+      const spec = selectedMermaid(view); if (!spec || view.state.readOnly) return false;
+      cancelMermaidOperation();
+      view.dispatch({ changes: { from: spec.from, to: spec.to }, selection: EditorSelection.cursor(spec.from),
+        userEvent: 'delete.mermaid', annotations: CM.isolateHistory.of('full'), scrollIntoView: true });
+      return true;
+    }
+    function copySelectedMermaid(event, view, cut) {
+      const spec = selectedMermaid(view); if (!spec) return false;
+      event.preventDefault();
+      try { if (!event.clipboardData) return true; event.clipboardData.setData('text/plain', view.state.doc.sliceString(spec.from, spec.to)); }
+      catch (_) { return true; }
+      if (cut) deleteSelectedMermaid(view);
+      return true;
+    }
+    function enterMermaidBoundary(view, backward) {
+      if (sourceMode || inputPending() || view.state.selection.ranges.length !== 1 || !view.state.selection.main.empty) return false;
+      const head = view.state.selection.main.head, line = view.state.doc.lineAt(head), blocks = view.state.field(blockField, false);
+      const spec = blocks?.specs.find(spec => spec.kind === 'mermaid' && !blocks.activeIds.has(spec.id) && (backward
+        ? head === spec.to || head === spec.to + 1 && head === line.from
+        : head === spec.from || head === spec.from - 1 && head === line.to));
+      if (!spec) return false;
+      safeOptions.onMermaidEdit(spec.id, backward); return true;
+    }
+    function mermaidBodyBoundary(view) {
+      if (sourceMode || inputPending() || view.state.selection.ranges.length !== 1 || !view.state.selection.main.empty) return null;
+      const head = view.state.selection.main.head, blocks = view.state.field(blockField, false);
+      const spec = blocks?.specs.find(spec => spec.kind === 'mermaid' && !blocks.activeIds.has(spec.id) && (head === spec.from || head === spec.to));
+      return spec ? { id: spec.id, side: head === spec.from ? 'before' : 'after' } : null;
+    }
     function enterTableBoundary(view, backward) {
       return !sourceMode && !inputPending() && !!tableController?.enterBoundary(view, backward);
     }
@@ -5526,6 +5722,7 @@
     function syncImageSelectionClass(view) {
       if (inputSession.pending()) return;
       host.classList.toggle('has-image-selection', !sourceMode && !!exactSelectedImageRange(view.state));
+      host.classList.toggle('has-mermaid-selection', !!selectedMermaid(view));
       imageTextController.syncSelection(view);
     }
 
@@ -5768,10 +5965,10 @@
           return [transaction, { selection: EditorSelection.cursor(task.contentFrom), sequential: true }];
         }),
         Prec.highest(keymap.of([
-          { key: 'Backspace', run: (view) => deleteImageObject(view, true) || enterTableBoundary(view, true) || !sourceMode && deleteListPrefix(view) },
-          { key: 'Delete', run: (view) => deleteImageObject(view, false) || enterTableBoundary(view, false) },
-          { key: 'Enter', run: () => imageTextKeyCommand('edit') },
-          { key: 'Escape', run: () => imageTextKeyCommand('clear-selection') },
+          { key: 'Backspace', run: (view) => deleteImageObject(view, true) || deleteSelectedMermaid(view) || enterMermaidBoundary(view, true) || enterTableBoundary(view, true) || !sourceMode && deleteListPrefix(view) },
+          { key: 'Delete', run: (view) => deleteImageObject(view, false) || deleteSelectedMermaid(view) || enterMermaidBoundary(view, false) || enterTableBoundary(view, false) },
+          { key: 'Enter', run: view => imageTextKeyCommand('edit') || editSelectedMermaid(view) },
+          { key: 'Escape', run: view => imageTextKeyCommand('clear-selection') || finishMermaidEdit(view) },
           { key: 'ArrowLeft', run: (view) => imageTextKeyCommand('move', { dx: -1, dy: 0 }) || moveSelectedMediaCaret(view, true) || !sourceMode && moveBeforeTask(view) },
           { key: 'ArrowRight', run: (view) => imageTextKeyCommand('move', { dx: 1, dy: 0 }) || moveSelectedMediaCaret(view, false) },
           { key: 'ArrowUp', run: () => imageTextKeyCommand('move', { dx: 0, dy: -1 }) },
@@ -5850,8 +6047,13 @@
         Prec.highest(EditorView.domEventHandlers({
           beforeinput(event, view) {
             if (!event.isComposing && /^deleteContent(?:Backward|Forward)$/.test(event.inputType)
-                && enterTableBoundary(view, event.inputType === 'deleteContentBackward')) {
+                && (deleteSelectedMermaid(view) || enterMermaidBoundary(view, event.inputType === 'deleteContentBackward')
+                  || enterTableBoundary(view, event.inputType === 'deleteContentBackward'))) {
               event.preventDefault(); return true;
+            }
+            if (!event.isComposing && event.inputType.startsWith('insert')) {
+              const boundary = mermaidBodyBoundary(view);
+              if (boundary) safeOptions.onMermaidBodyRequest(boundary.id, boundary.side);
             }
             if (!sourceMode && tableController && !inputPending() && event.inputType.startsWith('insert')) {
               const boundary = tableController.boundary(view);
@@ -5859,6 +6061,8 @@
             }
             return false;
           },
+          copy(event, view) { return copySelectedMermaid(event, view, false); },
+          cut(event, view) { return copySelectedMermaid(event, view, true); },
           contextmenu(event, view) {
             if (imageTextController.active) return false;
             event.preventDefault();
@@ -5883,6 +6087,14 @@
           },
           keydown(event, view) {
             pastePlain = (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'v';
+            if (!event.isComposing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+              const boundary = mermaidBodyBoundary(view);
+              if (boundary && (event.key.length === 1 || event.key === 'Enter' || event.key === 'Process' || event.keyCode === 229 || /^Arrow(?:Down|Right|Up|Left)$/.test(event.key))) {
+                if (/^Arrow/.test(event.key)) boundary.side = /Up|Left/.test(event.key) ? 'before' : 'after';
+                safeOptions.onMermaidBodyRequest(boundary.id, boundary.side);
+                if (/^Arrow/.test(event.key) || event.key === 'Enter') { event.preventDefault(); return true; }
+              }
+            }
             if (!sourceMode && tableController && !inputPending() && !event.isComposing && !event.ctrlKey && !event.metaKey && !event.altKey) {
               const boundary = tableController.boundary(view);
               if (boundary && (event.key.length === 1 || event.key === 'Enter' || event.key === 'Process' || event.keyCode === 229 || /^Arrow(?:Down|Right|Up|Left)$/.test(event.key))) {
@@ -5914,6 +6126,8 @@
             return false;
           },
           compositionstart(event, view) {
+            const mermaidBoundary = mermaidBodyBoundary(view);
+            if (mermaidBoundary) safeOptions.onMermaidBodyRequest(mermaidBoundary.id, mermaidBoundary.side);
             if (!sourceMode && tableController && !inputPending()) {
               const boundary = tableController.boundary(view);
               if (boundary) safeOptions.onTableBodyRequest(boundary.id, boundary.side);
@@ -5926,6 +6140,7 @@
             return false;
           },
           mousedown(event, view) {
+            if (event.button === 0 || event.button === 2) cancelMermaidOperation();
             // Focus must use the clicked body position, not a stale selection
             // in a currently hidden nested header. Otherwise revealing that
             // header moves the native mouse target before CM starts its drag.
@@ -5969,6 +6184,8 @@
             return true;
           },
           paste(event, view) {
+            const mermaidBoundary = mermaidBodyBoundary(view);
+            if (mermaidBoundary) safeOptions.onMermaidBodyRequest(mermaidBoundary.id, mermaidBoundary.side);
             if (!sourceMode && tableController && !inputPending()) {
               const boundary = tableController.boundary(view);
               if (boundary) safeOptions.onTableBodyRequest(boundary.id, boundary.side);
@@ -6064,6 +6281,7 @@
     }
 
     function setDocument(documentState) {
+      cancelMermaidOperation();
       highlightInputs.forEach(input => input.dismiss());
       for (const target of imageInsertions) target.valid = false;
       imageInsertions.clear();
@@ -6238,6 +6456,7 @@
     }
 
     function setSourceMode(active) {
+      cancelMermaidOperation();
       highlightInputs.forEach(input => input.dismiss());
       const next = !!active;
       if (inputPending()) {
@@ -6389,6 +6608,7 @@
       if (name.startsWith('highlight-color:')) done = applyHighlightColor(view, name.slice(16));
       else if (name.startsWith('paragraph:')) done = paragraphCommand(view, name.slice(10));
       else if (name.startsWith('insert:')) done = insertBlockCommand(view, name.slice(7), document.documentElement.lang === 'en', text);
+      else if (name === 'cut' && selectedMermaid(view)) done = deleteSelectedMermaid(view);
       else if (name === 'cut' || name === 'paste' || name === 'paste-plain') {
         // Windows clipboard reads may contain CRLF. Selection offsets must use
         // the same normalized document text as the inserted ChangeSet.
@@ -6572,7 +6792,11 @@
         if (tableController) tableController.destroy();
         inputSession.destroy();
         delete view.__relatumInputSession;
-        host.classList.remove('is-composing', 'has-image-selection', 'is-image-text-mode');
+        window.removeEventListener('blur', cancelMermaidOperation);
+        window.removeEventListener('pagehide', cancelMermaidOperation);
+        window.removeEventListener('canvasdesktop:visibility', mermaidVisibility);
+        document.removeEventListener('visibilitychange', mermaidVisibility);
+        host.classList.remove('is-composing', 'has-image-selection', 'has-mermaid-selection', 'is-image-text-mode');
         coordinator.epoch += 1;
         view.destroy();
         host.replaceChildren();

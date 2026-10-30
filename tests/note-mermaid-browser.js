@@ -105,7 +105,7 @@ window.setSample=(source,mode='live')=>{const e=document.getElementById('editor'
     assert.equal(await page.evaluate(() => testEditor.snapshot().value), one);
     assert.equal(requests.filter(url => url.includes('vendor/pele/pele.global.js')).length, 1);
     assert(!requests.some(url => url.includes('vendor/mermaid/')));
-    await page.locator('.is-mermaid svg').click();
+    await page.locator('.is-mermaid svg').dblclick();
     await page.locator('.note-live-mermaid-preview svg').waitFor();
     assert(await page.locator('.cm-line').filter({ hasText: 'flowchart' }).count(), 'click exposes source with a preview below');
     assert.equal(await page.locator('.cm-line.note-live-code-line').filter({ hasText: '' }).evaluateAll(nodes => nodes.filter(node => !node.textContent.trim()).length), 0,
@@ -124,7 +124,7 @@ window.setSample=(source,mode='live')=>{const e=document.getElementById('editor'
     report.checks.push('lazy loading, live editing, undo and source integrity');
 
     // Source remains editable while a stable widget displays the last good SVG.
-    await page.locator('.is-mermaid svg').click();
+    await page.locator('.is-mermaid svg').dblclick();
     await page.locator('.note-live-mermaid-preview svg').waitFor();
     await page.waitForFunction(() => testEditor.view.state.doc.lineAt(testEditor.view.state.selection.main.head).text.startsWith('flowchart'));
     await page.evaluate(() => {
@@ -160,13 +160,13 @@ window.setSample=(source,mode='live')=>{const e=document.getElementById('editor'
     await page.evaluate(() => { const v = testEditor.view, end = v.state.doc.toString().lastIndexOf('```'); v.dispatch({ changes: { from: end, to: end + 3 } }); });
     await pause(160); assert.equal(await page.locator('.note-live-mermaid-preview').count(), 0, 'removing the closing fence removes the editing preview');
     await set(page, fence('flowchart TD\n A[') + '\n\n尾文', 'live');
-    await page.locator('.is-mermaid').click();
+    await page.locator('.is-mermaid').dblclick();
     await page.locator('.note-live-mermaid-preview .note-mermaid-status').waitFor();
     assert.equal(await page.locator('.note-live-mermaid-preview svg').count(), 0, 'first-invalid input has no invented diagram');
     await set(page, one, 'live'); await page.locator('.is-mermaid svg').waitFor();
     const reused = await page.evaluate(() => ({ parses: __diagramMetrics.parses, renders: __diagramMetrics.renders }));
     for (let index = 0; index < 3; index++) {
-      await page.locator('.is-mermaid svg').click(); await page.locator('.note-live-mermaid-preview svg').waitFor();
+      await page.locator('.is-mermaid svg').dblclick(); await page.locator('.note-live-mermaid-preview svg').waitFor();
       await page.evaluate(() => { const v = testEditor.view; v.dispatch({ selection: { anchor: v.state.doc.length } }); v.focus(); });
       await page.waitForFunction(() => !document.querySelector('.note-live-mermaid-preview') && document.querySelector('.is-mermaid svg'));
     }
@@ -220,7 +220,7 @@ window.setSample=(source,mode='live')=>{const e=document.getElementById('editor'
 
     await set(page, '> [!note] 引用\n> ```mermaid\n> flowchart TD\n> A[中文] --> B[结束]\n> ```\n\n最后正文', 'live');
     await page.locator('.is-mermaid svg').waitFor();
-    await page.locator('.is-mermaid svg').click(); await page.locator('.note-live-mermaid-preview svg').waitFor();
+    await page.locator('.is-mermaid svg').dblclick(); await page.locator('.note-live-mermaid-preview svg').waitFor();
     assert((await page.locator('.note-live-mermaid-preview svg').textContent()).includes('中文'), 'quoted source renders without quote prefixes');
     await set(page, fence('flowchart TD\n A['), 'reading'); await page.locator('.note-mermaid-error').waitFor();
     assert((await page.locator('.note-mermaid-error pre').textContent()).includes('A['));

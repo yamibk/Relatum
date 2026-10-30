@@ -15,7 +15,7 @@ async function port() { const socket = net.createServer(); await new Promise(res
 (async () => {
   const checks = [];
   const runtime = fs.readFileSync(path.join(release, '_internal/assets/vendor/pele/pele.global.js'));
-  assert.equal(crypto.createHash('sha256').update(runtime).digest('hex'), '323c16de7844d4b609743f70449ebce041a531e4f48f23b1e9e7ec9d3b917287');
+  assert.equal(crypto.createHash('sha256').update(runtime).digest('hex'), '787ed66bb4bd56c15e224109ff5b89ed395ebfacf71fae2c0ccad1f86d6e24ef');
   for (const enabled of [true, false]) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-mermaid-desktop-data-')), debug = await port();
     fs.mkdirSync(path.join(root, 'data')); fs.mkdirSync(path.join(root, 'notes'));

@@ -1,5 +1,5 @@
 'use strict';
-// Alternating same-Pele baseline/current runs. All probes exist only in responses.
+// Alternating baseline/current assets, including each version's engine and worker.
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http');
 const { execFileSync } = require('node:child_process');
@@ -7,9 +7,10 @@ const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..'), pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const output = process.env.RELATUM_MERMAID_PIPELINE_REPORT || fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-mermaid-pipeline-'));
 fs.mkdirSync(output, { recursive: true });
-const reference = process.env.RELATUM_NOTE_MERMAID_BASELINE_REF || '459b8a3';
+const reference = process.env.RELATUM_NOTE_MERMAID_BASELINE_REF || '85106e9';
 const rounds = Number(process.env.RELATUM_MERMAID_PIPELINE_ROUNDS) || 3;
-const baseline = execFileSync('git', ['show', reference + ':assets/note-mermaid.js'], { cwd: repo, encoding: 'utf8', windowsHide: true });
+const baseline = new Map(['note-mermaid.js', 'note-mermaid-worker.js', 'note-mermaid.css', 'vendor/pele/pele.global.js', 'styles.css', 'markdown.js']
+  .map(name => [name, execFileSync('git', ['show', reference + ':assets/' + name], { cwd: repo, maxBuffer: 4 * 1024 * 1024, windowsHide: true })]));
 const single = '```mermaid\nflowchart LR\nA[中文开始]-->B{有效?}\nB-->|是|C[完成]\nB-->|否|D[重试]\n```';
 const hundred = Array.from({ length: 100 }, (_, i) => '## 图表' + i + '\n\n' + single + '\n\n正文').join('\n\n');
 const hundredDistinct = Array.from({ length: 100 }, (_, i) => '## 图表' + i + '\n\n'
@@ -20,7 +21,7 @@ const dense = '```mermaid\nflowchart LR\n' + Array.from({ length: 500 }, (_, i) 
 const probe = `\n{ const original = pele; pele = {...original,
  parse(...args){if(typeof document==='undefined')self.postMessage({probe:'parse'});else window.metrics.parses++;return original.parse(...args)},
  render(...args){if(typeof document==='undefined')self.postMessage({probe:'render'});else window.metrics.renders++;return original.render(...args)} }; }`;
-const html = mode => `<!doctype html><meta charset="utf-8"><base href="/assets/"><link rel="stylesheet" href="styles.css">
+const html = mode => `<!doctype html><meta charset="utf-8"><base href="/${mode}/assets/"><link rel="stylesheet" href="styles.css">
 <style>body{display:block;margin:0;font-family:"Relatum Open Sans","Microsoft YaHei","Microsoft YaHei UI","Segoe UI","Noto Sans SC",Helvetica,Arial,sans-serif;--note-font-mono:"Cascadia Mono","SFMono-Regular",Consolas,"Liberation Mono","Microsoft YaHei UI","Microsoft YaHei","Noto Sans SC",monospace}#host{width:900px;max-width:95vw;margin:32px auto 0;height:calc(100vh - 36px);overflow:auto}.node-text{width:100%;font-family:inherit}#typing{position:fixed;top:0;left:20px;width:150px;height:22px}</style>
 <input id="typing" aria-label="Input latency probe"><div id="host"><article class="node-text" id="content"></article></div>
 <script>window.metrics={parses:0,renders:0,frames:0,created:0,terminated:0,tasks:[],phases:[]};
@@ -29,7 +30,7 @@ new MutationObserver(records=>{for(const record of records)for(const node of rec
 new PerformanceObserver(list=>metrics.tasks.push(...list.getEntries().map(e=>({start:e.startTime,duration:e.duration})))).observe({type:'longtask',buffered:true});
 const frame=requestAnimationFrame;window.requestAnimationFrame=cb=>{metrics.frames++;return frame.call(window,cb)};
 const Native=Worker;window.Worker=class extends Native{constructor(...args){super(...args);metrics.created++;phase('worker-created');this.addEventListener('message',e=>{if(e.data.ready)phase('worker-ready');if(e.data.probe==='fonts')phase('worker-fonts');if(e.data.probe==='parse'){metrics.parses++;phase('parse')}if(e.data.probe==='render'){metrics.renders++;phase('render')}})}terminate(){metrics.terminated++;return super.terminate()}};
-</script><script src="markdown.js"></script><script src="${mode === 'baseline' ? 'baseline-note-mermaid.js' : 'note-mermaid.js'}"></script>
+</script><script src="markdown.js"></script><script src="note-mermaid.js"></script>
 <script>window.show=source=>{window.controller?.destroy();content.innerHTML=MarkdownMini.render(source);host.scrollTop=0;window.started=performance.now();window.firstSvgAt=undefined;window.lastSvgAt=undefined;metrics.phases=[];window.startCounts={parses:metrics.parses,renders:metrics.renders};window.controller=RelatumNoteMermaid.attach(content,{mode:'live',isCurrent:()=>true})};</script>`;
 
 async function workerHeap(browser, page) {
@@ -59,11 +60,12 @@ async function workerHeap(browser, page) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname === '/') { res.setHeader('Content-Type', 'text/html;charset=utf-8'); res.end(html(url.searchParams.get('mode'))); return; }
-    res.setHeader('Content-Type', url.pathname.endsWith('.js') ? 'text/javascript' : url.pathname.endsWith('.css') ? 'text/css' : 'application/octet-stream');
-    if (url.pathname === '/assets/baseline-note-mermaid.js') { res.end(baseline); return; }
-    const file = path.resolve(repo, '.' + url.pathname);
+    const baselineRequest = url.pathname.startsWith('/baseline/');
+    const pathname = url.pathname.replace(/^\/(?:baseline|current)\//, '/');
+    res.setHeader('Content-Type', pathname.endsWith('.js') ? 'text/javascript' : pathname.endsWith('.css') ? 'text/css' : 'application/octet-stream');
+    const file = path.resolve(repo, '.' + pathname);
     if (!file.startsWith(path.join(repo, 'assets') + path.sep) || !fs.existsSync(file)) { res.writeHead(404).end(); return; }
-    let data = fs.readFileSync(file);
+    let data = baselineRequest && baseline.get(pathname.slice('/assets/'.length)) || fs.readFileSync(file);
     if (file.endsWith('pele.global.js')) data = data.toString('utf8') + probe;
     if (file.endsWith('note-mermaid.js')) data = data.toString('utf8').replace('  window.RelatumNoteMermaid =',
       '  window.cacheProbe=()=>({items:cache.size,bytes:cacheBytes});\n  window.RelatumNoteMermaid =')
@@ -146,7 +148,7 @@ async function workerHeap(browser, page) {
         mainHeapBytesAfterGC: median(rows.map(row => row.mainHeapBytesAfterGC)), workerHeapBytesAfterGC: median(rows.map(row => row.workerHeapBytesAfterGC)),
         parses: median(rows.map(row => row.parses)), renders: median(rows.map(row => row.renders)) });
     }
-    const report = { reference, rounds, method: 'Alternating rounds, same Pele 1.9.0 and actual note font stacks; CDP input continues throughout rendering with at least 8 events per scenario. 100 repeated and 100 distinct flowcharts; dense DAG has 500 nodes and 3964 edges. Includes parsing, SVG sanitation/insertion and layout. Main/worker GC heaps are JS heaps, not process/GPU memory.', summary, records, errors };
+    const report = { reference, rounds, method: 'Alternating complete baseline/current adapter, worker, engine and CSS assets with actual note font stacks; CDP input continues throughout rendering with at least 8 events per scenario. 100 repeated and 100 distinct flowcharts; dense DAG has 500 nodes and 3964 edges. Includes parsing, SVG sanitation/insertion and layout. Main/worker GC heaps are JS heaps, not process/GPU memory.', summary, records, errors };
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify({ output, summary }));
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }

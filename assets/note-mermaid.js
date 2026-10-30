@@ -536,7 +536,7 @@
         if (entry.key === key && entry.el.querySelector('.note-mermaid-stage > svg')) { controls(entry); return; }
         if (entry.source.length > 65536) throw Object.assign(new Error(text('图表源码超过 64 KiB 限制', 'Diagram source exceeds the 64 KiB limit')), { code: 'limit' });
         const hit = cached(key);
-        if (!hit && options.editing && !entry.el.querySelector('.note-mermaid-stage > svg')) {
+        if (!hit && options.historyKey && !entry.el.querySelector('.note-mermaid-stage > svg')) {
           const previousKey = lastGood.get(options.historyKey), previous = cached(previousKey);
           if (previous?.layoutKey === layoutKey) {
             const restored = await safeSvg(previous.svg, entry.prefix, valid, true, ticket.controller.signal);
@@ -571,9 +571,11 @@
     function fail(entry, error, retryable) {
       entry.error = true; entry.failure = { error, retryable };
       const editing = options.editing === true;
+      const keepDrawing = !!options.historyKey && !!entry.el.querySelector('.note-mermaid-stage > svg');
       const box = document.createElement('div'); box.className = editing ? 'note-mermaid-status' : 'note-mermaid-error';
       const message = document.createElement('p');
       message.textContent = editing && !retryable ? text('图表源码尚未完成', 'Diagram source is incomplete')
+        : keepDrawing ? text('图表暂未更新：', 'Diagram has not updated: ') + String(error?.message || error)
         : text('图表暂未显示：', 'Diagram unavailable: ') + String(error?.message || error);
       box.append(message);
       if (retryable) {
@@ -585,7 +587,7 @@
         }); box.append(button);
       }
       entry.el.querySelectorAll(':scope > .note-mermaid-status, :scope > .note-mermaid-error').forEach(el => el.remove());
-      if (!editing) {
+      if (!editing && !keepDrawing) {
         releaseReservation(entry.el);
         releaseZoom(entry); entry.camera = null; entry.key = '';
         entry.el.classList.remove('is-rendered'); entry.el.classList.add('is-error'); delete entry.el.dataset.noteMermaidRendered;

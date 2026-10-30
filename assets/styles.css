@@ -1006,7 +1006,10 @@ body.start-page[data-start-theme="dark"] .note-table-control:focus-visible { col
 body.start-page[data-start-theme="dark"] .note-live-rich-block.note-table td.is-table-selected { background: rgba(173,203,165,.14); }
 body.start-page[data-start-theme="dark"] .note-table-drop { background: #adcba5; }
 .note-live-rich-block.is-derive .md-derive { margin: 0; }
-.note-live-rich-block.is-mermaid { min-height: 70px; }
+.note-live-rich-block.is-mermaid { padding-block: 4px; }
+.note-mermaid-block { position: relative; cursor: default; }
+.note-mermaid-block.is-selected { outline: 2px solid var(--note-theme-accent, #4183c4); outline-offset: -2px; border-radius: 5px; }
+.note-live-editor-host.has-mermaid-selection > .cm-editor > .cm-scroller > :is(.cm-cursorLayer, .cm-selectionLayer) { visibility: hidden; }
 .note-live-rich-block.is-math { padding: .35em 0; contain: inline-size; overflow-x: auto; text-align: center; }
 .note-live-rich-block mjx-container { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
 .note-live-rich-block.is-math mjx-container[jax="CHTML"][display="true"] {
