@@ -697,7 +697,7 @@ class NoteIndex:
             where.append('(' + metadata_match + ')'); args.extend(metadata_args)
         with self.read() as conn:
             conn.execute('CREATE TEMP TABLE link_visits(path TEXT PRIMARY KEY,at REAL)')
-            conn.executemany('INSERT OR REPLACE INTO link_visits VALUES(?,?)',
+            conn.executemany('INSERT INTO link_visits VALUES(?,?) ON CONFLICT(path) DO UPDATE SET at=MAX(link_visits.at,excluded.at)',
                              [(normalize(path), at) for path, at in recent.items()])
             parent = str(PurePosixPath(source).parent)
             parent = '' if parent == '.' else normalize(parent)
@@ -832,7 +832,10 @@ class NoteIndex:
                 if not isinstance(recent, dict) or len(recent) > 200:
                     raise ValueError('最近记录无效')
                 conn.execute('CREATE TEMP TABLE visits(path TEXT PRIMARY KEY,at REAL)')
-                conn.executemany('INSERT INTO visits VALUES(?,?)', [(normalize(p), at) for p, at in recent.items() if isinstance(p, str) and type(at) in (int, float)])
+                # Legacy session histories may contain case/NFC aliases of the
+                # same path. Merge after normalization, independent of order.
+                conn.executemany('INSERT INTO visits VALUES(?,?) ON CONFLICT(path) DO UPDATE SET at=MAX(visits.at,excluded.at)',
+                                 [(normalize(p), at) for p, at in recent.items() if isinstance(p, str) and type(at) in (int, float)])
                 joins += 'LEFT JOIN visits v ON v.path=e.key '
                 order = 'MAX(e.modified/1000000.0,COALESCE(v.at,0)) DESC,e.key'
             elif sorting == 'relevance' and words:

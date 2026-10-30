@@ -39,6 +39,20 @@ class NoteIndexApiTests(unittest.TestCase):
             for route in ('/api/note-index-state', '/api/note-changes?since=0', '/api/note-children', '/api/note-tags', '/api/note-links?path=N000.md'):
                 self.assertEqual(self.fixture.request(route)[0], 200, route)
 
+    def test_launcher_mixed_profile_recent_with_case_aliases_and_search(self):
+        enabled = {'canvas', 'canvas.tree', 'notes', 'notes.graph', 'notes.mermaid', 'notes.quiz',
+                   'notes.canvas', 'runtime.preload', 'daily', 'daily.images'}
+        self.fixture.server.launch_profile = LaunchProfile({key: key in enabled for key in FEATURES}, restricted=True)
+        recent = {'N000.md': 4000000000000, 'n000.md': 1000000000000, 'N001.md': 3000000000000}
+        with mock.patch.object(self.store, '_read_note_bytes', side_effect=AssertionError('body reread')), \
+                mock.patch('os.scandir', side_effect=AssertionError('directory scan')):
+            code, body = self.fixture.request('/api/note-query', {'mode': 'recent', 'recent': recent})
+            self.assertEqual(code, 200, body)
+            self.assertEqual(body['total'], 65)
+            self.assertEqual([row['path'] for row in body['items'][:2]], ['N000.md', 'N001.md'])
+            code, result = self.fixture.request('/api/note-query', {'mode': 'search', 'q': 'needle'})
+            self.assertEqual((code, result['total']), (200, 65))
+
     def test_disabled_notes_reject_every_index_entry_before_starting(self):
         self.fixture.server.launch_profile = LaunchProfile({key: key == 'canvas' or key == 'canvas.library' for key in FEATURES}, restricted=True)
         with mock.patch.object(self.store.sync, 'start', side_effect=AssertionError('disabled index started')), \

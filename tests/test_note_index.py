@@ -129,6 +129,21 @@ class NoteIndexTests(unittest.TestCase):
         self.assertLess(counted['source'].reads, 100)
         self.assertLess(counted['display'].reads, 100)
 
+    def test_recent_merges_normalized_paths_using_latest_visit(self):
+        for path in ('Foo.md', 'B.md', 'Café.md'):
+            self.write(path, 'recent needle')
+        recent = {'Foo.md': 4000000000000, 'foo.md': 1000000000000, 'B.md': 3000000000000,
+                  'Cafe\u0301.md': 5000000000000, 'Café.md': 2000000000000}
+        expected = ['Café.md', 'Foo.md', 'B.md']
+        for records in (recent, dict(reversed(list(recent.items())))):
+            with self.subTest(records=records):
+                first = self.store.query({'mode': 'recent', 'recent': records, 'limit': 1})
+                self.assertEqual((first['total'], first['items'][0]['path']), (3, expected[0]))
+                second = self.store.query({'mode': 'recent', 'recent': records, 'limit': 1, 'cursor': first['cursor']})
+                self.assertEqual(second['items'][0]['path'], expected[1])
+                self.assertEqual([row['path'] for row in self.store.query({'mode': 'recent', 'recent': records})['items']], expected)
+        self.assertEqual(self.store.query({'q': 'needle'})['total'], 3)
+
     def test_scope_dates_tags_and_cursor_generation(self):
         for i in range(68):
             self.write(f'Folder/N{i:03}.md', 'same token #学/测')

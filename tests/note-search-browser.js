@@ -30,7 +30,9 @@ async function run(browser, mode) {
   fs.writeFileSync(path.join(notes, 'image.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
   const listen = await port(), debug = release ? await port() : 0;
   let url = `http://127.0.0.1:${listen}`;
-  const profile = mode === 'full' ? [] : ['--launch-profile', JSON.stringify({ version: 1, features: Object.fromEntries(JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json'))).features.map(f => [f.id, ['notes', 'notes.graph'].includes(f.id) || mode === 'notes-only' && f.id === 'notes.canvas'])) })];
+  const launcherFeatures = new Set(['canvas', 'canvas.tree', 'notes', 'notes.graph', 'notes.mermaid', 'notes.quiz', 'notes.canvas', 'runtime.preload', 'daily', 'daily.images']);
+  const profile = mode === 'full' ? [] : ['--launch-profile', JSON.stringify({ version: 1, features: Object.fromEntries(JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json'))).features.map(f => [f.id,
+    mode === 'launcher-mixed' ? launcherFeatures.has(f.id) : ['notes', 'notes.graph'].includes(f.id) || mode === 'notes-only' && f.id === 'notes.canvas'])) })];
   const service = spawn(release ? path.join(release, 'Relatum.exe') : process.env.RELATUM_PYTHON || 'python',
     release ? profile : ['app.py', '--no-browser', '--port', String(listen), ...profile],
     { cwd: release || repo, env: { ...process.env, RELATUM_DATA_ROOT: root,
@@ -52,7 +54,12 @@ async function run(browser, mode) {
     page.on('request', request => { if (request.url().includes('/api/note-query')) queries.push(request.postDataJSON()); if (request.url().includes('/api/notes-tree')) treeRequests.push(request.url()); });
     const source = fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8').replace('  window.CanvasNoteWorkspace = {', '  window.T = {state, openNote, selectNotebook, setViewMode, renderTree, setTreeSort, flushSave, get editor(){return liveEditor;}};\n  window.CanvasNoteWorkspace = {');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
-    await page.addInitScript(() => { localStorage.setItem('canvas:startWorkspace:v1', 'notes'); localStorage.setItem('canvas:noteFocusMode:v1', '0'); });
+    await page.addInitScript(mode => {
+      localStorage.setItem('canvas:startWorkspace:v1', 'notes'); localStorage.setItem('canvas:noteFocusMode:v1', '0');
+      if (mode === 'launcher-mixed') localStorage.setItem('canvas:noteRecentFiles:v1', JSON.stringify([
+        ['N000.md', 4000000000000], ['N001.md', 3000000000000], ['n000.md', 1000000000000],
+      ]));
+    }, mode);
     await page.goto(url + (release ? '/?desktop=1' : ''));
     await page.waitForFunction(() => window.T?.state.initialized && T.state.active);
     for (let i = 0; i < 200; i++) { if ((await (await fetch(url + '/api/note-index-state')).json()).phase === 'ready') break; await sleep(50); }
@@ -61,6 +68,16 @@ async function run(browser, mode) {
     await page.locator('[data-note-action="toggle-all-folders"]').click();
     await page.keyboard.press('Control+Shift+F');
     const input = page.locator('[data-note-search="query"]'); await input.waitFor({ state: 'visible' });
+    if (mode === 'launcher-mixed') {
+      const recentReply = page.waitForResponse(response => response.url().includes('/api/note-query') && response.request().postDataJSON()?.mode === 'recent');
+      await page.locator('[data-note-browser-provider="recent"]').click();
+      const response = await recentReply, recent = await response.json();
+      assert.equal(response.status(), 200, JSON.stringify(recent)); assert.equal(recent.total, 325);
+      assert.deepEqual(recent.items.slice(0, 2).map(item => item.path), ['N000.md', 'N001.md']);
+      await page.waitForFunction(() => document.querySelector('.note-browser-results')?.getAttribute('aria-busy') === 'false');
+      assert.equal(await page.locator('.note-browser-message').filter({ hasText: '读取失败' }).count(), 0);
+      await page.locator('[data-note-browser-provider="search"]').click(); await input.waitFor({ state: 'visible' });
+    }
     const search = async q => {
       const response = q ? page.waitForResponse(response => response.url().includes('/api/note-query') && response.request().postDataJSON()?.q === q && response.status() === 200) : null;
       await input.fill(q); await input.press('Enter'); if (response) await response;
@@ -160,6 +177,6 @@ async function run(browser, mode) {
 }
 (async () => {
   const browser = release ? null : await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
-  try { for (const mode of process.argv.slice(2).length ? process.argv.slice(2) : ['full', 'notes-only', 'notes-no-canvas']) await run(browser, mode); }
+  try { for (const mode of process.argv.slice(2).length ? process.argv.slice(2) : ['full', 'notes-only', 'notes-no-canvas', 'launcher-mixed']) await run(browser, mode); }
   finally { if (browser) await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

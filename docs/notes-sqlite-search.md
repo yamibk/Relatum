@@ -56,6 +56,8 @@ Windows 用 `ReadDirectoryChangesW`，覆盖原子替换、同大小/同修改�
 
 范围为 `all`、`notebook` 或 `folder`；后两者带库内 `path`。默认本的路径是空字符串并排除 `CustomNotebook`。`recent` 模式带本机访问记录 `recent={path:毫秒}`，最多 200 条，与文件修改时间合并排序；`tags` 模式带标签；`paths` 模式供既有组件批量取得有序元数据。修改时间筛选使用纳秒，前闭后开。
 
+访问记录先按 NFC/casefold 规范化路径合并，同一文件的多条记录取最大访问时间，与记录顺序无关；最近文件与双链补全均遵循此规则，不回写旧偏好、不改索引结构。2026-10-30 排查发现启动器 `canvas-notes-daily` 会话保留了同一文件大小写不同的两条记录，旧最近查询在临时表插入时触发 `UNIQUE constraint failed: visits.path`，表现为“读取失败”；完整模式使用另一份会话偏好，因此正常，实际与功能权限无关。现在查询直接兼容旧记录，无需清空配置或重建索引。回归覆盖大小写及 NFC 别名、倒序输入、分页，以及树状/笔记/日常图片组合启动配置下的最近文件和全文搜索（`node tests/note-search-browser.js launcher-mixed`）。
+
 响应为 `items,total,hasMore,cursor,generation,index`。条目有路径、文件名标题、修订、修改时间、标签和摘要；全文结果另有 `highlights` 与 `sourceRange`，均为 UTF-16 偏移。标题匹配优先于路径，路径优先于正文，同分按修改时间、路径排序。游标绑定查询与索引版本；版本改变返回 `409/query_changed`，界面重新取结果。目录版本改变也返回同类错误，不拼接不同版本的页。
 
 定位发现文档修订变化时，只针对该路径发送 `expectedRevision` 重新核验并定位原查询。普通查询不读取 Markdown；只有这类明确的修订复核读取受影响文档。图谱元数据及其版本也在同一 SQLite 读取快照内取得。

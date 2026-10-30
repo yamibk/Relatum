@@ -77,6 +77,14 @@ class NoteLinkCompletionTests(unittest.TestCase):
             self.assertEqual(self.query('Alpha', includeBody=True, sort=sorting, recent=recent)['items'][-1]['path'], 'Body.md')
         self.assertEqual(self.query('Alpha', sort='recent', recent=recent)['items'][0]['path'], 'Alpha.md')
 
+    def test_recent_aliases_keep_latest_visit_regardless_of_record_order(self):
+        self.write('Foo.md')
+        self.write('B.md')
+        self.ready()
+        recent = {'Foo.md': 4000, 'foo.md': 1000, 'B.md': 3000}
+        for records in (recent, dict(reversed(list(recent.items())))):
+            self.assertEqual([row['path'] for row in self.query(recent=records)['items']], ['Foo.md', 'B.md'])
+
     def test_recheck_deletion_limit_and_hot_queries(self):
         for i in range(65):
             self.write(f'N{i:03}.md', 'common')
