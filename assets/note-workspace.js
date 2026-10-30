@@ -1098,7 +1098,7 @@
         const label = document.createElement('label'); label.className = 'relatum-settings-guide-option';
         const input = document.createElement('input'); input.type = 'radio'; input.name = 'note-guide-topic'; input.value = id; input.checked = guideTopic === id;
         const body = document.createElement('span'), title = document.createElement('strong'), description = document.createElement('small');
-        title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: language() === 'en' ? 'Cards' : '卡片组' }[id]; description.textContent = names[language() === 'en' ? 1 : 0];
+        title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards' }[id]; description.textContent = names[language() === 'en' ? 1 : 0];
         body.append(title, description); label.append(input, body); guide.append(label);
       });
       const hint = document.createElement('p'); hint.textContent = language() === 'en' ? 'Choose what the Guide sidebar displays. Changes apply immediately.' : '选择右侧“引导”面板展示的内容，更改立即生效。'; guide.append(hint);

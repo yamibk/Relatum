@@ -1563,7 +1563,7 @@
         }
         entry.spec = spec;
         dom.className = spec.kind === 'cards' ? 'note-live-rich-block is-cards note-live-cards-preview' : 'note-live-rich-block is-mermaid note-live-mermaid-preview';
-        dom.setAttribute('aria-label', spec.kind === 'cards' ? (document.documentElement.lang === 'en' ? 'Cards preview' : '卡片组预览') : (document.documentElement.lang === 'en' ? 'Diagram preview' : '图表预览'));
+        dom.setAttribute('aria-label', spec.kind === 'cards' ? (document.documentElement.lang === 'en' ? 'Cards preview' : 'Cards 预览') : (document.documentElement.lang === 'en' ? 'Diagram preview' : '图表预览'));
         if (spec.calloutType) {
           const descriptor = window.MarkdownMini.noteBlock(spec.calloutType);
           dom.classList.add('note-block-math'); dom.classList.toggle('note-color-block', !!descriptor.color);
@@ -2930,7 +2930,7 @@
       dom.className = this.spec.kind === 'cards' ? 'note-live-rich-block is-cards note-cards-block' : 'note-live-rich-block is-mermaid note-mermaid-block';
       dom.classList.toggle('is-selected', this.selected);
       dom.setAttribute('aria-label', this.spec.kind === 'cards'
-        ? (document.documentElement.lang === 'en' ? 'Cards: click to select, double-click or Enter to edit' : '卡片组：单击选择，双击或 Enter 编辑源码')
+        ? (document.documentElement.lang === 'en' ? 'Cards: click to select, double-click or Enter to edit' : 'Cards：单击选择，双击或 Enter 编辑源码')
         : (document.documentElement.lang === 'en' ? 'Diagram: click to select, double-click or Enter to edit' : '图表：单击选择，双击或 Enter 编辑源码'));
       if (this.spec.calloutType) {
         const descriptor = window.MarkdownMini.noteBlock(this.spec.calloutType);

@@ -175,7 +175,7 @@
         sequence++; diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; cardsControl?.destroy(); cardsControl = null; clearTimeout(feedbackTimer);
         topic = next; renderedLanguage = lang; host.replaceChildren(); host.dataset.language = lang; host.dataset.guideTopic = topic;
         const head = document.createElement('header'); head.className = 'note-guide-topic-head';
-        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: text('卡片组', 'Cards') }[topic];
+        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards' }[topic];
         const settings = document.createElement('button'); settings.type = 'button'; settings.dataset.noteAction = 'guide-settings'; settings.textContent = text('切换内容', 'Change topic'); head.append(title, settings); host.append(head);
         if (topic === 'markdown') markdown(); else if (topic === 'mermaid') mermaid(); else if (topic === 'quiz') quiz(); else if (topic === 'cards') cards(); else callouts();
         host.scrollTop = positions.get(topic) || 0;
