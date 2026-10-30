@@ -165,7 +165,7 @@ assert(notes.includes('function visibleNoteSource(value)') && notes.includes('Ma
   'the Note status bar must count decoded visible image text rather than metadata encoding');
 assert(notes.includes('editorSnapshot()') && notes.includes('setEditorDocument'), 'workspace save/load must use editor snapshots');
 const applyDocumentSource = notes.slice(notes.indexOf('function applyDocument'), notes.indexOf('function clearCurrent'));
-assert(applyDocumentSource.includes('options.preserveViewState') && applyDocumentSource.includes('editorSnapshot()'),
+assert(applyDocumentSource.includes('options.preserveViewState') && applyDocumentSource.includes('editorSnapshot(true)'),
   'external document refreshes must be able to carry the current editor view state');
 assert(!applyDocumentSource.includes('selectNotebook(') && openNoteSource.includes('!options?.preserveNotebook')
   && notes.includes('noFocus: true, preserveNotebook: true'), 'background refresh and automatic tab reconciliation cannot select a notebook');

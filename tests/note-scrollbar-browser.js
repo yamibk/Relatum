@@ -73,6 +73,8 @@ function metrics() {
           await page.waitForTimeout(350);
           await page.evaluate(() => {
             const area = T.state.viewMode === 'reading' ? document.querySelector('[data-role="note-reading-view"]') : T.editor.view.scrollDOM;
+            // Fixture navigation explicitly supersedes the mode's content restore.
+            T.editor.cancelViewportRestore(); RelatumNoteLiveEditor.cancelViewportRestore(area);
             area.scrollTop = 1200;
           });
           await page.waitForTimeout(200);
@@ -106,7 +108,8 @@ function metrics() {
           const box = await area.boundingBox();
           await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.wheel(0, 240);
           await page.waitForTimeout(180);
-          assert((await page.evaluate(metrics)).scroll > before.scroll + 100, 'real wheel scrolling works');
+          const wheeled = await page.evaluate(metrics);
+          assert(wheeled.scroll > before.scroll + 100, 'real wheel scrolling works: ' + JSON.stringify({ width, dpr, mode, before, after: wheeled }));
           if (width === 1920) {
             await page.evaluate(() => T.setSideOpen(true)); await page.waitForTimeout(300);
             const drag = await page.evaluate(metrics);

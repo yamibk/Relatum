@@ -428,6 +428,8 @@
   const VIEW_STATES_LIMIT = 200;
   const VIEW_STATES_DELAY = 750;
   const viewStates = new Map();
+  let viewportRestoreSequence = 0;
+  let deferredViewportDocument = null;
   let viewStatesTimer = 0;
   let viewStatesDirty = false;
   const SAVE_DELAY = 350;
@@ -542,7 +544,9 @@
       if (!Array.isArray(entry) || typeof entry[0] !== 'string' || !entry[0] || !entry[1]) return;
       const view = entry[1];
       if (![view.anchor, view.head, view.scrollTop].every((value) => Number.isFinite(value) && value >= 0)) return;
-      viewStates.set(entry[0], { anchor: Math.floor(view.anchor), head: Math.floor(view.head), scrollTop: view.scrollTop });
+      const viewport = normalizeViewport(view.viewport);
+      viewStates.set(entry[0], { anchor: Math.floor(view.anchor), head: Math.floor(view.head), scrollTop: view.scrollTop,
+        ...(viewport ? { viewport } : {}) });
     });
   } catch (error) {}
 
@@ -1002,6 +1006,7 @@
 
   // Explicit theme changes preserve a visible text anchor without an editor transaction.
   window.addEventListener('relatum:note-theme-beforechange', () => {
+    cancelDocumentViewportRestore();
     themeLayoutAnchor = null; themeLayoutSequence++;
     if (!noteWorkspaceVisible() || !state.current) return;
     const view = liveEditor?.view, reading = state.viewMode === 'reading';
@@ -1335,9 +1340,12 @@
       head: Math.max(0, Math.floor(Number(view.head) || 0)),
       scrollTop: Math.max(0, Number(view.scrollTop) || 0),
     };
+    const viewport = normalizeViewport(view.viewport);
+    if (viewport) normalized.viewport = viewport;
     const previous = viewStates.get(path);
     if (previous && previous.anchor === normalized.anchor && previous.head === normalized.head
-      && previous.scrollTop === normalized.scrollTop && Array.from(viewStates.keys()).pop() === path) return;
+      && previous.scrollTop === normalized.scrollTop && JSON.stringify(previous.viewport) === JSON.stringify(normalized.viewport)
+      && Array.from(viewStates.keys()).pop() === path) return;
     viewStates.delete(path); viewStates.set(path, normalized);
     while (viewStates.size > VIEW_STATES_LIMIT) viewStates.delete(viewStates.keys().next().value);
     viewStatesDirty = true;
@@ -1360,21 +1368,49 @@
     persistViewStates();
   }
 
-  function editorSnapshot() {
+  function normalizeViewport(value) { return window.RelatumNoteLiveEditor?.normalizeViewportAnchor(value) || null; }
+  function cancelDocumentViewportRestore() {
+    viewportRestoreSequence++;
+    liveEditor?.cancelViewportRestore();
+    window.RelatumNoteLiveEditor?.cancelViewportRestore(readingHost);
+  }
+  function viewportRestoreCurrent(documentState = state.current, mode = state.viewMode) {
+    const sequence = viewportRestoreSequence, epoch = noteVisibilityEpoch;
+    return () => sequence === viewportRestoreSequence && epoch === noteVisibilityEpoch
+      && documentState === state.current && mode === state.viewMode && noteWorkspaceVisible()
+      && !browserResultsActive() && !graphPresentation;
+  }
+  function restoreDeferredViewport() {
+    if (!deferredViewportDocument || deferredViewportDocument !== state.current || !noteWorkspaceVisible()
+        || graphPresentation || browserResultsActive()) return;
+    // Hidden preloads have no measurable viewport. Reveal their saved bookmark
+    // only after the host becomes visible (including return from Browse).
+    const documentState = deferredViewportDocument; deferredViewportDocument = null;
+    cancelDocumentViewportRestore();
+    if (state.viewMode === 'reading') window.RelatumNoteLiveEditor?.restoreReadingViewport(readingHost, documentState.viewport, { isCurrent: viewportRestoreCurrent() });
+    else if (liveEditor) liveEditor.restoreViewport(documentState.viewport, { isCurrent: viewportRestoreCurrent() });
+    else fallbackEditor.scrollTop = documentState.scrollTop;
+  }
+  function editorSnapshot(captureViewport = false) {
+    const deferred = captureViewport && !!state.current && (deferredViewportDocument === state.current
+      || (root.hidden || !state.active) && !!normalizeViewport(state.current.viewport));
+    const viewport = deferred ? state.current?.viewport : captureViewport ? (state.viewMode === 'reading'
+      ? window.RelatumNoteLiveEditor?.captureReadingViewport(readingHost) : liveEditor?.captureViewport()) : null;
     if (state.viewMode === 'reading' && state.current) {
       return {
         value: state.current.content || '',
         anchor: state.current.selectionStart || 0,
         head: state.current.selectionEnd ?? state.current.selectionStart ?? 0,
-        scrollTop: readingHost && readingHost.scrollTop || 0,
+        scrollTop: deferred ? state.current.scrollTop : readingHost && readingHost.scrollTop || 0,
+        ...(viewport ? { viewport } : {}),
       };
     }
-    if (liveEditor) return liveEditor.snapshot();
+    if (liveEditor) return { ...liveEditor.snapshot(), ...(viewport ? { viewport } : {}), ...(deferred ? { scrollTop: state.current.scrollTop } : {}) };
     return {
       value: fallbackEditor.value,
       anchor: fallbackEditor.selectionStart || 0,
       head: fallbackEditor.selectionEnd ?? fallbackEditor.selectionStart ?? 0,
-      scrollTop: fallbackEditor.scrollTop || 0,
+      scrollTop: deferred ? state.current.scrollTop : fallbackEditor.scrollTop || 0,
     };
   }
 
@@ -1443,6 +1479,8 @@
   }
 
   function setEditorDocument(documentState) {
+    cancelDocumentViewportRestore();
+    deferredViewportDocument = documentState && normalizeViewport(documentState.viewport) && !noteWorkspaceVisible() ? documentState : null;
     closeContextMenu();
     if (!documentState) {
       cancelStatistics();
@@ -1454,6 +1492,8 @@
       anchor: documentState && documentState.selectionStart || 0,
       head: documentState ? (documentState.selectionEnd ?? documentState.selectionStart ?? 0) : 0,
       scrollTop: documentState && documentState.scrollTop || 0,
+      viewport: documentState?.viewport,
+      viewportCurrent: viewportRestoreCurrent(documentState),
     };
     if (state.titleScrollFrame) {
       cancelAnimationFrame(state.titleScrollFrame);
@@ -1642,6 +1682,7 @@
       if (!result.value.some(item => item.from === position && item.level === heading.level)) return false;
     }
     if (mode === 'reading') {
+      cancelDocumentViewportRestore();
       const target = readingHost.querySelector('[data-note-heading-from="' + position + '"]');
       if (!target) return false;
       readingHost.scrollTop += target.getBoundingClientRect().top - readingHost.getBoundingClientRect().top - 12;
@@ -1911,6 +1952,7 @@
       anchor: target && target.selectionStart || 0,
       head: target ? (target.selectionEnd ?? target.selectionStart ?? 0) : 0,
       scrollTop: target && target.scrollTop || 0,
+      viewport: target?.viewport,
     };
   }
 
@@ -1920,7 +1962,9 @@
     try { renderReadingDocumentNow(payload); } finally { release?.(); }
   }
   function renderReadingDocumentNow(payload) {
+    window.RelatumNoteLiveEditor?.cancelViewportRestore(readingHost);
     const documentState = payload || readingPayload();
+    if (state.current && normalizeViewport(documentState.viewport) && !noteWorkspaceVisible()) deferredViewportDocument = state.current;
     if (window.RelatumNoteLiveEditor && typeof window.RelatumNoteLiveEditor.renderMarkdown === 'function') {
       window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', { calloutSession: liveEditor?.calloutSession, onOpenExternal: openMarkdownTarget });
     } else {
@@ -1929,7 +1973,13 @@
         : { html: '' };
       readingHost.innerHTML = '<article class="note-reading-content node-text">' + (result.html || '') + '</article>';
     }
-    requestAnimationFrame(() => { readingHost.scrollTop = Math.max(0, Number(documentState.scrollTop) || 0); });
+    const current = viewportRestoreCurrent(), epoch = readingHost.dataset.noteReadingEpoch;
+    const valid = () => current() && epoch === readingHost.dataset.noteReadingEpoch;
+    const restoring = normalizeViewport(documentState.viewport)
+      && window.RelatumNoteLiveEditor.restoreReadingViewport(readingHost, documentState.viewport, { isCurrent: valid });
+    if (!restoring) requestAnimationFrame(() => {
+      if (valid()) readingHost.scrollTop = Math.max(0, Number(documentState.scrollTop) || 0);
+    });
   }
 
   async function setViewMode(mode) {
@@ -1937,11 +1987,13 @@
     const next = normalizeViewMode(mode);
     if (next === state.viewMode) return;
     if (!(await flushCanvases())) return false;
-    closeContextMenu();
     if (editorInputPending()) await whenEditorInputSettled();
     if (next === state.viewMode) return;
-    if (liveEditor) liveEditor.setImageTextMode(false);
+    // Read the current viewport before closing tools invalidates page layout.
     if (state.current) rememberEditorState(state.current);
+    closeContextMenu();
+    if (liveEditor) liveEditor.setImageTextMode(false);
+    cancelDocumentViewportRestore();
     if (next === 'reading' && state.current) flushSave(state.current);
     state.viewMode = next;
     if (next !== 'reading' && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
@@ -1956,10 +2008,15 @@
       } else if (next === 'reading') {
         renderReadingDocument(payload);
       } else if (liveEditor) {
-        requestAnimationFrame(() => {
-          liveEditor.view.scrollDOM.scrollTop = payload.scrollTop;
-          liveEditor.view.requestMeasure();
-        });
+        if (normalizeViewport(payload.viewport)) liveEditor.restoreViewport(payload.viewport, { isCurrent: viewportRestoreCurrent() });
+        else {
+          const valid = viewportRestoreCurrent();
+          requestAnimationFrame(() => {
+            if (!valid()) return;
+            liveEditor.view.scrollDOM.scrollTop = payload.scrollTop;
+            liveEditor.view.requestMeasure();
+          });
+        }
       }
     }
     updateEditorVisibility();
@@ -1968,6 +2025,8 @@
   }
 
   function initializeEditor() {
+    const body = $('.note-document-body');
+    for (const name of ['wheel', 'pointerdown', 'touchstart', 'keydown']) body?.addEventListener(name, cancelDocumentViewportRestore, { capture: true, passive: true });
     if (window.RelatumNoteLiveEditor && typeof window.RelatumNoteLiveEditor.create === 'function') {
       try {
         liveEditor = window.RelatumNoteLiveEditor.create(editorHost, {
@@ -2430,6 +2489,7 @@
       if (liveEditor) liveEditor.revealPosition(range[0], { align: 'start', end: range[1], unfold: true });
       else { fallbackEditor.focus(); fallbackEditor.setSelectionRange(...range); }
     } else {
+      cancelDocumentViewportRestore();
       await new Promise(resolve => requestAnimationFrame(resolve));
       if (state.current !== target || sequence !== state.openSeq || visibility !== noteVisibilityEpoch) return false;
       const highlight = result.highlights?.[0];
@@ -2618,12 +2678,13 @@
   }
   function rememberEditorState(documentState) {
     if (!documentState || state.current !== documentState) return;
-    const snapshot = editorSnapshot();
+    const snapshot = editorSnapshot(true);
     documentState.content = snapshot.value;
     documentState.hasImageText = snapshot.value.includes('<!--relatum:image-text:');
     documentState.selectionStart = snapshot.anchor || 0;
     documentState.selectionEnd = snapshot.head ?? snapshot.anchor ?? 0;
     documentState.scrollTop = snapshot.scrollTop || 0;
+    documentState.viewport = snapshot.viewport || null;
     rememberViewState(documentState.path, snapshot);
     scheduleStatistics(documentState);
     cacheDocument(documentState);
@@ -3677,6 +3738,7 @@
     editorHost.hidden = !hasNote || !liveEditor || state.viewMode === 'reading';
     fallbackEditor.hidden = !hasNote || state.viewMode === 'reading' || !!liveEditor;
     if (readingHost) readingHost.hidden = !hasNote || state.viewMode !== 'reading';
+    restoreDeferredViewport();
     syncEditorExtensions();
     updateViewToggle();
     updateImageTextTools();
@@ -3704,7 +3766,7 @@
     closeContextMenu(); resetExternalSyncActivity(); cancelStatistics();
     state.imageTextCleanupPath = '';
     const preservedView = options && options.preserveViewState && state.current && state.current.path === data.path
-      ? editorSnapshot()
+      ? editorSnapshot(true)
       : viewStates.get(data.path);
     clearTimeout(state.saveTimer); clearTimeout(state.retryTimer); state.editGeneration += 1;
     const documentState = typeof data.editGeneration === 'number' ? data : makeDocument(data);
@@ -3713,9 +3775,10 @@
       documentState.selectionStart = Math.max(0, Math.min(end, Number(preservedView.anchor) || 0));
       documentState.selectionEnd = Math.max(0, Math.min(end, Number(preservedView.head) || 0));
       documentState.scrollTop = Math.max(0, Number(preservedView.scrollTop) || 0);
+      documentState.viewport = normalizeViewport(preservedView.viewport);
     }
     rememberViewState(documentState.path, {
-      anchor: documentState.selectionStart, head: documentState.selectionEnd, scrollTop: documentState.scrollTop,
+      anchor: documentState.selectionStart, head: documentState.selectionEnd, scrollTop: documentState.scrollTop, viewport: documentState.viewport,
     });
     setDocumentSwitchPending(false);
     state.current = documentState; cacheDocument(documentState); state.openingPath = '';
@@ -5287,6 +5350,7 @@
     if (wasInitialized) await triggerExternalSync({ silentErrors: true });
     else scheduleExternalSync();
     if (state.current) {
+      restoreDeferredViewport();
       resumeLinksRefresh();
       scheduleStatistics(state.current); scheduleDocumentPrefetch();
       if (state.viewMode === 'reading' && !readingHost.firstChild) renderReadingDocument();
@@ -5301,6 +5365,7 @@
     cancelTabCloseMotion(); cancelTabScroll();
     state.linksRefreshSuspended = true; cancelLinksRefresh(); stopExternalSync();
     if (!(await flushSave())) { state.linksRefreshSuspended = false; resumeLinksRefresh(); scheduleExternalSync(); return false; }
+    cancelDocumentViewportRestore();
     noteGraphIntentSequence++; noteGraph?.deactivate();
     await flushNotebookSettings(); browserSequence++; browserIntent = root.classList.contains('note-browser-mode'); updateBrowserToggle();
     stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); persistViewStates();
@@ -5329,7 +5394,7 @@
     if (!root.hidden && state.active && noteWorkspaceVisible()) {
       resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch();
     }
-    if (root.hidden) { closeNoteModal(); wikiOpenTask = null; noteGraphIntentSequence++; noteGraph?.deactivate(); cancelSideClose(); clearClosedNotebookTree(); }
+    if (root.hidden) { cancelDocumentViewportRestore(); closeNoteModal(); wikiOpenTask = null; noteGraphIntentSequence++; noteGraph?.deactivate(); cancelSideClose(); clearClosedNotebookTree(); }
     else if (state.active && graphPresentation) resumeNoteGraph();
     if (root.hidden && !state.active && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
   }).observe(root, { attributes: true, attributeFilter: ['hidden'] });

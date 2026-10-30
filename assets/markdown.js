@@ -1127,7 +1127,7 @@
         if (noteBlocks && /^(?: {4}|\t)/.test(quote.text)) {
           let close = i + 1;
           while (close < lines.length && quoteLine(lines[close]).depth >= quote.depth && /^(?: {4}|\t)/.test(stripQuote(lines[close], quote.depth))) close++;
-          codes.push({ lang: '', code: lines.slice(i, close).map(line => stripQuote(line, quote.depth).replace(/^(?: {4}|\t)/, '')).join('\n') });
+          codes.push({ lang: '', code: lines.slice(i, close).map(line => stripQuote(line, quote.depth).replace(/^(?: {4}|\t)/, '')).join('\n'), sourceLine: i, sourceEndLine: close });
           output.push(quote.prefix + '\x00CODE' + (codes.length - 1) + '\x00');
           for (let pad = i + 1; pad < close; pad++) output.push(quote.prefix);
           i = close - 1; continue;
@@ -1141,7 +1141,7 @@
       // the rest of the document.
       if (close >= lines.length || !isFenceClose(stripQuote(lines[close], quote.depth), fence)) {
         if (noteBlocks) {
-          codes.push({ lang: '', code: lines.slice(i + 1, close).map(line => stripQuote(line, quote.depth)).join('\n') });
+          codes.push({ lang: '', code: lines.slice(i + 1, close).map(line => stripQuote(line, quote.depth)).join('\n'), sourceLine: i, sourceEndLine: close });
           output.push(quote.prefix + '\x00CODE' + (codes.length - 1) + '\x00');
           for (let pad = i + 1; pad < close; pad++) output.push(quote.prefix);
           i = close - 1; continue;
@@ -1150,7 +1150,7 @@
         continue;
       }
       codes.push({ lang: fence.language, code: lines.slice(i + 1, close).map((line) => stripQuote(line, quote.depth)).join('\n'),
-        line: i, endLine: close, endColumn: lines[close].length });
+        line: i, endLine: close, endColumn: lines[close].length, sourceLine: i, sourceEndLine: close + 1 });
       output.push(quote.prefix + '\x00CODE' + (codes.length - 1) + '\x00');
       for (let pad = i + 1; pad <= close; pad++) output.push(quote.prefix);
       i = close;
@@ -1162,22 +1162,24 @@
     return html.replace(/\x00CODE(\d+)\x00/g, function (_, idx) {
       const b = codes[+idx];
       if (!b) return '';
+      const attributes = noteBlockAttributes(options, b.sourceLine, b.sourceEndLine);
+      const annotate = value => attributes ? value.replace(/^<([a-z][\w-]*)\b/i, '<$1' + attributes) : value;
       if (typeof options?.renderFence === 'function' && Number.isInteger(b.line)) {
         const custom = options.renderFence({ language: b.lang, source: b.code,
           from: options.fencePosition(b.line, 0), to: options.fencePosition(b.endLine, b.endColumn) });
-        if (typeof custom === 'string') return custom;
+        if (typeof custom === 'string') return annotate(custom);
       }
-      if (b.lang === 'derive') return renderDerive(b.code);   // 推导链围栏
+      if (b.lang === 'derive') return annotate(renderDerive(b.code));   // 推导链围栏
       // Mermaid 围栏只产出安全的源码容器；统一渲染器负责补全简写、排队和错误展示。
       // template 让源码随批注净快照保存但不进入正文字符偏移；pre 是渲染器启动前的可见兜底。
       if ((!options || options.mermaid !== false) && /^(?:mermaid|flowchart|graph|flow|sequence|sequencediagram|timeline|gantt|class|classdiagram|state|statediagram|er|erdiagram|mindmap)$/.test(b.lang)) {
-        return '<div class="mermaid-diagram" data-mermaid-lang="' + escapeHtml(b.lang) + '">'
+        return '<div class="mermaid-diagram"' + attributes + ' data-mermaid-lang="' + escapeHtml(b.lang) + '">'
           + '<template class="mermaid-source">' + escapeHtml(b.code) + '</template>'
           + '<pre class="mermaid-fallback">' + escapeHtml(b.code) + '</pre></div>';
       }
       const inner = CODE_LANGS[b.lang] ? highlightCode(b.code, b.lang) : escapeHtml(b.code);
       const label = b.lang ? ' data-lang="' + escapeHtml(b.lang) + '"' : '';
-      return '<pre class="md-code"' + label + '><code>' + inner + '</code></pre>';
+      return '<pre class="md-code"' + attributes + label + '><code>' + inner + '</code></pre>';
     });
   }
 
@@ -1231,22 +1233,24 @@
       const lineStart = src.lastIndexOf('\n', range.from - 1) + 1;
       const quote = quoteLine(src.slice(lineStart, range.from));
       const content = range.display && quote.depth ? range.body.split('\n').map((line, index) => index ? stripQuote(line, quote.depth) : line).join('\n') : range.body;
-      maths.push({ content, raw: !!(noteBlocks && range.display && range.to - range.from > 32768), delimiter: range.open === '\\[' ? 'bracket-block' : range.open === '\\(' ? 'paren-inline' : range.display ? 'dollar-block' : 'dollar-inline' });
-      const nl = preserveLines === false || !range.display ? 0 : (src.slice(range.from, range.to).match(/\n/g) || []).length;
+      const lineBreaks = range.display ? (src.slice(range.from, range.to).match(/\n/g) || []).length : 0;
+      maths.push({ content, lines: lineBreaks + 1, raw: !!(noteBlocks && range.display && range.to - range.from > 32768), delimiter: range.open === '\\[' ? 'bracket-block' : range.open === '\\(' ? 'paren-inline' : range.display ? 'dollar-block' : 'dollar-inline' });
+      const nl = preserveLines === false ? 0 : lineBreaks;
       s += '\x00' + (range.display ? 'DMATH' : 'MATH') + (maths.length - 1) + '\x00' + ('\n' + quote.prefix).repeat(nl);
       cursor = range.to;
     });
     s += src.slice(cursor);
     return { protected: s, maths: maths };
   }
-  function restoreMath(html, maths) {
+  function restoreMath(html, maths, options) {
     if (maths.length === 0) return html;
     html = html.replace(/\x00DMATH(\d+)\x00/g, function (_, idx) {
       const item = maths[+idx];
       if (!item) return '';
       const content = escapeHtml(item.content);
-      if (item.raw) return '<pre class="md-math-source"><code>' + (item.delimiter === 'bracket-block' ? '\\[' + content + '\\]' : '$$' + content + '$$') + '</code></pre>';
-      return '<div class="md-math-block">'
+      const attributes = options?.noteMathAttributes?.get(+idx) || '';
+      if (item.raw) return '<pre class="md-math-source"' + attributes + '><code>' + (item.delimiter === 'bracket-block' ? '\\[' + content + '\\]' : '$$' + content + '$$') + '</code></pre>';
+      return '<div class="md-math-block"' + attributes + '>'
         + (item.delimiter === 'bracket-block' ? '\\[' + content + '\\]' : '$$' + content + '$$')
         + '</div>';
     });
@@ -1584,7 +1588,12 @@
 
   // 大纲常用 2 或 4 空格缩进。按相对缩进建树，不锁死空格数，
   // 同时允许有序、无序与任务列表在不同层级混用。
-  function parseListBlock(lines, start, topLevel, options) {
+  function noteBlockAttributes(options, start, end) {
+    if (!options?.noteBlockPosition || !Number.isInteger(start) || !Number.isInteger(end)) return '';
+    return ' data-note-block-from="' + options.noteBlockPosition(start) + '" data-note-block-to="' + options.noteBlockPosition(end, true) + '"';
+  }
+
+  function parseListBlock(lines, start, topLevel, options, lineOffset) {
     const root = { children: [] };
     const stack = [];
     let i = start;
@@ -1592,12 +1601,12 @@
       const marker = parseListMarker(lines[i]);
       if (!marker || marker.empty) break;
       const indent = marker.indent;
-      while (stack.length && stack[stack.length - 1].indent > indent) stack.pop();
+      while (stack.length && stack[stack.length - 1].indent > indent) stack.pop().item.endLine = i;
       let parent = root;
       if (stack.length) {
         const tail = stack[stack.length - 1];
         if (tail.indent < indent) parent = tail.item;
-        else stack.pop();
+        else stack.pop().item.endLine = i;
       }
       if (parent === root && stack.length) parent = stack[stack.length - 1].item;
       const item = {
@@ -1611,6 +1620,7 @@
       stack.push({ indent: indent, item: item });
       i++;
     }
+    stack.forEach(entry => { entry.item.endLine = i; });
 
     function renderChildren(items) {
       let html = '';
@@ -1618,14 +1628,18 @@
       while (index < items.length) {
         const ordered = items[index].ordered;
         const tag = ordered ? 'ol' : 'ul';
-        html += '<' + tag + '>';
+        let groupEnd = index + 1;
+        while (groupEnd < items.length && items[groupEnd].ordered === ordered) groupEnd++;
+        html += '<' + tag + noteBlockAttributes(options, (lineOffset || 0) + items[index].line,
+          (lineOffset || 0) + items[groupEnd - 1].endLine) + '>';
         while (index < items.length && items[index].ordered === ordered) {
           const item = items[index++];
           const lineAttr = topLevel ? (' data-ln="' + item.line + '"') : '';
           const taskClass = item.task == null ? '' : ' class="md-task-item"';
           const taskBox = item.task == null ? ''
             : ('<span class="md-task-box" aria-hidden="true">' + (item.task ? '✓' : '') + '</span>');
-          html += '<li' + taskClass + lineAttr + '>' + taskBox
+          html += '<li' + taskClass + lineAttr + noteBlockAttributes(options, (lineOffset || 0) + item.line,
+            (lineOffset || 0) + item.endLine) + '>' + taskBox
             + renderInline(escapeHtml(item.text), options?.noteSyntax)
             + (item.children.length ? renderChildren(item.children) : '')
             + '</li>';
@@ -1660,18 +1674,19 @@
     let iterations = 0;
     const maxIterations = Math.max(64, lines.length * 4 + 16);
     const ln = function (n) { return topLevel ? (' data-ln="' + n + '"') : ''; };
+    const span = (start, end) => noteBlockAttributes(options, (lineOffset || 0) + start, (lineOffset || 0) + end);
 
     while (i < lines.length) {
       if (++iterations > maxIterations) {
         while (i < lines.length) {
-          out.push('<p' + ln(i) + ' class="md-parse-fallback">'
+          out.push('<p' + ln(i) + span(i, i + 1) + ' class="md-parse-fallback">'
             + renderInline(escapeHtml(lines[i]), options?.noteSyntax) + '</p>');
           i++;
         }
         break;
       }
       if (i === previousIndex) {
-        out.push('<p' + ln(i) + ' class="md-parse-fallback">'
+        out.push('<p' + ln(i) + span(i, i + 1) + ' class="md-parse-fallback">'
           + renderInline(escapeHtml(lines[i]), options?.noteSyntax) + '</p>');
         i++;
         previousIndex = -1;
@@ -1689,24 +1704,28 @@
         ? /^[ \t]{0,3}\x00NHEAD([1-6]):(\d+)\x00(.*)$/.exec(line) : null;
       if (noteHeading) {
         const tag = 'h' + noteHeading[1];
-        out.push('<' + tag + ' data-note-heading-from="' + noteHeading[2] + '">' + renderInline(escapeHtml(noteHeading[3]), options?.noteSyntax) + '</' + tag + '>');
+        out.push('<' + tag + span(i, i + 1) + ' data-note-heading-from="' + noteHeading[2] + '">' + renderInline(escapeHtml(noteHeading[3]), options?.noteSyntax) + '</' + tag + '>');
         i++; continue;
       }
 
       // 代码块占位符（独占一行）→ 直接透传，最外层 restoreCode 换成 <pre>
       if (/^\x00CODE\d+\x00$/.test(trimmed)) { out.push(trimmed); i++; continue; }
       // 块级公式占位符（独占一行）→ 居中块
-      if (/^\x00DMATH\d+\x00$/.test(trimmed)) { out.push(trimmed); i++; continue; }
+      const displayMath = /^\x00DMATH(\d+)\x00$/.exec(trimmed);
+      if (displayMath) {
+        options?.noteMathAttributes?.set(+displayMath[1], span(i, i + (options.noteMaths[+displayMath[1]]?.lines || 1)));
+        out.push(trimmed); i++; continue;
+      }
 
       // 分隔线：--- *** ___（整行）
-      if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) { out.push('<hr class="md-hr">'); i++; continue; }
+      if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) { out.push('<hr class="md-hr"' + span(i, i + 1) + '>'); i++; continue; }
 
       // 标题 #–######：保留真实 h1–h6 语义，紧凑程度交由容器 CSS 变量控制。
       let m;
       const heading = parseHeadingLine(line);
       if (heading) {
         const tag = 'h' + heading.level;
-        out.push('<' + tag + ln(i) + '>' + renderInline(escapeHtml(heading.text), options?.noteSyntax) + '</' + tag + '>');
+        out.push('<' + tag + ln(i) + span(i, i + 1) + '>' + renderInline(escapeHtml(heading.text), options?.noteSyntax) + '</' + tag + '>');
         i++;
         continue;
       }
@@ -1729,13 +1748,13 @@
           const title = head[3].trim() || CALLOUT_LABEL[type] || head[1];
           const bodyHtml = parseBlocks(buf.slice(1).join('\n'), false, options, (lineOffset || 0) + startLn + 1);
           out.push('<div class="md-callout' + (descriptor ? ' note-block' + (descriptor.color ? ' note-color-block' : '') : '') + '" data-callout="' + (descriptor ? descriptor.type : type) + '"' + (descriptor ? ' data-ln="' + ((lineOffset || 0) + startLn) + '"' : ln(startLn))
-            + (descriptor ? ' style="' + descriptor.style + '" data-fold="' + (descriptor.foldable ? head[2] : '') + '"' : '') + '>'
+            + span(startLn, i) + (descriptor ? ' style="' + descriptor.style + '" data-fold="' + (descriptor.foldable ? head[2] : '') + '"' : '') + '>'
             + ((!descriptor || descriptor.title) ? '<div class="md-callout-title">' + (descriptor ? descriptor.icon : calloutIcon(type))
             + '<span class="note-callout-title-text">' + renderInline(escapeHtml(descriptor ? descriptor.title : title), options?.noteSyntax) + '</span>' + (descriptor && descriptor.foldable ? foldButton(descriptor.collapsed) : '') + '</div>' : '')
             + (bodyHtml ? '<div class="md-callout-body"' + (descriptor && descriptor.collapsed ? ' hidden' : '') + '>' + bodyHtml + '</div>' : '')
             + '</div>');
         } else {
-          out.push('<blockquote' + ln(startLn) + '>' + parseBlocks(buf.join('\n'), false, options, (lineOffset || 0) + startLn) + '</blockquote>');
+          out.push('<blockquote' + ln(startLn) + span(startLn, i) + '>' + parseBlocks(buf.join('\n'), false, options, (lineOffset || 0) + startLn) + '</blockquote>');
         }
         continue;
       }
@@ -1764,12 +1783,12 @@
           }
         }
         const cellStyle = function (idx) { return aligns[idx] ? ' style="text-align:' + aligns[idx] + '"' : ''; };
-        let html = '<div class="md-scroll-x" data-md-table-ln="' + tableStartLine
-          + '"><table class="md-table"><thead><tr>';
+        let html = '<div class="md-scroll-x"' + span(tableStartLine, i) + ' data-md-table-ln="' + tableStartLine
+          + '"><table class="md-table"><thead><tr' + span(tableStartLine, tableStartLine + 1) + '>';
         header.forEach(function (c, idx) { html += '<th' + cellStyle(idx) + '>' + renderInline(escapeHtml(c), options?.noteSyntax) + '</th>'; });
         html += '</tr></thead><tbody>';
-        bodyRows.forEach(function (row) {
-          html += '<tr>';
+        bodyRows.forEach(function (row, rowIndex) {
+          html += '<tr' + span(tableStartLine + 2 + rowIndex, tableStartLine + 3 + rowIndex) + '>';
           for (let k = 0; k < header.length; k++) {
             html += '<td' + cellStyle(k) + '>' + renderInline(escapeHtml(row[k] || ''), options?.noteSyntax) + '</td>';
           }
@@ -1783,7 +1802,7 @@
       // 有序 / 无序 / 任务列表：连续缩进行组成一棵安全的嵌套列表。
       const listMarker = parseListMarker(line);
       if (listMarker && !listMarker.empty) {
-        const parsedList = parseListBlock(lines, i, topLevel, options);
+        const parsedList = parseListBlock(lines, i, topLevel, options, lineOffset);
         if (parsedList.end > i) {
           out.push(parsedList.html);
           i = parsedList.end;
@@ -1799,7 +1818,7 @@
         para.push(lines[i]);
         i++;
       }
-      if (para.length) out.push('<p' + ln(paraStart) + '>' + renderParagraphLines(para, options) + '</p>');
+      if (para.length) out.push('<p' + ln(paraStart) + span(paraStart, i) + '>' + renderParagraphLines(para, options) + '</p>');
     }
     return out.join('');
   }
@@ -1855,6 +1874,19 @@
     }
     const header = opts.noteTags ? frontmatter(headingSource) : null;
     const body = header ? headingSource.slice(header.to) : headingSource;
+    // Opt-in source spans belong to Notes only. All placeholder transforms keep
+    // source newlines; resolve their line numbers against the unmodified input.
+    let noteSourceOffsets;
+    if (opts.noteSourceMap) {
+      let offset = 0;
+      const offsets = noteSourceOffsets = source.split('\n').map(line => { const from = offset; offset += line.length + 1; return from; });
+      const base = header ? source.slice(0, header.to).split('\n').length - 1 : 0;
+      opts = Object.assign({}, opts, { noteBlockPosition(line, end) {
+        const at = Math.min(source.length, offsets[base + line] ?? source.length);
+        const position = end && at < source.length ? Math.max(0, at - 1) : at;
+        return typeof opts.noteSourcePosition === 'function' ? opts.noteSourcePosition(position) : position;
+      }, noteMathAttributes: new Map() });
+    }
     const features = scanFeatures(body);
     if (opts.mermaid === false) features.mermaid = false;
     try {
@@ -1866,6 +1898,7 @@
       const linkGuard = noteGuard ? { protected: noteGuard.protected, links: [] } : protectLinks(wikiGuard.protected);
       const mathSource = opts.noteBlocks ? linkGuard.protected.replace(/<!--[\s\S]*?(?:-->|$)|%%[\s\S]*?(?:%%|$)/g, (comment) => comment.split('\n').slice(1).map(line => '\n' + quoteLine(line).prefix).join('')) : linkGuard.protected;
       const mathGuard = protectMath(mathSource, undefined, opts.noteBlocks);
+      if (opts.noteSourceMap) opts.noteMaths = mathGuard.maths;
       if (opts.noteBlocks) features.math = mathGuard.maths.some(item => !item.raw) || /\\begin\{([^{}\s]+)\}[\s\S]+?\\end\{\1\}|\\(?:ref|eqref)\{[^{}\n]+\}/.test(mathGuard.protected);
       const escapeGuard = protectEscapes(mathGuard.protected);
       const tags = opts.noteTags ? tagRanges(escapeGuard.protected) : [];
@@ -1875,7 +1908,7 @@
       });
       let html = parseBlocks(tagged, true, opts);
       html = html.replace(/\x00NTAG(\d+)\x00/g, (_, index) => '<a class="note-tag" data-note-tag="' + escapeHtml(tags[+index].tag) + '">' + escapeHtml('#' + tags[+index].tag) + '</a>');
-      html = restoreMath(html, mathGuard.maths);
+      html = restoreMath(html, mathGuard.maths, opts);
       html = restoreLinks(html, linkGuard.links);
       html = restoreWikiLinks(html, wikiGuard.wikis);
       html = restoreLocalImages(html, imageGuard.images);
@@ -1884,7 +1917,7 @@
       let fencePosition;
       if (typeof opts.renderFence === 'function' && codeGuard.codes.some(block => Number.isInteger(block.line))) {
         let offset = 0;
-        const offsets = source.split('\n').map(line => { const from = offset; offset += line.length + 1; return from; });
+        const offsets = noteSourceOffsets || source.split('\n').map(line => { const from = offset; offset += line.length + 1; return from; });
         const base = header ? source.slice(0, header.to).split('\n').length - 1 : 0;
         fencePosition = (line, column) => {
           const value = offsets[base + line] + column;
@@ -1893,8 +1926,12 @@
       }
       html = restoreCode(html, codeGuard.codes, fencePosition ? Object.assign({}, opts, { fencePosition }) : opts);
       if (noteGuard) {
-        html = html.replace(/<p(?: data-ln="\d+")?>(\x00NSYN(\d+)\x00)<\/p>/g,
-          (whole, token, index) => noteGuard.values[+index].startsWith('<nav') ? token : whole);
+        html = html.replace(/<p([^>]*)>(\x00NSYN(\d+)\x00)<\/p>/g,
+          (whole, attributes, token, index) => {
+            if (!noteGuard.values[+index].startsWith('<nav')) return whole;
+            if (opts.noteSourceMap) noteGuard.values[+index] = noteGuard.values[+index].replace('<nav', '<nav' + attributes);
+            return token;
+          });
         html = html.replace(/\x00NSYN(\d+)\x00/g, (_, index) => noteGuard.values[+index]);
       }
       if (noteContext && !opts.noteFootnoteBody && noteContext.uses.length) {
@@ -1909,7 +1946,7 @@
           features.math = features.math || body.features.math;
           features.mermaid = features.mermaid || body.features.mermaid;
           const position = typeof opts.noteSourcePosition === 'function' ? opts.noteSourcePosition : value => value;
-          html += '<div class="note-footnote" data-note-definition-from="' + position(entry.from) + '"><span class="note-footnote-number">'
+          html += '<div class="note-footnote"' + (opts.noteSourceMap ? ' data-note-block-from="' + position(entry.from) + '" data-note-block-to="' + position(entry.to) + '"' : '') + ' data-note-definition-from="' + position(entry.from) + '"><span class="note-footnote-number">'
             + use.number + '.</span><div>' + body.html + '<span class="note-footnote-returns">'
             + noteUsesByKey(noteContext).get(use.key).map((item, index) => '<a data-note-jump="' + position(item.from)
               + '" role="link" tabindex="0" aria-label="Back to reference ' + (index + 1) + '">↩' + (index ? index + 1 : '') + '</a>').join(' ')
@@ -1917,7 +1954,7 @@
         }
         html += '</section>';
       }
-      if (header) html = '<pre class="note-frontmatter"><code>' + escapeHtml(source.slice(0, header.to)) + '</code></pre>' + html;
+      if (header) html = '<pre class="note-frontmatter"' + (opts.noteSourceMap ? ' data-note-block-from="0" data-note-block-to="' + header.to + '"' : '') + '><code>' + escapeHtml(source.slice(0, header.to)) + '</code></pre>' + html;
       return { html: html, features: features, error: false };
     } catch (error) {
       return {

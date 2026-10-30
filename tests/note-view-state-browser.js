@@ -443,8 +443,18 @@ async function freePort() {
     await open('moved/C.md');
     await page.evaluate(() => __noteViewTest.setViewMode('source')); await settle();
     await position(600); const sourceView = await snapshot();
+    const visibleSource = () => page.evaluate(() => {
+      const view = __noteViewTest.editor.view, top = view.scrollDOM.getBoundingClientRect().top;
+      const block = view.lineBlockAtHeight(top + 12 - view.documentTop);
+      return { from: block.from, ratio: (top + 12 - view.documentTop - block.top) / block.height };
+    });
+    const sourceViewport = await visibleSource();
     await page.evaluate(() => __noteViewTest.setViewMode('live')); await settle();
-    await expectPosition(sourceView, 'source/live toggle');
+    const liveView = await snapshot(), liveViewport = await visibleSource();
+    assert.equal(liveView.anchor, sourceView.anchor, 'source/live preserves selection anchor');
+    assert.equal(liveView.head, sourceView.head, 'source/live preserves selection head');
+    assert.equal(liveViewport.from, sourceViewport.from, 'source/live follows the visible content');
+    assert(Math.abs(liveViewport.ratio - sourceViewport.ratio) < .03, 'source/live preserves progress within the visible block');
     await page.evaluate(() => __noteViewTest.setViewMode('reading')); await settle();
     await page.evaluate(() => { document.querySelector('[data-role="note-reading-view"]').scrollTop = 500; });
     await settle(); const readingView = await snapshot();

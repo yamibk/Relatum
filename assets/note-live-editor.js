@@ -2676,8 +2676,149 @@
     return markdownMini.renderResult(source, Object.assign({ localImages: true, noteTags: true, noteBlocks: true, noteSyntax: true, mermaid: mermaidEnabled(), renderFence: noteFence }, options));
   }
 
+  // Viewport memory is independent of the editing selection. Only transitions
+  // capture an anchor; ordinary scrolling does not scan the document or its DOM.
+  const viewportRestores = new WeakMap();
+  function normalizeViewportAnchor(value) {
+    if (!value || !Number.isInteger(value.from) || !Number.isInteger(value.to)
+        || value.from < 0 || value.to < value.from || !Number.isFinite(value.ratio)
+        || value.ratio < 0 || value.ratio > 1 || !Number.isFinite(value.offset) || Math.abs(value.offset) > 1000000) return null;
+    return { from: value.from, to: value.to, ratio: value.ratio, offset: value.offset,
+      ...(value.edge === 'start' || value.edge === 'end' ? { edge: value.edge } : {}) };
+  }
+  function viewportEdge(scroller) {
+    const edge = scroller.scrollTop <= 1 ? 'start'
+      : scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 1 ? 'end' : '';
+    return edge ? { from: 0, to: 0, ratio: 0, offset: 0, edge } : null;
+  }
+  function blockViewportAnchor(scroller, from, to, top, height) {
+    const origin = scroller.getBoundingClientRect().top, point = origin + 12;
+    return { from, to, ratio: height > 0 ? Math.max(0, Math.min(1, (point - top) / height)) : 0,
+      offset: Math.max(12, top - origin) };
+  }
+  function viewportProgress(anchor, from, to) {
+    if (anchor.from === from && anchor.to === to) return anchor.ratio;
+    const position = anchor.from + (anchor.to - anchor.from) * anchor.ratio;
+    return to > from ? Math.max(0, Math.min(1, (position - from) / (to - from))) : 0;
+  }
+  function cancelViewportRestore(scroller) { viewportRestores.get(scroller)?.cancel(); }
+  function scheduleViewportRestore(scroller) { viewportRestores.get(scroller)?.schedule(); }
+  function startViewportRestore(scroller, anchor, options) {
+    cancelViewportRestore(scroller);
+    if (!anchor) return null;
+    let frame = 0, corrections = 0, expectedTop = scroller.scrollTop, measured = false;
+    const current = () => viewportRestores.get(scroller) === control && scroller.isConnected
+      && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1' && options.isCurrent();
+    const control = { anchor,
+      get pending() { return !measured; },
+      current,
+      cancel() {
+        if (viewportRestores.get(scroller) !== control) return;
+        viewportRestores.delete(scroller); cancelAnimationFrame(frame); frame = 0;
+        for (const name of ['wheel', 'pointerdown', 'touchstart', 'keydown', 'beforeinput']) scroller.removeEventListener(name, cancel, true);
+        scroller.removeEventListener('scroll', scroll);
+        window.removeEventListener('pagehide', cancel); window.removeEventListener('canvasdesktop:visibility', visibility);
+        window.removeEventListener('resize', schedule);
+        document.removeEventListener('visibilitychange', visibility); document.fonts?.removeEventListener('loadingdone', schedule);
+      },
+      schedule() {
+        if (!current()) { control.cancel(); return; }
+        if (frame) return;
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          if (!current() || !scroller.clientHeight) { control.cancel(); return; }
+          const read = () => {
+            if (!current()) return null;
+            if (anchor.edge) return anchor.edge === 'start' ? -scroller.scrollTop
+              : scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
+            return options.read();
+          };
+          const write = delta => {
+            if (!current() || delta == null || !Number.isFinite(delta)) return;
+            measured = true;
+            if (Math.abs(delta) > .5) {
+              const before = scroller.scrollTop;
+              scroller.scrollTop += delta;
+              expectedTop = scroller.scrollTop;
+              if (Math.abs(scroller.scrollTop - before) > .5 && ++corrections < 8) control.schedule();
+            } else { corrections = 0; expectedTop = scroller.scrollTop; }
+          };
+          if (options.measure) options.measure({ key: control, read, write });
+          else write(read());
+        });
+      },
+    };
+    const cancel = () => control.cancel(), schedule = () => { corrections = 0; control.schedule(); };
+    // Also respect native scrollbar drags and programmatic navigation. A viewport
+    // update can already have queued a measure before its scroll event arrives.
+    const scroll = () => { if (measured && !frame && Math.abs(scroller.scrollTop - expectedTop) > 1) control.cancel(); };
+    const visibility = () => { if (!current()) control.cancel(); };
+    viewportRestores.set(scroller, control);
+    for (const name of ['wheel', 'pointerdown', 'touchstart', 'keydown', 'beforeinput']) scroller.addEventListener(name, cancel, { capture: true, passive: true });
+    scroller.addEventListener('scroll', scroll, { passive: true });
+    window.addEventListener('pagehide', cancel); window.addEventListener('canvasdesktop:visibility', visibility);
+    window.addEventListener('resize', schedule);
+    document.addEventListener('visibilitychange', visibility); document.fonts?.addEventListener('loadingdone', schedule);
+    control.schedule(); return control;
+  }
+  function readingPositionIndex(host, content) {
+    const byElement = new WeakMap(), entries = [];
+    for (const element of content.querySelectorAll('[data-note-block-from]')) {
+      const from = Number(element.dataset.noteBlockFrom), to = Number(element.dataset.noteBlockTo);
+      if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from) continue;
+      const parent = byElement.get(element.parentElement?.closest('[data-note-block-from]')) || null;
+      const record = { element, from, to, parent }; entries.push(record); byElement.set(element, record);
+      if (parent) (parent.children ||= []).push(record);
+    }
+    host.__relatumReadingPosition = { content, top: entries.filter(entry => !entry.parent),
+      source: entries.slice().sort((a, b) => a.from - b.from || b.to - a.to) };
+  }
+  function captureReadingViewport(host) {
+    const pending = viewportRestores.get(host);
+    if (pending?.current() && pending.pending) return { ...pending.anchor };
+    const index = host?.__relatumReadingPosition;
+    if (!index || !host.clientHeight) return null;
+    const edge = viewportEdge(host); if (edge) return edge;
+    const point = host.getBoundingClientRect().top + 12;
+    // Native elementFromPoint can rebuild hit testing for the entire long page.
+    // The existing block hierarchy needs only logarithmic geometry lookups.
+    const at = entries => {
+      let lo = 0, hi = entries.length;
+      while (lo < hi) { const mid = (lo + hi) >>> 1; if (entries[mid].element.getBoundingClientRect().bottom <= point) lo = mid + 1; else hi = mid; }
+      return entries[Math.min(lo, entries.length - 1)];
+    };
+    let record = at(index.top);
+    while (record?.children) {
+      const child = at(record.children), rect = child?.element.getBoundingClientRect();
+      if (!rect?.height || rect.top > point || rect.bottom <= point) break;
+      record = child;
+    }
+    if (!record) return null;
+    const rect = record.element.getBoundingClientRect();
+    return blockViewportAnchor(host, record.from, record.to, rect.top, rect.height);
+  }
+  function restoreReadingViewport(host, value, options = {}) {
+    const anchor = normalizeViewportAnchor(value), index = host?.__relatumReadingPosition;
+    if (!index || !anchor || !index.source.length && !anchor.edge) return null;
+    const position = anchor.from + (anchor.to - anchor.from) * anchor.ratio;
+    let lo = 0, hi = index.source.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (index.source[mid].from <= position) lo = mid + 1; else hi = mid; }
+    let record = index.source[Math.max(0, lo - 1)];
+    while (record?.parent && (record.to < position || record.element.closest('[hidden]'))) record = record.parent;
+    return startViewportRestore(host, anchor, {
+      isCurrent: () => host.__relatumReadingPosition === index && (!options.isCurrent || options.isCurrent()),
+      read() {
+        if (!record) return null;
+        const rect = record.element.getBoundingClientRect();
+        return rect.height ? rect.top + rect.height * viewportProgress(anchor, record.from, record.to)
+          - host.getBoundingClientRect().top - anchor.offset : null;
+      },
+    });
+  }
+
   function releaseReadingDocument(host) {
     if (!host) return;
+    cancelViewportRestore(host); delete host.__relatumReadingPosition;
     releaseImageFailures(host);
     host.__relatumReadingMermaid?.destroy();
     delete host.__relatumReadingMermaid;
@@ -2724,19 +2865,20 @@
       }
       return Object.assign({}, heading, { from: heading.from + canvasShift, to: heading.to + canvasShift, sourceFrom: heading.from });
     });
+    let sourceShift = 0;
+    const canvasPositions = canvasRefs.map((ref, index) => {
+      const start = ref.from + sourceShift, length = ('![](relatum-canvas-placeholder-' + index + ')').length;
+      sourceShift += length - (ref.to - ref.from);
+      return { start, end: start + length, from: ref.from, shift: sourceShift };
+    });
     const noteSourcePosition = position => {
-      let shift = 0;
-      for (let index = 0; index < canvasRefs.length; index++) {
-        const ref = canvasRefs[index], length = ('![](relatum-canvas-placeholder-' + index + ')').length;
-        const start = ref.from + shift;
-        if (position < start) break;
-        if (position < start + length) return ref.from;
-        shift += length - (ref.to - ref.from);
-      }
-      return position - shift;
+      let lo = 0, hi = canvasPositions.length;
+      while (lo < hi) { const mid = (lo + hi) >>> 1; if (canvasPositions[mid].start <= position) lo = mid + 1; else hi = mid; }
+      const entry = canvasPositions[lo - 1];
+      return entry ? position < entry.end ? entry.from : position - entry.shift : position;
     };
     const readingSyntax = window.MarkdownMini.noteSyntax.scan(renderedSource);
-    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts: readingCallouts(renderedSource), noteSourcePosition, noteContext: readingSyntax, renderFence: noteFence });
+    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts: readingCallouts(renderedSource), noteSourcePosition, noteSourceMap: true, noteContext: readingSyntax, renderFence: noteFence });
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
@@ -2807,8 +2949,11 @@
     });
     content.querySelectorAll('input.md-task-box').forEach((box) => { box.disabled = true; });
     host.replaceChildren(content);
+    readingPositionIndex(host, content);
+    content.addEventListener('load', readingLayout, true);
     host.classList.toggle('is-failed', !!result.error);
     const current = () => host.dataset.noteReadingEpoch === epoch && content.isConnected;
+    function readingLayout() { if (current()) scheduleViewportRestore(host); }
     let mathQueue = Promise.resolve();
     function typesetVisibleMath() {
       if (!result.features?.math || !current() || host.closest('[hidden]')) return;
@@ -2834,17 +2979,18 @@
         const visible = roots.filter(root => root.isConnected && !root.closest('[hidden]'));
         if (!visible.length) return;
         await math.typesetPromise(visible);
+        if (current()) scheduleViewportRestore(host);
         if (!current() && typeof math.typesetClear === 'function') math.typesetClear(visible);
       }).catch(() => { if (current()) host.classList.add('is-failed'); });
     }
     if (content.querySelector('.note-quiz-carrier')) host.__relatumReadingQuiz = attachNoteQuiz(content, {
-      notePath, isCurrent: current, onLink: safeOptions.onOpenExternal,
+      notePath, isCurrent: current, onLink: safeOptions.onOpenExternal, onLayout: readingLayout,
     });
-    if (content.querySelector('.note-cards')) host.__relatumReadingCards = attachNoteCards(content, { isCurrent: current, onLink: safeOptions.onOpenExternal });
+    if (content.querySelector('.note-cards')) host.__relatumReadingCards = attachNoteCards(content, { isCurrent: current, onLink: safeOptions.onOpenExternal, onLayout: readingLayout });
     host.__relatumReadingCode = prepareReadingCode(content, current);
     if (result.features && result.features.mermaid && mermaidEnabled()) {
       window.RelatumNoteMermaid?.reserve?.(content, { mode: 'reading' });
-      host.__relatumReadingMermaid = attachNoteMermaid(content, { mode: 'reading', isCurrent: current });
+      host.__relatumReadingMermaid = attachNoteMermaid(content, { mode: 'reading', isCurrent: current, onLayout: readingLayout });
     }
     Promise.resolve().then(typesetVisibleMath);
     return result;
@@ -6114,6 +6260,8 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (update.docChanged) cancelViewportRestore(update.view.scrollDOM);
+          else if (update.geometryChanged) scheduleViewportRestore(update.view.scrollDOM);
           if (update.geometryChanged && !inputSession.pending()) host.querySelectorAll('.note-cards-block, .note-live-cards-preview').forEach(dom => {
             const entry = dom.__relatumMermaidBlock || dom.__relatumMermaidPreview;
             const spec = entry?.widget?.spec || entry?.spec;
@@ -6409,7 +6557,42 @@
       return block ? find(block.source, block.from) : null;
     }
 
+    function captureViewport() {
+      const pending = viewportRestores.get(view.scrollDOM);
+      if (pending?.current() && pending.pending) return { ...pending.anchor };
+      if (inputPending() || !view.scrollDOM.clientHeight) return null;
+      const edge = viewportEdge(view.scrollDOM); if (edge) return edge;
+      const point = view.scrollDOM.getBoundingClientRect().top + 12;
+      const block = view.lineBlockAtHeight(Math.max(0, point - view.documentTop));
+      return blockViewportAnchor(view.scrollDOM, block.from, block.to,
+        view.documentTop + block.top, block.height);
+    }
+
+    function restoreViewport(value, options = {}) {
+      const anchor = normalizeViewportAnchor(value);
+      cancelViewportRestore(view.scrollDOM);
+      if (!anchor || destroyed) return null;
+      scrollRestoreSeq++;
+      const doc = view.state.doc, path = currentPath, mode = sourceMode;
+      const position = clamp(Math.round(anchor.from + (anchor.to - anchor.from) * anchor.ratio), 0, doc.length);
+      // Address the virtual document by source position first. Restoring pixels
+      // against its initial estimated height can mount an entirely different page.
+      view.dispatch({ effects: EditorView.scrollIntoView(anchor.edge === 'end' ? doc.length : anchor.edge === 'start' ? 0 : position,
+        { y: 'start', yMargin: Math.max(0, anchor.offset) }) });
+      return startViewportRestore(view.scrollDOM, anchor, {
+        isCurrent: () => !destroyed && doc === view.state.doc && path === currentPath && mode === sourceMode
+          && !inputPending() && (!options.isCurrent || options.isCurrent()),
+        measure: request => view.requestMeasure(request),
+        read() {
+          const block = view.lineBlockAt(position);
+          return view.documentTop + block.top + block.height * viewportProgress(anchor, block.from, block.to)
+            - view.scrollDOM.getBoundingClientRect().top - anchor.offset;
+        },
+      });
+    }
+
     function setDocument(documentState) {
+      cancelViewportRestore(view.scrollDOM);
       window.RelatumNoteLinkCompletion?.closeAll();
       cancelMermaidOperation();
       highlightInputs.forEach(input => input.dismiss());
@@ -6469,7 +6652,10 @@
       if (view.hasFocus) view.dispatch({ effects: focusEffect.of(true) });
       requestAnimationFrame(() => {
         if (destroyed || seq !== documentSetSeq || !view.dom.isConnected) return;
-        if (scrollSeq === scrollRestoreSeq) view.scrollDOM.scrollTop = Math.max(0, Number(documentState && documentState.scrollTop) || 0);
+        if (scrollSeq === scrollRestoreSeq) {
+          if (normalizeViewportAnchor(documentState?.viewport)) restoreViewport(documentState.viewport, { isCurrent: documentState.viewportCurrent });
+          else view.scrollDOM.scrollTop = Math.max(0, Number(documentState && documentState.scrollTop) || 0);
+        }
         view.requestMeasure();
         requestAnimationFrame(() => {
           if (destroyed || seq !== documentSetSeq || !view.dom.isConnected) return;
@@ -6588,6 +6774,7 @@
     }
 
     function setSourceMode(active) {
+      cancelViewportRestore(view.scrollDOM);
       window.RelatumNoteLinkCompletion?.closeAll();
       cancelMermaidOperation();
       highlightInputs.forEach(input => input.dismiss());
@@ -6793,6 +6980,7 @@
     }
 
     function revealPosition(position, options) {
+      cancelViewportRestore(view.scrollDOM);
       scrollRestoreSeq++;
       const target = clamp(position, 0, view.state.doc.length);
       const effects = [];
@@ -6906,6 +7094,7 @@
 
     return {
       setDocument, setNotePath, setSourceMode, setShortcutBindings, setSelectionMatchHighlight, setImageTextMode, imageTextCommand, snapshot, replaceSelection, revealPosition,
+      captureViewport, restoreViewport, cancelViewportRestore() { cancelViewportRestore(view.scrollDOM); scrollRestoreSeq++; },
       setExtensionsActive(active) { highlightActive = active !== false; if (!highlightActive) highlightInputs.forEach(input => input.dismiss()); extensionHost?.setActive(active); },
       calloutSession: {
         get(position, fallback) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); return spec ? calloutCollapsed(spec, coordinator) : coordinator.foldPositions.has(position) ? coordinator.foldPositions.get(position) : fallback; },
@@ -6917,6 +7106,7 @@
       get inputPending() { return inputPending(); },
       focus() { view.focus(); },
       destroy() {
+        cancelViewportRestore(view.scrollDOM);
         destroyed = true;
         extensionHost?.destroy();
         imageInsertions.clear();
@@ -6961,4 +7151,5 @@
   Object.assign(window.RelatumNoteLiveEditor, { quizFence, renderFence: noteFence, attachCards: attachNoteCards, attachQuiz: attachNoteQuiz,
     remapQuiz(source, destination) { quizSession?.remap(source, destination); } });
   window.RelatumNoteLiveEditor.releaseReadingDocument = releaseReadingDocument;
+  Object.assign(window.RelatumNoteLiveEditor, { normalizeViewportAnchor, captureReadingViewport, restoreReadingViewport, cancelViewportRestore });
 })();

@@ -14,7 +14,7 @@ if ($Browser) {
     if ($LASTEXITCODE -ne 0) { throw 'Link completion browser checks failed.' }
     & $Node (Join-Path $PSScriptRoot 'note-cards-browser.js')
     if ($LASTEXITCODE -ne 0) { throw 'Cards browser checks failed.' }
-    foreach ($check in @('note-image-compat-browser.js','note-image-upload-browser.js','note-image-text-browser.js','note-image-text-workspace-browser.js','note-typora-browser.js','note-caret-selection-browser.js','note-table-alignment-browser.js','note-search-browser.js','note-folder-picker-browser.js','note-ui-browser.js','note-context-menu-browser.js','note-reveal-browser.js','note-browser-browser.js','note-tree-sort-browser.js','note-tree-motion-browser.js','note-notebooks-browser.js','note-open-state-browser.js','note-visibility-browser.js','note-view-state-browser.js','note-canvas-browser-discovery.js','note-outline-browser.js','note-graph-browser.js')) {
+    foreach ($check in @('note-image-compat-browser.js','note-image-upload-browser.js','note-image-text-browser.js','note-image-text-workspace-browser.js','note-typora-browser.js','note-caret-selection-browser.js','note-table-alignment-browser.js','note-search-browser.js','note-folder-picker-browser.js','note-ui-browser.js','note-context-menu-browser.js','note-reveal-browser.js','note-browser-browser.js','note-tree-sort-browser.js','note-tree-motion-browser.js','note-notebooks-browser.js','note-open-state-browser.js','note-visibility-browser.js','note-view-state-browser.js','note-viewport-browser.js','note-canvas-browser-discovery.js','note-outline-browser.js','note-graph-browser.js')) {
         & $Node (Join-Path $PSScriptRoot $check)
         if ($LASTEXITCODE -ne 0) { throw ('Failed: ' + $check) }
     }
