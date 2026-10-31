@@ -2,6 +2,7 @@
 (function () {
   'use strict';
   const MAX_SOURCE = 256 * 1024, MAX_LINE = 64 * 1024;
+  const colors = new Map(window.MarkdownMini.noteBlockCatalog.colors.map(color => [color.name, color]));
   // Static Lucide paths; the existing vendor/lucide/LICENSE.txt applies.
   const icons = Object.freeze({
     zap: '<path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z"/>',
@@ -27,14 +28,20 @@
       if (lines.some(line => line.length > MAX_LINE)) return invalid();
       const header = /^### +(.+)$/.exec(lines.shift() || '');
       if (!header) return invalid();
-      let title = header[1].trim(), icon = '';
-      const token = /^\[([a-z-]+)\]\s+(.+)$/.exec(title);
-      if (token && Object.hasOwn(icons, token[1])) { icon = token[1]; title = token[2].trim(); }
-      const bareIcon = /^\[([a-z-]+)\]$/.exec(title);
-      if (bareIcon && Object.hasOwn(icons, bareIcon[1])) return invalid();
+      let title = header[1].trim(), icon = '', color = '';
+      // Only known leading metadata is consumed. Unknown or repeated tokens
+      // start the literal title, so ordinary bracketed text stays intact.
+      for (;;) {
+        const token = /^\[(!?)([a-z-]+)\](?:\s+|$)/.exec(title);
+        if (!token) break;
+        if (token[1] && !color && colors.has(token[2])) color = token[2];
+        else if (!token[1] && !icon && Object.hasOwn(icons, token[2])) icon = token[2];
+        else break;
+        title = title.slice(token[0].length).trim();
+      }
       if (!title || lines.some(line => /^\s*(?:#{1,6} |`{3,}|~{3,}|\$\$|\\\[|\\begin\{|!\[|>)/.test(line))) return invalid();
       if (/\$\$|\\\[|\\begin\{/.test([title, ...lines].join('\n').replace(/`[^`\n]*`/g, ''))) return invalid();
-      cards.push({ title, icon, body: lines.join('\n').trim() });
+      cards.push({ title, icon, color, body: lines.join('\n').trim() });
     }
     return { valid: true, cards };
   }
@@ -68,9 +75,12 @@
       }
       flushParagraph(); flushList(); return blocks.join('');
     }
-    const html = '<div class="note-cards"><div class="note-cards-grid">' + model.cards.map(card =>
-      '<article class="note-card">' + (card.icon ? '<svg class="note-card-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">' + icons[card.icon] + '</svg>' : '')
-      + '<div class="note-card-title">' + inline(card.title) + '</div><div class="note-card-body">' + body(card.body) + '</div></article>').join('') + '</div></div>';
+    const html = '<div class="note-cards"><div class="note-cards-grid">' + model.cards.map(card => {
+      const color = colors.get(card.color);
+      const tint = color ? ' data-note-card-color="' + color.name + '" style="--note-card-bg-light:' + color.light + ';--note-card-bg-dark:' + color.dark + ';"' : '';
+      return '<article class="note-card"' + tint + '>' + (card.icon ? '<svg class="note-card-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">' + icons[card.icon] + '</svg>' : '')
+        + '<div class="note-card-title">' + inline(card.title) + '</div><div class="note-card-body">' + body(card.body) + '</div></article>';
+    }).join('') + '</div></div>';
     return { html: html.replace('class="note-cards"', 'class="note-cards" data-note-cards-math="' + (math ? '1' : '0') + '"'), features: { math, mermaid: false } };
   }
   const retries = new Set();

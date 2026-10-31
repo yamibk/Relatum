@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict'), fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..'), output = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-cards-'));
-const body = '### [zap] 提高供电效率\n减少**转换损耗**，优化电力分配。\n\n---\n\n### [shield] 提升可靠性\n- 降低风险\n- 持续运行\n\n---\n\n### 学习资料\n[参考资料](https://example.com) 与 `code`';
+const body = '### [zap] [!purple] 提高供电效率\n减少**转换损耗**，优化电力分配。\n\n---\n\n### [!blue] [shield] 提升可靠性\n- 降低风险\n- 持续运行\n\n---\n\n### 学习资料\n[参考资料](https://example.com) 与 `code`';
 const fence = '```cards\n' + body + '\n```', source = 'before\n\n' + fence + '\n\nafter';
 const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><base href="/assets/">
 <link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="note-theme.css"><style>body{margin:0}.note-document-pane{height:100vh;display:flex;flex-direction:column}#reading,#guide{height:100vh;overflow:auto;padding:32px;box-sizing:border-box}[hidden]{display:none!important}</style></head>
@@ -32,6 +32,33 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
     const value = () => page.evaluate(() => editor.snapshot().value);
     const group = () => page.locator('#editor .note-cards-block').first();
     const preview = () => page.locator('#editor .note-live-cards-preview');
+    async function checkTints(selector) {
+      const colors = await page.locator(selector).first().evaluate(root => {
+        const cards = [...root.querySelectorAll('.note-card')], reference = document.createElement('div');
+        reference.className = 'node-text'; reference.hidden = true;
+        reference.innerHTML = MarkdownMini.renderResult(cards.filter(card => card.dataset.noteCardColor).map(card => '> [!' + card.dataset.noteCardColor + '] reference').join('\n\n'), { noteBlocks: true }).html;
+        root.closest('.note-workspace').append(reference);
+        const expected = [...reference.querySelectorAll('.note-color-block')].map(node => getComputedStyle(node).backgroundColor);
+        const actual = cards.filter(card => card.dataset.noteCardColor).map(card => getComputedStyle(card).backgroundColor);
+        const foregrounds = cards.map(card => ['.note-card-title', '.note-card-body'].map(selector => getComputedStyle(card.querySelector(selector)).color));
+        reference.remove(); return { actual, expected, foregrounds };
+      });
+      assert.deepEqual(colors.actual, colors.expected, 'cards share the existing color-block palette');
+      for (const foreground of colors.foregrounds) assert.deepEqual(foreground, colors.foregrounds[0], 'tints preserve theme text colors');
+      return colors.actual;
+    }
+    async function checkPalette() {
+      const result = await page.evaluate(() => {
+        const palette = MarkdownMini.noteBlockCatalog.colors, host = document.createElement('div'); host.className = 'node-text'; host.hidden = true;
+        host.innerHTML = RelatumNoteCards.render(palette.map(color => '### [!' + color.name + '] ' + color.name).join('\n---\n')).html
+          + MarkdownMini.renderResult(palette.map(color => '> [!' + color.name + '] reference').join('\n\n'), { noteBlocks: true }).html;
+        document.querySelector('.note-workspace').append(host);
+        const actual = [...host.querySelectorAll('.note-card')].map(node => getComputedStyle(node).backgroundColor);
+        const expected = [...host.querySelectorAll('.note-color-block')].map(node => getComputedStyle(node).backgroundColor);
+        host.remove(); return { actual, expected, count: palette.length };
+      });
+      assert.equal(result.actual.length, result.count); assert.deepEqual(result.actual, result.expected, 'every named color adapts to the active theme');
+    }
     async function reset(text = source) {
       await page.evaluate(text => { document.getElementById('editor').hidden=false; document.getElementById('reading').hidden=true; document.getElementById('guide').hidden=true; window.cardsGuide?.suspend(); editor.setSourceMode(false); editor.setDocument({value:text,notePath:'cards.md',head:text.length,anchor:text.length,scrollTop:0}); editor.focus(); }, text);
       await settle();
@@ -41,6 +68,9 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
       await page.setViewportSize({width,height:1000});
       await page.evaluate(([skin,theme,scale]) => {document.documentElement.dataset.noteTheme=skin;document.body.dataset.startTheme=theme;document.body.style.setProperty('--note-font-scale',scale);}, [skin,theme,scale]);
       await reset(); await group().waitFor(); await settle();
+      const tints = await checkTints('#editor .note-cards-block');
+      assert.notEqual(tints[0], tints[1], 'each card has its own tint');
+      if (width === 1500 && scale === 1) await checkPalette();
       const layout = await group().evaluate(root => { const g=root.querySelector('.note-cards'), c=[...root.querySelectorAll('.note-card')].map(n=>n.getBoundingClientRect()); return {width:g.getBoundingClientRect().width,columns:getComputedStyle(g.firstElementChild).gridTemplateColumns.split(' ').length,first:c[0].height,second:c[1].height,odd:c[2].width,card:c[0].width}; });
       assert.equal(layout.columns, layout.width>=560?2:1); if(layout.columns===2) {assert(Math.abs(layout.first-layout.second)<1);assert(Math.abs(layout.odd-layout.card)<1);}
       const left = await page.evaluate(()=>[document.querySelector('.note-cards').getBoundingClientRect().left,[...document.querySelectorAll('#editor .cm-line')].find(n=>n.textContent==='before').getBoundingClientRect().left]); assert(Math.abs(left[0]-left[1])<1,'cards align with the note text');
@@ -49,7 +79,7 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
       assert.equal(await page.evaluate(()=>editor.view.state.doc.lineAt(editor.view.state.selection.main.head).text),'after');
       await group().locator('.note-card-title').first().click(); await page.keyboard.press('Enter'); await preview().waitFor();
       await page.keyboard.press('Escape'); await group().waitFor(); assert.equal(await value(),source);
-      matrix.push({skin,theme,width,scale,...layout});
+      matrix.push({skin,theme,width,scale,...layout,tints});
     }
     await page.setViewportSize({width:1500,height:1000}); await page.evaluate(()=>{document.documentElement.dataset.noteTheme='default';document.body.dataset.startTheme='light';document.body.style.setProperty('--note-font-scale',1);}); await reset();
     await page.setViewportSize({width:700,height:1000});await settle();await page.locator('.cm-line').filter({hasText:/^after$/}).click();assert.equal(await page.evaluate(()=>editor.view.state.doc.lineAt(editor.view.state.selection.main.head).text),'after');await page.setViewportSize({width:1500,height:1000});await settle();
@@ -73,12 +103,26 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
     await reset();
     for(const invalid of ['```cards\n### a','```cards\nmissing\n```','```cards\n\n```']){await reset(invalid);assert.equal(await page.locator('.note-cards-block').count(),0);assert.equal(await value(),invalid);}
     for(const blanks of [0,1,2]){await reset('before\n'+ '\n'.repeat(blanks)+fence+'\n'+'\n'.repeat(blanks)+'after');await group().waitFor();await page.locator('.cm-line').filter({hasText:/^after$/}).click();assert.equal(await page.evaluate(()=>editor.view.state.doc.lineAt(editor.view.state.selection.main.head).text),'after');}
+    await reset(); await group().locator('.note-card-title').first().dblclick(); await preview().waitFor();
+    await page.evaluate(() => { const view = editor.view, from = view.state.doc.toString().indexOf('[!purple]') + 2; view.dispatch({changes:{from,to:from+6,insert:'green'},selection:{anchor:from+5},userEvent:'input'}); });
+    await preview().locator('[data-note-card-color="green"]').waitFor(); await checkTints('#editor .note-live-cards-preview');
+    await page.keyboard.press('Escape'); await group().waitFor(); assert.equal(await value(), source.replace('[!purple]', '[!green]'));
+    await page.keyboard.press('Control+z'); assert.equal(await value(), source);
     await reset(source);
     await page.evaluate(text=>{document.getElementById('editor').hidden=true;const root=document.getElementById('reading');root.hidden=false;RelatumNoteLiveEditor.renderMarkdown(root,text,'cards.md',{});}, source);
     assert.equal(await page.locator('#reading .note-card').count(),3);
-    await page.evaluate(()=>{RelatumNoteLiveEditor.releaseReadingDocument(document.getElementById('reading'));document.getElementById('reading').hidden=true;const host=document.getElementById('guide');host.hidden=false;window.cardsGuide=RelatumNoteGuide.create({host,language:()=> 'zh',isCurrent:()=>!host.hidden,renderFence:RelatumNoteLiveEditor.renderFence,attachCards:RelatumNoteLiveEditor.attachCards});cardsGuide.show('cards');});
+    await checkTints('#reading');
+    await page.evaluate(()=>{RelatumNoteLiveEditor.releaseReadingDocument(document.getElementById('reading'));document.getElementById('reading').hidden=true;const host=document.getElementById('guide');host.hidden=false;window.guideLanguage='zh';window.cardsGuide=RelatumNoteGuide.create({host,language:()=>window.guideLanguage,isCurrent:()=>!host.hidden,renderFence:RelatumNoteLiveEditor.renderFence,attachCards:RelatumNoteLiveEditor.attachCards});cardsGuide.show('cards');});
     await page.locator('#guide .note-cards').first().waitFor(); await page.locator('#guide mjx-container').first().waitFor();
     await page.locator('#guide .note-guide-copy').first().click(); assert((await page.evaluate(()=>navigator.clipboard.readText())).startsWith('```cards'));
+    for (const language of ['zh', 'en']) {
+      await page.evaluate(language => { window.guideLanguage = language; cardsGuide.show('cards'); }, language);
+      assert(await page.locator('#guide h3').filter({hasText:language === 'zh' ? '卡片染色' : 'Card colors'}).isVisible());
+      await page.locator('#guide .note-guide-example').nth(1).locator('.note-guide-copy').click();
+      const copied = await page.evaluate(() => navigator.clipboard.readText());
+      assert(copied.includes('[book] [!purple]')); assert(copied.includes('[!rose]'));
+      assert.equal(await page.locator('#guide [data-note-card-color]').count(), 4);
+    }
     await reset(source.replace('减少**转换损耗**','公式 $I=U/R$ 与**转换损耗**')); await group().locator('mjx-container').waitFor();
     await page.evaluate(()=>document.querySelector('.note-workspace').style.width='700px');await settle();await page.locator('.cm-line').filter({hasText:/^after$/}).click();assert.equal(await page.evaluate(()=>editor.view.state.doc.lineAt(editor.view.state.selection.main.head).text),'after');await page.evaluate(()=>document.querySelector('.note-workspace').style.width='');await settle();
     await page.evaluate(()=>document.fonts.ready);
@@ -91,7 +135,7 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
     await reset(source);await page.evaluate(()=>{window.lateResolve=null;window.MathJax={typesetPromise:()=>new Promise(resolve=>window.lateResolve=resolve),typesetClear:()=>{}};});
     await reset(source.replace('减少','公式 $x$ 减少'));await page.waitForFunction(()=>!!window.lateResolve);await reset('new document');await page.evaluate(()=>lateResolve());await settle();assert.equal(await value(),'new document');assert.equal(await page.locator('#editor .note-cards').count(),0,'late math cannot restore the old document');
     assert.deepEqual(errors,[]); assert(!requests.some(url=>!url.startsWith(origin)), 'no outgoing requests');
-    fs.writeFileSync(path.join(output,'validation.json'),JSON.stringify({matrix,checks:['selection/edit/clipboard/history/IME/source/reading/guide/search/boundaries/math/reopen/stale'],errors},null,2));
+    fs.writeFileSync(path.join(output,'validation.json'),JSON.stringify({matrix,checks:['palette/theme/tint-edit/selection/edit/clipboard/history/IME/source/reading/bilingual-guide/search/boundaries/math/reopen/stale'],errors},null,2));
     console.log('note cards browser: ok; '+output);
   } finally { await browser?.close(); await new Promise(resolve=>server.close(resolve)); }
 })().catch(error=>{console.error(error);process.exitCode=1;});
