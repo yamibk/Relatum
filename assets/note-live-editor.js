@@ -3230,6 +3230,7 @@
           if (this.spec.colorFirst) wrap.classList.add('note-live-callout-first');
         }
         decorateNestedCalloutWidget(wrap, view, this.spec, this.coordinator);
+        const finishPointerScroll = this.coordinator.mathProjectionTask?.(this.spec);
         ensureMathJax().then((math) => {
           if (!this.isCurrent(view, wrap, token)) return;
           return runWhenInputSettled(view, () => (
@@ -3240,7 +3241,7 @@
               if (this.isCurrent(view, wrap, token)) view.requestMeasure();
             });
           }).finally(() => { if (!this.isCurrent(view, wrap, token) && typeof math.typesetClear === 'function') math.typesetClear([wrap]); });
-        }).catch(() => wrap.classList.add('is-failed'));
+        }).catch(() => wrap.classList.add('is-failed')).finally(() => finishPointerScroll?.());
       } else if (this.spec.kind === 'rule') {
         wrap.tabIndex = 0;
         wrap.setAttribute('aria-label', '点击编辑 ' + this.spec.kind + ' 源码');
@@ -5426,6 +5427,84 @@
       }
     }
     const coordinator = { epoch: 1, field: null, folds: new Map(), foldPositions: new Map(), records: [], spec() { return null; } };
+    // A pointer leaving display math owns one short-lived scroll target. Use
+    // CM's scroll effect in the selection transaction, before its normal top
+    // anchor compensation, and again only when that projection finishes math.
+    let mathPointerScroll = null;
+    const mathPointerSelectionEffect = StateEffect.define();
+    const mathPointerScrollTargets = new WeakMap();
+    const mathPointerEvents = ['pointerdown', 'wheel', 'touchstart', 'keydown', 'beforeinput', 'blur', 'pagehide'];
+    function cancelMathPointerScroll() {
+      if (!mathPointerScroll) return;
+      mathPointerScroll = null;
+      for (const name of mathPointerEvents) window.removeEventListener(name, cancelMathPointerScroll, true);
+      window.removeEventListener('pointermove', moveMathPointerScroll, true);
+      window.removeEventListener('canvasdesktop:visibility', mathPointerVisibility);
+      document.removeEventListener('visibilitychange', mathPointerVisibility);
+      document.removeEventListener('relatum:start-workspacechange', mathPointerVisibility);
+      view.scrollDOM.removeEventListener('scroll', scrollMathPointerScroll);
+    }
+    function currentMathPointerScroll(control) {
+      return !!control && control === mathPointerScroll && !destroyed && !sourceMode && control.doc === view.state.doc
+        && control.path === currentPath && control.epoch === coordinator.epoch && !inputPending()
+        && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
+        && view.dom.isConnected && !view.dom.closest('[hidden]');
+    }
+    function mathPointerVisibility(event) {
+      if (event.type === 'relatum:start-workspacechange' && event.detail.workspace !== 'notes'
+          || !currentMathPointerScroll(mathPointerScroll)) cancelMathPointerScroll();
+    }
+    function moveMathPointerScroll(event) {
+      const control = mathPointerScroll;
+      if (control && event.buttons & 1 && Math.hypot(event.clientX - control.x, event.clientY - control.y) > 3) cancelMathPointerScroll();
+    }
+    function scrollMathPointerScroll() {
+      const control = mathPointerScroll;
+      if (control?.applied && Math.abs(view.scrollDOM.scrollTop - control.expectedTop) > 1) cancelMathPointerScroll();
+    }
+    function mathPointerScrollEffect(control, range) {
+      const effect = EditorView.scrollIntoView(range, { y: 'start', yMargin: control.offset });
+      mathPointerScrollTargets.set(effect.value, control);
+      return effect;
+    }
+    function rememberMathPointerScroll(event, view) {
+      cancelMathPointerScroll();
+      if (sourceMode || inputPending() || event.button !== 0 || event.detail !== 1
+          || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey
+          || !event.target.closest('.cm-line') || event.target.closest('.note-live-inline-math, .note-live-rich-block')) return;
+      const blocks = view.state.field(coordinator.field, false);
+      let spec;
+      if (blocks) for (const id of blocks.activeIds) {
+        const item = blocks.byId.get(id);
+        if (item?.kind === 'math') { spec = item; break; }
+      }
+      if (!spec) return;
+      const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (position == null || position >= spec.from && position <= spec.to) return;
+      const rect = view.coordsAtPos(position);
+      if (!rect) return;
+      mathPointerScroll = { doc: view.state.doc, path: currentPath, epoch: coordinator.epoch, id: spec.id,
+        position, offset: rect.top - view.scrollDOM.getBoundingClientRect().top,
+        x: event.clientX, y: event.clientY, tasks: 0, accepted: false, finished: false, applied: false };
+      for (const name of mathPointerEvents) window.addEventListener(name, cancelMathPointerScroll, { capture: true, passive: true });
+      window.addEventListener('pointermove', moveMathPointerScroll, { capture: true, passive: true });
+      window.addEventListener('canvasdesktop:visibility', mathPointerVisibility);
+      document.addEventListener('visibilitychange', mathPointerVisibility);
+      document.addEventListener('relatum:start-workspacechange', mathPointerVisibility);
+      view.scrollDOM.addEventListener('scroll', scrollMathPointerScroll, { passive: true });
+    }
+    coordinator.mathProjectionTask = spec => {
+      const control = mathPointerScroll;
+      if (!control || spec.id !== control.id || !currentMathPointerScroll(control)) return null;
+      control.tasks++; control.finished = false;
+      return () => {
+        control.tasks--;
+        if (!currentMathPointerScroll(control)) { if (mathPointerScroll === control) cancelMathPointerScroll(); return; }
+        if (!control.accepted) return;
+        control.finished = !control.tasks;
+        view.dispatch({ effects: mathPointerScrollEffect(control, view.state.selection.main) });
+      };
+    };
     const imageTextSizer = createImageTextSizer();
     const safeOptions = Object.assign({
       imageUrl(notePath, target, syntax) {
@@ -6283,6 +6362,28 @@
         codeHighlighting,
         livePreviewCompartment.of(livePreviewExtensions()),
         Prec.highest(imageTextInputHandlers),
+        EditorState.transactionExtender.of(transaction => {
+          const control = mathPointerScroll, selection = transaction.newSelection;
+          if (!control || control.accepted || transaction.docChanged || transaction.startState.doc !== control.doc
+              || !transaction.isUserEvent('select.pointer') || selection.ranges.length !== 1 || !selection.main.empty
+              || transaction.startState.doc.lineAt(selection.main.head).from !== transaction.startState.doc.lineAt(control.position).from
+              || transaction.state.field(blockField, false)?.activeIds.has(control.id)) return null;
+          return { effects: [mathPointerSelectionEffect.of({ control, position: selection.main.head }),
+            mathPointerScrollEffect(control, selection.main)] };
+        }),
+        EditorView.scrollHandler.of((view, range, target) => {
+          const control = mathPointerScrollTargets.get(target);
+          if (!control) return false;
+          // Cancel even a scroll effect already waiting for CM's next measure.
+          if (!currentMathPointerScroll(control) || !control.accepted) return true;
+          control.applied = true;
+          Promise.resolve().then(() => {
+            if (!currentMathPointerScroll(control)) return;
+            control.expectedTop = view.scrollDOM.scrollTop;
+            if (control.finished) cancelMathPointerScroll();
+          });
+          return false;
+        }),
         EditorState.transactionFilter.of((transaction) => {
           if (!transaction.docChanged || sourceMode || !imageTextController.active || !imageTextController.selectedId
               || transaction.isUserEvent('input.image-text')
@@ -6330,6 +6431,16 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (mathPointerScroll) {
+            const pointerCommit = update.transactions.flatMap(transaction => transaction.effects)
+              .find(effect => effect.is(mathPointerSelectionEffect))?.value;
+            if (pointerCommit && pointerCommit.control === mathPointerScroll) {
+              mathPointerScroll.position = pointerCommit.position;
+              mathPointerScroll.accepted = true;
+              mathPointerScroll.finished = !mathPointerScroll.tasks;
+            } else if (update.docChanged || update.selectionSet
+                || update.transactions.some(transaction => transaction.effects.some(effect => effect.is(focusEffect) && !effect.value))) cancelMathPointerScroll();
+          }
           if (update.docChanged) imagePreviewPointer = null;
           if (update.docChanged) cancelViewportRestore(update.view.scrollDOM);
           else if (update.geometryChanged) scheduleViewportRestore(update.view.scrollDOM);
@@ -6468,6 +6579,7 @@
           },
           blur(event, view) {
             if (event.target !== view.contentDOM) return false;
+            cancelMathPointerScroll();
             pastePlain = false;
             if (inputSession.pending()) inputSession.end(view);
             else view.dispatch({ effects: focusEffect.of(false) });
@@ -6488,6 +6600,7 @@
             return false;
           },
           mousedown(event, view) {
+            rememberMathPointerScroll(event, view);
             if (event.button === 0 || event.button === 2) cancelMermaidOperation();
             // Focus must use the clicked body position, not a stale selection
             // in a currently hidden nested header. Otherwise revealing that
@@ -6671,6 +6784,7 @@
     }
 
     function restoreViewport(value, options = {}) {
+      cancelMathPointerScroll();
       const anchor = normalizeViewportAnchor(value);
       cancelViewportRestore(view.scrollDOM);
       if (!anchor || destroyed) return null;
@@ -6694,6 +6808,7 @@
     }
 
     function setDocument(documentState) {
+      cancelMathPointerScroll();
       imagePreviewPointer = null;
       cancelViewportRestore(view.scrollDOM);
       window.RelatumNoteLinkCompletion?.closeAll();
@@ -6849,6 +6964,7 @@
     }
 
     async function setNotePath(path, value) {
+      cancelMathPointerScroll();
       window.RelatumNoteLinkCompletion?.closeAll();
       highlightInputs.forEach(input => input.dismiss());
       if (destroyed) return;
@@ -6877,6 +6993,7 @@
     }
 
     function setSourceMode(active) {
+      cancelMathPointerScroll();
       cancelViewportRestore(view.scrollDOM);
       window.RelatumNoteLinkCompletion?.closeAll();
       cancelMermaidOperation();
@@ -7083,6 +7200,7 @@
     }
 
     function revealPosition(position, options) {
+      cancelMathPointerScroll();
       cancelViewportRestore(view.scrollDOM);
       scrollRestoreSeq++;
       const target = clamp(position, 0, view.state.doc.length);
@@ -7198,7 +7316,7 @@
     return {
       setDocument, setNotePath, setSourceMode, setShortcutBindings, setSelectionMatchHighlight, setImageTextMode, imageTextCommand, snapshot, replaceSelection, revealPosition,
       captureViewport, restoreViewport, cancelViewportRestore() { cancelViewportRestore(view.scrollDOM); scrollRestoreSeq++; },
-      setExtensionsActive(active) { highlightActive = active !== false; if (!highlightActive) highlightInputs.forEach(input => input.dismiss()); extensionHost?.setActive(active); },
+      setExtensionsActive(active) { highlightActive = active !== false; if (!highlightActive) { cancelMathPointerScroll(); highlightInputs.forEach(input => input.dismiss()); } extensionHost?.setActive(active); },
       calloutSession: {
         get(position, fallback) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); return spec ? calloutCollapsed(spec, coordinator) : coordinator.foldPositions.has(position) ? coordinator.foldPositions.get(position) : fallback; },
         set(position, collapsed) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); coordinator.foldPositions.set(spec ? spec.from : position, collapsed); if (spec) view.dispatch({ effects: calloutFoldEffect.of({ id: spec.id, collapsed }) }); },
@@ -7209,6 +7327,7 @@
       get inputPending() { return inputPending(); },
       focus() { view.focus(); },
       destroy() {
+        cancelMathPointerScroll();
         cancelViewportRestore(view.scrollDOM);
         destroyed = true;
         imagePreviewPointer = null;

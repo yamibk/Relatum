@@ -88,7 +88,186 @@ async function checkMathHeadings(page, set, settle) {
   return checks;
 }
 
-async function checkWorkspace(browser) {
+async function checkMathPointerScroll(page, filename) {
+  const report = [], reportPath = path.join(output, 'pointer-scroll.json');
+  const prepare = async (scenario) => {
+    const open = scenario.brackets ? '\\[' : '$$', close = scenario.brackets ? '\\]' : '$$';
+    const formula = (open + '\nx_0\n' + Array.from({ length: 12 }, (_, i) => '+x_{' + (i + 1) + '}').join('\n') + '\n' + close)
+      .split('\n').map(line => (scenario.callout ? '> ' : '') + line).join('\n');
+    const value = Array.from({ length: scenario.short ? 2 : 50 }, (_, i) => '前文段落 ' + i + '：用于检查阅读位置的正文。').join('\n\n')
+      + '\n\nBEFORE target paragraph\n\n' + (scenario.callout ? '> [!note]\n' : '') + formula + '\n\nAFTER target paragraph\n\n'
+      + Array.from({ length: scenario.end ? 1 : scenario.short ? 2 : 60 }, (_, i) => '后文段落 ' + i + '：用于检查阅读位置的正文。').join('\n\n');
+    await page.evaluate(value => {
+      const e = T.editor, at = value.indexOf('x_0') + 2;
+      e.view.contentDOM.blur(); e.setSourceMode(false);
+      e.setDocument({ value, notePath: 'Formula.md', anchor: at, head: at, scrollTop: 0 }); e.focus();
+    }, value);
+    await page.waitForTimeout(80);
+    await page.evaluate(() => {
+      const v = T.editor.view, at = v.state.doc.toString().indexOf('x_0') + 2;
+      v.dispatch({ changes: { from: at, to: at + 1, insert: '9' }, selection: { anchor: at + 1 },
+        userEvent: 'input.type', annotations: RelatumCodeMirror.isolateHistory.of('full'), scrollIntoView: true });
+    });
+    await page.waitForFunction(() => document.querySelector('.note-live-math-preview-content mjx-container'));
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(() => T.flushSave()));
+    const saved = value.replace('x_0', 'x_9');
+    assert.equal(fs.readFileSync(filename, 'utf8'), saved);
+    const target = await page.evaluate(scenario => {
+      const v = T.editor.view, d = v.state.doc.toString(), from = d.indexOf(scenario.brackets ? '\\[' : '$$');
+      const top = v.coordsAtPos(from)?.top ?? v.documentTop + v.lineBlockAt(from).top;
+      v.scrollDOM.scrollTop += top - v.scrollDOM.getBoundingClientRect().top - scenario.align;
+      v.requestMeasure();
+      return d.indexOf(scenario.target || 'AFTER') + 8;
+    }, scenario);
+    await page.waitForTimeout(100);
+    const before = await page.evaluate(target => {
+      const v = T.editor.view, s = v.scrollDOM, r = v.coordsAtPos(target), box = s.getBoundingClientRect();
+      return { target, top: s.scrollTop, max: s.scrollHeight - s.clientHeight, origin: box.top, end: box.bottom,
+        x: r?.left, y: r?.top, bottom: r?.bottom };
+    }, target);
+    assert(before.y >= before.origin && before.bottom <= before.end, 'click target is visible: ' + JSON.stringify({ scenario, before }));
+    return { value, saved, before };
+  };
+  const sample = async (before) => page.evaluate(before => {
+    window.__pointerFrames = []; window.__pointerSampling = true;
+    const sample = () => {
+      if (!__pointerSampling) return;
+      const v = T.editor.view, s = v.scrollDOM, r = v.coordsAtPos(before.target);
+      if (r) {
+        const origin = s.getBoundingClientRect().top, max = s.scrollHeight - s.clientHeight;
+        const docY = r.top - origin + s.scrollTop, desired = docY - (before.y - before.origin);
+        __pointerFrames.push({ y: r.top, top: s.scrollTop, max,
+          expected: docY - Math.max(0, Math.min(max, desired)) + origin });
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }, before);
+  const collect = async (scenario, before) => {
+    const result = await page.evaluate(before => {
+      window.__pointerSampling = false;
+      const v = T.editor.view, r = v.coordsAtPos(before.target);
+      return { before, y: r?.top, head: v.state.selection.main.head, value: T.editor.snapshot().value,
+        preview: !!document.querySelector('.note-live-math-preview'), frames: __pointerFrames };
+    }, before);
+    report.push({ scenario, ...result, value: undefined }); fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+    assert.equal(result.head, before.target, 'native click retains the exact character');
+    assert.equal(result.preview, false, 'leaving math closes the source preview');
+    assert(result.frames.length >= 3 && result.frames.every(frame => Math.abs(frame.y - frame.expected) <= 2),
+      'every visible frame preserves the click or its clamped position: ' + JSON.stringify(report.at(-1)));
+    return result;
+  };
+  const scenarios = [
+    { name: 'visible-below', align: 80 }, { name: 'top-inside-source', align: -180 },
+    { name: 'click-above', align: 180, target: 'BEFORE' },
+    { name: 'source-above-viewport', align: -650, target: '后文段落 8' },
+    { name: 'document-end', align: -180, end: true }, { name: 'short-document', align: 0, short: true },
+    { name: 'callout-below', align: 80, callout: true },
+  ];
+  for (const brackets of [false, true]) for (const scenario of scenarios) {
+    const sc = { ...scenario, brackets }, { value, saved, before } = await prepare(sc);
+    await sample(before); await page.mouse.click(before.x, (before.y + before.bottom) / 2);
+    await page.waitForTimeout(250);
+    const result = await collect(sc, before);
+    assert.equal(result.value, saved); assert(await page.evaluate(() => T.flushSave()));
+    assert.equal(fs.readFileSync(filename, 'utf8'), saved, 'a click and scroll correction do not change disk contents');
+    assert(await page.evaluate(() => RelatumCodeMirror.undo(T.editor.view)));
+    assert.equal(await page.evaluate(() => T.editor.snapshot().value), value, 'one undo reaches the edit before the click');
+    assert(await page.evaluate(() => RelatumCodeMirror.redo(T.editor.view)));
+    assert.equal(await page.evaluate(() => T.editor.snapshot().value), saved);
+  }
+  await page.setViewportSize({ width: 780, height: 950 });
+  await page.evaluate(() => {
+    document.body.dataset.startTheme = 'dark'; document.querySelector('.note-workspace').style.setProperty('--note-font-scale', '1.35');
+  });
+  const narrow = { name: 'dark-narrow-large-font', align: 40, brackets: true };
+  const { saved: narrowSaved, before: narrowBefore } = await prepare(narrow);
+  await sample(narrowBefore); await page.mouse.click(narrowBefore.x, (narrowBefore.y + narrowBefore.bottom) / 2);
+  await page.waitForTimeout(250); assert.equal((await collect(narrow, narrowBefore)).value, narrowSaved);
+  await page.setViewportSize({ width: 1500, height: 950 });
+  await page.evaluate(() => {
+    document.body.dataset.startTheme = 'light'; document.querySelector('.note-workspace').style.removeProperty('--note-font-scale');
+  });
+  // Hold only the new rendered projection, after the editing preview is ready.
+  // This makes the second layout change and cancellation deterministic.
+  for (const action of ['settle', 'wheel', 'click', 'drag', 'input', 'document', 'source', 'workspace', 'hidden', 'minimize', 'pagehide']) {
+    const scenario = { name: 'delayed-' + action, align: 80 }, { saved, before } = await prepare(scenario);
+    await page.evaluate(() => {
+      const original = MathJax.typesetPromise;
+      MathJax.typesetPromise = function (nodes) {
+        if (!nodes.some(node => node.matches?.('.note-live-rich-block.is-math:not(.note-live-math-preview)'))) return original.call(this, nodes);
+        window.__pointerHeld = true;
+        return new Promise((resolve, reject) => {
+          window.__pointerRelease = async () => {
+            MathJax.typesetPromise = original;
+            try { resolve(await original.call(MathJax, nodes)); } catch (error) { reject(error); }
+          };
+        });
+      };
+    });
+    await sample(before); await page.mouse.click(before.x, (before.y + before.bottom) / 2);
+    await page.waitForFunction(() => window.__pointerHeld);
+    await page.waitForTimeout(80);
+    if (action === 'settle') {
+      await page.evaluate(() => __pointerRelease()); await page.waitForTimeout(180);
+      assert.equal((await collect(scenario, before)).value, saved);
+    } else {
+      await collect(scenario, before);
+      if (action === 'wheel') {
+        await page.mouse.move(before.x, before.y); await page.mouse.wheel(0, 220);
+      } else if (action === 'click' || action === 'drag') {
+        const point = await page.evaluate(() => {
+          const v = T.editor.view, at = v.state.doc.toString().indexOf('BEFORE') + 8, r = v.coordsAtPos(at);
+          return { at, x: r.left, y: (r.top + r.bottom) / 2 };
+        });
+        if (action === 'click') await page.mouse.click(point.x, point.y);
+        else {
+          await page.mouse.move(before.x, (before.y + before.bottom) / 2); await page.mouse.down();
+          await page.mouse.move(point.x, point.y, { steps: 5 }); await page.mouse.up();
+          assert(await page.evaluate(() => !T.editor.view.state.selection.main.empty), 'native dragging still selects text');
+        }
+      } else if (action === 'input') await page.keyboard.type('!');
+      else await page.evaluate(action => {
+        const e = T.editor;
+        if (action === 'document') e.setDocument({ value: 'A different document\n\n' + 'ordinary paragraph\n\n'.repeat(100), notePath: 'Other.md', anchor: 4, head: 4, scrollTop: 300 });
+        if (action === 'source') e.setSourceMode(true);
+        if (action === 'workspace') {
+          document.dispatchEvent(new CustomEvent('relatum:start-workspacechange', { detail: { workspace: 'canvas' } }));
+          document.dispatchEvent(new CustomEvent('relatum:start-workspacechange', { detail: { workspace: 'notes' } }));
+        }
+        if (action === 'hidden') {
+          const host = document.querySelector('.note-workspace');
+          host.hidden = true; e.setExtensionsActive(false); host.hidden = false; e.setExtensionsActive(true);
+        }
+        if (action === 'minimize') {
+          document.documentElement.dataset.desktopMinimized = '1'; dispatchEvent(new Event('canvasdesktop:visibility'));
+          document.documentElement.dataset.desktopMinimized = '0'; dispatchEvent(new Event('canvasdesktop:visibility'));
+        }
+        if (action === 'pagehide') { dispatchEvent(new Event('pagehide')); dispatchEvent(new Event('pageshow')); }
+      }, action);
+      await page.waitForTimeout(150);
+      const stable = await page.evaluate(() => {
+        const v = T.editor.view, block = v.lineBlockAtHeight(v.scrollDOM.scrollTop + 12), r = v.coordsAtPos(block.from);
+        return { position: block.from, y: r?.top, head: v.state.selection.main.head, anchor: v.state.selection.main.anchor, value: T.editor.snapshot().value };
+      });
+      await page.evaluate(() => __pointerRelease()); await page.waitForTimeout(180);
+      const after = await page.evaluate(position => {
+        const v = T.editor.view;
+        return { y: v.coordsAtPos(position)?.top, head: v.state.selection.main.head, anchor: v.state.selection.main.anchor, value: T.editor.snapshot().value };
+      }, stable.position);
+      assert.equal(after.head, stable.head, action + ': a late typeset does not change the new caret');
+      assert.equal(after.anchor, stable.anchor, action + ': a late typeset does not change the new selection');
+      assert.equal(after.value, stable.value);
+      assert(stable.y != null && after.y != null && Math.abs(after.y - stable.y) <= 2,
+        action + ': a late typeset does not restore the cancelled pointer target: ' + JSON.stringify({ stable, after }));
+    }
+    await page.evaluate(() => { delete window.__pointerHeld; delete window.__pointerRelease; });
+  }
+  return { cases: report.length, report: reportPath };
+}
+
+async function checkWorkspace(browser, pointerOnly = false) {
   const root = path.join(output, 'workspace');
   fs.mkdirSync(path.join(root, 'notes'), { recursive: true });
   const value = '前文\n\n' + equation + '\n\n后文';
@@ -126,6 +305,9 @@ async function checkWorkspace(browser) {
     });
     await page.goto(url);
     await page.waitForFunction(() => window.T?.state.active && T.state.current?.path === 'Formula.md' && T.editor);
+    if (pointerOnly) {
+      const result = await checkMathPointerScroll(page, filename); assert.deepEqual(errors, []); return result;
+    }
     await page.evaluate(() => {
       const at = T.editor.view.state.doc.toString().indexOf('\\rho');
       T.editor.view.dispatch({ selection: { anchor: at, head: at }, scrollIntoView: true }); T.editor.focus();
@@ -177,8 +359,9 @@ async function checkWorkspace(browser) {
     }
     assert(await page.evaluate(() => T.editor === __headingEditor), 'mode changes retain the original editor');
     await page.screenshot({ path: path.join(output, 'heading-math-workspace.png') });
+    const pointerScroll = await checkMathPointerScroll(page, filename);
     assert.deepEqual(errors, []);
-    return { saved: true, reading: true, scrollStable: true, editorReused: true, mathHeadings: true };
+    return { saved: true, reading: true, scrollStable: true, editorReused: true, mathHeadings: true, pointerScroll };
   } finally {
     await context?.close();
     if (service.pid && service.exitCode === null && service.signalCode === null) {
@@ -209,6 +392,9 @@ async function checkWorkspace(browser) {
     page.setDefaultTimeout(12000);
     await page.goto('http://127.0.0.1:' + server.address().port);
     await page.waitForFunction(() => window.editor);
+    if (process.argv.includes('--pointer-only')) {
+      console.log(JSON.stringify({ output, workspace: await checkWorkspace(browser, true) })); return;
+    }
     const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const set = async (value, at = value.indexOf('x') >= 0 ? value.indexOf('x') + 1 : value.indexOf('\\begin') + 3) => {
       await page.evaluate(({ value, at }) => {
