@@ -106,7 +106,7 @@ function loadLiveDecorationProbe() {
   const instrumented = editorSource.replace(
     'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath };',
     'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, toggleInlineFormat, inlineFormatEdit, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension, projectedTableExtension };',
-  );
+  ).replace("    noteHeadingParser.parse(pieces.join('')).iterate", "    window.__headingProjectionParses = (window.__headingProjectionParses || 0) + 1;\n    noteHeadingParser.parse(pieces.join('')).iterate");
   assert.notStrictEqual(instrumented, editorSource, 'the test-only decoration probe must attach to the Live Preview export');
   vm.runInNewContext(instrumented, context);
   return context;
@@ -119,6 +119,77 @@ function decorationRecords(set, length) {
 }
 
 const liveProbe = loadLiveDecorationProbe();
+
+// A standalone TeX =/--- must not turn the preceding paragraph into a Setext
+// heading. Use the real parser, block StateField and visible decorations.
+function mathHeadingProbe(source, focused = false, anchor = 0, visibleRanges) {
+  const CM = liveProbe.RelatumCodeMirror, coordinator = { field: null, spec() { return null; } };
+  const field = liveProbe.__relatumLiveTest.createBlockField(() => 'heading-math.md', { coordinator }, coordinator, { pending: () => false });
+  const state = CM.EditorState.create({ doc: source, selection: { anchor },
+    extensions: [CM.markdown({ base: CM.markdownLanguage }), field] });
+  const inspect = (current = state, focus = focused, visible = visibleRanges) => decorationRecords(liveProbe.__relatumLiveTest.createInlineDecorations({
+    state: current, visibleRanges: visible || [{ from: 0, to: current.doc.length }], hasFocus: focus, composing: false,
+  }, field, () => 'heading-math.md', {}), current.doc.length);
+  return { state, inspect };
+}
+for (const delimiter of [['\\[', '\\]'], ['$$', '$$']]) {
+  for (const marker of ['=', '---']) for (const gap of ['', '1\n', '\n']) {
+    const formula = [delimiter[0], 'E_{t+1}', marker, 'E_t+\\eta P_t', delimiter[1]].join('\n');
+    for (const prefix of ['', '> ', '> > ']) {
+      const text = ('例如电池能量约束：\n' + gap + formula).split('\n').map(line => prefix + line).join('\n');
+      const source = prefix ? prefix + '[!note]\n' + text : text;
+      for (const focused of [false, true]) {
+        const probe = mathHeadingProbe(source, focused, source.indexOf('E_{t+1}') + 1);
+        const records = probe.inspect();
+        assert.equal(records.filter(item => /note-live-heading|note-live-setext-marker-line/.test(item.spec.class || '')).length, 0,
+          'TeX cannot create heading decorations: ' + JSON.stringify({ delimiter, marker, gap, prefix, focused }));
+        assert.equal(probe.state.doc.toString(), source, 'projection never rewrites the Markdown');
+      }
+    }
+  }
+}
+for (const open of ['\\[', '$$']) for (const prefix of ['', '> ', '> > ']) {
+  for (const gap of ['', '\n']) {
+    const text = ['普通文字', open, gap + 'x', '=', 'y', '# literal TeX'].join('\n').split('\n').map(line => prefix + line).join('\n');
+    const records = mathHeadingProbe(text).inspect();
+    assert.equal(records.filter(item => /note-live-heading|note-live-setext-marker-line/.test(item.spec.class || '')).length, 0,
+      'unfinished formulas protect headings, including across a real blank line');
+  }
+}
+for (const prefix of ['', '> ', '> > ']) {
+  const source = ['# ATX', '', 'Before', '===', '\\[', 'x', '=', 'y', '\\]', 'After **bold**', '---', '', 'plain', '', '---', 'end']
+    .map(line => prefix + line).join('\n');
+  const { inspect } = mathHeadingProbe(source);
+  const records = inspect();
+  assert.deepEqual(records.filter(item => /note-live-heading/.test(item.spec.class || '')).map(item => item.from),
+    ['# ATX', 'Before', 'After **bold**'].map(text => source.indexOf(text) - prefix.length),
+    'real headings on either side of math keep their actual source lines');
+  assert(records.some(item => item.spec.class === 'note-live-strong'), 'inline emphasis after math is preserved');
+}
+{
+  const source = 'ordinary\n\\[\nx\n=\ny\n\\]\nReal title\n---';
+  const probe = mathHeadingProbe(source);
+  probe.inspect();
+  const parses = liveProbe.__headingProjectionParses;
+  for (let i = 0; i < 12; i++) probe.inspect(probe.state.update({ selection: { anchor: i % 2 } }).state, true);
+  assert.equal(liveProbe.__headingProjectionParses, parses, 'selection changes reuse the math-aware heading decisions');
+  const split = source.indexOf('\\]') + 2;
+  const records = probe.inspect(probe.state, false, [{ from: 0, to: source.indexOf('\\[') }, { from: split, to: source.length }]);
+  assert.deepEqual(records.filter(item => /note-live-heading/.test(item.spec.class || '')).map(item => item.from), [source.indexOf('Real title')],
+    'a formula splitting visibleRanges cannot hide the following real heading');
+  let current = probe.state;
+  for (const changes of [{ from: split - 2, to: split }, { from: split - 2, insert: '\\]' }]) {
+    current = current.update({ changes }).state;
+    const headings = probe.inspect(current).filter(item => /note-live-heading/.test(item.spec.class || ''));
+    assert.deepEqual(headings.map(item => item.from), current.doc.toString().includes('\\]') ? [current.doc.toString().indexOf('Real title')] : [],
+      'adding/removing the closer invalidates the heading decision');
+  }
+}
+for (const source of ['# Plain\n\nTitle\n===', '```text\n$$\nx\n```\n\nReal\n---',
+  '%%\n\\[\n%%\n\nReal\n===', '<!--\n$$\n-->\n\nReal\n---', '---\nmath: $$\n---\n\nReal\n===']) {
+  assert(mathHeadingProbe(source).inspect().some(item => /note-live-heading/.test(item.spec.class || '')),
+    'ordinary headings and delimiters in protected code/comments/frontmatter keep their meaning');
+}
 for (const prefix of ['> ', '> > ', '> > > ']) {
   const source = prefix + '[!white]\n' + prefix + '| A | B |\n' + prefix + '| --- | --- |\n' + prefix + '| 1 | 2 |\n' + prefix + '\n' + prefix + '![image](a.png)';
   const specs = liveProbe.RelatumNoteLiveSyntax.scanBlockSpecsFromString(source);

@@ -16,6 +16,12 @@ const equation = String.raw`$$
 +\mu_0\varepsilon_0\frac{\partial \mathbf{E}}{\partial t}
 \end{aligned}
 $$`;
+const headingEquation = String.raw`\[
+E_{t+1}
+=
+E_t+\eta_{\mathrm{ch}}P_{\mathrm{ch},t}\Delta t
+-\frac{P_{\mathrm{dis},t}}{\eta_{\mathrm{dis}}}\Delta t
+\]`;
 const syntaxEquation = String.raw`> [!note]
 > $$
 > \frac{a_1+[
@@ -36,6 +42,51 @@ body{margin:0;background:var(--bg,#fbfbfa)}.note-workspace{display:block;positio
 <script src="vendor/codemirror/relatum-codemirror.min.js"></script><script src="note-table-editor.js"></script>
 <script src="note-media-frame.js"></script><script src="note-live-editor.js"></script>
 <script>window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{value:'ordinary text',notePath:'math.md'});</script></body></html>`;
+
+async function checkMathHeadings(page, set, settle) {
+  let checks = 0;
+  for (const dollars of [false, true]) for (const prefix of ['', '> ', '> > ']) for (const gap of ['', '1\n', '\n']) {
+    const formula = dollars ? headingEquation.replace('\\[', () => '$$').replace('\\]', () => '$$') : headingEquation;
+    const value = ('例如电池能量约束：\n' + gap + formula).split('\n').map(line => prefix + line).join('\n');
+    await set(value, value.indexOf('E_{t+1}') + 1);
+    await page.waitForFunction(() => document.querySelector('.note-live-math-preview-content mjx-container'));
+    for (const active of [true, false]) {
+      if (!active) await page.evaluate(() => editor.view.contentDOM.blur());
+      await settle();
+      const metrics = await page.evaluate(() => {
+        const text = [...document.querySelectorAll('.cm-line')].find(line => line.textContent.includes('例如电池能量约束'));
+        return { size: getComputedStyle(text).fontSize, base: getComputedStyle(editor.view.contentDOM).fontSize,
+          heading: !!document.querySelector('.cm-line.note-live-heading, .cm-line.note-live-setext-marker-line'), value: editor.snapshot().value };
+      });
+      assert.equal(metrics.heading, false, JSON.stringify({ dollars, prefix, gap, active }));
+      assert.equal(metrics.size, metrics.base, 'ordinary text keeps the configured body font size');
+      assert.equal(metrics.value, value);
+    }
+    await page.evaluate(() => editor.setSourceMode(true)); await settle();
+    assert.equal(await page.locator('.cm-line.note-live-heading, .cm-line.note-live-setext-marker-line').count(), 0);
+    assert.equal(await page.evaluate(() => editor.snapshot().value), value);
+    await page.evaluate(() => { editor.setSourceMode(false); editor.focus(); }); await settle();
+    assert.equal(await page.locator('.cm-line.note-live-heading, .cm-line.note-live-setext-marker-line').count(), 0);
+    checks++;
+  }
+  const value = '例如电池能量约束：\n' + headingEquation + '\n真实标题\n---';
+  await set(value, value.indexOf('E_{t+1}') + 1);
+  assert.equal(await page.locator('.cm-line.note-live-heading').textContent(), '真实标题');
+  await page.evaluate(() => {
+    const at = editor.view.state.doc.toString().lastIndexOf('\\]');
+    editor.view.dispatch({ changes: { from: at, to: at + 2 }, userEvent: 'input.type', annotations: RelatumCodeMirror.isolateHistory.of('full') });
+  });
+  await settle();
+  assert.equal(await page.locator('.cm-line.note-live-heading, .cm-line.note-live-setext-marker-line').count(), 0, 'removing the closer protects the unfinished formula');
+  await page.keyboard.press('Control+z'); await settle();
+  assert.equal(await page.evaluate(() => editor.snapshot().value), value);
+  assert.equal(await page.locator('.cm-line.note-live-heading').textContent(), '真实标题');
+  await page.keyboard.press('Control+y'); await settle();
+  assert.equal(await page.locator('.cm-line.note-live-heading, .cm-line.note-live-setext-marker-line').count(), 0);
+  await page.keyboard.press('Control+z'); await settle();
+  await page.screenshot({ path: path.join(output, 'heading-math.png') });
+  return checks;
+}
 
 async function checkWorkspace(browser) {
   const root = path.join(output, 'workspace');
@@ -104,8 +155,30 @@ async function checkWorkspace(browser) {
     await page.waitForFunction(() => document.querySelector('.note-live-math-preview-content mjx-container'));
     await page.evaluate(() => { document.body.dataset.startTheme = 'dark'; });
     await page.screenshot({ path: path.join(output, 'workspace-dark.png') });
+    const headingValue = '例如电池能量约束：\n' + headingEquation + '\n真实标题\n---';
+    await page.evaluate(value => {
+      T.editor.view.dispatch({ changes: { from: 0, to: T.editor.view.state.doc.length, insert: value },
+        selection: { anchor: value.indexOf('E_{t+1}') + 1 }, userEvent: 'input.type' }); T.editor.focus();
+    }, headingValue);
+    await page.waitForFunction(() => document.querySelector('.note-live-math-preview-content mjx-container'));
+    assert.equal(await page.locator('.cm-line.note-live-heading').textContent(), '真实标题');
+    const editorBeforeModes = await page.evaluate(() => { window.__headingEditor = T.editor; return T.editor.snapshot().value; });
+    assert.equal(editorBeforeModes, headingValue);
+    for (const mode of ['source', 'live', 'reading', 'live']) {
+      await page.evaluate(mode => T.setViewMode(mode), mode);
+      if (mode === 'reading') {
+        await page.waitForFunction(() => document.querySelector('.note-reading-content mjx-container'));
+        assert.equal(await page.locator('.note-reading-content h2').textContent(), '真实标题');
+        assert.equal(await page.locator('.note-reading-content h1').count(), 0, 'reading never invents a heading before math');
+      } else {
+        assert.equal(await page.evaluate(() => T.editor.snapshot().value), headingValue);
+        if (mode === 'live') assert.equal(await page.locator('.cm-line.note-live-heading').textContent(), '真实标题');
+      }
+    }
+    assert(await page.evaluate(() => T.editor === __headingEditor), 'mode changes retain the original editor');
+    await page.screenshot({ path: path.join(output, 'heading-math-workspace.png') });
     assert.deepEqual(errors, []);
-    return { saved: true, reading: true, scrollStable: true, editorReused: true };
+    return { saved: true, reading: true, scrollStable: true, editorReused: true, mathHeadings: true };
   } finally {
     await context?.close();
     if (service.pid && service.exitCode === null && service.signalCode === null) {
@@ -216,6 +289,7 @@ async function checkWorkspace(browser) {
     // Return to ordinary text before the original preview cases.
     await set('ordinary text', 4);
 
+    const headingChecks = await checkMathHeadings(page, set, settle);
     await set(equation);
     await previewReady();
     assert.equal(await page.locator('.note-live-math-delimiter').count(), 2);
@@ -467,7 +541,7 @@ async function checkWorkspace(browser) {
     assert.equal(await page.evaluate(() => Array.from(MathJax.startup.document.math).length), 0);
     assert.deepEqual(errors, []);
     const workspace = await checkWorkspace(browser);
-    console.log(JSON.stringify({ output, variants, typing: true, history: true, errors: true, ime: true, lifecycle: true, workspace }));
+    console.log(JSON.stringify({ output, variants, headingChecks, typing: true, history: true, errors: true, ime: true, lifecycle: true, workspace }));
   } catch (error) {
     console.error('math preview output:', output);
     if (page) {

@@ -994,6 +994,72 @@
     return step.value;
   }
 
+  const headingProjectionCache = new WeakMap();
+  function headingProjection(state, node) {
+    const doc = state.doc, tree = syntaxTree(state);
+    let cache = headingProjectionCache.get(doc);
+    if (!cache || cache.tree !== tree) {
+      cache = { tree, entries: new Map() }; headingProjectionCache.set(doc, cache);
+    }
+    const key = node.name + ':' + node.from + ':' + node.to;
+    if (cache.entries.has(key)) return cache.entries.get(key);
+    const original = { from: node.from, to: node.to };
+    const remember = value => { cache.entries.set(key, value); return value; };
+    const from = doc.lineAt(Math.max(0, node.from - BLOCK_MATH_LIMIT)).from;
+    if (node.to - from > RICH_BLOCK_LIMIT) return remember(original);
+    const source = doc.sliceString(from, node.to);
+    // Most headings need no additional parse. Include bounded preceding lines
+    // for a closing delimiter or an unfinished formula above the candidate.
+    if (!/^(?:[ \t]*>[ \t]*)*[ \t]*(?:\$\$|\\\[)/m.test(source)) return remember(original);
+    const guards = lineProtectedRanges(state, from, node.to);
+    const metadata = documentFrontmatter(doc);
+    if (metadata) guards.push(metadata);
+    guards.push(...scanSourceComments(doc, from, node.to, guards));
+    const mathRanges = [];
+    let math = null;
+    for (let number = doc.lineAt(from).number; number <= doc.lineAt(node.to).number; number++) {
+      const line = doc.line(number), quote = window.MarkdownMini.quoteLine(line.text);
+      if (math) {
+        if (quote.depth < math.depth || line.to - math.from > BLOCK_MATH_LIMIT) {
+          mathRanges.push({ from: math.from, to: Math.min(doc.line(number - 1).to, math.from + BLOCK_MATH_LIMIT) }); math = null;
+        } else {
+          if (quote.depth === math.depth && quote.text.trim() === math.close) {
+            mathRanges.push({ from: math.from, to: line.to }); math = null;
+          }
+          continue;
+        }
+      }
+      if (insideRange(guards, line.from + quote.prefix.length, line.to)) continue;
+      const text = quote.text.trim();
+      if (text === '$$' || text === '\\[') math = { from: line.from, depth: quote.depth, close: text === '$$' ? '$$' : '\\]' };
+      else if (sameLineBlockMath(text)) mathRanges.push({ from: line.from, to: line.to });
+    }
+    if (math) mathRanges.push({ from: math.from, to: Math.min(node.to, math.from + BLOCK_MATH_LIMIT) });
+    if (!mathRanges.some(range => range.from < node.to && range.to > node.from)) return remember(original);
+    // Lezer sees a bare TeX =/--- as a Setext underline, possibly absorbing
+    // ordinary text before the formula. Reparse only this bounded fragment with
+    // math blanked at its original offsets, retaining quote/container prefixes.
+    const pieces = []; let position = from;
+    for (const range of mathRanges) {
+      const end = Math.min(range.to, node.to);
+      pieces.push(doc.sliceString(position, range.from), doc.sliceString(range.from, end).replace(/[^\n]+/g, line => {
+        const quote = window.MarkdownMini.quoteLine(line);
+        return quote.prefix + quote.text.replace(/./g, ' ');
+      }));
+      position = end;
+    }
+    pieces.push(doc.sliceString(position, node.to));
+    if (!noteHeadingParser) noteHeadingParser = markdownLanguage.parser.configure(plainParagraphExtension);
+    const marker = node.getChild('HeaderMark');
+    let projected = null;
+    noteHeadingParser.parse(pieces.join('')).iterate({ enter(ref) {
+      if (ref.name !== node.name) return;
+      const candidate = ref.node, mark = candidate.getChild('HeaderMark');
+      if (mark && marker && mark.from + from === marker.from) projected = { from: candidate.from + from, to: candidate.to + from };
+    } });
+    return remember(projected);
+  }
+
   function calloutPresentationType(type) {
     return window.MarkdownMini.noteBlock(type).type;
   }
@@ -4322,12 +4388,15 @@
 
           const heading = /^ATXHeading([1-6])$/.exec(nodeRef.name) || /^SetextHeading([12])$/.exec(nodeRef.name);
           if (heading) {
-            const line = view.state.doc.lineAt(nodeRef.from);
-            lineClass(line.from, 'note-live-heading note-live-h' + heading[1]
-              + (line.number > 1 && !view.state.doc.line(line.number - 1).text.trim() ? ' follows-gap' : ''));
-            if (/^Setext/.test(nodeRef.name)) {
-              const markerLine = view.state.doc.lineAt(Math.max(nodeRef.from, nodeRef.to - 1));
-              lineClass(markerLine.from, constructActive(view, nodeRef.from, nodeRef.to) ? 'note-live-setext-marker-line' : 'note-live-setext-marker-line is-hidden');
+            const projected = headingProjection(view.state, node);
+            if (projected) {
+              const line = view.state.doc.lineAt(projected.from);
+              lineClass(line.from, 'note-live-heading note-live-h' + heading[1]
+                + (line.number > 1 && !view.state.doc.line(line.number - 1).text.trim() ? ' follows-gap' : ''));
+              if (/^Setext/.test(nodeRef.name)) {
+                const markerLine = view.state.doc.lineAt(Math.max(projected.from, projected.to - 1));
+                lineClass(markerLine.from, constructActive(view, projected.from, projected.to) ? 'note-live-setext-marker-line' : 'note-live-setext-marker-line is-hidden');
+              }
             }
           } else if (decorateInlineText(node, mark, sourceMark)) {
             // Shared with the cell editor; its source positions are local.
@@ -4358,7 +4427,7 @@
             }
           } else if (nodeRef.name === 'HeaderMark') {
             const unit = ancestorOf(node, /^(?:ATXHeading|SetextHeading)/);
-            if (unit) {
+            if (unit && headingProjection(view.state, unit)) {
               if (constructActive(view, nodeRef.from, headingMarkerProjectionEnd(view.state.doc, nodeRef.from, nodeRef.to))) {
                 mark(nodeRef.from, nodeRef.to, 'note-live-source-mark is-heading');
               } else {
