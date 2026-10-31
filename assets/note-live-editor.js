@@ -401,10 +401,7 @@
     return window.RelatumNoteCards.attach(root, Object.assign({
       async typeset(node, current) {
         const nodes = node.matches('.note-cards') ? [node] : Array.from(node.querySelectorAll('.note-cards'));
-        const math = await ensureMathJax();
-        if (!current()) return;
-        try { await math.typesetPromise(nodes); }
-        finally { if (!current()) math.typesetClear?.(nodes); }
+        if (nodes.length) await typesetMathNodes(nodes, current);
       },
     }, options));
   }
@@ -418,11 +415,9 @@
       if (!current()) return () => {};
       await options.whenSettled?.();
       if (!current()) return () => {};
-      const math = await ensureMathJax();
-      if (!current()) return () => {};
-      await math.typesetPromise([node]);
-      const cleanup = () => { try { math.typesetClear?.([node]); } catch (_) {} };
-      if (!current()) cleanup(); else onLayout();
+      const rendered = await typesetMath(node, current);
+      const cleanup = () => { try { window.MathJax?.typesetClear?.([node]); } catch (_) {} };
+      if (rendered) onLayout();
       return cleanup;
     }
     async function start(entry) {
@@ -1492,21 +1487,26 @@
   }
 
   let mathLoadPromise = null;
-  let mathEditQueue = Promise.resolve();
-  // Share the preview slot with note AI without importing note-reading behavior.
-  async function typesetMath(host, isCurrent) {
-    const previous = mathEditQueue;
-    let release;
-    mathEditQueue = new Promise(resolve => { release = resolve; });
+  let mathTypesetQueue = Promise.resolve();
+  // MathJax 3's autoload mutates shared TeX state. Every note host must use
+  // the same slot, including projected blocks, reading, previews and note AI.
+  function typesetMath(host, isCurrent) { return typesetMathNodes([host], isCurrent); }
+  async function typesetMathNodes(nodes, isCurrent) {
+    const previous = mathTypesetQueue;
+    let release, math;
+    mathTypesetQueue = new Promise(resolve => { release = resolve; });
     try {
       await previous;
       if (!isCurrent()) return false;
-      const math = await ensureMathJax();
+      math = await ensureMathJax();
       await math.startup?.promise;
       if (!isCurrent()) return false;
-      await math.typesetPromise([host]);
-      if (!isCurrent()) { math.typesetClear?.([host]); return false; }
+      await math.typesetPromise(nodes);
+      if (!isCurrent()) { math.typesetClear?.(nodes); return false; }
       return true;
+    } catch (error) {
+      if (math && !isCurrent()) math.typesetClear?.(nodes);
+      throw error;
     } finally { release(); }
   }
   function ensureMathJax() {
@@ -1535,6 +1535,15 @@
     return source.slice(2, -2).trim() ? source : '';
   }
 
+  function mathScrollbarHit(event, dom) {
+    if (!event || dom.scrollWidth <= dom.clientWidth + 1) return false;
+    const height = dom.offsetHeight - dom.clientHeight;
+    if (height <= 0) return false;
+    const rect = dom.getBoundingClientRect(), scale = rect.height / dom.offsetHeight;
+    return event.clientY >= rect.bottom - height * scale && event.clientY <= rect.bottom
+      && event.clientX >= rect.left && event.clientX <= rect.right;
+  }
+
   // This widget adds height after the closing delimiter without replacing any
   // editable source or taking part in atomic cursor navigation.
   class MathEditPreviewWidget extends WidgetType {
@@ -1546,7 +1555,10 @@
     toDOM(view) {
       const dom = document.createElement('div');
       dom.contentEditable = 'false';
-      dom.addEventListener('mousedown', event => { if (!event.button) event.preventDefault(); });
+      dom.addEventListener('mousedown', event => {
+        if (mathScrollbarHit(event, dom)) event.stopPropagation();
+        else if (!event.button) event.preventDefault();
+      });
       this.updateDOM(dom, view);
       return dom;
     }
@@ -1753,9 +1765,9 @@
         if (!this.current(entry, entry.version)) return;
         this.running = true; entry.pending = false;
         const version = entry.version;
-        const previous = mathEditQueue;
+        const previous = mathTypesetQueue;
         let release;
-        mathEditQueue = new Promise(resolve => { release = resolve; });
+        mathTypesetQueue = new Promise(resolve => { release = resolve; });
         let stage = null, processed = false;
         try {
           // A replaced editor/plugin can still have a typeset in flight. Share
@@ -1884,19 +1896,9 @@
       span.addEventListener('click', (event) => this.reveal(view, event));
       const token = {};
       this.token = token;
-      ensureMathJax().then((math) => {
-        if (this.token !== token || !span.isConnected || this.coordinator.epoch !== this.epoch) return;
-        return runWhenInputSettled(view, () => (
-          this.token === token && span.isConnected && this.coordinator.epoch === this.epoch
-            ? math.typesetPromise([span]) : undefined
-        )).then(() => {
-          if (this.token !== token || !span.isConnected || this.coordinator.epoch !== this.epoch) return;
-          return runWhenInputSettled(view, () => {
-            if (this.token === token && span.isConnected && this.coordinator.epoch === this.epoch) view.requestMeasure();
-          });
-        }).finally(() => {
-          if ((this.token !== token || !span.isConnected || this.coordinator.epoch !== this.epoch) && typeof math.typesetClear === 'function') math.typesetClear([span]);
-        });
+      const current = () => this.token === token && span.isConnected && this.coordinator.epoch === this.epoch;
+      runWhenInputSettled(view, () => typesetMath(span, current)).then(rendered => {
+        if (rendered) return runWhenInputSettled(view, () => { if (current()) view.requestMeasure(); });
       }).catch(() => { span.classList.add('is-failed'); });
       return span;
     }
@@ -3039,14 +3041,10 @@
       if (!roots.length) return;
       mathQueue = mathQueue.then(async () => {
         if (!current() || host.closest('[hidden]')) return;
-        const math = await ensureMathJax();
-        if (!current() || host.closest('[hidden]')) return;
         roots.length = 0; visit(content);
         const visible = roots.filter(root => root.isConnected && !root.closest('[hidden]'));
         if (!visible.length) return;
-        await math.typesetPromise(visible);
-        if (current()) scheduleViewportRestore(host);
-        if (!current() && typeof math.typesetClear === 'function') math.typesetClear(visible);
+        if (await typesetMathNodes(visible, () => current() && !host.closest('[hidden]'))) scheduleViewportRestore(host);
       }).catch(() => { if (current()) host.classList.add('is-failed'); });
     }
     if (content.querySelector('.note-quiz-carrier')) host.__relatumReadingQuiz = attachNoteQuiz(content, {
@@ -3177,6 +3175,9 @@
     }
     reveal(view, event) {
       if (event?.target.closest?.('[data-note-mermaid-control]')) return;
+      if (this.spec.kind === 'math' && event && mathScrollbarHit(event, event.currentTarget)) {
+        event.stopPropagation(); return;
+      }
       if (event) { event.preventDefault(); event.stopPropagation(); }
       if (compositionActive(view)) {
         runWhenInputSettled(view, () => this.reveal(view));
@@ -3231,16 +3232,10 @@
         }
         decorateNestedCalloutWidget(wrap, view, this.spec, this.coordinator);
         const finishPointerScroll = this.coordinator.mathProjectionTask?.(this.spec);
-        ensureMathJax().then((math) => {
-          if (!this.isCurrent(view, wrap, token)) return;
-          return runWhenInputSettled(view, () => (
-            this.isCurrent(view, wrap, token) ? math.typesetPromise([wrap]) : undefined
-          )).then(() => {
-            if (!this.isCurrent(view, wrap, token)) return;
-            return runWhenInputSettled(view, () => {
-              if (this.isCurrent(view, wrap, token)) view.requestMeasure();
-            });
-          }).finally(() => { if (!this.isCurrent(view, wrap, token) && typeof math.typesetClear === 'function') math.typesetClear([wrap]); });
+        runWhenInputSettled(view, () => typesetMath(wrap, () => this.isCurrent(view, wrap, token))).then(rendered => {
+          if (rendered) return runWhenInputSettled(view, () => {
+            if (this.isCurrent(view, wrap, token)) view.requestMeasure();
+          });
         }).catch(() => wrap.classList.add('is-failed')).finally(() => finishPointerScroll?.());
       } else if (this.spec.kind === 'rule') {
         wrap.tabIndex = 0;
@@ -3281,16 +3276,10 @@
         }
         if (hasMath) {
           wrap.dataset.noteMath = '1';
-          ensureMathJax().then((math) => {
-            if (!this.isCurrent(view, wrap, token)) return;
-            return runWhenInputSettled(view, () => (
-              this.isCurrent(view, wrap, token) ? math.typesetPromise([wrap]) : undefined
-            )).then(() => {
-              if (!this.isCurrent(view, wrap, token)) return;
-              return runWhenInputSettled(view, () => {
-                if (this.isCurrent(view, wrap, token)) view.requestMeasure();
-              });
-            }).finally(() => { if (!this.isCurrent(view, wrap, token) && typeof math.typesetClear === 'function') math.typesetClear([wrap]); });
+          runWhenInputSettled(view, () => typesetMath(wrap, () => this.isCurrent(view, wrap, token))).then(rendered => {
+            if (rendered) return runWhenInputSettled(view, () => {
+              if (this.isCurrent(view, wrap, token)) view.requestMeasure();
+            });
           }).catch(() => wrap.classList.add('is-failed'));
         }
       }
@@ -5902,11 +5891,9 @@
       });
       if (!result.features || !result.features.math) return;
       const current = () => surface.current() && content.isConnected && content.dataset.source === source;
-      ensureMathJax().then(async (math) => {
+      Promise.resolve().then(async () => {
         await whenInputSettled();
-        if (!current()) return;
-        await math.typesetPromise([content]);
-        if (!current()) { math.typesetClear([content]); return; }
+        if (!await typesetMath(content, current)) return;
         await whenInputSettled();
         if (current()) surface.view.requestMeasure();
       }).catch(() => { if (current()) content.classList.add('is-failed'); });

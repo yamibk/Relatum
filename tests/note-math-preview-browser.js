@@ -22,6 +22,19 @@ E_{t+1}
 E_t+\eta_{\mathrm{ch}}P_{\mathrm{ch},t}\Delta t
 -\frac{P_{\mathrm{dis},t}}{\eta_{\mathrm{dis}}}\Delta t
 \]`;
+const optimizationEquation = String.raw`\[
+\boxed{
+\begin{aligned}
+\min_{\boldsymbol{x},\boldsymbol{u}}\quad
+&J(\boldsymbol{x},\boldsymbol{u})\\
+\text{s.t.}\quad
+&\boldsymbol{x}_{t+1}
+=f(\boldsymbol{x}_t,\boldsymbol{u}_t,\boldsymbol{w}_t)\\
+&\boldsymbol{g}(\boldsymbol{x}_t,\boldsymbol{u}_t)\le0\\
+&\boldsymbol{h}(\boldsymbol{x}_t,\boldsymbol{u}_t)=0
+\end{aligned}
+}
+\]`;
 const syntaxEquation = String.raw`> [!note]
 > $$
 > \frac{a_1+[
@@ -42,6 +55,111 @@ body{margin:0;background:var(--bg,#fbfbfa)}.note-workspace{display:block;positio
 <script src="vendor/codemirror/relatum-codemirror.min.js"></script><script src="note-table-editor.js"></script>
 <script src="note-media-frame.js"></script><script src="note-live-editor.js"></script>
 <script>window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{value:'ordinary text',notePath:'math.md'});</script></body></html>`;
+
+async function checkMathAutoload(browser, url) {
+  const report = [];
+  for (const kind of ['blocks', 'editing', 'inline', 'reading-live']) {
+    const page = await browser.newPage({ viewport: { width: 1100, height: 850 } });
+    const errors = [], requests = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('request', request => requests.push(request.url()));
+    try {
+      // Keep the extension in flight long enough to expose concurrent TeX
+      // parsing. Each case has a new JS context and no warmed math packages.
+      await page.route('**/mathjax/input/tex/extensions/boldsymbol.js', async route => {
+        await new Promise(resolve => setTimeout(resolve, 150)); await route.continue();
+      });
+      await page.goto(url); await page.waitForFunction(() => window.editor?.view);
+      const value = (kind === 'inline' ? 'Inline $\\boldsymbol{\\alpha}$\n\n' : '')
+        + optimizationEquation + '\n\n' + optimizationEquation.replace('\\[', () => '$$').replace('\\]', () => '$$') + '\n\ntail';
+      await page.evaluate(({ value, kind }) => {
+        const at = kind === 'editing' ? value.indexOf('J(') : value.length;
+        editor.setDocument({ value, notePath: 'autoload.md', anchor: at, head: at }); editor.focus();
+        if (kind === 'reading-live') {
+          const host = document.createElement('div'); host.style.width = '820px'; document.body.appendChild(host);
+          RelatumNoteLiveEditor.renderMarkdown(host, value, 'reading.md');
+        }
+      }, { value, kind });
+      const count = kind === 'reading-live' ? 4 : kind === 'inline' ? 3 : 2;
+      await page.waitForFunction(count => document.querySelectorAll('mjx-container').length === count
+        && !document.querySelector('.note-live-math-stage'), count);
+      const metrics = await page.evaluate(() => ({
+        red: [...document.querySelectorAll('mtext[mathcolor="red"]')].map(node => node.textContent),
+        errors: [...document.querySelectorAll('mjx-merror,[data-mjx-error],merror')].map(node => node.textContent),
+        incomplete: [...document.querySelectorAll('.note-live-math-status')].some(node => !node.hidden),
+        widths: [...document.querySelectorAll('.note-live-rich-block.is-math')].map(node => ({ width: node.clientWidth, scroll: node.scrollWidth })),
+        value: editor.snapshot().value,
+      }));
+      assert.deepEqual(metrics.red, [], kind + ': auto-loaded boldsymbol is defined in every formula');
+      assert.deepEqual(metrics.errors, []); assert.equal(metrics.incomplete, false);
+      assert(metrics.widths.every(item => item.scroll <= item.width + 1), kind + ': the short boxed formula needs no horizontal scrollbar');
+      assert.equal(metrics.value, value); assert.deepEqual(errors, []);
+      assert(requests.some(url => url.includes('/extensions/boldsymbol.js')), 'the real local extension is loaded');
+      assert(requests.every(request => new URL(request).origin === new URL(url).origin), 'math stays fully offline');
+      report.push({ kind, ...metrics, value: undefined });
+      await page.screenshot({ path: path.join(output, 'autoload-' + kind + '.png') });
+      if (kind === 'blocks') await page.locator('.note-live-rich-block.is-math').first().screenshot({ path: path.join(output, 'boxed-optimization.png') });
+    } finally { await page.close(); }
+  }
+  const page = await browser.newPage({ viewport: { width: 1100, height: 850 } });
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.editor?.view);
+    for (const editing of [false, true]) {
+      const value = '$$' + Array.from({ length: 75 }, (_, i) => 'x_{' + i + '}').join('+') + '$$\n\ntail';
+      await page.evaluate(({ value, editing }) => {
+        editor.view.contentDOM.blur(); const at = editing ? 5 : value.length;
+        editor.setDocument({ value, notePath: 'wide.md', anchor: at, head: at, scrollTop: 0 }); editor.focus();
+      }, { value, editing });
+      await page.waitForFunction(() => document.querySelector('.is-math mjx-container'));
+      const before = await page.locator('.note-live-rich-block.is-math').evaluate(node => {
+        const box = node.getBoundingClientRect(), height = node.offsetHeight - node.clientHeight;
+        const thumb = node.clientWidth * node.clientWidth / node.scrollWidth;
+        return { x: box.left + Math.max(20, thumb / 2), y: box.bottom - height / 2,
+          height, scroll: node.scrollLeft, width: node.clientWidth, total: node.scrollWidth,
+          overflow: getComputedStyle(node).overflowX, scrollbar: getComputedStyle(node, '::-webkit-scrollbar').height };
+      });
+      assert(before.total > before.width * 2 && before.height >= 6, 'a truly wide formula has a real native scrollbar: ' + JSON.stringify({ editing, before }));
+      await page.mouse.move(before.x, before.y); await page.mouse.down();
+      await page.mouse.move(before.x + 180, before.y, { steps: 6 }); await page.mouse.up();
+      const left = await page.locator('.note-live-rich-block.is-math').evaluate(node => node.scrollLeft);
+      assert(left > before.scroll + 80, 'dragging the real thumb scrolls the formula');
+      const track = await page.locator('.note-live-rich-block.is-math').boundingBox();
+      await page.mouse.click(track.x + track.width - 20, before.y);
+      await page.waitForFunction(left => document.querySelector('.note-live-rich-block.is-math').scrollLeft > left + 40, left);
+      assert.equal(await page.locator('.note-live-math-preview').count(), editing ? 1 : 0, 'scrollbar dragging does not open or close source');
+      assert.equal(await page.evaluate(() => editor.snapshot().value), value);
+      if (!editing) {
+        const box = await page.locator('.note-live-rich-block.is-math').boundingBox();
+        await page.mouse.click(box.x + 40, box.y + 10);
+        await page.waitForFunction(() => document.querySelector('.note-live-math-preview mjx-container'));
+      }
+    }
+    // A rejected, removed host must release the shared slot and clear its
+    // MathItems; otherwise one failed formula can block the whole workspace.
+    const recovery = await page.evaluate(async () => {
+      const native = MathJax.typesetPromise, clear = MathJax.typesetClear;
+      const removed = document.createElement('div'), next = document.createElement('div');
+      removed.textContent = '$$x$$'; next.textContent = '$$y$$'; document.body.append(removed, next);
+      let current = true, release, entered, cleared = false;
+      const started = new Promise(resolve => { entered = resolve; });
+      MathJax.typesetPromise = function (nodes) {
+        if (nodes[0] === removed) return new Promise((resolve, reject) => { release = reject; entered(); });
+        return native.call(this, nodes);
+      };
+      MathJax.typesetClear = function (nodes) { if (nodes[0] === removed) cleared = true; return clear.call(this, nodes); };
+      try {
+        const first = RelatumNoteLiveEditor.typesetMath(removed, () => current).catch(error => error.message);
+        await started;
+        const second = RelatumNoteLiveEditor.typesetMath(next, () => next.isConnected);
+        current = false; removed.remove(); release(new Error('deliberate math failure'));
+        return { first: await first, second: await second, cleared, rendered: !!next.querySelector('mjx-container') };
+      } finally { MathJax.typesetPromise = native; MathJax.typesetClear = clear; clear.call(MathJax, [removed, next]); next.remove(); }
+    });
+    assert.deepEqual(recovery, { first: 'deliberate math failure', second: true, cleared: true, rendered: true });
+  } finally { await page.close(); }
+  fs.writeFileSync(path.join(output, 'autoload-report.json'), JSON.stringify(report, null, 2));
+  return { cases: report.length, nativeScrollbars: 2, queueRecovery: true };
+}
 
 async function checkMathHeadings(page, set, settle) {
   let checks = 0;
@@ -385,7 +503,8 @@ async function checkWorkspace(browser, pointerOnly = false) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser, page;
   try {
-    browser = await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
+    browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'],
+      ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
     page = await browser.newPage({ viewport: { width: 1100, height: 850 } });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -395,6 +514,8 @@ async function checkWorkspace(browser, pointerOnly = false) {
     if (process.argv.includes('--pointer-only')) {
       console.log(JSON.stringify({ output, workspace: await checkWorkspace(browser, true) })); return;
     }
+    const autoload = await checkMathAutoload(browser, page.url());
+    if (process.argv.includes('--autoload-only')) { console.log(JSON.stringify({ output, autoload })); return; }
     const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const set = async (value, at = value.indexOf('x') >= 0 ? value.indexOf('x') + 1 : value.indexOf('\\begin') + 3) => {
       await page.evaluate(({ value, at }) => {
@@ -727,7 +848,7 @@ async function checkWorkspace(browser, pointerOnly = false) {
     assert.equal(await page.evaluate(() => Array.from(MathJax.startup.document.math).length), 0);
     assert.deepEqual(errors, []);
     const workspace = await checkWorkspace(browser);
-    console.log(JSON.stringify({ output, variants, headingChecks, typing: true, history: true, errors: true, ime: true, lifecycle: true, workspace }));
+    console.log(JSON.stringify({ output, autoload, variants, headingChecks, typing: true, history: true, errors: true, ime: true, lifecycle: true, workspace }));
   } catch (error) {
     console.error('math preview output:', output);
     if (page) {
