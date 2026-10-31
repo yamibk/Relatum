@@ -1227,6 +1227,51 @@ body.start-page[data-start-theme="dark"] .note-context-separator { background: r
   transform: translateY(6px); transition: transform 200ms var(--easing-soft);
 }
 .note-modal-overlay.visible .note-modal-card { transform: none; }
+.note-modal-card.note-image-preview {
+  position: relative; box-sizing: border-box; display: flex; flex-direction: column;
+  width: min(1200px, calc(100vw - 48px)); height: min(900px, calc(100dvh - 48px));
+  max-width: 100%; padding: 52px 20px 66px; overflow: hidden;
+}
+.note-image-preview > h2 {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+.note-image-preview-stage {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  flex: 1; min-height: 0; width: 100%; overflow: hidden; touch-action: none;
+  user-select: none; overscroll-behavior: contain;
+}
+.note-image-preview-picture { position: relative; flex: none; transform-origin: center; }
+.note-image-preview-picture > img {
+  display: block; width: 100%; height: 100%; max-width: none; max-height: none;
+  object-fit: contain; pointer-events: none; -webkit-user-drag: none;
+}
+.note-image-preview-picture .note-image-text-layer { border-radius: 0; }
+.note-image-preview-stage.can-pan { cursor: grab; }
+.note-image-preview-stage.is-panning { cursor: grabbing; }
+.note-image-preview-status { position: absolute; margin: 0; padding: 20px; color: var(--text-secondary); font-size: 13px; }
+.note-image-preview-toolbar {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 4px; padding: 4px; border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+.note-image-preview :is(.note-image-preview-toolbar button, .note-image-preview-close) {
+  appearance: none; display: grid; place-items: center; width: 34px; height: 34px;
+  padding: 7px; border: 0; border-radius: 8px; color: inherit; background: transparent; cursor: pointer;
+}
+.note-image-preview :is(.note-image-preview-toolbar button, .note-image-preview-close):hover {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+.note-image-preview :is(.note-image-preview-toolbar button, .note-image-preview-close):focus-visible {
+  outline: 2px solid currentColor; outline-offset: 2px;
+}
+.note-image-preview .note-image-preview-toolbar button:disabled { opacity: .3; cursor: default; background: transparent; }
+.note-image-preview button svg { display: block; width: 20px; height: 20px; pointer-events: none; }
+.note-image-preview-close { position: absolute; top: 12px; right: 12px; }
+@media (max-width: 600px) {
+  .note-modal-card.note-image-preview { width: calc(100vw - 32px); height: calc(100dvh - 32px); padding-inline: 10px; }
+  .note-modal-overlay:has(.note-image-preview) { padding: 16px; }
+}
 .note-modal-card h2 { margin: 0 0 9px; font-size: 19px; letter-spacing: -0.025em; }
 .note-modal-card > p { margin: 0 0 19px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; white-space: pre-line; }
 .note-modal-field { display: grid; gap: 7px; margin-bottom: 20px; color: var(--text-secondary); font-size: 11px; }

@@ -1991,6 +1991,7 @@
     if (next === state.viewMode) return;
     // Read the current viewport before closing tools invalidates page layout.
     if (state.current) rememberEditorState(state.current);
+    closeNoteModal();
     closeContextMenu();
     if (liveEditor) liveEditor.setImageTextMode(false);
     cancelDocumentViewportRestore();
@@ -2044,6 +2045,7 @@
           onImageFiles: (files) => uploadImages(files),
           clipboardText: clipboardLinkMarkdown,
           onImageSelectionChange: (selection) => updateImageTextTools(selection),
+          onImagePreview: (image) => openImagePreview(image),
           imageTextDefaults: { size: state.imageText.size, color: state.imageText.color },
           onImageTextDefaultsChange: (defaults) => persistImageTextDefaults(defaults),
           onContextMenu: (payload) => openBodyContextMenu(payload),
@@ -4377,21 +4379,24 @@
     catch (error) { showToast(error.message || tr('revealFailed'), 'error'); }
   }
   function closeNoteModal() { activeNoteModal?.cancel(false); }
-  function promptNoteModal(title, cancelValue, content) {
+  function promptNoteModal(title, cancelValue, content, options = {}) {
     if (!modalHost || !noteWorkspaceVisible()) return Promise.resolve(cancelValue);
     closeNoteModal();
     const previousFocus = document.activeElement, previousDocument = state.current, previousTab = state.activeTab;
     return new Promise(resolve => {
       const overlay = document.createElement('div'); overlay.className = 'note-modal-overlay';
       const dialog = document.createElement('section'); dialog.className = 'note-modal-card';
+      if (options.className) dialog.classList.add(options.className);
       dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
       const heading = document.createElement('h2'); heading.id = 'relatum-note-modal-title'; heading.textContent = title;
       dialog.setAttribute('aria-labelledby', heading.id); dialog.append(heading);
       let finished = false, frame = 0, initialFocus;
-      const valid = () => noteWorkspaceVisible() && state.current === previousDocument && state.activeTab === previousTab;
+      const valid = () => noteWorkspaceVisible() && state.current === previousDocument && state.activeTab === previousTab
+        && (!options.isCurrent || options.isCurrent());
       const finish = (value, restoreFocus = true) => {
         if (finished) return;
         finished = true; cancelAnimationFrame(frame);
+        options.onClose?.();
         document.removeEventListener('keydown', keydown, true);
         document.removeEventListener('focusin', focusin, true);
         if (activeNoteModal === session) activeNoteModal = null;
@@ -4426,10 +4431,145 @@
       document.addEventListener('keydown', keydown, true);
       document.addEventListener('focusin', focusin, true);
       overlay.addEventListener('keydown', event => event.stopPropagation());
+      if (options.backdropClose) {
+        let down = null;
+        overlay.addEventListener('pointerdown', event => {
+          down = event.target === overlay && event.button === 0 ? { id: event.pointerId, x: event.clientX, y: event.clientY } : null;
+        });
+        overlay.addEventListener('pointerup', event => {
+          if (down && down.id === event.pointerId && event.target === overlay
+              && Math.hypot(event.clientX - down.x, event.clientY - down.y) < 6) finish(cancelValue);
+          down = null;
+        });
+        overlay.addEventListener('pointercancel', () => { down = null; });
+      }
       initialFocus.focus({ preventScroll: true });
       if (initialFocus.tagName === 'INPUT') initialFocus.select();
       frame = requestAnimationFrame(() => { if (activeNoteModal === session) overlay.classList.add('visible'); });
     });
+  }
+  function openImagePreview(payload) {
+    if (!noteWorkspaceVisible() || !state.current || state.current.path !== payload.notePath
+        || state.viewMode !== 'live' || editorInputPending()) return;
+    closeContextMenu({ instant: true });
+    const documentState = state.current;
+    let dispose = () => {};
+    return promptNoteModal(language() === 'en' ? 'Image preview' : '图片查看', null, (dialog, finish) => {
+      const stage = document.createElement('div'); stage.className = 'note-image-preview-stage';
+      const picture = document.createElement('div'); picture.className = 'note-image-preview-picture'; picture.hidden = true;
+      const image = document.createElement('img'); image.alt = payload.alt || ''; image.draggable = false; image.decoding = 'async';
+      picture.append(image);
+      if (payload.imageText) {
+        picture.style.setProperty('--note-image-text-unit', payload.textUnit || '4px');
+        picture.style.setProperty('--note-image-text-scale', payload.textScale || '1');
+        picture.append(payload.imageText);
+      }
+      const status = document.createElement('p'); status.className = 'note-image-preview-status'; status.setAttribute('role', 'status');
+      const toolbar = document.createElement('div'); toolbar.className = 'note-image-preview-toolbar';
+      let disposed = false, ready = false, failed = false, frame = 0, drag = null;
+      let width = 0, height = 0, baseWidth = 0, baseHeight = 0, fit = 1, zoom = 1, x = 0, y = 0;
+      const current = () => !disposed && state.current === documentState && state.viewMode === 'live' && noteWorkspaceVisible();
+      const button = (name, paths, action) => {
+        const control = document.createElement('button'); control.type = 'button'; control.dataset.imagePreviewAction = name;
+        control.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' + paths + '</svg>';
+        control.addEventListener('click', action); return control;
+      };
+      const close = button('close', '<path d="m6 6 12 12M6 18 18 6"/>', () => finish(null));
+      close.className = 'note-image-preview-close';
+      const out = button('out', '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4M7.5 10.5h6"/>', () => scale(zoom / 1.25));
+      const inside = button('in', '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4M7.5 10.5h6m-3-3v6"/>', () => scale(zoom * 1.25));
+      const reset = button('reset', '<path d="M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5"/>', () => { zoom = 1; x = y = 0; measure(); });
+      toolbar.append(out, inside, reset); stage.append(picture, status); dialog.append(stage, close, toolbar);
+      const labels = () => {
+        const en = language() === 'en';
+        dialog.querySelector('h2').textContent = en ? 'Image preview' : '图片查看';
+        for (const [node, zh, english] of [[close, '关闭', 'Close'], [out, '缩小', 'Zoom out'],
+          [inside, '放大', 'Zoom in'], [reset, '完整显示', 'Fit image']]) {
+          node.dataset.uiTooltip = en ? english : zh;
+          node.dataset.uiTooltipSource = node.dataset.uiTooltip;
+          node.setAttribute('aria-label', en ? english : zh);
+        }
+        status.textContent = failed ? (en ? 'Image could not be loaded' : '图片无法加载') : (en ? 'Loading image…' : '正在加载图片…');
+      };
+      const paint = () => {
+        frame = 0;
+        if (!current() || !ready) return;
+        const sx = baseWidth * fit * zoom, sy = baseHeight * fit * zoom;
+        const limitX = Math.max(0, (sx - width) / 2), limitY = Math.max(0, (sy - height) / 2);
+        x = Math.max(-limitX, Math.min(limitX, x)); y = Math.max(-limitY, Math.min(limitY, y));
+        picture.style.transform = `translate(${x}px, ${y}px) scale(${fit * zoom})`;
+        stage.classList.toggle('can-pan', limitX > 0 || limitY > 0);
+        out.disabled = zoom <= .25; inside.disabled = zoom >= 8;
+      };
+      const schedule = () => { if (!frame && current()) frame = requestAnimationFrame(paint); };
+      function measure() {
+        if (!current() || !ready) return;
+        const rect = stage.getBoundingClientRect(), oldFit = fit;
+        width = rect.width; height = rect.height;
+        if (!width || !height) return;
+        fit = Math.min(width / baseWidth, height / baseHeight);
+        x *= fit / oldFit; y *= fit / oldFit; schedule();
+      }
+      function scale(next, point) {
+        if (!current() || !ready) return;
+        const previous = zoom;
+        zoom = Math.max(.25, Math.min(8, next));
+        const px = point ? point.x - width / 2 : 0, py = point ? point.y - height / 2 : 0;
+        x = px - (px - x) * zoom / previous; y = py - (py - y) * zoom / previous;
+        schedule();
+      }
+      const loaded = () => {
+        if (!current() || !image.naturalWidth || !image.naturalHeight) return;
+        ready = true; status.hidden = true; picture.hidden = false;
+        baseWidth = payload.width || image.naturalWidth; baseHeight = payload.height || image.naturalHeight;
+        picture.style.width = baseWidth + 'px'; picture.style.height = baseHeight + 'px';
+        out.disabled = inside.disabled = reset.disabled = false;
+        measure();
+      };
+      const error = () => { if (current()) { failed = true; labels(); } };
+      const endDrag = () => {
+        if (!drag) return;
+        const id = drag.id; drag = null; stage.classList.remove('is-panning');
+        try { if (stage.hasPointerCapture(id)) stage.releasePointerCapture(id); } catch (_) {}
+      };
+      stage.addEventListener('wheel', event => {
+        event.preventDefault(); event.stopPropagation();
+        const rect = stage.getBoundingClientRect(), delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? height : 1);
+        scale(zoom * Math.exp(-Math.max(-300, Math.min(300, delta)) * .002), { x: event.clientX - rect.left, y: event.clientY - rect.top });
+      }, { passive: false });
+      stage.addEventListener('pointerdown', event => {
+        if (event.button !== 0 || !ready || !stage.classList.contains('can-pan') || drag) return;
+        event.preventDefault(); endDrag();
+        drag = { id: event.pointerId, startX: event.clientX, startY: event.clientY, x, y };
+        stage.classList.add('is-panning'); stage.setPointerCapture(event.pointerId);
+      });
+      stage.addEventListener('pointermove', event => {
+        if (!drag || event.pointerId !== drag.id) return;
+        x = drag.x + event.clientX - drag.startX; y = drag.y + event.clientY - drag.startY; schedule();
+      });
+      stage.addEventListener('pointerup', event => {
+        if (!drag || event.pointerId !== drag.id) return;
+        x = drag.x + event.clientX - drag.startX; y = drag.y + event.clientY - drag.startY;
+        schedule(); endDrag();
+      });
+      stage.addEventListener('pointercancel', endDrag); stage.addEventListener('lostpointercapture', endDrag);
+      window.addEventListener('blur', endDrag);
+      window.addEventListener('resize', measure);
+      document.addEventListener('relatum:languagechange', labels);
+      image.addEventListener('load', loaded); image.addEventListener('error', error);
+      labels(); out.disabled = inside.disabled = reset.disabled = true;
+      image.src = payload.url;
+      frame = requestAnimationFrame(() => { frame = 0; if (image.complete && image.naturalWidth) loaded(); });
+      dispose = () => {
+        disposed = true; cancelAnimationFrame(frame); frame = 0; endDrag();
+        window.removeEventListener('blur', endDrag); window.removeEventListener('resize', measure);
+        document.removeEventListener('relatum:languagechange', labels);
+        image.removeEventListener('load', loaded); image.removeEventListener('error', error); image.removeAttribute('src');
+        picture.replaceChildren();
+      };
+      return close;
+    }, { className: 'note-image-preview', backdropClose: true, onClose: () => dispose(),
+      isCurrent: () => state.viewMode === 'live' });
   }
   function canvasNameInput(name) {
     return promptNoteModal(tr('rename'), null, (dialog, finish) => {
@@ -5719,6 +5859,7 @@
     indexActivity(visible && state.active);
     if (!visible) {
       clearNoteTreeDrag();
+      closeNoteModal();
       // Native WebView2 minimization need not change document.hidden or focus.
       // Invalidate reads, but let the existing save/IME handoff finish normally.
       noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++;

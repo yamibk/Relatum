@@ -5363,10 +5363,11 @@
         return '/api/note-asset?note=' + encodeURIComponent(notePath || '') + '&src=' + encodeURIComponent(target || '') + '&syntax=' + encodeURIComponent(syntax || 'markdown');
       },
       onDocChanged() {}, onSaveRequest() {}, onOpenWiki() {}, onOpenExternal() {}, onOpenLocalFile() {}, onOpenTag() {}, onImageFiles() {},
-      onImageSelectionChange() {}, onImageTextDefaultsChange() {}, onContextMenu() {}, onCommandContextChanged() {},
+      onImageSelectionChange() {}, onImageTextDefaultsChange() {}, onImagePreview() {}, onContextMenu() {}, onCommandContextChanged() {},
       clipboardText(text) { return text; },
       imageTextDefaults: { size: 'md', color: 'white' },
     }, options);
+    let imagePreviewPointer = null;
     const inputSession = {
       phase: 'idle',
       dirty: false,
@@ -6260,6 +6261,7 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (update.docChanged) imagePreviewPointer = null;
           if (update.docChanged) cancelViewportRestore(update.view.scrollDOM);
           else if (update.geometryChanged) scheduleViewportRestore(update.view.scrollDOM);
           if (update.geometryChanged && !inputSession.pending()) host.querySelectorAll('.note-cards-block, .note-live-cards-preview').forEach(dom => {
@@ -6523,6 +6525,37 @@
     }
 
     const view = new EditorView({ state: makeState(options.value || '', EditorSelection.cursor(0)), parent: host });
+    // Selection can replace an image widget between the two clicks. Listen on
+    // the stable editor, retaining the actual second pointer target even when
+    // Chromium dispatches dblclick to their common ancestor instead of the img.
+    const previewBlocked = () => destroyed || sourceMode || inputPending() || imageTextController.active;
+    const rememberPreviewImage = event => {
+      imagePreviewPointer = null;
+      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || previewBlocked()
+          || event.target.closest('.note-live-image-resize-handle, .note-image-text-editor')) return;
+      const frame = event.target.closest('.note-live-image-frame');
+      const range = imageContextResolvers.get(frame)?.();
+      if (!range || absoluteImageTarget(range.parsed.target) || isRemoteTarget(range.parsed.target)) return;
+      imagePreviewPointer = { frame, doc: view.state.doc, path: currentPath };
+    };
+    const previewImage = event => {
+      const target = imagePreviewPointer;
+      imagePreviewPointer = null;
+      if (!target || event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey
+          || previewBlocked() || target.doc !== view.state.doc || target.path !== currentPath) return;
+      const image = target.frame.querySelector('img');
+      if (!image?.getAttribute('src')) return;
+      const rect = image.getBoundingClientRect();
+      const layer = target.frame.querySelector('.note-image-text-layer');
+      const style = getComputedStyle(target.frame);
+      event.preventDefault(); event.stopPropagation();
+      safeOptions.onImagePreview({ notePath: currentPath, url: image.currentSrc || image.src, alt: image.alt,
+        width: rect.width, height: rect.height, imageText: layer?.cloneNode(true),
+        textUnit: style.getPropertyValue('--note-image-text-unit'),
+        textScale: style.getPropertyValue('--note-image-text-scale') });
+    };
+    view.dom.addEventListener('pointerdown', rememberPreviewImage, true);
+    view.dom.addEventListener('dblclick', previewImage, true);
     view.__relatumInputSession = inputSession;
     inputSession.capture(view);
     host.classList.toggle('is-source-mode', sourceMode);
@@ -6592,6 +6625,7 @@
     }
 
     function setDocument(documentState) {
+      imagePreviewPointer = null;
       cancelViewportRestore(view.scrollDOM);
       window.RelatumNoteLinkCompletion?.closeAll();
       cancelMermaidOperation();
@@ -7108,6 +7142,9 @@
       destroy() {
         cancelViewportRestore(view.scrollDOM);
         destroyed = true;
+        imagePreviewPointer = null;
+        view.dom.removeEventListener('pointerdown', rememberPreviewImage, true);
+        view.dom.removeEventListener('dblclick', previewImage, true);
         extensionHost?.destroy();
         imageInsertions.clear();
         pendingSelectionMatchHighlight = null;
