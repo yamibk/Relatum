@@ -105,7 +105,7 @@ function loadLiveDecorationProbe() {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'assets', 'markdown-table.js'), 'utf8'), context);
   const instrumented = editorSource.replace(
     'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath };',
-    'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, toggleInlineFormat, inlineFormatEdit, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension, projectedTableExtension };',
+    'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath }; window.__relatumLiveTest = { deferNoteRenderInput, createBlockLayoutMemory, createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, toggleInlineFormat, inlineFormatEdit, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension, projectedTableExtension };',
   ).replace("    noteHeadingParser.parse(pieces.join('')).iterate", "    window.__headingProjectionParses = (window.__headingProjectionParses || 0) + 1;\n    noteHeadingParser.parse(pieces.join('')).iterate");
   assert.notStrictEqual(instrumented, editorSource, 'the test-only decoration probe must attach to the Live Preview export');
   vm.runInNewContext(instrumented, context);
@@ -119,6 +119,41 @@ function decorationRecords(set, length) {
 }
 
 const liveProbe = loadLiveDecorationProbe();
+
+{
+  let pending = true, visible = true, resumes = 0, waits = 0, complete;
+  const input = { pending: () => pending, settled: () => ({ then(resolve) { waits++; complete = resolve; } }) };
+  const owner = { foreground: () => visible, schedule() { resumes++; } };
+  const defer = liveProbe.__relatumLiveTest.deferNoteRenderInput;
+  assert(defer(owner, input)); assert(defer(owner, input));
+  assert.equal(waits, 1, 'one settlement waiter replaces repeated candidate-time preparation');
+  pending = false; complete(); assert.equal(resumes, 1);
+  pending = true; assert(defer(owner, input));
+  visible = false; pending = false; complete();
+  assert.equal(resumes, 1, 'obsolete or hidden owners are not awakened by late candidate completion');
+  assert.equal(defer(owner, input), false);
+}
+
+// Hints retain numeric measurements only, use layout/content identity, and
+// cannot grow with the size of a long note or leak to another path/layout.
+{
+  const memory = liveProbe.__relatumLiveTest.createBlockLayoutMemory();
+  const spec = { kind: 'math', source: '$$x$$' };
+  const key = memory.key(spec, 'a.md', 'wide');
+  memory.remember(key, 42);
+  assert.equal(memory.get(key).height, 42);
+  assert.equal(memory.get(memory.key(spec, 'b.md', 'wide')), undefined);
+  assert.equal(memory.get(memory.key(spec, 'a.md', 'narrow')), undefined);
+  assert.equal(memory.get(memory.key({ ...spec, source: '$$y$$' }, 'a.md', 'wide')), undefined);
+  for (let i = 0; i < 2048; i++) memory.remember('item-' + i, 10 + i);
+  assert.equal(memory.get(key), undefined, 'least recently used hints are evicted at the item limit');
+  memory.get('item-0'); memory.remember('new', 11);
+  assert(memory.get('item-0'), 'reads refresh recency');
+  assert.equal(memory.get('item-1'), undefined);
+  for (let i = 0; i < 3000; i++) memory.remember('x'.repeat(200) + i, i + 1);
+  assert(memory.bytes <= 256 * 1024, 'byte budget independently bounds long keys');
+  memory.clear(); assert.equal(memory.bytes, 0); assert.equal(memory.get('new'), undefined);
+}
 
 // A standalone TeX =/--- must not turn the preceding paragraph into a Setext
 // heading. Use the real parser, block StateField and visible decorations.
@@ -807,8 +842,9 @@ assert(editorSource.includes('viewportParseRequestEffect') && editorSource.inclu
   'restored and programmatic scrolling must explicitly refresh visible decorations');
 assert(editorSource.includes('ResizeObserver') && editorSource.includes("removeEventListener('scroll', this.onScroll)"),
   'layout-driven viewport refresh hooks must be installed and cleaned up');
-assert(editorSource.includes('range.from - BLOCK_MATH_LIMIT') && editorSource.includes('range.to + BLOCK_MATH_LIMIT'),
-  'nearby rich blocks must be discovered before their widgets change restored viewport geometry');
+assert(editorSource.includes('visible.from - BLOCK_MATH_LIMIT') && editorSource.includes('last.to + BLOCK_MATH_LIMIT')
+  && editorSource.includes('VIEWPORT_PREPARE_SLICE'),
+  'screen projection must retain math boundaries while nearby parsing runs in a separate bounded slice');
 assert(editorSource.includes('tree.resolveInner(clamp(position') && editorSource.includes('visibleFirst = Math.max(first.number, blockFirst)'),
   'a viewport beginning inside a fence must retain code block line decorations');
 assert(editorSource.includes('onDocChanged'), 'the editor must report metadata-only document changes');

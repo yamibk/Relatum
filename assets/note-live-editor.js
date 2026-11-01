@@ -12,6 +12,7 @@
   const RICH_BLOCK_LIMIT = 256 * 1024;
   const MAX_RICH_LINE = 64 * 1024;
   const VIEWPORT_PARSE_SLICE = 12;
+  const VIEWPORT_PREPARE_SLICE = 4;
   const imageContextResolvers = new WeakMap();
   // @lezer/markdown's public leaf-parser extension API. A long paragraph with
   // no inline syntax needs the same Paragraph node but no expensive inline pass.
@@ -89,6 +90,7 @@
   const quizLayoutEffect = StateEffect.define();
   const mermaidEditEffect = StateEffect.define();
   const mermaidLayoutEffect = StateEffect.define();
+  const blockLayoutEffect = StateEffect.define();
   let nextBlockSpecId = 1;
   let nextTableCellVersion = 1;
   const noteSyntaxContexts = new WeakMap();
@@ -1483,7 +1485,13 @@
     const replaceFrom = rescanned.reduce((value, spec) => Math.min(value, spec.from), expanded.from);
     const replaceTo = rescanned.reduce((value, spec) => Math.max(value, spec.to), expanded.to);
     const kept = previous.filter((spec) => spec.to < replaceFrom || spec.from > replaceTo);
-    return kept.concat(rescanned).sort((a, b) => a.from - b.from || a.to - b.to);
+    const next = kept.concat(rescanned).sort((a, b) => a.from - b.from || a.to - b.to);
+    if (next.length === previous.length && next.every((spec, index) => {
+      const old = previous[index];
+      return old.id === spec.id && old.from === spec.from && old.to === spec.to && old.source === spec.source
+        && old.fingerprint === spec.fingerprint && old.calloutContext === spec.calloutContext;
+    })) return previous;
+    return next;
   }
 
   let mathLoadPromise = null;
@@ -1573,6 +1581,7 @@
   }
 
   function measureMermaid(view, dom, coordinator, id) {
+    coordinator.layout?.schedule();
     const epoch = coordinator.epoch, doc = view.state.doc;
     const current = () => dom.isConnected && !dom.closest('[hidden]') && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
       && epoch === coordinator.epoch && view.state.doc === doc && !compositionActive(view)
@@ -2783,6 +2792,7 @@
       cancel() {
         if (viewportRestores.get(scroller) !== control) return;
         viewportRestores.delete(scroller); cancelAnimationFrame(frame); frame = 0;
+        options.onCancel?.();
         for (const name of ['wheel', 'pointerdown', 'touchstart', 'keydown', 'beforeinput']) scroller.removeEventListener(name, cancel, true);
         scroller.removeEventListener('scroll', scroll);
         window.removeEventListener('pagehide', cancel); window.removeEventListener('canvasdesktop:visibility', visibility);
@@ -3234,9 +3244,9 @@
         const finishPointerScroll = this.coordinator.mathProjectionTask?.(this.spec);
         runWhenInputSettled(view, () => typesetMath(wrap, () => this.isCurrent(view, wrap, token))).then(rendered => {
           if (rendered) return runWhenInputSettled(view, () => {
-            if (this.isCurrent(view, wrap, token)) view.requestMeasure();
+            if (this.isCurrent(view, wrap, token)) { wrap.dataset.noteMathReady = '1'; view.requestMeasure(); this.coordinator.layout?.schedule(); }
           });
-        }).catch(() => wrap.classList.add('is-failed')).finally(() => finishPointerScroll?.());
+        }).catch(() => { if (this.isCurrent(view, wrap, token)) { wrap.classList.add('is-failed'); this.coordinator.layout?.schedule(); } }).finally(() => finishPointerScroll?.());
       } else if (this.spec.kind === 'rule') {
         wrap.tabIndex = 0;
         wrap.setAttribute('aria-label', '点击编辑 ' + this.spec.kind + ' 源码');
@@ -3278,7 +3288,7 @@
           wrap.dataset.noteMath = '1';
           runWhenInputSettled(view, () => typesetMath(wrap, () => this.isCurrent(view, wrap, token))).then(rendered => {
             if (rendered) return runWhenInputSettled(view, () => {
-              if (this.isCurrent(view, wrap, token)) view.requestMeasure();
+              if (this.isCurrent(view, wrap, token)) { view.requestMeasure(); this.coordinator.layout?.schedule(); }
             });
           }).catch(() => wrap.classList.add('is-failed'));
         }
@@ -3634,13 +3644,199 @@
     return usesBlockReplacement(spec) && (spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'table' || !activeIds.has(spec.id));
   }
 
+  const remembersBlockLayout = spec => /^(?:image|math|table|mermaid)$/.test(spec.kind);
+  function layoutFingerprint(source) {
+    let a = 2166136261, b = 2246822519;
+    for (let index = 0; index < source.length; index++) {
+      const code = source.charCodeAt(index); a = Math.imul(a ^ code, 16777619); b = Math.imul(b ^ code, 3266489917);
+    }
+    return source.length.toString(36) + '.' + (a >>> 0).toString(36) + '.' + (b >>> 0).toString(36);
+  }
+
+  function createBlockLayoutMemory() {
+    const entries = new Map();
+    return { signature: '', fontRevision: 0, bytes: 0, restoring: false, mounts: new Map(), schedule() {},
+      key(spec, path, signature = this.signature) {
+        return layoutFingerprint(path) + ':' + layoutFingerprint(signature) + ':' + spec.kind + ':'
+          + layoutFingerprint(spec.source) + ':' + layoutFingerprint(spec.calloutContext || '');
+      },
+      get(key) {
+        const value = entries.get(key);
+        if (value) { entries.delete(key); entries.set(key, value); }
+        return value;
+      },
+      remember(key, height, width = 0, imageHeight = 0) {
+        const previous = entries.get(key);
+        if (previous && Math.abs(previous.height - height) < .5 && previous.width === width && previous.imageHeight === imageHeight) return false;
+        if (previous) { entries.delete(key); this.bytes -= previous.bytes; }
+        const bytes = key.length * 2 + 48;
+        entries.set(key, { height, width, imageHeight, bytes }); this.bytes += bytes;
+        while (entries.size > 2048 || this.bytes > 256 * 1024) {
+          const first = entries.keys().next().value; this.bytes -= entries.get(first).bytes; entries.delete(first);
+        }
+        return true;
+      },
+      clear() { entries.clear(); this.bytes = 0; this.mounts.clear(); this.signature = ''; },
+    };
+  }
+
+  // Keep the existing widget/controller alive when only its height estimate
+  // changes. Only numeric hints survive virtual DOM eviction.
+  function releaseBlockReservation(dom, entry) {
+    if (!entry.reserved) return;
+    dom.style.height = entry.heightStyle; dom.style.overflow = entry.overflowStyle;
+    entry.reserved = false;
+  }
+
+  class MeasuredBlockWidget extends WidgetType {
+    constructor(inner, coordinator) {
+      super(); this.inner = inner; this.memory = coordinator.layout;
+      this.signature = this.memory.signature;
+      this.key = this.memory.key(inner.spec, inner.notePath);
+      // A saved source anchor owns its initial height-map calibration. New
+      // off-screen estimates must not move its gap before that pass paints.
+      const hint = this.memory.restoring ? null : this.memory.get(this.key);
+      this.layoutHeight = hint?.height ?? inner.estimatedHeight;
+      this.hinted = !!hint;
+    }
+    get estimatedHeight() { return this.layoutHeight; }
+    eq(other) { return this.key === other.key && this.layoutHeight === other.layoutHeight && this.inner.compare(other.inner); }
+    bind(dom) {
+      const entry = dom.__relatumBlockLayout ||= { reserved: false };
+      entry.widget = this; this.memory.mounts.set(dom, entry);
+      // An immutable decoration may have been created during position restore.
+      // Recheck numeric hints when it mounts after the user takes over, without
+      // mutating its captured estimate or rebuilding the editor state.
+      const height = !this.memory.restoring && this.signature === this.memory.signature
+        ? this.memory.get(this.key)?.height ?? (this.hinted ? this.layoutHeight : -1) : -1;
+      if (height > 0 && this.inner.spec.kind !== 'table' && !this.ready(dom)) {
+        if (!entry.reserved) { entry.heightStyle = dom.style.height; entry.overflowStyle = dom.style.overflow; }
+        // A minimum alone still lets raw TeX exceed its final rendered height.
+        // Use the known box until the real resource finishes, then release it.
+        dom.style.height = height + 'px'; dom.style.overflow = 'hidden'; entry.reserved = true;
+      }
+      this.memory.schedule(); return dom;
+    }
+    ready(dom) {
+      if (this.inner.spec.kind === 'image') {
+        const image = dom.querySelector('.note-live-image-frame img');
+        return !!image && (image.complete && image.naturalWidth > 0 || !!image.closest('.is-failed'));
+      }
+      if (this.inner.spec.kind === 'mermaid') return !!dom.querySelector('.note-mermaid-stage > svg, .note-mermaid.is-error');
+      return this.inner.spec.kind !== 'math' || dom.dataset.noteMathReady === '1' || dom.classList.contains('is-failed');
+    }
+    toDOM(view) { return this.bind(this.inner.toDOM(view)); }
+    updateDOM(dom, view) {
+      const old = dom.__relatumBlockLayout?.widget;
+      if (!old) return false;
+      if (this.inner.compare(old.inner)) this.inner = old.inner;
+      else if (!this.inner.updateDOM(dom, view, old.inner)) return false;
+      if (old.key !== this.key && dom.__relatumBlockLayout.reserved) {
+        releaseBlockReservation(dom, dom.__relatumBlockLayout);
+      }
+      this.bind(dom); return true;
+    }
+    destroy(dom) {
+      this.memory.mounts.delete(dom); delete dom.__relatumBlockLayout;
+      this.inner.destroy(dom);
+    }
+    ignoreEvent(event) { return this.inner.ignoreEvent(event); }
+    coordsAt(dom, pos, side) { return this.inner.coordsAt(dom, pos, side); }
+  }
+
+  function createBlockLayoutPlugin(coordinator, isActive, input) {
+    const memory = coordinator.layout;
+    return ViewPlugin.fromClass(class {
+      constructor(view) {
+        this.view = view; this.pageActive = true; this.pending = false; this.disposed = false;
+        this.schedule = () => {
+          if (this.disposed || this.pending || !this.foreground() || compositionActive(view)) return;
+          if (deferNoteRenderInput(this, input)) return;
+          this.pending = true;
+          view.requestMeasure({ key: this, read: () => this.read(), write: result => this.write(result) });
+        };
+        memory.schedule = this.schedule;
+        this.onFonts = () => { memory.fontRevision++; this.schedule(); };
+        this.unwatch = watchNoteRenderLifecycle(event => {
+          if (event.type === 'pagehide') this.pageActive = false;
+          if (event.type === 'pageshow') this.pageActive = true;
+          if (this.foreground()) this.schedule();
+        });
+        view.contentDOM.addEventListener('load', this.schedule, true);
+        view.contentDOM.addEventListener('error', this.schedule, true);
+        document.fonts?.addEventListener('loadingdone', this.onFonts);
+        this.schedule();
+      }
+      foreground() { return !this.disposed && this.pageActive && isActive() && noteRenderForeground(this.view); }
+      update(update) {
+        if (update.geometryChanged || update.docChanged || update.transactions.some(tr => tr.effects.some(effect =>
+          effect.is(inputReconcileEffect) || effect.is(viewportParseRequestEffect)))) this.schedule();
+      }
+      read() {
+        const view = this.view;
+        if (this.disposed || !this.foreground() || compositionActive(view) || deferNoteRenderInput(this, input)) return null;
+        const style = getComputedStyle(view.contentDOM);
+        const signature = JSON.stringify([view.contentDOM.clientWidth, style.paddingLeft, style.paddingRight,
+          style.fontFamily, style.fontSize, style.fontWeight, style.lineHeight, style.letterSpacing,
+          style.getPropertyValue('--note-font-mono'), document.documentElement.dataset.noteTheme,
+          document.body.dataset.startTheme, window.innerHeight, memory.fontRevision]);
+        const entries = [];
+        memory.mounts.forEach((entry, dom) => {
+          const widget = entry.widget, inner = widget.inner, spec = coordinator.spec(view, inner.spec.id);
+          if (!dom.isConnected || inner.epoch !== coordinator.epoch || spec?.source !== inner.spec.source) { memory.mounts.delete(dom); return; }
+          if (!widget.ready(dom)) return;
+          const image = dom.querySelector('.note-live-image-frame img');
+          entries.push({ entry, dom, key: memory.key(inner.spec, inner.notePath, signature),
+            height: dom.getBoundingClientRect().height / view.scaleY, width: image?.naturalWidth || 0, imageHeight: image?.naturalHeight || 0 });
+        });
+        return { signature, entries, doc: view.state.doc, epoch: coordinator.epoch };
+      }
+      write(result) {
+        this.pending = false;
+        const view = this.view;
+        if (!result || this.disposed || !this.foreground() || compositionActive(view)
+            || deferNoteRenderInput(this, input)
+            || result.doc !== view.state.doc || result.epoch !== coordinator.epoch) return;
+        const layoutChanged = memory.signature !== result.signature;
+        memory.signature = result.signature;
+        const changed = [];
+        let released = false;
+        for (const item of result.entries) {
+          if (item.entry.reserved) {
+            releaseBlockReservation(item.dom, item.entry); released = true;
+          } else if (item.height > 0 && memory.remember(item.key, item.height, item.width, item.imageHeight)) changed.push(item.entry.widget.inner.spec.id);
+        }
+        if (released) this.schedule();
+        if (layoutChanged || changed.length) Promise.resolve().then(() => {
+          if (this.disposed || !this.foreground() || compositionActive(view)
+              || deferNoteRenderInput(this, input)
+              || result.doc !== view.state.doc || result.epoch !== coordinator.epoch) return;
+          view.dispatch({ effects: blockLayoutEffect.of(layoutChanged ? null : changed), annotations: Transaction.addToHistory.of(false) });
+          scheduleViewportRestore(view.scrollDOM);
+        });
+      }
+      destroy() {
+        this.disposed = true; this.unwatch();
+        this.view.contentDOM.removeEventListener('load', this.schedule, true);
+        this.view.contentDOM.removeEventListener('error', this.schedule, true);
+        document.fonts?.removeEventListener('loadingdone', this.onFonts);
+        if (memory.schedule === this.schedule) memory.schedule = () => {};
+        memory.mounts.clear();
+      }
+    });
+  }
+
   function blockWidget(spec, path, options, coordinator, selected) {
-    if (editableFence(spec)) return new MermaidBlockWidget(spec, path, options, coordinator, selected);
+    if (editableFence(spec)) {
+      const widget = new MermaidBlockWidget(spec, path, options, coordinator, selected);
+      return coordinator.layout && remembersBlockLayout(spec) ? new MeasuredBlockWidget(widget, coordinator) : widget;
+    }
     if (spec.kind === 'quiz') return new QuizBlockWidget(spec, path, options, coordinator, selected);
     if (spec.kind === 'canvas') return new CanvasBlockWidget(spec, path, options, coordinator, selected);
-    return spec.kind === 'table' && options.tableController && spec.tableModel
+    const widget = spec.kind === 'table' && options.tableController && spec.tableModel
       ? options.tableController.widget(spec, path, coordinator)
       : new RichBlockWidget(spec, path, options, coordinator, selected);
+    return coordinator.layout && remembersBlockLayout(spec) ? new MeasuredBlockWidget(widget, coordinator) : widget;
   }
 
   function compactBlockProjection(spec, state, options) {
@@ -3798,9 +3994,10 @@
         let inputReconcileRanges;
         transaction.effects.forEach((effect) => {
           if (!effect.is(viewportScanEffect) && !effect.is(inputReconcileEffect)) return;
-          specs = refreshVisibleBlockSpecs(specs, transaction.state, effect.value);
+          const next = refreshVisibleBlockSpecs(specs, transaction.state, effect.value);
+          viewportRefreshed ||= next !== specs || effect.is(inputReconcileEffect);
+          specs = next;
           if (effect.is(inputReconcileEffect)) inputReconcileRanges = effect.value;
-          viewportRefreshed = true;
         });
         const notePathChanged = transaction.effects.some((effect) => effect.is(notePathEffect));
         const imageTextModeChanged = transaction.effects.some((effect) => effect.is(imageTextProjectionEffect));
@@ -3809,7 +4006,8 @@
         const quizLayouts = transaction.effects.filter(effect => effect.is(quizLayoutEffect)).map(effect => effect.value);
         const mermaidEdits = transaction.effects.filter(effect => effect.is(mermaidEditEffect)).map(effect => effect.value);
         const mermaidLayouts = transaction.effects.filter(effect => effect.is(mermaidLayoutEffect)).map(effect => effect.value);
-        if (!transaction.docChanged && !selectionChanged && focused === value.focused && !notePathChanged && !imageTextModeChanged && !viewportRefreshed && !foldChanged && !quizLayouts.length && !mermaidEdits.length && !mermaidLayouts.length) return value;
+        const blockLayouts = transaction.effects.filter(effect => effect.is(blockLayoutEffect)).map(effect => effect.value);
+        if (!transaction.docChanged && !selectionChanged && focused === value.focused && !notePathChanged && !imageTextModeChanged && !viewportRefreshed && !foldChanged && !quizLayouts.length && !mermaidEdits.length && !mermaidLayouts.length && !blockLayouts.length) return value;
 
         const byId = specs === value.specs ? value.byId : new Map(specs.map((spec) => [spec.id, spec]));
         const activeIds = activeBlockIds(specs, transaction.state, focused, false, value.activeIds);
@@ -3817,6 +4015,10 @@
         const selectedImageIds = selectedBlockImageIds(specs, transaction.state);
         const selectedMermaidIds = selectedBlockMermaidIds(specs, transaction.state);
         const refresh = new Set();
+        blockLayouts.forEach(ids => {
+          if (ids) ids.forEach(id => refresh.add(id));
+          else specs.forEach(spec => { if (remembersBlockLayout(spec)) refresh.add(spec.id); });
+        });
         quizLayouts.forEach(id => { if (byId.get(id)?.kind === 'quiz') refresh.add(id); });
         mermaidLayouts.forEach(id => { if (editableFence(byId.get(id))) refresh.add(id); });
         if (foldChanged) specs.forEach(spec => refresh.add(spec.id));
@@ -4676,7 +4878,32 @@
     return plugin;
   }
 
-  function createViewportParsePlugin(blockField) {
+  function noteRenderForeground(view) {
+    return view.dom.isConnected && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
+      && !view.dom.closest('[hidden], [inert]')
+      && (!view.dom.closest('.note-workspace') || document.body.dataset.startWorkspace === 'notes');
+  }
+
+  function watchNoteRenderLifecycle(listener) {
+    const events = [[document, 'visibilitychange'], [document, 'relatum:start-workspacechange'],
+      [window, 'canvasdesktop:visibility'], [window, 'pagehide'], [window, 'pageshow']];
+    events.forEach(([host, name]) => host.addEventListener(name, listener));
+    return () => events.forEach(([host, name]) => host.removeEventListener(name, listener));
+  }
+
+  function deferNoteRenderInput(owner, input) {
+    if (!input?.pending()) return false;
+    if (!owner.waitingForInput) {
+      owner.waitingForInput = true;
+      input.settled().then(() => {
+        owner.waitingForInput = false;
+        if (owner.foreground()) owner.schedule();
+      }, () => { owner.waitingForInput = false; });
+    }
+    return true;
+  }
+
+  function createViewportParsePlugin(blockField, isActive = () => true, input) {
     return ViewPlugin.fromClass(class {
       constructor(view) {
         this.view = view;
@@ -4684,7 +4911,17 @@
         this.stopped = false;
         this.rerun = false;
         this.settlePasses = 0;
+        this.prepareHandle = 0;
+        this.pageActive = true;
+        this.lastScan = '';
+        this.scannedDoc = null;
+        this.scannedTree = null;
         this.onScroll = () => this.schedule();
+        this.unwatch = watchNoteRenderLifecycle(event => {
+          if (event.type === 'pagehide') this.pageActive = false;
+          if (event.type === 'pageshow') this.pageActive = true;
+          if (this.foreground()) this.schedule(); else this.pause();
+        });
         view.scrollDOM.addEventListener('scroll', this.onScroll, { passive: true });
         this.resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(() => this.schedule()) : null;
         if (this.resizeObserver) {
@@ -4694,12 +4931,14 @@
         this.schedule();
       }
       update(update) {
-        const explicitlyRequested = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(viewportParseRequestEffect)));
+        const explicitlyRequested = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(viewportParseRequestEffect) || effect.is(inputReconcileEffect)));
         const localEdit = blockField && validatedLocalCellViewUpdate(update, blockField);
         if (update.docChanged && !localEdit || (localEdit ? update.viewportMoved : update.viewportChanged) || explicitlyRequested) this.schedule();
       }
       schedule() {
-        if (this.stopped) return;
+        if (this.stopped || !this.foreground()) return;
+        this.cancelPrepare();
+        if (deferNoteRenderInput(this, input)) return;
         // Replacing a source table/formula with a widget can move the blocks below
         // it into the viewport after this pass has already chosen visibleRanges.
         // Always take one bounded follow-up pass against the settled geometry.
@@ -4707,7 +4946,7 @@
         this.queueFrame();
       }
       queueFrame() {
-        if (this.stopped) return;
+        if (this.stopped || !this.foreground()) return;
         if (this.frame) {
           this.rerun = true;
           return;
@@ -4721,29 +4960,75 @@
       }
       parseViewport() {
         const view = this.view;
-        if (this.stopped || !view.dom.isConnected) return;
+        if (this.stopped || !this.foreground()) return;
         // compositionend explicitly schedules a fresh pass. Do not force the
         // parser or replace DOM while Windows is still editing a candidate.
-        if (compositionActive(view)) return;
-        const target = Math.min(view.state.doc.length, view.viewport.to + BLOCK_MATH_LIMIT);
+        if (compositionActive(view) || deferNoteRenderInput(this, input)) return;
+        // Address the screen first, rather than holding it behind speculative
+        // parsing of the virtual viewport and another 32 KiB of source.
+        const box = view.scrollDOM.getBoundingClientRect(), top = box.top - view.documentTop;
+        const first = view.lineBlockAtHeight(Math.max(0, top));
+        const last = view.lineBlockAtHeight(Math.max(0, top + view.scrollDOM.clientHeight));
+        const restoring = viewportRestores.get(view.scrollDOM)?.current();
+        // Position restoration calibrates against surrounding projections in
+        // the same pass. Keep that stronger boundary before exposing a saved
+        // section; ordinary scrolling can prioritize the screen alone.
+        const visible = restoring ? view.viewport : { from: first.from, to: last.to };
+        const target = Math.min(view.state.doc.length, visible.to + (restoring ? BLOCK_MATH_LIMIT : 0));
         const complete = typeof forceParsing !== 'function' || forceParsing(view, target, VIEWPORT_PARSE_SLICE);
         if (!complete) {
           this.rerun = true;
           return;
         }
-        const ranges = (view.visibleRanges && view.visibleRanges.length ? view.visibleRanges : [view.viewport])
-          .map((range) => ({
-            from: Math.max(0, range.from - BLOCK_MATH_LIMIT),
-            to: Math.min(view.state.doc.length, range.to + BLOCK_MATH_LIMIT),
-          }));
-        view.dispatch({ effects: viewportScanEffect.of(ranges) });
+        this.scan([{ from: Math.max(0, visible.from - BLOCK_MATH_LIMIT), to: target }]);
         if (this.settlePasses > 0) {
           this.settlePasses -= 1;
           this.rerun = true;
         }
+        if (!this.rerun) this.prepare();
+      }
+      foreground() { return !this.stopped && this.pageActive && isActive() && noteRenderForeground(this.view); }
+      scan(ranges) {
+        const view = this.view, tree = syntaxTree(view.state), key = ranges.map(range => range.from + ':' + range.to).join(',');
+        if (this.scannedDoc === view.state.doc && this.scannedTree === tree && this.lastScan === key) return;
+        this.scannedDoc = view.state.doc; this.scannedTree = tree; this.lastScan = key;
+        view.dispatch({ effects: viewportScanEffect.of(ranges) });
+        scheduleViewportRestore(view.scrollDOM);
+      }
+      prepare() {
+        if (this.prepareHandle || !this.foreground() || compositionActive(this.view) || deferNoteRenderInput(this, input)) return;
+        const doc = this.view.state.doc;
+        const run = () => {
+          this.prepareHandle = 0;
+          const view = this.view;
+          if (doc !== view.state.doc || !this.foreground() || compositionActive(view) || deferNoteRenderInput(this, input)) return;
+          const box = view.scrollDOM.getBoundingClientRect(), top = box.top - view.documentTop, height = view.scrollDOM.clientHeight;
+          const first = view.lineBlockAtHeight(Math.max(0, top - height));
+          const last = view.lineBlockAtHeight(Math.max(0, top + height * 2));
+          // Keep the existing bounded math look-behind and closing-block guards.
+          // No extra DOM is mounted outside CodeMirror's own virtual viewport.
+          const target = Math.min(doc.length, last.to + BLOCK_MATH_LIMIT);
+          if (typeof forceParsing === 'function' && !forceParsing(view, target, VIEWPORT_PREPARE_SLICE)) { this.prepare(); return; }
+          this.scan([{ from: Math.max(0, first.from - BLOCK_MATH_LIMIT), to: last.to }]);
+        };
+        this.prepareIdle = typeof window.requestIdleCallback === 'function';
+        this.prepareHandle = this.prepareIdle ? window.requestIdleCallback(run) : setTimeout(run, 0);
+      }
+      cancelPrepare() {
+        if (this.prepareHandle) {
+          if (this.prepareIdle) window.cancelIdleCallback(this.prepareHandle); else clearTimeout(this.prepareHandle);
+        }
+        this.prepareHandle = 0;
+      }
+      pause() {
+        this.cancelPrepare();
+        if (this.frame) cancelAnimationFrame(this.frame);
+        this.frame = 0; this.rerun = false; this.settlePasses = 0;
       }
       destroy() {
         this.stopped = true;
+        this.unwatch();
+        this.pause();
         this.view.scrollDOM.removeEventListener('scroll', this.onScroll);
         if (this.resizeObserver) this.resizeObserver.disconnect();
         if (this.frame) cancelAnimationFrame(this.frame);
@@ -5415,7 +5700,7 @@
         quizRememberedDocument = view.state.doc; quizRememberedPath = currentPath;
       }
     }
-    const coordinator = { epoch: 1, field: null, folds: new Map(), foldPositions: new Map(), records: [], spec() { return null; } };
+    const coordinator = { epoch: 1, field: null, folds: new Map(), foldPositions: new Map(), records: [], layout: createBlockLayoutMemory(), spec() { return null; } };
     // A pointer leaving display math owns one short-lived scroll target. Use
     // CM's scroll effect in the selection transaction, before its normal top
     // anchor compensation, and again only when that projection finishes math.
@@ -6083,7 +6368,9 @@
       }
       destroy() { this.mathColors.clear(); }
     }, { decorations: value => value.decorations });
-    const viewportParsePlugin = createViewportParsePlugin(blockField);
+    const renderInput = { pending: inputPending, settled: whenInputSettled };
+    const viewportParsePlugin = createViewportParsePlugin(blockField, () => highlightActive, renderInput);
+    const blockLayoutPlugin = createBlockLayoutPlugin(coordinator, () => highlightActive, renderInput);
     const livePreviewCompartment = new Compartment();
     const markdownCompartment = new Compartment();
     const editorLabelCompartment = new Compartment();
@@ -6204,7 +6491,7 @@
     });
 
     function livePreviewExtensions() {
-      return sourceMode ? [sourceFoldPlugin] : [blockField, viewportParsePlugin, inlinePlugin, mathPreviewPlugin, mermaidPreviewPlugin];
+      return sourceMode ? [sourceFoldPlugin] : [blockField, viewportParsePlugin, blockLayoutPlugin, inlinePlugin, mathPreviewPlugin, mermaidPreviewPlugin];
     }
 
     function editorLabelExtension() {
@@ -6775,6 +7062,7 @@
       const anchor = normalizeViewportAnchor(value);
       cancelViewportRestore(view.scrollDOM);
       if (!anchor || destroyed) return null;
+      coordinator.layout.restoring = true;
       scrollRestoreSeq++;
       const doc = view.state.doc, path = currentPath, mode = sourceMode;
       const position = clamp(Math.round(anchor.from + (anchor.to - anchor.from) * anchor.ratio), 0, doc.length);
@@ -6783,6 +7071,7 @@
       view.dispatch({ effects: EditorView.scrollIntoView(anchor.edge === 'end' ? doc.length : anchor.edge === 'start' ? 0 : position,
         { y: 'start', yMargin: Math.max(0, anchor.offset) }) });
       return startViewportRestore(view.scrollDOM, anchor, {
+        onCancel: () => { coordinator.layout.restoring = false; },
         isCurrent: () => !destroyed && doc === view.state.doc && path === currentPath && mode === sourceMode
           && !inputPending() && (!options.isCurrent || options.isCurrent()),
         measure: request => view.requestMeasure(request),
@@ -6841,6 +7130,7 @@
         pendingSelectionMatchHighlight = null;
       }
       const value = documentState && typeof documentState.value === 'string' ? documentState.value : '';
+      coordinator.layout.restoring = !!normalizeViewportAnchor(documentState?.viewport);
       canvasHistoryPresent = /\.canvas/i.test(value);
       currentPath = String(documentState && documentState.notePath || '');
       const end = value.length;
@@ -7303,7 +7593,12 @@
     return {
       setDocument, setNotePath, setSourceMode, setShortcutBindings, setSelectionMatchHighlight, setImageTextMode, imageTextCommand, snapshot, replaceSelection, revealPosition,
       captureViewport, restoreViewport, cancelViewportRestore() { cancelViewportRestore(view.scrollDOM); scrollRestoreSeq++; },
-      setExtensionsActive(active) { highlightActive = active !== false; if (!highlightActive) { cancelMathPointerScroll(); highlightInputs.forEach(input => input.dismiss()); } extensionHost?.setActive(active); },
+      setExtensionsActive(active) {
+        highlightActive = active !== false;
+        if (!highlightActive) { cancelMathPointerScroll(); highlightInputs.forEach(input => input.dismiss()); view.plugin(viewportParsePlugin)?.pause(); }
+        else { view.plugin(viewportParsePlugin)?.schedule(); coordinator.layout.schedule(); }
+        extensionHost?.setActive(active);
+      },
       calloutSession: {
         get(position, fallback) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); return spec ? calloutCollapsed(spec, coordinator) : coordinator.foldPositions.has(position) ? coordinator.foldPositions.get(position) : fallback; },
         set(position, collapsed) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); coordinator.foldPositions.set(spec ? spec.from : position, collapsed); if (spec) view.dispatch({ effects: calloutFoldEffect.of({ id: spec.id, collapsed }) }); },
@@ -7337,6 +7632,7 @@
         host.classList.remove('is-composing', 'has-image-selection', 'has-mermaid-selection', 'is-image-text-mode');
         coordinator.epoch += 1;
         view.destroy();
+        coordinator.layout.clear();
         host.replaceChildren();
       },
       get view() { return view; },
