@@ -28,14 +28,23 @@ body.markdown-window > .markdown-root { position: relative; inset: auto; display
 .markdown-window button:focus-visible { outline: 2px solid var(--note-theme-link, #777); outline-offset: 2px; }
 .markdown-filename { flex: 1; min-width: 0; text-align: center; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; color: var(--text-secondary); }
 .markdown-window .markdown-layout { position: relative; inset: auto; display: flex; flex: 1; width: 100%; min-width: 0; min-height: 0; margin: 0; padding: 0; overflow: hidden; background: var(--markdown-bg); --note-font-scale: 1; }
-.markdown-window .note-document-pane { flex: 1; position: relative; inset: auto; display: block; width: auto; min-width: 0; height: 100%; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; --note-content-left: max(28px, calc((100% - 800px) / 2)); --note-content-right: max(28px, calc((100% - 800px) / 2)); }
+.markdown-window .note-document-pane {
+  flex: 1; position: relative; inset: auto; display: block; width: auto; min-width: 0; height: 100%;
+  margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent;
+  --note-content-left: clamp(16px, 2vw, 28px);
+  /* Reserve the overlay space progressively on wider windows, independent of its open state. */
+  --note-content-right: calc(var(--note-content-left) + clamp(0px, calc(100vw - 760px), 320px));
+}
 .markdown-window .note-document-pane::before { display: none; }
 html[data-markdown-dark] body.markdown-window .markdown-layout .note-document-pane,
 html[data-markdown-dark] body.markdown-window .markdown-root :is(.note-live-editor-host, .cm-editor) { background: var(--markdown-bg); color: var(--markdown-text); }
 .markdown-window .note-live-editor-host { height: 100%; min-height: 0; background: transparent; }
 .markdown-window .note-live-editor-host .cm-editor { height: 100%; background: transparent; }
 .markdown-window .note-live-editor-host .cm-scroller { overflow: auto; }
-.markdown-window .note-live-editor-host .cm-content { padding-top: 38px; padding-bottom: 36vh; padding-left: var(--note-content-left); padding-right: var(--note-content-right); }
+.markdown-window .note-live-editor-host .cm-content {
+  box-sizing: border-box; width: 100%; max-width: none; margin: 0;
+  padding: 38px var(--note-content-right) 36vh var(--note-content-left);
+}
 .markdown-window .markdown-outline {
   position: absolute; z-index: 5; inset: 0 0 0 auto; box-sizing: border-box;
   width: min(320px, calc(100% - 24px)); min-width: 0; overflow: hidden; display: flex; flex-direction: column;
