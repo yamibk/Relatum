@@ -4388,17 +4388,21 @@
     const replace = (from, to) => { if (to > from) add(from, to, Decoration.replace({ inclusive: false })); };
     const mark = (from, to, name) => { if (to > from) add(from, to, Decoration.mark({ class: name })); };
     const lineClass = (position, name, style) => add(position, position, Decoration.line({ class: name, ...(style ? { attributes: { style } } : {}) }));
-    const inactiveBlockAt = (from, to) => blockSpecs.some((spec) => blockIsProjected(spec, blockValue.activeIds) && spec.from < to && spec.to > from);
-    const inactiveBlockContains = (from, to) => blockSpecs.some((spec) => blockIsProjected(spec, blockValue.activeIds) && spec.from <= from && spec.to >= to);
     const sourceMark = (from, to, unitFrom, unitTo, role) => {
       if (constructActive(view, unitFrom, unitTo)) mark(from, to, 'note-live-source-mark' + (role ? ' is-' + role : ''));
       else replace(from, to);
     };
 
     const decoratedSyntax = new Set();
+    const calloutModel = calloutLayout(view, blockSpecs, options.coordinator);
     view.visibleRanges.forEach((visible) => {
       const first = view.state.doc.lineAt(visible.from);
       const last = view.state.doc.lineAt(visible.to);
+      // Keep enclosing parents and touching boundaries, in source order. The
+      // repeated node/line queries below need only this segment's candidates.
+      const visibleBlocks = blockSpecs.filter(spec => spec.to >= first.from && spec.from <= last.to);
+      const inactiveBlockAt = (from, to) => visibleBlocks.some(spec => blockIsProjected(spec, blockValue.activeIds) && spec.from < to && spec.to > from);
+      const inactiveBlockContains = (from, to) => visibleBlocks.some(spec => blockIsProjected(spec, blockValue.activeIds) && spec.from <= from && spec.to >= to);
       const coloredMath = new Set();
       const protectedRanges = lineProtectedRanges(view.state, first.from, last.to).filter(range =>
         range.kind !== 'HTMLTag' || !/^<\/?(?:u|ins|del|s|sup|sub|kbd|mark|strong|em|b|i|br)\s*\/?>$/i.test(view.state.doc.sliceString(range.from, range.to)));
@@ -4446,8 +4450,8 @@
       const tree = syntaxTree(view.state);
       const quotedCodeLines = new Set();
       const inactiveCalloutHeaders = [];
-      const calloutModel = calloutLayout(view, blockSpecs, options.coordinator), layeredLines = new Map();
-      blockSpecs.forEach((spec) => {
+      const layeredLines = new Map();
+      visibleBlocks.forEach((spec) => {
         if (spec.kind !== 'callout' || spec.to < first.from || spec.from > last.to) return;
         const entry = calloutModel.bySpec.get(spec);
         const presentation = calloutModel.layout.get(entry);
@@ -4501,7 +4505,7 @@
         if (/^(?:FencedCode|CodeBlock|IndentedCode)$/.test(range.kind)) {
           // A projected diagram or quiz owns the entire fence. Decorating its
           // hidden first line leaves an empty code-colored stripe above it.
-          if (blockSpecs.some(spec => (editableFence(spec) || spec.kind === 'quiz') && blockIsProjected(spec, blockValue.activeIds)
+          if (visibleBlocks.some(spec => (editableFence(spec) || spec.kind === 'quiz') && blockIsProjected(spec, blockValue.activeIds)
               && spec.from <= range.from && spec.to >= range.to)) return;
           const blockFirst = view.state.doc.lineAt(range.from).number;
           const blockLast = view.state.doc.lineAt(Math.max(range.from, range.to - 1)).number;
@@ -4512,7 +4516,7 @@
             if (number === blockFirst) className += ' note-live-code-first';
             if (number === blockLast) className += ' note-live-code-last';
             const codeLine = view.state.doc.line(number), quote = window.MarkdownMini.quoteLine(codeLine.text);
-            const callout = quote.depth && blockSpecs.some(spec => spec.kind === 'callout' && spec.from <= codeLine.from && spec.to >= codeLine.to);
+            const callout = quote.depth && visibleBlocks.some(spec => spec.kind === 'callout' && spec.from <= codeLine.from && spec.to >= codeLine.to);
             if (quote.depth) {
               if (!callout) className += ' note-live-quote-code';
               quotedCodeLines.add(codeLine.from);
@@ -4634,7 +4638,7 @@
             if (unit) sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, 'code');
           } else if (nodeRef.name === 'LinkMark') {
             const unit = ancestorOf(node, /^(?:Link|Image|Autolink)$/);
-            const calloutSpec = blockSpecs.find((item) => item.kind === 'callout' && blockValue.activeIds.has(item.id)
+            const calloutSpec = visibleBlocks.find((item) => item.kind === 'callout' && blockValue.activeIds.has(item.id)
               && item.from <= nodeRef.from && item.to >= nodeRef.to);
             if (calloutSpec) mark(nodeRef.from, nodeRef.to, 'note-live-source-mark is-callout');
             else if (unit) sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, 'link');
@@ -4664,7 +4668,7 @@
           } else if (nodeRef.name === 'QuoteMark') {
             const line = view.state.doc.lineAt(nodeRef.from);
             if (quotedCodeLines.has(line.from)) return false;
-            const spec = blockSpecs.find((item) => item.kind === 'callout' && item.from <= nodeRef.from && item.to >= nodeRef.to);
+            const spec = visibleBlocks.find((item) => item.kind === 'callout' && item.from <= nodeRef.from && item.to >= nodeRef.to);
             if (!spec) {
               const quote = window.MarkdownMini.quoteLine(line.text);
               lineClass(line.from, 'note-live-quote-line'
@@ -4691,7 +4695,7 @@
           continue;
         }
         if (inactiveBlockAt(line.from, Math.max(line.from + 1, line.to))) continue;
-        const blockMath = blockSpecs.find((spec) => spec.kind === 'math' && spec.from <= line.to && spec.to >= line.from);
+        const blockMath = visibleBlocks.find((spec) => spec.kind === 'math' && spec.from <= line.to && spec.to >= line.from);
         if (blockMath) {
           lineClass(line.from, 'note-live-math-source');
           // The cached tokens carry nesting from off-screen lines. Emit once
