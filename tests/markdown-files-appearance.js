@@ -61,7 +61,7 @@ module.exports = async function checkAppearance(page, artifacts) {
   await pause(260);
   assert.deepEqual(await geometry(), before, 'opening the outline leaves editor geometry, wrap, selection and scroll unchanged');
   const paneRect = await outline.boundingBox(), viewport = page.viewportSize() || await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
-  assert(Math.abs(paneRect.width - 320) < 1); assert(Math.abs(paneRect.x + paneRect.width - viewport.width) < 1);
+  assert(Math.abs(paneRect.width - 280) < 1); assert(Math.abs(paneRect.x + paneRect.width - viewport.width) < 1);
   await page.screenshot({ path: path.join(artifacts, 'markdown-outline-white.png') });
   // Repeated opening/closing reverses the same CSS motion; a previous end event
   // or timeout cannot hide a newly opened outline.
