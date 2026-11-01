@@ -1469,7 +1469,8 @@
   function syncInlineTitleScroll(scrollTop) {
     const maximum = inlineTitleShell && !inlineTitleShell.hidden ? inlineTitleShell.offsetHeight : 0;
     const offset = Math.min(Math.max(0, Number(scrollTop) || 0), maximum);
-    root.style.setProperty('--note-title-scroll-offset', offset + 'px');
+    const value = offset + 'px';
+    if (root.style.getPropertyValue('--note-title-scroll-offset') !== value) root.style.setProperty('--note-title-scroll-offset', value);
   }
 
   function scheduleInlineTitleScroll() {
