@@ -105,7 +105,7 @@ function loadLiveDecorationProbe() {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'assets', 'markdown-table.js'), 'utf8'), context);
   const instrumented = editorSource.replace(
     'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath };',
-    'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath }; window.__relatumLiveTest = { deferNoteRenderInput, createBlockLayoutMemory, createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, toggleInlineFormat, inlineFormatEdit, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension, projectedTableExtension };',
+    'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath }; window.__relatumLiveTest = { createViewportScanCache, deferNoteRenderInput, createBlockLayoutMemory, createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, toggleInlineFormat, inlineFormatEdit, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension, projectedTableExtension };',
   ).replace("    noteHeadingParser.parse(pieces.join('')).iterate", "    window.__headingProjectionParses = (window.__headingProjectionParses || 0) + 1;\n    noteHeadingParser.parse(pieces.join('')).iterate");
   assert.notStrictEqual(instrumented, editorSource, 'the test-only decoration probe must attach to the Live Preview export');
   vm.runInNewContext(instrumented, context);
@@ -119,6 +119,25 @@ function decorationRecords(set, length) {
 }
 
 const liveProbe = loadLiveDecorationProbe();
+
+{
+  const cache = liveProbe.__relatumLiveTest.createViewportScanCache(), doc = {}, tree = {};
+  assert(cache.shouldScan(doc, tree, 'screen'));
+  assert(cache.shouldScan(doc, tree, 'nearby'));
+  for (let i = 0; i < 10; i++) {
+    assert.equal(cache.shouldScan(doc, tree, 'screen'), false, 'nearby scans do not invalidate the current screen');
+    assert.equal(cache.shouldScan(doc, tree, 'nearby'), false, 'screen scans do not invalidate nearby preparation');
+  }
+  assert(cache.shouldScan(doc, tree, 'next-screen'));
+  assert.equal(cache.shouldScan(doc, tree, 'nearby'), false);
+  assert(cache.shouldScan(doc, tree, 'screen'), 'only two recent ranges are retained');
+  assert(cache.shouldScan({}, tree, 'screen'), 'editing or switching document invalidates cached ranges');
+  const newDoc = {}, partialTree = {}, completeTree = {};
+  assert(cache.shouldScan(newDoc, partialTree, 'screen'));
+  assert(cache.shouldScan(newDoc, completeTree, 'screen'), 'a completed syntax tree must rescan the same range');
+  assert.equal(cache.shouldScan(newDoc, completeTree, 'screen'), false);
+  cache.clear(); assert(cache.shouldScan(newDoc, completeTree, 'screen'));
+}
 
 {
   let pending = true, visible = true, resumes = 0, waits = 0, complete;

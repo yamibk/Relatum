@@ -4903,6 +4903,24 @@
     return true;
   }
 
+  function createViewportScanCache() {
+    let document = null, syntax = null;
+    const keys = [];
+    return {
+      shouldScan(doc, tree, key) {
+        if (document !== doc || syntax !== tree) { document = doc; syntax = tree; keys.length = 0; }
+        const index = keys.indexOf(key);
+        if (index >= 0) { keys.splice(index, 1); keys.push(key); return false; }
+        keys.push(key);
+        // Current-screen and nearby preparation scans alternate. Retain both
+        // without accumulating every range visited in a long document.
+        if (keys.length > 2) keys.shift();
+        return true;
+      },
+      clear() { document = null; syntax = null; keys.length = 0; },
+    };
+  }
+
   function createViewportParsePlugin(blockField, isActive = () => true, input) {
     return ViewPlugin.fromClass(class {
       constructor(view) {
@@ -4913,9 +4931,7 @@
         this.settlePasses = 0;
         this.prepareHandle = 0;
         this.pageActive = true;
-        this.lastScan = '';
-        this.scannedDoc = null;
-        this.scannedTree = null;
+        this.scanCache = createViewportScanCache();
         this.onScroll = () => this.schedule();
         this.unwatch = watchNoteRenderLifecycle(event => {
           if (event.type === 'pagehide') this.pageActive = false;
@@ -4990,8 +5006,7 @@
       foreground() { return !this.stopped && this.pageActive && isActive() && noteRenderForeground(this.view); }
       scan(ranges) {
         const view = this.view, tree = syntaxTree(view.state), key = ranges.map(range => range.from + ':' + range.to).join(',');
-        if (this.scannedDoc === view.state.doc && this.scannedTree === tree && this.lastScan === key) return;
-        this.scannedDoc = view.state.doc; this.scannedTree = tree; this.lastScan = key;
+        if (!this.scanCache.shouldScan(view.state.doc, tree, key)) return;
         view.dispatch({ effects: viewportScanEffect.of(ranges) });
         scheduleViewportRestore(view.scrollDOM);
       }
@@ -5029,6 +5044,7 @@
         this.stopped = true;
         this.unwatch();
         this.pause();
+        this.scanCache.clear();
         this.view.scrollDOM.removeEventListener('scroll', this.onScroll);
         if (this.resizeObserver) this.resizeObserver.disconnect();
         if (this.frame) cancelAnimationFrame(this.frame);
