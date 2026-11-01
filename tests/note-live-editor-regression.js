@@ -105,7 +105,7 @@ function loadLiveDecorationProbe() {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'assets', 'markdown-table.js'), 'utf8'), context);
   const instrumented = editorSource.replace(
     'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath };',
-    'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath }; window.__relatumLiveTest = { createViewportScanCache, deferNoteRenderInput, createBlockLayoutMemory, createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, toggleInlineFormat, inlineFormatEdit, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension, projectedTableExtension };',
+    'window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath }; window.__relatumLiveTest = { completeSpec, calloutDescriptor, calloutCollapsed, createViewportScanCache, deferNoteRenderInput, createBlockLayoutMemory, createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, toggleInlineFormat, inlineFormatEdit, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension, projectedTableExtension };',
   ).replace("    noteHeadingParser.parse(pieces.join('')).iterate", "    window.__headingProjectionParses = (window.__headingProjectionParses || 0) + 1;\n    noteHeadingParser.parse(pieces.join('')).iterate");
   assert.notStrictEqual(instrumented, editorSource, 'the test-only decoration probe must attach to the Live Preview export');
   vm.runInNewContext(instrumented, context);
@@ -119,6 +119,29 @@ function decorationRecords(set, length) {
 }
 
 const liveProbe = loadLiveDecorationProbe();
+
+{
+  const { completeSpec, calloutDescriptor, calloutCollapsed } = liveProbe.__relatumLiveTest;
+  for (const type of ['note', 'TIP', 'warning', 'abstract', 'unknown', 'white', 'blue', 'indigo']) {
+    for (const title of ['', '自定义 **标题**']) for (const suffix of ['', '+', '-']) {
+      const raw = { kind: 'callout', type, title, suffix, collapsed: suffix === '-', source: '> header\n> body', from: 0, to: 16 };
+      const initial = completeSpec(raw), moved = completeSpec({ ...raw, source: raw.source + ' edited', from: 10, to: 33 }, initial);
+      assert.strictEqual(moved.calloutStyle, initial.calloutStyle, 'body edits and mapped offsets reuse header presentation');
+      const expected = liveProbe.MarkdownMini.noteBlock(type, title, suffix);
+      assert.strictEqual(JSON.stringify(calloutDescriptor(moved)), JSON.stringify(expected));
+      assert.strictEqual(JSON.stringify(moved.calloutStyle.colors), JSON.stringify(Object.fromEntries(expected.style.split(';').filter(Boolean).map(pair => pair.split(':')))));
+      const coordinator = { folds: new Map(), foldPositions: new Map() };
+      assert.equal(calloutCollapsed(moved, coordinator), expected.foldable && raw.collapsed);
+      coordinator.folds.set(moved.id, !raw.collapsed);
+      assert.equal(calloutCollapsed(moved, coordinator), expected.foldable && !raw.collapsed, 'fold state remains live');
+      for (const change of [{ type: 'cyan' }, { title: '新标题' }, { suffix: suffix === '+' ? '-' : '+' }]) {
+        const edited = completeSpec({ ...raw, ...change }, initial);
+        assert.notStrictEqual(edited.calloutStyle, initial.calloutStyle, 'each header field invalidates presentation');
+        assert.strictEqual(JSON.stringify(calloutDescriptor(edited)), JSON.stringify(liveProbe.MarkdownMini.noteBlock(edited.type, edited.title, edited.suffix)));
+      }
+    }
+  }
+}
 
 {
   const cache = liveProbe.__relatumLiveTest.createViewportScanCache(), doc = {}, tree = {};

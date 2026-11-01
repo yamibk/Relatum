@@ -20,6 +20,8 @@ if ($Browser) {
     if ($LASTEXITCODE -ne 0) { throw 'Repeated viewport scan checks failed.' }
     & $Node (Join-Path $PSScriptRoot 'note-inline-candidates-browser.js') --quick
     if ($LASTEXITCODE -ne 0) { throw 'Visible inline block candidate checks failed.' }
+    & $Node (Join-Path $PSScriptRoot 'note-callout-performance-browser.js') --quick
+    if ($LASTEXITCODE -ne 0) { throw 'Callout header presentation checks failed.' }
     foreach ($check in @('note-image-compat-browser.js','note-image-upload-browser.js','note-image-text-browser.js','note-image-text-workspace-browser.js','note-image-preview-browser.js','note-typora-browser.js','note-caret-selection-browser.js','note-table-alignment-browser.js','note-search-browser.js','note-folder-picker-browser.js','note-ui-browser.js','note-context-menu-browser.js','note-reveal-browser.js','note-browser-browser.js','note-tree-sort-browser.js','note-tree-motion-browser.js','note-notebooks-browser.js','note-open-state-browser.js','note-visibility-browser.js','note-view-state-browser.js','note-viewport-browser.js','note-canvas-browser-discovery.js','note-outline-browser.js','note-graph-browser.js')) {
         & $Node (Join-Path $PSScriptRoot $check)
         if ($LASTEXITCODE -ne 0) { throw ('Failed: ' + $check) }

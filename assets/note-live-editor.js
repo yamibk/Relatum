@@ -718,6 +718,9 @@
   }
 
   const calloutTrees = new WeakMap();
+  function calloutDescriptor(spec) {
+    return spec.calloutStyle?.descriptor || window.MarkdownMini.noteBlock(spec.type, spec.title, spec.suffix);
+  }
   function calloutTree(specs, doc) {
     let entries = calloutTrees.get(specs);
     if (entries) return entries;
@@ -726,9 +729,9 @@
       if (spec.kind !== 'callout') continue;
       while (stack.length && (stack[stack.length - 1].spec.to < spec.to || stack[stack.length - 1].spec.to <= spec.from)) stack.pop();
       const parent = stack[stack.length - 1];
-      const entry = { spec, parent, descriptor: window.MarkdownMini.noteBlock(spec.type, spec.title, spec.suffix),
+      const entry = { spec, parent, descriptor: calloutDescriptor(spec),
         start: doc.lineAt(spec.from).number, end: doc.lineAt(Math.max(spec.from, spec.to - 1)).number, nested: !!parent };
-      entry.colors = Object.fromEntries(entry.descriptor.style.split(';').filter(Boolean).map(pair => pair.split(':')));
+      entry.colors = spec.calloutStyle?.colors || Object.fromEntries(entry.descriptor.style.split(';').filter(Boolean).map(pair => pair.split(':')));
       if (parent) { parent.nested = true; entry.chain = parent.chain.concat(entry); } else entry.chain = [entry];
       entries.push(entry); stack.push(entry);
     }
@@ -737,12 +740,16 @@
 
   function calloutLayout(view, specs, coordinator) {
     const entries = calloutTree(specs, view.state.doc), layout = new Map(), hiddenHeaders = new Set(), hidden = [];
+    const inputActive = view.hasFocus || compositionActive(view);
     for (const entry of entries) {
       const parent = entry.parent && layout.get(entry.parent);
-      const header = view.state.doc.line(entry.start), active = constructActive(view, header.from, header.to);
       const collapsed = calloutCollapsed(entry.spec, coordinator);
       const blocked = !!parent && (parent.blocked || parent.collapsed);
-      const hideHeader = entry.descriptor.color && !entry.descriptor.title && !active && entry.start < entry.end;
+      let hideHeader = false;
+      if (entry.descriptor.color && !entry.descriptor.title && entry.start < entry.end) {
+        const header = view.state.doc.line(entry.start);
+        hideHeader = !inputActive || !selectionTouches(view.state.selection, header.from, header.to);
+      }
       layout.set(entry, { blocked, collapsed, hideHeader, first: entry.start, last: collapsed ? entry.start : entry.end });
       if (!blocked && hideHeader) hiddenHeaders.add(entry.start);
       if (!blocked && collapsed && entry.start < entry.end) hidden.push({ from: entry.start + 1, to: entry.end });
@@ -1063,9 +1070,20 @@
 
   function completeSpec(spec, prior) {
     const source = String(spec.source || '');
+    let calloutStyle;
+    if (spec.kind === 'callout') {
+      // Header presentation is independent of body text, offsets, focus and
+      // folds. Share it through mapped specs and unchanged-header rescans.
+      calloutStyle = prior && prior.type === spec.type && prior.title === spec.title && prior.suffix === spec.suffix ? prior.calloutStyle : null;
+      if (!calloutStyle) {
+        const descriptor = window.MarkdownMini.noteBlock(spec.type, spec.title, spec.suffix);
+        calloutStyle = { descriptor, colors: Object.fromEntries(descriptor.style.split(';').filter(Boolean).map(pair => pair.split(':'))) };
+      }
+    }
     return Object.assign({}, spec, {
       id: prior && prior.id || 'note-block-' + nextBlockSpecId++,
       source,
+      ...(calloutStyle ? { calloutStyle } : {}),
       fingerprint: spec.kind === 'table' && prior?.source === source ? prior.fingerprint : sourceFingerprint(source),
       ...(spec.kind === 'table' && window.MarkdownTable ? { tableModel: spec.tableModel
         || (prior?.source === source ? prior.tableModel : null)
@@ -1291,7 +1309,7 @@
       if (spec.kind !== 'callout') {
         const parent = calloutParents[calloutParents.length - 1];
         if (parent) {
-          const descriptor = window.MarkdownMini.noteBlock(parent.type, parent.title, parent.suffix);
+          const descriptor = calloutDescriptor(parent);
           spec.calloutType = parent.type; spec.calloutLast = parent.to === spec.to;
           spec.colorFirst = descriptor.color && !descriptor.title && doc.lineAt(parent.from).to + 1 === spec.from;
         }
@@ -3233,7 +3251,7 @@
         wrap.textContent = this.spec.renderSource || this.spec.source;
         const parent = view.state.field(this.coordinator.field, false)?.specs.filter((spec) => spec.kind === 'callout' && spec.from <= this.spec.from && spec.to >= this.spec.to).sort((a, b) => b.from - a.from)[0];
         if (parent) {
-          const descriptor = window.MarkdownMini.noteBlock(parent.type, parent.title, parent.suffix);
+          const descriptor = calloutDescriptor(parent);
           wrap.classList.add('note-block-math');
           wrap.style.cssText = descriptor.style;
           if (descriptor.color) wrap.classList.add('note-color-block');
@@ -3387,7 +3405,7 @@
       wrap.className = 'note-live-callout-title-widget';
       wrap.dataset.blockId = this.spec.id; wrap.dataset.fingerprint = this.spec.fingerprint;
       wrap.dataset.callout = calloutPresentationType(this.spec.type);
-      const descriptor = window.MarkdownMini.noteBlock(this.spec.type, this.spec.title, this.spec.suffix);
+      const descriptor = calloutDescriptor(this.spec);
       wrap.classList.toggle('note-color-block', descriptor.color);
       wrap.tabIndex = 0;
       wrap.setAttribute('aria-label', '点击编辑 Callout 源码');
@@ -3413,7 +3431,7 @@
   }
 
   function calloutCollapsed(spec, coordinator) {
-    const descriptor = window.MarkdownMini.noteBlock(spec.type, spec.title, spec.suffix);
+    const descriptor = calloutDescriptor(spec);
     return descriptor.foldable && (coordinator.folds.has(spec.id) ? coordinator.folds.get(spec.id) : coordinator.foldPositions?.has(spec.from) ? coordinator.foldPositions.get(spec.from) : spec.collapsed);
   }
   function bindLiveFold(button, view, spec, coordinator) {
@@ -3940,7 +3958,7 @@
       projection.callouts.forEach(spec => {
         if (projection.hidden.has(spec.id)) return;
         const header = state.doc.lineAt(spec.from);
-        const descriptor = window.MarkdownMini.noteBlock(spec.type, spec.title, spec.suffix);
+        const descriptor = calloutDescriptor(spec);
         if (projection.collapsed.has(spec.id) && header.to < spec.to) ranges.push(Decoration.replace({ block: true, inclusive: false, blockId: spec.id }).range(header.to, spec.to));
         if (descriptor.color && !descriptor.title && header.to < spec.to && !(focused && selectionTouches(state.selection, header.from, header.to))) ranges.push(Decoration.replace({ block: true, inclusiveStart: true, inclusiveEnd: false, blockId: spec.id, colorHeader: true }).range(header.from, header.to + 1));
       });
@@ -6355,7 +6373,7 @@
             if (seen.has(spec.id)) return; seen.add(spec.id);
             const prior = coordinator.records.findIndex(item => item.id === spec.id);
             if (prior >= 0) coordinator.records[prior] = spec; else coordinator.records.push(spec);
-            if (window.MarkdownMini.noteBlock(spec.type, spec.title, spec.suffix).foldable) ranges.push(Decoration.widget({ widget: new CalloutFoldWidget(spec, coordinator), side: 1 }).range(view.state.doc.lineAt(spec.from).to));
+            if (calloutDescriptor(spec).foldable) ranges.push(Decoration.widget({ widget: new CalloutFoldWidget(spec, coordinator), side: 1 }).range(view.state.doc.lineAt(spec.from).to));
           });
           const blocks = allSpecs.filter(spec => spec.kind === 'math');
           for (const spec of blocks) markMathSource(mark, spec.source, spec.from, true, this.mathColors, first.from, last.to);
