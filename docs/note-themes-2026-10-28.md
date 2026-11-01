@@ -123,7 +123,33 @@ Sky 浅色普通背景的正文采用静态
 
 Apple 使用 macOS 原生应用的中性表面、细分隔线、轻阴影和克制蓝色反馈。
 参考 Apple 官方配色指南：https://developer.apple.com/design/human-interface-guidelines/color 。
-不新增外部主题加载器、偏好字段、框架或运行时网络请求。
+不新增外部主题加载器、框架或运行时网络请求。
+
+### Apple 选中提示
+
+外观分类在主题下方提供“选中提示 / Selection feedback”，仅 Apple 显示，
+提供“蓝色 / Blue”和“灰色 / Gray”。默认蓝色保留原效果；灰色浅/深色分别为
+`#e5e5e5/#3a3a3c`，即时改变文件树、笔记本列表、侧栏导航与笔记设置中的选中背景。
+正文选中文字、链接、表格选区/编辑/拖动、图片边框和六色高亮不变，文件染色继续优先。
+
+- 独立键 `canvas:noteAppleSelection:v1` 使用 `blue/gray`，首帧由 `note-theme.js`
+  读取并设置 `html[data-note-apple-selection]`；缺失/无效回退蓝色，启动不回写或清理。
+- `RelatumNoteTheme.readAppleSelection()` 返回当前值；
+  `applyAppleSelection(value, {persist=true})` / `resetAppleSelection()` 返回成功布尔值。
+  无效应用值返回 false，存储失败保留当前状态；设置入口还原下拉并提示保存失败。
+- 值真正变化后发布 `relatum:note-apple-selection`，detail 为 `{previous,current}`，
+  不触发主题切换、字体等待或正文锚点测量。切到其他主题保留选择，重启沿用桌面偏好快照。
+- 外观分类恢复及全部笔记设置恢复调用 `resetAppleSelection()` 恢复蓝色，
+  原主题 `reset()` 仍只负责主题 ID；全局设置恢复不影响此项。
+- 下拉沿用 `review-controls` 与 `.note-theme-popovers`，支持中英文、设置搜索定位按钮，
+  跟随现有分类/语言/关闭/离场/隐藏/最小化等收起行为。隐藏时禁用且不作为独立搜索结果。
+- CSS 用 `--note-theme-nav-selected` 管导航与 `--settings-selected`，
+  保留内容使用的 `--note-theme-selected`、文字选区和强调色，不增加观察器或绘制循环。
+
+本次按用户要求不运行测试、浏览器验证、构建或打包。后续验收关注即时切换、跨主题及重启
+恢复、深浅色、中英文、搜索定位、恢复默认和存储失败反馈，并确认内容选区与用户颜色保持原样。
+
+### Apple 配色与排版
 
 | 角色 | 浅色 | 深色 |
 | --- | --- | --- |

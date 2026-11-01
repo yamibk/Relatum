@@ -1550,6 +1550,14 @@
           <select id="note-theme-select" data-role="note-theme" aria-label="主题" aria-describedby="note-theme-hint"></select>
           <small id="note-theme-hint">调整笔记工作区的配色与字体，深浅色沿用全局设置</small>
         </div>
+        <div class="note-settings-theme" data-role="note-apple-selection-setting" data-i18n-managed="true"
+          data-settings-keywords="Apple 选中提示 蓝色 灰色 selection blue gray" aria-label="选中提示" hidden>
+          <label for="note-apple-selection-select"><strong data-role="note-apple-selection-label">选中提示</strong></label>
+          <select id="note-apple-selection-select" data-role="note-apple-selection" aria-label="选中提示" aria-describedby="note-apple-selection-hint">
+            <option value="blue">蓝色</option><option value="gray">灰色</option>
+          </select>
+          <small id="note-apple-selection-hint">调整 Apple 主题的文件列表、侧栏导航和设置选中背景</small>
+        </div>
         <label class="note-settings-font">
           <span><strong>笔记正文字号</strong><output data-role="note-font-scale-value">100%</output></span>
           <span class="note-settings-range" style="--default-pos:33.333%;">

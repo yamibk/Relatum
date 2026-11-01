@@ -90,6 +90,8 @@
   let themeChoices = null, themeLayoutAnchor = null, themeLayoutSequence = 0;
   let linkCompletionSettings = null;
   const themeSelect = $('[data-role="note-theme"]');
+  const appleSelectionSetting = $('[data-role="note-apple-selection-setting"]');
+  const appleSelectionSelect = $('[data-role="note-apple-selection"]');
   const GUIDE_TOPIC_KEY = 'canvas:noteGuideTopic:v1';
   let guideTopic = 'callout';
   try { const saved = localStorage.getItem(GUIDE_TOPIC_KEY); if (['callout', 'markdown', 'mermaid', 'quiz', 'cards'].includes(saved)) guideTopic = saved; } catch (_) {}
@@ -993,16 +995,35 @@
       themeSelect.setAttribute('aria-label', en ? 'Theme' : '主题');
       const hint = $('#note-theme-hint');
       if (hint) hint.textContent = en ? 'Change the colors and fonts of Notes. Light and dark modes follow the global setting.' : '调整笔记工作区的配色与字体，深浅色沿用全局设置';
+      if (appleSelectionSelect) {
+        const selectionLabel = en ? 'Selection feedback' : '选中提示';
+        $('[data-role="note-apple-selection-label"]').textContent = selectionLabel;
+        appleSelectionSetting.setAttribute('aria-label', selectionLabel);
+        appleSelectionSelect.setAttribute('aria-label', selectionLabel);
+        appleSelectionSelect.replaceChildren(new Option(en ? 'Blue' : '蓝色', 'blue'), new Option(en ? 'Gray' : '灰色', 'gray'));
+        $('#note-apple-selection-hint').textContent = en
+          ? 'Change the selected backgrounds in Apple file lists, sidebar navigation and settings.'
+          : '调整 Apple 主题的文件列表、侧栏导航和设置选中背景';
+      }
       themeChoices?.refresh();
     }
     themeSelect.value = registry?.read() || 'default';
+    if (appleSelectionSetting) {
+      const hidden = themeSelect.value !== 'apple';
+      if (appleSelectionSetting.hidden !== hidden) themeChoices?.close();
+      appleSelectionSetting.hidden = hidden;
+      appleSelectionSelect.disabled = hidden;
+      appleSelectionSelect.value = registry?.readAppleSelection() || 'blue';
+    }
     themeChoices?.sync();
   }
 
   function resetNoteTheme() {
+    if (window.RelatumNoteTheme && !window.RelatumNoteTheme.resetAppleSelection()) throw new Error('Could not restore Apple selection feedback');
     if (window.RelatumNoteTheme && !window.RelatumNoteTheme.reset()) throw new Error('Could not restore note theme');
     syncNoteThemeSettings();
   }
+  window.addEventListener('relatum:note-apple-selection', syncNoteThemeSettings);
 
   // Explicit theme changes preserve a visible text anchor without an editor transaction.
   window.addEventListener('relatum:note-theme-beforechange', () => {
@@ -1139,7 +1160,10 @@
       const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = href; document.head.append(style);
     }
     const categories = [
-      { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-laptop-minimal', panel: appearance, keywords: '主题 Claude theme 字体 font size image text scale', reset: () => { resetNoteTheme(); pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
+      { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-laptop-minimal', panel: appearance, keywords: '主题 Claude Apple theme 字体 font size image text scale',
+        searchTargets: () => Array.from(appearance.querySelectorAll('label, [data-settings-keywords], .note-canvas-default-tabs button, .note-shortcut-row'))
+          .filter(element => !element.closest('[data-role="note-apple-selection-setting"]') || (element === appleSelectionSetting && !appleSelectionSetting.hidden)),
+        reset: () => { resetNoteTheme(); pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
       { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮 双向链接 补全 候选 搜索 正文 排序 wiki link completion suggestions scope search content sort', reset: resetEditingSettings },
       { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings, keywords: '排序 命名 sort name timestamp', reset: resetLibraryPreferences },
       { id: 'sidebar', label: ['侧栏', 'Sidebar'], icon: 'note-icon-panel-right-frame', panel: sidebar, keywords: '页签 显示 隐藏 顺序 拖拽 tabs visibility reorder sidebar', reset: () => sidePreferences.reset() },
@@ -1208,6 +1232,7 @@
     settingsDialog.dialog.append(themePortal);
     themeChoices = window.RelatumReviewControls.createManager(appearance, themePortal);
     themeChoices.enhance(themeSelect);
+    if (appleSelectionSelect) themeChoices.enhance(appleSelectionSelect);
     linkCompletionSettings = window.RelatumNoteLinkCompletion?.createSettings(editing, { portal: themePortal,
       onOpen() { settingsDialog.finishContentMotion(); prepareWorkspacePopover('settings'); },
       onError() { settingsDialog.setStatus(language() === 'en' ? 'Could not save link completion settings. Please retry.' : '双向链接补全设置保存失败，请重试'); },
@@ -1223,6 +1248,11 @@
     themeSelect.addEventListener('change', () => {
       if (!window.RelatumNoteTheme.apply(themeSelect.value)) {
         syncNoteThemeSettings(); settingsDialog.setStatus(language() === 'en' ? 'Could not save the theme. Please retry.' : '主题保存失败，请重试');
+      }
+    });
+    appleSelectionSelect?.addEventListener('change', () => {
+      if (!window.RelatumNoteTheme.applyAppleSelection(appleSelectionSelect.value)) {
+        syncNoteThemeSettings(); settingsDialog.setStatus(language() === 'en' ? 'Could not save selection feedback. Please retry.' : '选中提示保存失败，请重试');
       }
     });
     settingsDialog.dialog.querySelector('[data-settings-search]').addEventListener('input', () => { themeChoices.close(); linkCompletionSettings?.close(); });

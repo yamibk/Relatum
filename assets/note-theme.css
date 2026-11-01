@@ -5,6 +5,7 @@
   border-radius: 14px; background: var(--settings-card);
 }
 #note-settings-dialog .note-settings-theme > label { font-size: 13px; font-weight: 580; }
+#note-settings-dialog .note-settings-theme > label > strong { font-weight: inherit; }
 #note-settings-dialog .note-settings-theme > small { grid-column: 1 / -1; color: var(--settings-muted); font-size: 11px; line-height: 1.6; }
 #note-settings-dialog .note-settings-theme .review-choice { width: 100%; }
 #note-settings-dialog .note-settings-theme .review-choice-trigger {
@@ -559,6 +560,7 @@ html[data-note-theme="apple"] body.start-page :is(.note-workspace, #note-setting
 html[data-note-theme="apple"] body.start-page[data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
   --note-theme-paper: #fff; --note-theme-nav: #f5f5f7; --note-theme-surface: #fff;
   --note-theme-hover: #ededf0; --note-theme-selected: #e8f0fc; --note-theme-code: #f5f5f7;
+  --note-theme-nav-selected: var(--note-theme-selected);
   --note-theme-text: #1d1d1f; --note-theme-secondary: #6e6e73; --note-theme-muted: #6e6e73;
   --note-theme-line: #e5e5ea; --note-theme-line-strong: #b6b6bd; --note-theme-accent: #0066cc;
   --note-theme-table-line: #d2d2d7;
@@ -577,7 +579,7 @@ html[data-note-theme="apple"] body.start-page[data-start-workspace="notes"] > :i
   --note-control-hover: var(--note-theme-hover); --note-control-active: var(--note-theme-selected);
   --note-control-focus: var(--note-theme-accent); --note-notebook-cutout: var(--note-theme-nav);
   --settings-bg: var(--note-theme-nav); --settings-nav: #ededf0; --settings-card: var(--note-theme-surface);
-  --settings-text: var(--note-theme-text); --settings-muted: var(--note-theme-muted); --settings-selected: var(--note-theme-selected);
+  --settings-text: var(--note-theme-text); --settings-muted: var(--note-theme-muted); --settings-selected: var(--note-theme-nav-selected);
   color: var(--text); font-family: var(--note-theme-ui-font); font-optical-sizing: auto;
 }
 html[data-note-theme="apple"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover, .note-table-alignment, .note-link-completion, .note-link-completion-status),
@@ -594,6 +596,14 @@ html[data-note-theme="apple"] body.start-page[data-start-theme="dark"][data-star
   --apple-hl-yellow: rgba(255,214,10,.27); --apple-hl-red: rgba(255,69,58,.28);
   --apple-hl-orange: rgba(255,159,10,.27); --apple-hl-green: rgba(48,209,88,.25);
   --apple-hl-blue: rgba(10,132,255,.30); --apple-hl-purple: rgba(191,90,242,.28);
+}
+
+/* Navigation/settings feedback has its own token; content selections stay blue. */
+html[data-note-theme="apple"][data-note-apple-selection="gray"] body.start-page :is(.note-workspace, #note-settings-dialog) {
+  --note-theme-nav-selected: #e5e5e5;
+}
+html[data-note-theme="apple"][data-note-apple-selection="gray"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog) {
+  --note-theme-nav-selected: #3a3a3c;
 }
 
 /* One inset document surface, with quiet sidebars belonging to the workspace.
@@ -666,7 +676,8 @@ html[data-note-theme="apple"] body.start-page :is(.note-tab.active, .note-tree-r
 html[data-note-theme="apple"] body.start-page .note-tree-row:not([data-file-color]):hover { background: var(--note-theme-hover); }
 html[data-note-theme="apple"] body.start-page .note-tree-row:not([data-file-color]):is(.active, .opening),
 html[data-note-theme="apple"] body.start-page .note-notebook-root > .note-tree-row.selected-notebook:not([data-file-color]),
-html[data-note-theme="apple"] body.start-page :is(.note-side-button.active, .note-view-toggle button.active, .note-side-button[aria-pressed="true"]) { color: var(--text); background: var(--note-theme-selected); }
+html[data-note-theme="apple"] body.start-page :is(.note-side-button.active, .note-view-toggle button.active, .note-side-button[aria-pressed="true"]) { color: var(--text); background: var(--note-theme-nav-selected); }
+html[data-note-theme="apple"] body.start-page .note-outline-row.is-current { background: var(--note-theme-nav-selected); }
 html[data-note-theme="apple"] body.start-page .note-tree-row.selected-folder:not(.active):not([data-file-color]) { color: var(--text); background: var(--note-theme-hover); }
 html[data-note-theme="apple"] body.start-page .note-tree-row.note-drop-target { box-shadow: inset 0 0 0 1px var(--note-theme-accent); }
 html[data-note-theme="apple"] body.start-page :is(.note-tree-children, .note-outline-group) { border-left-color: transparent; }
