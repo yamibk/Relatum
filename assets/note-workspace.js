@@ -510,7 +510,7 @@
     notebookRoot: '', notebookExpanded: new Set(), notebookColors: {}, notebookVisible: {}, notebookSettingsLoaded: false, notebookTreeDirty: true, notebookPruning: new Map(),
     editGeneration: 0, saveTimer: 0, retryTimer: 0, saveChain: Promise.resolve(true), saveRunning: false,
     openSeq: 0, refreshSeq: 0, externalSeq: 0, linksSeq: 0, linksRefreshTimer: 0, linksRefreshSuspended: false, draggedPath: '', renamePath: '', renameOriginal: '',
-    importRunning: false, renameError: '', renameDraft: null, renameCommitPromise: null, lastMoveError: '',
+    importRunning: false, renameError: '', renameDraft: null, renameCommitPromise: null, renameTree: 'files', lastMoveError: '',
     openingPath: '', documentGeneration: 0, documentCache: new Map(), loadPromises: new Map(), entryIndex: new Map(), prefetchTimer: 0,
     initializePromise: null, tabs: [], activeTab: '', renderedActiveTab: '', draggedTabPath: '', titleRenamePromise: null, lastMoveCode: '',
     externalSyncTimer: 0, externalSyncFailures: 0, externalSyncUnchanged: 0, treeMetadataSignature: '', externalSyncChain: Promise.resolve(true), recycleRunning: false,
@@ -3154,7 +3154,11 @@
       }
     } finally { prefetchRunning = false; }
   }
-  function rewriteEntryPaths(entry, source, destination) { if (entry.path === source) entry.path = destination; else if (entry.path.startsWith(source + '/')) entry.path = destination + entry.path.slice(source.length); if (entry.kind === 'folder') (entry.children || []).forEach((child) => rewriteEntryPaths(child, source, destination)); }
+  function rewriteEntryPaths(entry, source, destination) {
+    if (entry.path === source) { entry.path = destination; entry.name = entry.kind === 'note' ? noteTitle(destination) : baseName(destination); }
+    else if (entry.path.startsWith(source + '/')) entry.path = destination + entry.path.slice(source.length);
+    if (entry.kind === 'folder') (entry.children || []).forEach((child) => rewriteEntryPaths(child, source, destination));
+  }
   function remapCachedPaths(source, destination) { const remapped = new Map(); state.documentCache.forEach((documentState, cachedPath) => { let nextPath = cachedPath; if (cachedPath === source) nextPath = destination; else if (cachedPath.startsWith(source + '/')) nextPath = destination + cachedPath.slice(source.length); documentState.path = nextPath; remapped.set(nextPath, documentState); }); state.documentCache = remapped; }
   function optimisticMove(source, destination) {
     const folderPath = parentPath(destination);
@@ -3168,19 +3172,36 @@
     rewriteEntryPaths(extracted, source, destination); target.push(extracted); naturalSort(target); return true;
   }
 
-  function beginInlineRename(path) { const entry = findEntry(path); if (!entry || !path || isNotebookContainer(path) || notebookVisibilityBusy && isNotebookRoot(path)) return; selectNotebook(notebookRootForPath(path)); state.renamePath = path; state.renameOriginal = entry.kind === 'note' ? noteTitle(path) : entry.name; state.renameDraft = state.renameOriginal; state.renameError = ''; renderTree(); }
+  let inlineRenameSequence = 0, inlineRenameInput = null;
+  const renameHost = () => state.renameTree === 'notebooks' ? notebookTreeEl : treeEl;
+  async function beginInlineRename(path, host = treeEl) {
+    const sequence = ++inlineRenameSequence;
+    if (!(await finishInlineTitle()) || state.renamePath && !(await finishInlineRename())) return;
+    if (editorInputPending()) await whenEditorInputSettled();
+    if (sequence !== inlineRenameSequence || !noteWorkspaceVisible()) return;
+    const entry = findEntry(path);
+    if (!entry || !path || isNotebookContainer(path) || notebookVisibilityBusy && isNotebookRoot(path)) return;
+    selectNotebook(notebookRootForPath(path));
+    state.renameTree = host === notebookTreeEl ? 'notebooks' : 'files';
+    state.renamePath = path; state.renameOriginal = entry.kind === 'note' ? noteTitle(path) : entry.name;
+    state.renameDraft = state.renameOriginal; state.renameError = '';
+    renderTree();
+    // A windowed tree may need to mount the requested row before it can focus.
+    host.__noteWindow?.scrollToKey(path);
+  }
   function commitInlineRename(entry, input, cancel) {
     if (state.renameCommitPromise) return state.renameCommitPromise;
-    if (!entry || state.renamePath !== entry.path) return Promise.resolve(!state.renamePath);
+    if (!entry || state.renamePath !== entry.path || input !== inlineRenameInput || !renameHost()?.contains(input)) return Promise.resolve(!state.renamePath);
+    if (!cancel && input.dataset.composing === '1') { input.dataset.commitAfterComposition = '1'; return Promise.resolve(false); }
     input.dataset.committing = '1'; const originalPath = entry.path; const value = input.value.trim(); state.renameDraft = value;
     const operation = (async () => {
-      if (cancel || value === state.renameOriginal) { state.renamePath = ''; state.renameDraft = null; state.renameError = ''; renderTree(); return true; }
-      if (!value) { state.renameError = language() === 'en' ? 'A name is required' : '名称不能为空'; input.dataset.committing = ''; renderTree(); return false; }
+      if (cancel || value === state.renameOriginal) { state.renamePath = ''; inlineRenameInput = null; state.renameDraft = null; state.renameError = ''; renderTree(); return true; }
+      if (!value) { state.renameError = language() === 'en' ? 'A name is required' : '名称不能为空'; input.dataset.committing = ''; renderTree({ inlineRename: true }); return false; }
       const name = entry.kind === 'note' && !/\.md$/i.test(value) ? value + '.md' : value;
       const ok = await movePath(originalPath, joinPath(parentPath(originalPath), name), true);
-      if (ok) { state.renamePath = ''; state.renameDraft = null; state.renameError = ''; }
+      if (ok) { state.renamePath = ''; inlineRenameInput = null; state.renameDraft = null; state.renameError = ''; }
       else { state.renamePath = originalPath; state.renameError = state.lastMoveError || tr('moveFailed'); input.dataset.committing = ''; }
-      renderTree();
+      renderTree({ inlineRename: true });
       return ok;
     })();
     state.renameCommitPromise = operation.finally(() => { state.renameCommitPromise = null; });
@@ -3190,13 +3211,13 @@
     if (!state.renamePath) return true;
     if (state.renameCommitPromise) { await state.renameCommitPromise; return !state.renamePath; }
     const entry = findEntry(state.renamePath);
-    const input = root.querySelector('.note-tree-rename');
+    const input = inlineRenameInput;
     if (!entry || !input) return false;
     await commitInlineRename(entry, input, false);
     return !state.renamePath;
   }
   function renderTree(options) {
-    if (state.renamePath && findEntry(state.renamePath) && treeEl.contains(document.activeElement) && document.activeElement.classList.contains('note-tree-rename')) {
+    if (!options?.inlineRename && state.renamePath && findEntry(state.renamePath) && renameHost()?.contains(document.activeElement) && document.activeElement.classList.contains('note-tree-rename')) {
       state.pendingTreeReorder = true; updateTreeSelection(); return;
     }
     if (!options?.entryIndexReady) rebuildEntryIndex();
@@ -3238,6 +3259,7 @@
     const motions = new Map(), moreRows = new Map();
     let orderedLevels = new Map(), visibleCount = 0;
     const getEntry = (path) => notebookTree && (path === '' || isNotebookRoot(path)) ? notebookRoots().find((entry) => entry.path === path) : findEntry(path);
+    const isRenaming = entry => !!entry.path && state.renamePath === entry.path && state.renameTree === (notebookTree ? 'notebooks' : 'files');
     const reducedMotion = () => tabMotionPreference.matches;
     const folderLabel = (entry, expanded) => entry.path + ' · ' + tr(expanded ? 'collapseFolder' : 'expandFolder');
     const directChild = (wrapper, className) => Array.from(wrapper.children).find((child) => child.classList && child.classList.contains(className)) || null;
@@ -3399,12 +3421,12 @@
     }
 
     function reusableWrapper(wrapper, entry) {
-      const renaming = !!entry.path && state.renamePath === entry.path;
+      const renaming = isRenaming(entry);
       return !!wrapper && wrapper.__noteKind === entry.kind && wrapper.__noteNotebook === !!entry.notebook
         && wrapper.__noteRenaming === renaming && wrapper.__noteRenameError === (renaming ? state.renameError : '');
     }
     function createEntryWrapper(entry, depth, flat) {
-      const renaming = !!entry.path && state.renamePath === entry.path;
+      const renaming = isRenaming(entry);
       // Reused rows retain only their identity, never an old directory snapshot.
       const rowPath = entry.path, notebookEntry = !!entry.notebook;
       const wrapper = document.createElement('div'); wrapper.className = 'note-tree-entry'; wrapper.dataset.path = entry.path; wrapper.style.setProperty('--note-depth', depth);
@@ -3417,11 +3439,19 @@
       const toggle = document.createElement('span'); toggle.className = 'note-tree-toggle'; toggle.setAttribute('aria-hidden', 'true');
       if (entry.kind === 'folder') { const expanded = expandedPaths.has(entry.path); row.setAttribute('aria-expanded', expanded ? 'true' : 'false'); row.setAttribute('aria-label', folderLabel(entry, expanded)); }
       const label = document.createElement('span'); label.className = 'note-tree-label';
-      if (entry.path && state.renamePath === entry.path) {
+      if (renaming) {
         const input = document.createElement('input'); input.className = 'note-tree-rename'; input.value = state.renameDraft === null ? state.renameOriginal : state.renameDraft; input.setAttribute('aria-label', tr('rename')); label.appendChild(input);
+        inlineRenameInput = input;
         input.addEventListener('click', (event) => event.stopPropagation());
-        input.addEventListener('keydown', (event) => { event.stopPropagation(); if (event.key === 'Enter') { event.preventDefault(); commitInlineRename(getEntry(rowPath), input, false); } else if (event.key === 'Escape') { event.preventDefault(); commitInlineRename(getEntry(rowPath), input, true); } });
-        input.addEventListener('blur', () => commitInlineRename(getEntry(rowPath), input, false)); requestAnimationFrame(() => { input.focus(); input.select(); });
+        input.addEventListener('input', () => { if (state.renamePath === rowPath && renameHost() === treeEl) state.renameDraft = input.value; });
+        input.addEventListener('compositionstart', () => { input.dataset.composing = '1'; });
+        input.addEventListener('compositionend', () => {
+          delete input.dataset.composing;
+          if (input.dataset.commitAfterComposition === '1') { delete input.dataset.commitAfterComposition; requestAnimationFrame(() => commitInlineRename(getEntry(rowPath), input, false)); }
+        });
+        input.addEventListener('keydown', (event) => { event.stopPropagation(); if (event.isComposing || event.keyCode === 229 || input.dataset.composing === '1') return; if (event.key === 'Enter') { event.preventDefault(); commitInlineRename(getEntry(rowPath), input, false); } else if (event.key === 'Escape') { event.preventDefault(); commitInlineRename(getEntry(rowPath), input, true); } });
+        input.addEventListener('blur', () => commitInlineRename(getEntry(rowPath), input, false));
+        requestAnimationFrame(() => { if (input.isConnected && isRenaming(getEntry(rowPath) || {})) { input.focus(); input.select(); } });
       } else label.textContent = entry.name;
       row.append(toggle, entry.notebook ? notebookIcon(entry.path) : treeIcon(entry.kind), label);
       if (!notebookTree) fileColorHost?.instance?.decorate(row, entry.path);
@@ -3450,7 +3480,7 @@
         event.preventDefault(); event.stopPropagation();
         if (!(await finishInlineTitle()) || state.renamePath && !(await finishInlineRename())) return;
         if (editorInputPending()) await whenEditorInputSettled();
-        if (state.active && effectiveSideMode() === 'notebooks' && root.classList.contains('links-overlay-open') && findEntry(rowPath)?.kind === 'folder') beginInlineRename(rowPath);
+        if (state.active && effectiveSideMode() === 'notebooks' && root.classList.contains('links-overlay-open') && findEntry(rowPath)?.kind === 'folder') beginInlineRename(rowPath, treeEl);
       });
       if (entry.notebook) row.addEventListener('keydown', (event) => {
         if (event.target !== row || event.isComposing || (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft')) return;
@@ -3464,7 +3494,7 @@
         hoverPrefetchTimer = setTimeout(() => { hoverPrefetchPath = rowPath; runDocumentPrefetch(); }, 150);
       });
       row.addEventListener('pointerleave', () => { clearTimeout(hoverPrefetchTimer); hoverPrefetchPath = ''; });
-      row.addEventListener('contextmenu', (event) => { event.preventDefault(); event.stopPropagation(); const liveEntry = getEntry(rowPath); if (!liveEntry) return; if (notebookEntry) { openNotebookContext(liveEntry, event.clientX, event.clientY); return; } if (notebookTree) selectNotebook(notebookRootForPath(rowPath)); state.rootTargeted = false; state.selectedPath = rowPath; state.selectedFolder = liveEntry.kind === 'folder' ? rowPath : parentPath(rowPath); updateTreeSelection(); openContextMenu(liveEntry, event.clientX, event.clientY, { fileTree: !notebookTree }); });
+      row.addEventListener('contextmenu', (event) => { event.preventDefault(); event.stopPropagation(); const liveEntry = getEntry(rowPath); if (!liveEntry) return; if (notebookEntry) { openNotebookContext(liveEntry, event.clientX, event.clientY); return; } if (notebookTree) selectNotebook(notebookRootForPath(rowPath)); state.rootTargeted = false; state.selectedPath = rowPath; state.selectedFolder = liveEntry.kind === 'folder' ? rowPath : parentPath(rowPath); updateTreeSelection(); openContextMenu(liveEntry, event.clientX, event.clientY, { fileTree: !notebookTree, renameHost: treeEl }); });
       row.addEventListener('dragstart', (event) => {
         if (notebookTree || !row.draggable || !noteWorkspaceVisible() || noteMovePromise || notebookDropRunning) { event.preventDefault(); return; }
         clearNoteTreeDrag(); state.draggedPath = rowPath; noteTreeDragRow = row; row.classList.add('dragging');
@@ -3493,7 +3523,7 @@
         if (state.draggedPath) moveEntry(state.draggedPath, destination); else importDataTransfer(event.dataTransfer, destination);
       });
       wrapper.appendChild(row);
-      if (entry.path && state.renamePath === entry.path && state.renameError) { const error = document.createElement('small'); error.className = 'note-tree-inline-error'; error.textContent = state.renameError; wrapper.appendChild(error); }
+      if (renaming && state.renameError) { const error = document.createElement('small'); error.className = 'note-tree-inline-error'; error.textContent = state.renameError; wrapper.appendChild(error); }
       syncChildren(entry, depth, wrapper, flat, false);
       return wrapper;
     }
@@ -5011,7 +5041,7 @@
       );
     }
     if (entry.kind === 'folder') items.push(contextButton(tr('createHere'), () => createEntry('note', { parent: entry.path })), contextButton(tr('createFolderHere'), () => createEntry('folder', { parent: entry.path })), separator()); else items.push(contextButton(tr('open'), () => openNote(entry.path)));
-    items.push(contextButton(tr('rename'), () => beginInlineRename(entry.path)));
+    items.push(contextButton(tr('rename'), () => beginInlineRename(entry.path, options?.renameHost || treeEl)));
     if (entry.kind === 'note') items.push(contextButton(tr('copyPath'), () => copyText(entry.path)));
     items.push(contextButton(tr('explorer'), () => reveal(entry.path, false)));
     if (entry.kind === 'note') {
@@ -5048,7 +5078,7 @@
         });
         queueNotebookSettings({ colors: { [entry.path]: color } });
     }, language() === 'en' ? 'Notebook color' : '笔记本颜色');
-    showContext([colors, separator(), contextButton(tr('rename'), () => beginInlineRename(entry.path)),
+    showContext([colors, separator(), contextButton(tr('rename'), () => beginInlineRename(entry.path, notebookTreeEl)),
       contextButton(tr('openExplorer'), () => reveal(entry.path, false)), hide, contextButton(tr('recycle'), () => recycleEntry(entry), true)], x, y);
   }
   let notebookCreateRunning = false;
@@ -5846,7 +5876,7 @@
     else if (mod && key === 'w' && state.activeTab) { event.preventDefault(); closeTab(state.activeTab); }
     else if (event.ctrlKey && event.key === 'Tab') { event.preventDefault(); switchTab(event.shiftKey ? -1 : 1); }
     else if (mod && /^[1-9]$/.test(event.key) && state.tabs.length) { event.preventDefault(); const index = event.key === '9' ? state.tabs.length - 1 : Math.min(Number(event.key) - 1, state.tabs.length - 1); activateTab(state.tabs[index]); }
-    else if (event.key === 'F2' && (state.selectedPath || state.current)) { event.preventDefault(); if (!browserResultsActive()) beginInlineRename(state.selectedPath || state.current.path); }
+    else if (event.key === 'F2' && (state.selectedPath || state.current)) { event.preventDefault(); if (!browserResultsActive()) { const path = state.selectedPath || state.current.path; beginInlineRename(path, notebookTreeEl?.contains(event.target) || isNotebookRoot(path) ? notebookTreeEl : treeEl); } }
     else if (event.key === 'Escape') { closeContextMenu(); root.classList.remove('tree-overlay-open'); }
   });
   function flushWorkspaceState(keepalive) {

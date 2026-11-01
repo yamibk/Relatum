@@ -202,6 +202,7 @@ class MarkdownFiles:
         from app import _cross_process_mutation_lock, _atomic_write_json
         with _cross_process_mutation_lock():
             state = self.read()
+            previous = {**state, 'recent': list(state['recent'])}
             if action in ('autoSave', 'outline') and type(value) is bool:
                 state[action] = value
             elif action == 'remember':
@@ -215,7 +216,8 @@ class MarkdownFiles:
                 state.update(autoSave=True, outline=False)
             else:
                 raise MarkdownFileError('不支持的设置操作。')
-            _atomic_write_json(self.state_path, state)
+            if state != previous:
+                _atomic_write_json(self.state_path, state)
         return state
 
     def status(self):

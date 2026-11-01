@@ -551,6 +551,6 @@ async function freePort() {
     await new Promise(resolve => { if (server.exitCode !== null) resolve(); else server.once('exit', resolve); });
     assert.equal(path.dirname(path.resolve(dataRoot)), path.resolve(os.tmpdir()));
     assert(path.basename(dataRoot).startsWith('relatum-notebooks-'));
-    fs.rmSync(dataRoot, { recursive: true, force: true });
+    fs.rmSync(dataRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });

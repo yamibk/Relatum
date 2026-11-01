@@ -321,6 +321,6 @@ async function compare(browser, url) {
     await new Promise(resolve => { if (service.exitCode !== null) resolve(); else service.once('exit', resolve); });
     assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
     assert(path.basename(root).startsWith('relatum-note-tree-motion-'));
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });

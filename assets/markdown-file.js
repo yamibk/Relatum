@@ -16,6 +16,7 @@
   let editor, outline, current = null, generation = 0, savedGeneration = 0, saving = null, timer = 0, statsTimer = 0;
   let settings = { autoSave: true, outline: false }, outlineOpen = false, sourceMode = false, initialized = false, closing = false, hidden = false, failed = false, authorizedClose = false;
   let disposed = false, sourceIntent = false, sourceSequence = 0, outlineSequence = 0, outlineCloseTask = null;
+  let dirtySent = null, dirtySending = false, externalCheck = null, externalEpoch = 0, externalCheckEpoch = 0, externalQueued = false;
   const outlinePane = document.querySelector('.markdown-outline');
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
   function icon(id, zh, en, parent, handler) {
@@ -26,11 +27,20 @@
   function showError(message) { $('error').textContent = message || ''; $('error').hidden = !message; }
   function check(result) { if (!result?.ok) { const error = new Error(result?.error || text('操作未完成。', 'Could not complete the action.')); error.code = result?.code; throw error; } return result; }
   const dirty = () => generation !== savedGeneration;
+  function notifyDirty() {
+    const value = dirty();
+    if (disposed || dirtySending || dirtySent === value || !api()?.set_dirty) return;
+    dirtySending = true;
+    Promise.resolve().then(() => api().set_dirty(value)).then(() => {
+      dirtySent = value; dirtySending = false;
+      if (dirty() !== value) notifyDirty();
+    }, () => { dirtySending = false; dirtySent = null; });
+  }
   function syncDocumentState() {
     const filename = $('filename'), name = current?.name || 'Untitled.md';
     if (filename.textContent !== name) filename.textContent = name;
     filename.title = current?.path || name;
-    api()?.set_dirty?.(dirty())?.catch(() => {});
+    notifyDirty();
   }
   function updateStats() { clearTimeout(statsTimer); statsTimer = setTimeout(() => {
     statsTimer = 0; if (editor) $('count').textContent = editor.view.state.doc.length.toLocaleString() + text(' 字符', ' characters');
@@ -47,6 +57,7 @@
     if (!as && !dirty() && current?.path) return true;
     const at = generation, snapshot = editor.snapshot();
     const action = as || !current?.path ? 'save-as' : 'save';
+    externalEpoch++;
     saving = (async () => {
       try {
         const result = check(await api().markdown_document(action, snapshot.value, current?.revision));
@@ -68,11 +79,14 @@
     dialog.append(heading, copy, form); document.body.append(dialog); dialog.showModal();
     return new Promise(resolve => { dialog.addEventListener('close', () => { const value = dialog.returnValue; dialog.remove(); resolve(value); }, { once: true }); });
   }
-  async function reload() {
+  async function reload({ external = false } = {}) {
     await editor.whenInputSettled();
+    if (disposed || closing || external && (dirty() || hidden || saving)) return;
+    const epoch = external ? externalEpoch : ++externalEpoch;
     if (dirty() && await choose(text('重新载入文件？', 'Reload this file?'), text('窗口中的修改将被磁盘上的内容替换。可以先另存为保留修改。', 'Replace your changes with the file on disk. Save a copy first if you want to keep your changes.'), [['cancel', text('取消', 'Cancel')], ['reload', text('重新载入', 'Reload')]]) !== 'reload') return;
-    const at = generation, result = check(await api().markdown_document('read'));
-    if (at !== generation) return;
+    if (disposed || closing || epoch !== externalEpoch) return;
+    const at = generation, previous = current, result = check(await api().markdown_document('read'));
+    if (disposed || closing || epoch !== externalEpoch || at !== generation || current !== previous || saving) return;
     current = result.document; failed = false; generation++; savedGeneration = generation;
     editor.setDocument({ value: current.content, notePath: current.path }); outline.documentChanged(); updateStats(); syncDocumentState(); showError('');
   }
@@ -131,7 +145,7 @@
   }
   const filesPanel = RelatumMarkdownFilesSettings.createPanel({ language: () => document.documentElement.lang,
     onChange(value) { settings = value; scheduleSave(); },
-    confirmAction: async value => (await choose(value.title, value.message, [['cancel', text('取消', 'Cancel')], ['yes', value.confirmLabel]])) === 'yes' });
+    confirmAction: value => dialog.confirmAction(value) });
   const appearance = document.createElement('section'); appearance.className = 'markdown-appearance';
   const darkLabel = document.createElement('label'); darkLabel.textContent = text('深色外观', 'Dark appearance'); const dark = document.createElement('input'); dark.type = 'checkbox';
   dark.dataset.role = 'markdown-dark'; dark.checked = document.documentElement.dataset.markdownDark === '1';
@@ -254,33 +268,42 @@
       $('outline-title').textContent = text('大纲', 'Outline'); setOutline(settings.outline, { instant: true }); updateStats(); syncDocumentState(); editor.focus(); syncNativeAppearance();
     } catch (error) { initialized = false; showError(error.message); }
   }
-  async function checkExternal() {
-    if (!editor || hidden || saving || editor.inputPending) return;
-    try {
-      const result = check(await api().markdown_document('changed', null, current.revision));
-      if (result.settings) { settings = result.settings; scheduleSave(); }
-      if (result.changed) {
-        if (dirty()) { failed = true; clearTimeout(timer); showError(text('磁盘文件已变化。你的修改仍在窗口中，请另存为或重新载入。', 'The file changed on disk. Your changes are kept here; save as or reload.')); }
-        else await reload();
-      }
-    } catch (error) { failed = true; showError(error.message); }
+  function checkExternal() {
+    if (!editor || hidden || saving || closing || disposed || editor.inputPending) return;
+    if (externalCheck) { if (externalCheckEpoch !== externalEpoch) externalQueued = true; return externalCheck; }
+    const at = generation, previous = current, epoch = externalCheckEpoch = externalEpoch;
+    const isCurrent = () => !disposed && !closing && !hidden && !saving && epoch === externalEpoch && at === generation && current === previous && !editor.inputPending;
+    const task = (async () => {
+      try {
+        const result = check(await api().markdown_document('changed', null, previous.revision));
+        if (!isCurrent()) return;
+        if (result.settings) { settings = result.settings; scheduleSave(); }
+        if (result.changed) {
+          if (dirty()) { failed = true; clearTimeout(timer); showError(text('磁盘文件已变化。你的修改仍在窗口中，请另存为或重新载入。', 'The file changed on disk. Your changes are kept here; save as or reload.')); }
+          else await reload({ external: true });
+        }
+      } catch (error) { if (isCurrent()) { failed = true; showError(error.message); } }
+    })();
+    externalCheck = task;
+    task.finally(() => { if (externalCheck === task) externalCheck = null; if (externalQueued) { externalQueued = false; checkExternal(); } });
+    return task;
   }
   function visibility() {
     hidden = document.hidden || document.documentElement.dataset.desktopMinimized === '1';
     editor?.setExtensionsActive(!hidden);
     settleOutline();
-    if (hidden) { sourceSequence++; sourceIntent = sourceMode; dialog.close({ instant: true, restoreFocus: false, reason: 'hidden' }); menu.hidden = true; contextMenu.hidden = true; }
+    if (hidden) { externalEpoch++; sourceSequence++; sourceIntent = sourceMode; dialog.close({ instant: true, restoreFocus: false, reason: 'hidden' }); menu.hidden = true; contextMenu.hidden = true; }
     else checkExternal();
   }
   window.addEventListener('focus', checkExternal);
   document.addEventListener('visibilitychange', visibility); window.addEventListener('canvasdesktop:visibility', visibility);
   function motionChanged() { if (motion.matches) settleOutline(); }
   motion.addEventListener('change', motionChanged);
-  window.addEventListener('pagehide', () => { disposed = true; sourceSequence++; cancelOutlineClose(); motion.removeEventListener('change', motionChanged); clearTimeout(timer); clearTimeout(statsTimer); outline?.suspend(); editor?.destroy(); });
+  window.addEventListener('pagehide', () => { disposed = true; externalEpoch++; sourceSequence++; cancelOutlineClose(); motion.removeEventListener('change', motionChanged); clearTimeout(timer); clearTimeout(statsTimer); outline?.suspend(); editor?.destroy(); });
   window.addEventListener('beforeunload', event => { if (dirty() && !authorizedClose) { event.preventDefault(); event.returnValue = ''; } });
   window.RelatumMarkdownWindow = { async close() {
     if (closing) return;
-    closing = true; clearTimeout(timer); menu.hidden = true;
+    closing = true; externalEpoch++; clearTimeout(timer); menu.hidden = true;
     try {
       await editor?.whenInputSettled(); if (saving) await saving.catch(() => {});
       if (dirty()) {

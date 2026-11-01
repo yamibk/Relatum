@@ -19,5 +19,6 @@
 .markdown-files-recent > div:first-child { min-width: 0; }
 .markdown-files-recent .markdown-files-actions { flex-shrink: 0; }
 .markdown-files-message { font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.markdown-files-settings[aria-busy="true"] [data-markdown-action] { cursor: progress; }
 @media(max-width: 900px) { .markdown-files-steps { grid-template-columns: 1fr; gap: 12px; } .markdown-files-recent { align-items: flex-start; flex-direction: column; } }
 html:is([data-note-theme="apple"],[data-note-theme="claude"]) .markdown-files-card { border-color: transparent; }

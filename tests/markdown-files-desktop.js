@@ -13,6 +13,8 @@ const blank = process.argv.includes('--blank');
 const release = process.env.RELATUM_MARKDOWN_RELEASE;
 const workspace = process.argv.includes('--workspace');
 const appearance = process.argv.includes('--appearance');
+const management = process.argv.includes('--management');
+const lifecycle = process.argv.includes('--lifecycle');
 assert(!(release && blank), '--blank uses a source-only file-picker test double');
 fs.mkdirSync(path.join(root, 'data')); fs.mkdirSync(artifact, { recursive: true });
 fs.writeFileSync(file, '\ufeff' + source.replace(/\n/g, '\r\n'));
@@ -27,7 +29,17 @@ if (!workspace) {
   fs.writeFileSync(path.join(folder, 'preferences.json'), JSON.stringify({ version: 1,
     values: { 'canvas:noteTheme:v1': 'apple', 'canvas:markdownDark:v1': '0' } }));
 }
-async function freePort() { const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r)); const n = s.address().port; await new Promise(r => s.close(r)); return n; }
+async function freePort() {
+  // Keep the debugger outside Windows' dynamic port range: the application's
+  // subsequent asset server binds port 0 and must not consume this reservation.
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const s = net.createServer(), port = 20000 + Math.floor(Math.random() * 20000);
+    try { await new Promise((resolve, reject) => { s.once('error', reject); s.listen(port, '127.0.0.1', resolve); }); }
+    catch { continue; }
+    await new Promise(resolve => s.close(resolve)); return port;
+  }
+  throw new Error('No free debugger port');
+}
 (async () => {
   const port = await freePort(), debug = 'http://127.0.0.1:' + port;
   const saveTarget = path.join(root, '新建 文档.md'), copyTarget = path.join(root, '另存 文档.md');
@@ -53,6 +65,8 @@ async function freePort() { const s = net.createServer(); await new Promise(r =>
       await page.locator('[data-note-action="toggle-library-settings"]').click();
       await page.locator('nav [data-settings-category="markdown-files"]').click();
       await page.waitForFunction(() => !document.querySelector('[data-markdown-action="autoSave"]').disabled);
+      await page.waitForFunction(() => document.querySelector('.markdown-files-settings').getAttribute('aria-busy') === 'false');
+      if (management) { await require('./markdown-files-management.js')(page, true); assert.equal(errors.length, 0, errors.join('\n')); console.log('Markdown management / full workspace: OK'); return; }
       assert.equal(await page.locator('.markdown-files-card').count(), 4);
       await page.locator('[data-markdown-action="autoSave"]').check();
       await page.waitForFunction(() => !document.querySelector('[data-markdown-action="autoSave"]').disabled);
@@ -64,6 +78,7 @@ async function freePort() { const s = net.createServer(); await new Promise(r =>
       return;
     }
     await page.waitForFunction(() => window.RelatumMarkdownWindow?.editor);
+    if (management) { await require('./markdown-files-management.js')(page, false); assert.equal(errors.length, 0, errors.join('\n')); console.log('Markdown management / standalone: OK'); return; }
     async function waitForSaved(target = file) {
       const expected = await page.evaluate(() => RelatumMarkdownWindow.editor.snapshot().value);
       for (let attempt = 0; attempt < 150; attempt++) {
@@ -72,6 +87,7 @@ async function freePort() { const s = net.createServer(); await new Promise(r =>
       }
       assert.fail('The document was not saved to disk: ' + target);
     }
+    if (lifecycle) { await require('./markdown-files-lifecycle.js')(page, waitForSaved); assert.equal(errors.length, 0, errors.join('\n')); console.log('Markdown lifecycle / bridge deduplication: OK'); return; }
     if (appearance) {
       await require('./markdown-files-appearance.js')(page, artifact, waitForSaved);
       assert.equal(errors.length, 0, errors.join('\n'));

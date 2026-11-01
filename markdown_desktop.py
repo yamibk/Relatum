@@ -13,6 +13,8 @@ import urllib.parse
 
 from markdown_files import (MarkdownDocument, MarkdownFileError, MarkdownFiles,
                             register_association, unregister_association, safe_path, spawn_editor)
+from markdown_window_state import (DEFAULT_SIZE, MIN_SIZE, WindowState, read_state,
+                                   restore_placement, capture_placement)
 
 
 def set_window_appearance(shell, window, dark):
@@ -219,12 +221,29 @@ def run(shell, path=None):
     thread = threading.Thread(target=server.serve_forever, daemon=True, name='markdown-file-assets')
     thread.start()
     bridge = Bridge()
+    state_path = app.DATA / 'desktop-sessions' / 'markdown-files' / 'window-state.json'
+    saved_placement = read_state(state_path)
     window = webview.create_window((document.path.name if document.path else 'Untitled.md') + ' — Relatum',
         f'http://127.0.0.1:{server.server_address[1]}/markdown-file.html', js_api=bridge,
-        width=1040, height=780, min_size=(520, 400), background_color='#000000' if bridge._markdown_dark else '#ffffff', text_select=True)
+        width=saved_placement['width'] if saved_placement else DEFAULT_SIZE[0],
+        height=saved_placement['height'] if saved_placement else DEFAULT_SIZE[1],
+        min_size=MIN_SIZE, background_color='#000000' if bridge._markdown_dark else '#ffffff', text_select=True)
     bridge._window = window
+    placement = WindowState(state_path, lambda: capture_placement(shell, window))
+
+    def before_show():
+        try:
+            restore_placement(shell, window, saved_placement)
+        except (OSError, AttributeError, ValueError):
+            pass  # Native placement is optional; retain the usable default window.
+
+    def shown():
+        placement.start()
+        bridge.maximized = shell._is_maximized(window)
+        set_window_appearance(shell, window, bridge._markdown_dark)
 
     def closing():
+        placement.flush()
         if bridge._close_after_flush or not bridge._markdown_ready:
             return True
         def request():
@@ -235,9 +254,26 @@ def run(shell, path=None):
         threading.Thread(target=request, daemon=True).start()
         return False
     window.events.closing += closing
-    window.events.shown += lambda: set_window_appearance(shell, window, bridge._markdown_dark)
-    window.events.minimized += lambda: shell._notify_usage_visibility(window, True)
-    window.events.restored += lambda: shell._notify_usage_visibility(window, False)
+    window.events.before_show += before_show
+    window.events.shown += shown
+    window.events.moved += placement.changed
+    window.events.resized += placement.changed
+    def maximized():
+        bridge.maximized = True
+        bridge.minimized = False
+        shell._notify_usage_visibility(window, False)
+        placement.changed()
+    window.events.maximized += maximized
+    def minimized():
+        bridge.minimized = True
+        shell._notify_usage_visibility(window, True)
+    window.events.minimized += minimized
+    def restored():
+        bridge.maximized = shell._is_maximized(window)
+        bridge.minimized = False
+        shell._notify_usage_visibility(window, False)
+        placement.changed()
+    window.events.restored += restored
     try:
         storage = app.DATA / 'desktop-sessions' / 'markdown-files' / 'WebView2'
         storage.mkdir(parents=True, exist_ok=True)
@@ -246,6 +282,7 @@ def run(shell, path=None):
                       icon=str(app.ASSETS / 'app-icon.ico'))
     finally:
         try:
+            placement.stop()
             preferences.flush()
         finally:
             server.shutdown()

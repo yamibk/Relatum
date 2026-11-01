@@ -86,6 +86,127 @@ class MarkdownFileTests(unittest.TestCase):
         self.assertEqual(manager.read()['recent'], [])
         self.assertNotIn('content', json.dumps(manager.read()))
 
+    def test_unchanged_recent_list_and_preferences_do_not_write(self):
+        import app
+        manager = files.MarkdownFiles(self.root)
+        manager.update('remember', str(self.path))
+        with mock.patch.object(app, '_atomic_write_json', wraps=app._atomic_write_json) as write:
+            manager.update('remember', str(self.path))
+            manager.update('autoSave', True)
+            manager.update('reset')
+            write.assert_not_called()
+            manager.update('outline', True)
+            self.assertEqual(write.call_count, 1)
+
+
+class MarkdownWindowStateTests(unittest.TestCase):
+    class Timer:
+        def __init__(self, delay, callback):
+            self.delay, self.callback, self.cancelled = delay, callback, False
+        def start(self): pass
+        def cancel(self): self.cancelled = True
+
+    def setUp(self):
+        import markdown_window_state
+        self.module = markdown_window_state
+        self.temporary = tempfile.TemporaryDirectory(prefix='relatum-md-window-')
+        self.addCleanup(self.temporary.cleanup)
+        self.path = Path(self.temporary.name) / 'window-state.json'
+        self.current = dict(version=1, x=30, y=60, width=1040, height=780, maximized=False)
+
+    def session(self, timestamp):
+        session = self.module.WindowState(self.path, lambda: self.current.copy() if self.current else None,
+                                         clock=lambda: timestamp, timer=self.Timer)
+        session.start()
+        return session
+
+    def test_start_unchanged_close_and_minimize_never_save(self):
+        session = self.session(10)
+        session.changed()
+        self.current = None
+        session.changed()
+        session.stop()
+        self.assertFalse(self.path.exists())
+
+    def test_resize_debounce_close_and_maximize_keep_normal_size(self):
+        session = self.session(10)
+        self.current['width'] = 850
+        session.changed()
+        first = session.timer
+        self.assertEqual(first.delay, .4)
+        self.current.update(height=630, maximized=True)
+        session.changed()
+        self.assertTrue(first.cancelled)
+        first.callback()  # A cancelled callback already queued cannot flush the new timer.
+        self.assertFalse(self.path.exists())
+        session.flush()
+        saved = self.module.read_state(self.path)
+        self.assertEqual((saved['width'], saved['height'], saved['maximized']), (850, 630, True))
+        self.current = None
+        session.changed()
+        session.stop()
+        self.assertEqual(self.module.read_state(self.path), saved)
+
+    def test_reverse_close_order_does_not_overwrite_newer_adjustment(self):
+        old = self.session(10)
+        self.current['width'] = 800
+        old.changed()
+        newer = self.session(20)
+        self.current['width'] = 900
+        newer.changed()
+        newer.stop()
+        old.stop()
+        self.assertEqual(self.module.read_state(self.path)['width'], 900)
+        unchanged = self.session(30)
+        unchanged.stop()
+        self.assertEqual(self.module.read_state(self.path)['updatedNs'], 20)
+
+    def test_write_failure_can_retry_without_blocking_document(self):
+        import app
+        session = self.session(10)
+        self.current['height'] = 600
+        session.changed()
+        with mock.patch.object(app, '_atomic_write_json', side_effect=PermissionError('read-only')), \
+             self.assertLogs(self.module.log, level='WARNING'):
+            session.flush()
+        self.assertIsNotNone(session.pending)
+        session.stop()
+        self.assertEqual(self.module.read_state(self.path)['height'], 600)
+
+    def test_invalid_state_defaults_and_dpi_work_area_fitting(self):
+        for value in ('broken', '[]', '{"version":2}', json.dumps({**self.current, 'updatedNs': 10, 'width': True})):
+            self.path.write_text(value, encoding='utf-8')
+            self.assertIsNone(self.module.read_state(self.path))
+        saved = {**self.current, 'x': 5000, 'y': -3000, 'width': 900, 'height': 600}
+        for scale in (1, 1.5, 2):
+            x, y, width, height = self.module.fit_placement(saved, (0, 40, 1920, 1080), scale, (10, 20))
+            self.assertEqual((width, height), (min(1920, round(900 * scale)), min(1040, round(600 * scale))))
+            self.assertGreaterEqual(x, 0)
+            self.assertGreaterEqual(y, 40)
+            self.assertLessEqual(x + width, 1920)
+            self.assertLessEqual(y + height, 1080)
+        self.assertEqual(self.module.fit_placement(None, (0, 0, 3000, 2000), 1, (50, 60)), (50, 60, 1040, 780))
+        self.assertEqual(self.module.fit_placement({**saved, 'width': 100, 'height': 100}, (0, 0, 1920, 1080), 1, (0, 0))[2:], (520, 400))
+
+    def test_native_capture_converts_workspace_position_and_uses_actual_normal_rect(self):
+        import desktop
+        from ctypes import wintypes
+        def placement(hwnd, output):
+            output._obj.rcNormalPosition = wintypes.RECT(30, 20, 1380, 920)
+            return 1
+        user = types.SimpleNamespace(IsIconic=lambda hwnd: False, IsZoomed=lambda hwnd: True,
+                                     GetWindowPlacement=placement)
+        info = types.SimpleNamespace(work=wintypes.RECT(0, 60, 1920, 1080), monitor=wintypes.RECT(0, 0, 1920, 1080))
+        shell = types.SimpleNamespace(_hwnd=lambda window: 123, _window_scale=lambda window: 1.5,
+                                      _WINDOWPLACEMENT=desktop._WINDOWPLACEMENT)
+        with mock.patch.object(self.module.ctypes, 'windll', types.SimpleNamespace(user32=user)), \
+             mock.patch.object(self.module, '_monitor', return_value=(1, info)):
+            value = self.module.capture_placement(shell, object())
+            self.assertEqual((value['x'], value['y'], value['width'], value['height']), (30, 80, 900, 600))
+            self.assertTrue(value['maximized'])
+            user.IsIconic = lambda hwnd: True
+            self.assertIsNone(self.module.capture_placement(shell, object()))
+
 
 class FakeRegistry:
     HKEY_CURRENT_USER = 'USER'
