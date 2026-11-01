@@ -93,6 +93,24 @@
 
   // Clipboard-only compatibility. Rendering and existing Markdown keep their
   // escape semantics; only a complete pair wholly inside the new paste changes.
+  function pastedMathCandidateEnds(source) {
+    const ends = new Map();
+    let previous = null;
+    for (const token of source.matchAll(/\\+[()[\]]/g)) {
+      const open = previous && previous[0];
+      if ((open === '\\\\(' || open === '\\\\[') && token[0] === (open === '\\\\(' ? '\\\\)' : '\\\\]')) {
+        const from = previous.index, to = token.index + token[0].length;
+        const limit = open === '\\\\(' ? 4096 : 32768;
+        if (to - from <= limit) {
+          const body = source.slice(from + open.length, token.index);
+          if ((open !== '\\\\(' || !/[\r\n]/.test(body)) && body.split('\n').some(line => quoteLine(line).text.trim())) ends.set(from, to);
+        }
+      }
+      previous = token;
+    }
+    return ends;
+  }
+
   function pastedMathMask(source, inlineOnly) {
     const blocked = [];
     const header = !inlineOnly && /^\uFEFF?---\r?\n/.test(source) ? frontmatter(source) : null;
@@ -123,10 +141,13 @@
       offset += line.length + 1;
     }
     let visible = maskNoteRanges(source, blocked);
-    // Scan inline literals once, including multiline code and unfinished
-    // comments. HTML stays inert; link destinations are never math input.
+    // A copied formula is one token here: its comparisons, text and TeX
+    // literals must not start Markdown/HTML guards that consume later prose.
+    // Earlier code, comments, links and HTML still own everything inside them.
+    const mathEnds = pastedMathCandidateEnds(visible);
     const literals = [];
     for (let at = 0; at < visible.length;) {
+      if (mathEnds.has(at)) { at = mathEnds.get(at); continue; }
       if (!'<%`]hHwW'.includes(visible[at])) { at++; continue; }
       let end = -1;
       if (visible.startsWith('<!--', at) || visible.startsWith('%%', at)) {
@@ -149,9 +170,13 @@
       } else if (/^(?:https?:\/\/|www\.)/i.test(visible.slice(at, at + 8)) && !/[\w]/.test(visible[at - 1] || '')) {
         const tail = /^[^\s<>]+/.exec(visible.slice(at));
         if (tail) end = at + tail[0].length;
-      } else if (visible[at] === '<' && /^<(?:\/?[A-Za-z]|https?:|mailto:)/i.test(visible.slice(at, at + 16))) {
-        const found = visible.indexOf('>', at + 1);
-        if (found >= 0) end = found + 1;
+      } else if (visible[at] === '<') {
+        // Require a full tag and close it outside quoted attributes. In
+        // particular, "<a\\)" is a comparison, not the start of a distant tag.
+        const tail = visible.slice(at);
+        const tag = /^<\/?[A-Za-z][A-Za-z0-9:-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>/.exec(tail)
+          || /^<(?:https?:\/\/|mailto:)[^<>\r\n]*>/i.exec(tail);
+        if (tag) end = at + tag[0].length;
       }
       if (end > at) { literals.push({ from: at, to: end }); at = end; }
       else at++;
@@ -172,8 +197,8 @@
       }
       return -1;
     };
-    // Only the observed doubled thin-space command; keep real TeX row breaks,
-    // escaped braces/percent/underscores and all other commands byte-for-byte.
+    // Repair observed copy escapes only inside doubled-delimiter formulas;
+    // real TeX row breaks, text/verb literals and other escapes stay intact.
     for (let at = 0; at < source.length;) {
       if (source[at] === '%' && !escapedAtSource(source, at)) {
         const end = source.indexOf('\n', at); at = end < 0 ? source.length : end + 1; continue;
@@ -191,18 +216,11 @@
         let group = end + command.length; while (group < source.length && /\s/.test(source[group])) group++;
         if (source[group] === '{') { const close = groupEnd(group); if (close >= 0) { at = close + 1; continue; } }
       }
-      if (end - at === 1 && source.startsWith('underbrace', end) && !/[A-Za-z]/.test(source[end + 10] || '')) {
-        let open = end + 10; while (/\s/.test(source[open] || '') && open < source.length) open++;
-        if (source[open] === '{') {
-          const close = groupEnd(open);
-          if (close >= 0) {
-            let sub = close + 1; while (/\s/.test(source[sub] || '') && sub < source.length) sub++;
-            if (source.startsWith('\\_', sub)) {
-              let group = sub + 2; while (/\s/.test(source[group] || '') && group < source.length) group++;
-              if (source[group] === '{' && groupEnd(group) >= 0) removals.add(sub);
-            }
-          }
-        }
+      if (end - at === 1 && source[end] === '<') removals.add(at);
+      if (end - at === 1 && source[end] === '_') {
+        let before = at - 1; while (before >= 0 && /\s/.test(source[before])) before--;
+        let group = end + 1; while (group < source.length && /\s/.test(source[group])) group++;
+        if (/[A-Za-z0-9}\])]/.test(source[before] || '') && source[group] === '{' && groupEnd(group) >= 0) removals.add(at);
       }
       at = end;
     }

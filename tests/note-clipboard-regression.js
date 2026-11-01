@@ -15,6 +15,50 @@ assert.equal(normalize(formula), standard);
 assert.equal(normalize(formula, { before: '前文', after: '后文' }), standard);
 assert.equal(normalize(formula, { before: fixture.copied + '\n', after: '\n' + fixture.copied }), standard, 'old text only supplies context');
 assert.equal(normalize(formula.replaceAll('x', '🙂中文')), standard.replaceAll('x', '🙂中文'));
+const comparisonsCopied = String.raw`即使不知道 \\(t\<a\\) 期间的过程，只要知道 \\(t=a\\) 时的 \\(g(a)\\)。
+
+- \\(t\<a\\)：电压源为 \\(A\\)，已知 \\(t\leq a\\) 的表达式。
+
+\\[ u_c(a^+)=g(a) \\]
+
+\\[ \boxed{u\_{\text{new}}(t)=B+[g(a)-B]e^{-\frac{t-a}{RC}}} \\]
+
+之后计算 \\(t>a\\) 时的新旧函数之差。
+
+\\[ \begin{aligned} \Delta u(t)={}&u\_{\text{new}}(t)\\\ &-u\_{\text{old}}(t) \end{aligned} \\]`;
+const comparisonsExpected = String.raw`即使不知道 \(t<a\) 期间的过程，只要知道 \(t=a\) 时的 \(g(a)\)。
+
+- \(t<a\)：电压源为 \(A\)，已知 \(t\leq a\) 的表达式。
+
+\[ u_c(a^+)=g(a) \]
+
+\[ \boxed{u_{\text{new}}(t)=B+[g(a)-B]e^{-\frac{t-a}{RC}}} \]
+
+之后计算 \(t>a\) 时的新旧函数之差。
+
+\[ \begin{aligned} \Delta u(t)={}&u_{\text{new}}(t)\\\ &-u_{\text{old}}(t) \end{aligned} \]`;
+assert.equal(normalize(comparisonsCopied), comparisonsExpected, 'a comparison must not consume later formulas through a distant >');
+assert.equal(normalize(comparisonsExpected), comparisonsExpected, 'standard math remains byte-for-byte unchanged');
+assert.equal(mathRanges(normalize(comparisonsCopied)).length, 10, 'all inline and display formulas are recovered');
+assert.equal(normalize(String.raw`\\(x<a > b\\) \\(c\\)`), String.raw`\(x<a > b\) \(c\)`, 'tag-shaped comparisons belong to their formula');
+assert.equal(normalize(String.raw`\\(x<a\\) \\(c\\)`), String.raw`\(x<a\) \(c\)`, 'an unmatched < is also math content');
+assert.equal(normalize(String.raw`\\[x\<a \quad u \_ {\text{old}}\quad \underbrace{x}\_{\text{label}}\\]`),
+  String.raw`\[x<a \quad u _ {\text{old}}\quad \underbrace{x}_{\text{label}}\]`);
+const copiedLiterals = String.raw`\text{u\_{old} x\<y}+\verb|u\_{old} x\<y|+\{x\}+\%+x\_y+\>+\\`;
+assert.equal(normalize('\\\\[ ' + copiedLiterals + ' \\\\]'), '\\[ ' + copiedLiterals + ' \\]', 'text, verb, literal underscores, spacing and row breaks stay intact');
+assert.equal(normalize(String.raw`\\[u\_{unfinished\\]`), String.raw`\[u\_{unfinished\]`, 'an incomplete grouped subscript is not repaired');
+assert.equal(normalize('\\\\[x\\<y % u\\_{literal} x\\<y\n\\\\]'), '\\[x<y % u\\_{literal} x\\<y\n\\]', 'TeX comments remain literal');
+for (const literal of [
+  '`' + comparisonsCopied + '`', '```tex\n' + comparisonsCopied + '\n```',
+  '<!-- ' + comparisonsCopied + ' -->', '%% ' + comparisonsCopied + ' %%',
+]) assert.equal(normalize(literal), literal, 'comparison samples inside literals remain untouched');
+for (const tag of [
+  '<a data-label="1 > 0" title="' + formula + '">',
+  "<a data-label='1 > 0'\n title='" + formula + "'>",
+  '<custom-element data-formula=' + formula + '>',
+]) assert.equal(normalize(tag + 'link</a>\n\n' + formula), tag + 'link</a>\n\n' + standard, 'HTML attributes stay literal without hiding following formulas');
+assert.equal(normalize(formula, { before: '<a title="1 > 0 ', after: '">link</a>' }), formula, 'quoted > does not end the HTML paste context');
+assert.equal(normalize(String.raw`\\(x<a\\)`, { before: '    ', after: '' }, true), String.raw`\(x<a\)`, 'inline table paste uses the same comparison guards');
 const unchanged = [
   String.raw`\[\frac{a}{b}\]`, String.raw`$$\int x\\,dx$$`, String.raw`\(\text{file\_name}\)`,
   '`' + formula + '`', '`` ' + formula + ' ` tick ``', '`multiline\n' + formula + '\ncode`',
