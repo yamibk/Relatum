@@ -27,7 +27,7 @@ body.markdown-window > .markdown-root { position: relative; inset: auto; display
 .markdown-window .markdown-icon:hover, .markdown-window .markdown-icon[aria-pressed="true"] { color: var(--text); background: var(--markdown-hover); }
 .markdown-window button:focus-visible { outline: 2px solid var(--note-theme-link, #777); outline-offset: 2px; }
 .markdown-filename { flex: 1; min-width: 0; text-align: center; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; color: var(--text-secondary); }
-.markdown-window .markdown-layout { position: relative; inset: auto; display: flex; flex: 1; width: 100%; min-width: 0; min-height: 0; margin: 0; padding: 0; overflow: hidden; background: var(--markdown-bg); --note-font-scale: 1; --markdown-outline-width: 280px; }
+.markdown-window .markdown-layout { position: relative; inset: auto; display: flex; flex: 1; width: 100%; min-width: 0; min-height: 0; margin: 0; padding: 0; overflow: hidden; background: var(--markdown-bg); --note-font-scale: 1; --markdown-outline-width: 240px; }
 .markdown-window .note-document-pane {
   flex: 1; position: relative; inset: auto; display: block; width: auto; min-width: 0; height: 100%;
   margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent;
@@ -59,7 +59,7 @@ html[data-markdown-dark] body.markdown-window .markdown-root :is(.note-live-edit
 .markdown-outline-head { flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; margin: 0 0 10px; }
 .markdown-outline h2 { margin: 0 10px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .markdown-outline .note-outline { flex: 1; min-height: 0; overflow: auto; }
-.markdown-footer { display: flex; justify-content: space-between; gap: 12px; padding: 6px 18px; flex: 0 0 auto; font-size: 11px; line-height: 18px; color: var(--text-tertiary, #999); background: var(--markdown-bg); }
+.markdown-footer { display: flex; justify-content: flex-end; gap: 12px; padding: 6px 18px; flex: 0 0 auto; font-size: 11px; line-height: 18px; color: var(--text-tertiary, #999); background: var(--markdown-bg); }
 .markdown-error { padding: 9px 20px; background: var(--markdown-bg); border-bottom: 1px solid var(--markdown-line); color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
 .markdown-error[hidden] { display: none; }
 .markdown-window .markdown-more { position: fixed; z-index: 20; top: 42px; left: 100px; margin: 0; min-width: 180px; padding: 5px; border: 1px solid var(--border, #ddd); border-radius: 12px; background: var(--markdown-bg); box-shadow: 0 8px 24px #0002; }

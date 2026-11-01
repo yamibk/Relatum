@@ -2,7 +2,7 @@
 // Runs inside the isolated, real native host used by markdown-files-desktop.js.
 const assert = require('node:assert/strict'), path = require('node:path');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-module.exports = async function checkAppearance(page, artifacts) {
+module.exports = async function checkAppearance(page, artifacts, waitForSaved) {
   const outline = page.locator('.markdown-outline'), toggle = page.locator('[data-action="outline"]');
   const mode = page.locator('[data-action="source"]'), settings = page.locator('dialog.relatum-settings');
   await page.emulateMedia({ reducedMotion: 'no-preference' });
@@ -41,7 +41,7 @@ module.exports = async function checkAppearance(page, artifacts) {
     window.originalMarkdownEditor = e;
   });
   await page.locator('[data-action="save"]').click();
-  await page.waitForFunction(() => document.querySelector('[data-role="save-status"]').textContent === '已保存');
+  await waitForSaved();
   const geometry = () => page.evaluate(() => {
     const e = RelatumMarkdownWindow.editor, rect = e.view.scrollDOM.getBoundingClientRect();
     const paragraph = Array.from(e.view.contentDOM.querySelectorAll('.cm-line')).find(node => node.textContent.startsWith('A long paragraph'));
@@ -61,7 +61,7 @@ module.exports = async function checkAppearance(page, artifacts) {
   await pause(260);
   assert.deepEqual(await geometry(), before, 'opening the outline leaves editor geometry, wrap, selection and scroll unchanged');
   const paneRect = await outline.boundingBox(), viewport = page.viewportSize() || await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
-  assert(Math.abs(paneRect.width - 280) < 1); assert(Math.abs(paneRect.x + paneRect.width - viewport.width) < 1);
+  assert(Math.abs(paneRect.width - 240) < 1); assert(Math.abs(paneRect.x + paneRect.width - viewport.width) < 1);
   await page.screenshot({ path: path.join(artifacts, 'markdown-outline-white.png') });
   // Repeated opening/closing reverses the same CSS motion; a previous end event
   // or timeout cannot hide a newly opened outline.
@@ -110,7 +110,7 @@ module.exports = async function checkAppearance(page, artifacts) {
   });
   assert.deepEqual(history, { undo: true, redo: true, restored: true }, 'mode changes preserve the existing undo history');
   await page.locator('[data-action="save"]').click();
-  await page.waitForFunction(() => document.querySelector('[data-role="save-status"]').textContent === '已保存');
+  await waitForSaved();
   // Only grayscale appearance changes; neither old theme preferences nor the
   // editor's document and selection are replaced.
   await page.locator('[data-action="settings"]').click();

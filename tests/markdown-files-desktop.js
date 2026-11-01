@@ -64,8 +64,16 @@ async function freePort() { const s = net.createServer(); await new Promise(r =>
       return;
     }
     await page.waitForFunction(() => window.RelatumMarkdownWindow?.editor);
+    async function waitForSaved(target = file) {
+      const expected = await page.evaluate(() => RelatumMarkdownWindow.editor.snapshot().value);
+      for (let attempt = 0; attempt < 150; attempt++) {
+        if (fs.existsSync(target) && fs.readFileSync(target, 'utf8').replace(/^\ufeff/, '').replace(/\r\n/g, '\n') === expected) return;
+        await pause(100);
+      }
+      assert.fail('The document was not saved to disk: ' + target);
+    }
     if (appearance) {
-      await require('./markdown-files-appearance.js')(page, artifact);
+      await require('./markdown-files-appearance.js')(page, artifact, waitForSaved);
       assert.equal(errors.length, 0, errors.join('\n'));
       console.log('Markdown monochrome / overlay / mode controls: OK; artifacts: ' + artifact);
       return;
@@ -74,7 +82,7 @@ async function freePort() { const s = net.createServer(); await new Promise(r =>
       assert.equal(await page.evaluate(() => RelatumMarkdownWindow.editor.snapshot().value), '');
       await page.evaluate(() => RelatumMarkdownWindow.editor.replaceSelection('# 新文档\n\n保留修改。\n'));
       await page.locator('[data-action="save"]').click();
-      await page.waitForFunction(() => document.querySelector('[data-role="save-status"]').textContent === '已保存');
+      await waitForSaved(saveTarget);
       assert.equal(fs.readFileSync(saveTarget, 'utf8'), '# 新文档\n\n保留修改。\n');
       await page.keyboard.press('Control+Shift+s');
       await page.waitForFunction(() => document.querySelector('[data-role="filename"]').textContent === '另存 文档.md');
@@ -106,7 +114,7 @@ async function freePort() { const s = net.createServer(); await new Promise(r =>
     assert(await page.evaluate(() => RelatumMarkdownWindow.editor.view.state.selection.main.head > 100));
     await page.evaluate(() => { const e = RelatumMarkdownWindow.editor; e.view.dispatch({ changes: { from: e.view.state.doc.length, insert: '\n新增内容。\n' } }); });
     await page.locator('[data-action="save"]').click();
-    await page.waitForFunction(() => document.querySelector('[data-role="save-status"]').textContent === '已保存');
+    await waitForSaved();
     const saved = fs.readFileSync(file); assert(saved.subarray(0, 3).equals(Buffer.from([239, 187, 191])));
     assert(saved.toString().includes('新增内容。\r\n')); assert(!saved.toString().includes('\r\r\n'));
     fs.writeFileSync(file, '# External change\n');
@@ -141,7 +149,7 @@ async function freePort() { const s = net.createServer(); await new Promise(r =>
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.querySelector('dialog.relatum-settings').open);
     await page.evaluate(() => { const e = RelatumMarkdownWindow.editor; e.view.dispatch({ changes: { from: e.view.state.doc.length, insert: '\nAutosaved\n' } }); });
-    await page.waitForFunction(() => document.querySelector('[data-role="save-status"]').textContent === '已保存');
+    await waitForSaved();
     assert(fs.readFileSync(file, 'utf8').includes('Autosaved'));
     await page.locator('[data-action="source"]').click();
     await page.waitForFunction(() => document.querySelector('[data-action="source"]').getAttribute('aria-pressed') === 'true');

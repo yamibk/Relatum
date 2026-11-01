@@ -26,10 +26,10 @@
   function showError(message) { $('error').textContent = message || ''; $('error').hidden = !message; }
   function check(result) { if (!result?.ok) { const error = new Error(result?.error || text('操作未完成。', 'Could not complete the action.')); error.code = result?.code; throw error; } return result; }
   const dirty = () => generation !== savedGeneration;
-  function status(value) {
-    $('save-status').textContent = value || (dirty() ? text('尚未保存', 'Unsaved changes') : text('已保存', 'Saved'));
-    $('filename').textContent = (dirty() ? '● ' : '') + (current?.name || 'Untitled.md');
-    $('filename').title = current?.path || text('尚未选择保存位置', 'Choose a location when saving');
+  function syncDocumentState() {
+    const filename = $('filename'), name = current?.name || 'Untitled.md';
+    if (filename.textContent !== name) filename.textContent = name;
+    filename.title = current?.path || name;
     api()?.set_dirty?.(dirty())?.catch(() => {});
   }
   function updateStats() { clearTimeout(statsTimer); statsTimer = setTimeout(() => {
@@ -46,17 +46,16 @@
     if (saving) { await saving; return save(as); }
     if (!as && !dirty() && current?.path) return true;
     const at = generation, snapshot = editor.snapshot();
-    status(text('正在保存…', 'Saving…'));
     const action = as || !current?.path ? 'save-as' : 'save';
     saving = (async () => {
       try {
         const result = check(await api().markdown_document(action, snapshot.value, current?.revision));
-        if (result.cancelled) { status(); return false; }
+        if (result.cancelled) { syncDocumentState(); return false; }
         const previousPath = current?.path;
         current = result.document; savedGeneration = at; failed = false;
         if (previousPath !== current.path) editor.setNotePath(current.path);
-        showError(''); status(); scheduleSave(); return true;
-      } catch (error) { failed = true; status(text('保存失败，修改仍保留在窗口中', 'Save failed; your changes remain in this window')); throw error; }
+        showError(''); syncDocumentState(); scheduleSave(); return true;
+      } catch (error) { failed = true; syncDocumentState(); throw error; }
     })();
     try { return await saving; } finally { saving = null; }
   }
@@ -75,7 +74,7 @@
     const at = generation, result = check(await api().markdown_document('read'));
     if (at !== generation) return;
     current = result.document; failed = false; generation++; savedGeneration = generation;
-    editor.setDocument({ value: current.content, notePath: current.path }); outline.documentChanged(); updateStats(); status(); showError('');
+    editor.setDocument({ value: current.content, notePath: current.path }); outline.documentChanged(); updateStats(); syncDocumentState(); showError('');
   }
   function cancelOutlineClose() {
     outlineSequence++;
@@ -239,7 +238,7 @@
       editor = RelatumNoteLiveEditor.create($('editor'), { value: current.content, notePath: current.path || 'Untitled.md',
         shortcutBindings: window.RelatumNoteShortcuts?.load(),
         imageUrl: (_path, source) => '/api/markdown-file-asset?token=' + encodeURIComponent(current.token) + '&src=' + encodeURIComponent(source),
-        onDocChanged() { generation++; status(); updateStats(); outline?.documentChanged(); scheduleSave(); },
+        onDocChanged() { generation++; syncDocumentState(); updateStats(); outline?.documentChanged(); scheduleSave(); },
         onSaveRequest: () => save().catch(error => showError(error.message)),
         onOpenExternal: target => api().markdown_open_link(target).then(check).catch(error => showError(error.message)),
         onOpenLocalFile: target => api().markdown_open_link(target).then(check).catch(error => showError(error.message)),
@@ -252,8 +251,7 @@
         getDocument: () => ({ path: current.path || 'Untitled.md', source: editor.snapshot().value, identity: editor.view.state.doc }),
         getSurface: () => ({ kind: 'live', scroller: editor.view.scrollDOM, view: editor.view }),
         navigate: heading => editor.revealPosition(heading.from, { align: 'start', unfold: true }) });
-      $('outline-title').textContent = text('大纲', 'Outline'); setOutline(settings.outline, { instant: true }); updateStats(); status(); editor.focus(); syncNativeAppearance();
-      if (!current.path) status(text('新文档 · Ctrl+S 选择保存位置', 'New document · Ctrl+S to choose a location'));
+      $('outline-title').textContent = text('大纲', 'Outline'); setOutline(settings.outline, { instant: true }); updateStats(); syncDocumentState(); editor.focus(); syncNativeAppearance();
     } catch (error) { initialized = false; showError(error.message); }
   }
   async function checkExternal() {
