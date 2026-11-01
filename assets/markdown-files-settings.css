@@ -1,0 +1,23 @@
+.markdown-files-settings { color: var(--settings-text, var(--text)); }
+.markdown-files-card { padding: 22px 24px; margin-bottom: 18px; border-radius: 16px; background: var(--settings-card, var(--bg-card, #fff)); border: 1px solid color-mix(in srgb, currentColor 9%, transparent); }
+.markdown-files-card h3 { margin: 0 0 8px; font-size: 16px; }
+.markdown-files-card p { margin: 8px 0 16px; font-size: 13px; line-height: 1.75; color: var(--settings-muted, var(--text-secondary)); }
+.markdown-files-card small { display: block; margin-top: 5px; font-size: 12px; line-height: 1.6; color: var(--settings-muted, var(--text-secondary)); overflow-wrap: anywhere; }
+.markdown-files-card button { padding: 9px 13px; border: 1px solid color-mix(in srgb, currentColor 16%, transparent); border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+.markdown-files-card button:hover:not(:disabled) { background: color-mix(in srgb, currentColor 6%, transparent); }
+.markdown-files-card button:disabled { opacity: .45; cursor: default; }
+.markdown-files-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.markdown-files-steps { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.markdown-files-steps > div { min-width: 0; padding: 16px; border-radius: 12px; background: color-mix(in srgb, currentColor 4%, transparent); }
+.markdown-files-steps strong, .markdown-files-option strong, .markdown-files-recent strong { font-size: 13px; }
+.markdown-files-steps button { margin-top: 14px; }
+.markdown-files-card details { margin-top: 20px; font-size: 12px; }
+.markdown-files-card summary { cursor: pointer; color: var(--settings-muted, var(--text-secondary)); }
+.markdown-files-option { display: flex; justify-content: space-between; gap: 20px; padding: 13px 0; align-items: center; }
+.markdown-files-option input { flex: 0 0 auto; width: 17px; height: 17px; accent-color: var(--settings-text, #333); }
+.markdown-files-recent { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 14px 0; border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent); }
+.markdown-files-recent > div:first-child { min-width: 0; }
+.markdown-files-recent .markdown-files-actions { flex-shrink: 0; }
+.markdown-files-message { font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+@media(max-width: 900px) { .markdown-files-steps { grid-template-columns: 1fr; gap: 12px; } .markdown-files-recent { align-items: flex-start; flex-direction: column; } }
+html:is([data-note-theme="apple"],[data-note-theme="claude"]) .markdown-files-card { border-color: transparent; }

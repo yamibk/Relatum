@@ -62,6 +62,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ## 3. 源码地图
 
+外部 Markdown 文件由 `markdown_files.py`、`markdown_desktop.py` 与 `assets/markdown-file.html/js/css` 提供独立磁盘文件窗口，直接复用原 `note-live-editor.js`、表格、大纲及按需公式/Mermaid，不复制编辑器、不创建或扫描笔记库。工具栏使用有提示与可访问名称的图标按钮，唯一侧栏是可收起大纲；保存到原位置，保留 UTF-8 BOM 和主要 LF/CRLF 换行，检查磁盘修订并阻止覆盖外部修改或复活删除文件，失败保留草稿，关闭等待输入提交并可保存/放弃/取消。图片仅授权文档文件夹内的相对图片，粘贴写同名 `.assets`，复用现有格式、大小及静态 SVG 校验。笔记设置在文件与笔记库后新增 `markdown-files` 分类，使用 `assets/markdown-files-settings.js/css` 共用管理面板，提供打开/新建、最近文件、自动保存、大纲默认值及两步 Windows 关联指引；注册、系统默认选择、修复和取消各有明确说明。`data/markdown-files.json` 保存设置与最多 20 个最近路径，不存正文；恢复只重置自动保存和大纲偏好，保留列表和系统注册。简洁窗口的外观/扩展偏好与 WebView2 存储位于 `data/desktop-sessions/markdown-files/`，独立深浅色键为 `canvas:markdownDark:v1`。原生能力迟到刷新，分类离开及关闭丢弃过期结果，无持续状态轮询。专项为 `tests.test_markdown_files` 和 `tests/markdown-files-desktop.js`，补充原笔记设置七种功能配置回归；只使用隔离数据及模拟注册表。完整行为与验证见 `docs/markdown-files-2026-11-01.md`。
+
 笔记实时预览的行内排版在 `assets/note-live-editor.js` 中按每个可见区间的完整行边界筛选富块候选；包含跨屏父块及相接边界，保留源码顺序，行内包含判断、公式查找及 Callout 装饰复用候选。Callout 的祖先及折叠模型仍使用完整块集合，每次行内排版只计算一次，多个可见区间共用；没有新增持久缓存、设置或公开接口。`tests/note-inline-candidates-browser.js` 对照原排版的装饰范围、样式和控件种类，并以隔离的 400KiB/1MiB/4MiB 合成长文交替测量初访、往返后的光标移动、输入和滚动；三轮为完整基准，`--quick` 用于浏览器回归。行为及测量边界见 `docs/note-scroll-preparation-2026-11-01.md`。
 
 Callout 的标题、图标、配色及颜色分量由 `completeSpec()` 生成随块存续的只读展示信息，正文编辑、位置映射及标题字段未变的重扫共用；类型、标题或折叠后缀改变时重新生成。折叠、焦点、选区及隐藏标题仍实时计算，普通提示块不再读取无关标题行，嵌套及完整祖先模型不变；不新增独立缓存、偏好、监听或任务。`tests/note-callout-performance-browser.js` 以 `30ff695` 为默认基线，对照原始 Callout 模型和行内装饰，三轮交替测量 400KiB/1MiB/4MiB 提示块混排及 4MiB 表格对照；`--quick` 已接入笔记浏览器回归。实现、复现及测量边界见 `docs/note-callout-performance-2026-11-01.md`。
@@ -98,7 +100,7 @@ Sky 使用云白与雾蓝：浅色正文基色 `#f8fbff`，普通背景在 `.not
 
 `assets/feature-catalog.json` 的 `workspaces` 是工作区 ID、双语名称、面板、默认顺序和默认可见性的唯一描述源，`feature_profile.py` 将其注入首帧，`feature-runtime.js` 提供规范化与选择，顶栏、设置列表、键盘、滑块和过渡共用顺序。原有四项默认显示，日常默认隐藏，新增项追加且默认隐藏；可用性仍服从启动器，暂不可用项保留原槽位与选择。`start-workspace-runtime.js` 集中登记加载/离场生命周期，`RelatumStartWorkspace` 保留 `set/current` 并提供只读副本 `layout`、异步 `applyLayout(value,{reset,persist})`；隐藏当前项先完成原保存交接，失败返回 false 且不提交偏好，成功切到第一可见项。全部隐藏使用 `none`，首帧与重载主区纯空白，只留品牌、全局齿轮和桌面窗口按钮；重勾第一项立即进入，排序不切走当前项。加载失败按可见顺序回退，无可用候选留白，重新点击可重试。空白及隐藏项不准备笔记/图谱/生涯/专注预热。实现、扩展和验证见 `docs/global-settings-2026-10-25.md`。
 
-笔记设置由 `assets/settings-dialog.js` 与专用 CSS 提供应用内居中的原生 `dialog`，位于工作区变换容器之外，常规 1200×820 CSS px、四周留白、黑白灰主题、窄窗顶部分类导航。`assets/note-workspace.js` 注册外观、编辑、文件与笔记库、侧栏、引导、AI设置、AI对话、图谱、内嵌画布、快捷键、系统、笔记本、扩展十三类；内嵌画布使用本地 `note-icon-wallpaper` 山景显示器 SVG，笔记本紧接系统且使用 `notebooks` ID，扩展紧接笔记本且使用 `extensions` ID 和 `note-icon-puzzle`。AI设置保留 `ai` ID，AI对话为紧接其后的 `ai-chat`，使用路径绘制的 AI 字母 SVG，禁用笔记 AI 时两类均不注册，右栏仍叫 AI。通用控制器管理分类、搜索、确认、焦点及有限动画，不保存业务偏好；`open({category,trigger})/close({restoreFocus,instant,reason})/setLanguage()/destroy()` 供入口调用。分类可声明 `layout:'fill'` 填满内容区、无 reset 时隐藏分类恢复、空页脚不占位；`searchMode:'category'` 仅匹配分类名称与关键词，不检索聊天内容。搜索支持可选 `onSearch(query)` 按需准备分类内容，异步完成只刷新仍相同的搜索，不抢占新操作；分类关键词只作分类级回退，字段结果按自身名称/说明匹配。搜索跳转展开目标的 details 祖先，选择可见且启用的表单控件，自制下拉聚焦实际触发按钮，不聚焦隐藏 select。`onClose({reason})` 在关闭开始调用，`onClosed({reason})` 只在真正关闭后调用，开合版本使旧收尾不能改动重开的弹窗；`whenContentSettled()/finishContentMotion()` 协调聊天布局与锚定弹层。右侧齿轮、原库设置和画布默认样式入口共用弹窗，设置即时生效；分类恢复仅重置对应偏好，全部恢复另外确认，AI 重置保留模型、Key、预设与当前临时对话。普通失焦保留弹窗但结束录制，离场、隐藏、原生最小化和 pagehide 关闭，候选交接核对原正文/标签/操作身份，不改笔记或重建编辑器。
+笔记设置由 `assets/settings-dialog.js` 与专用 CSS 提供应用内居中的原生 `dialog`，位于工作区变换容器之外，常规 1200×820 CSS px、四周留白、黑白灰主题、窄窗顶部分类导航。`assets/note-workspace.js` 注册外观、编辑、文件与笔记库、Markdown 文件、侧栏、引导、AI设置、AI对话、图谱、内嵌画布、快捷键、系统、笔记本、扩展十四类；内嵌画布使用本地 `note-icon-wallpaper` 山景显示器 SVG，笔记本紧接系统且使用 `notebooks` ID，扩展紧接笔记本且使用 `extensions` ID 和 `note-icon-puzzle`。AI设置保留 `ai` ID，AI对话为紧接其后的 `ai-chat`，使用路径绘制的 AI 字母 SVG，禁用笔记 AI 时两类均不注册，右栏仍叫 AI。通用控制器管理分类、搜索、确认、焦点及有限动画，不保存业务偏好；`open({category,trigger})/close({restoreFocus,instant,reason})/setLanguage()/destroy()` 供入口调用。分类可声明 `layout:'fill'` 填满内容区、无 reset 时隐藏分类恢复、空页脚不占位；`searchMode:'category'` 仅匹配分类名称与关键词，不检索聊天内容。搜索支持可选 `onSearch(query)` 按需准备分类内容，异步完成只刷新仍相同的搜索，不抢占新操作；分类关键词只作分类级回退，字段结果按自身名称/说明匹配。搜索跳转展开目标的 details 祖先，选择可见且启用的表单控件，自制下拉聚焦实际触发按钮，不聚焦隐藏 select。`onClose({reason})` 在关闭开始调用，`onClosed({reason})` 只在真正关闭后调用，开合版本使旧收尾不能改动重开的弹窗；`whenContentSettled()/finishContentMotion()` 协调聊天布局与锚定弹层。右侧齿轮、原库设置和画布默认样式入口共用弹窗，设置即时生效；分类恢复仅重置对应偏好，全部恢复另外确认，AI 重置保留模型、Key、预设与当前临时对话。普通失焦保留弹窗但结束录制，离场、隐藏、原生最小化和 pagehide 关闭，候选交接核对原正文/标签/操作身份，不改笔记或重建编辑器。
 
 笔记扩展由 `assets/note-extensions.js` 管注册、偏好与宿主生命周期；默认 `scope:'editor'` 继续使用每编辑器的独立 Compartment，`scope:'workspace'` 使用 `attachWorkspace(id,context)` 且不创建编辑器配置。`note-extensions/catalog.js` 只含内置元数据、规范化、片段名称/分类及纯搜索条目，`note-extensions-settings.js` 与专用 CSS 管通用列表/详情、`createLatexPanel()` 和文件染色使用说明。扩展分类使用 `layout:'fill'`；列表卡片显示名称、说明、总开关和配置入口，文件染色另有独立调色盘按钮；配置在同一设置右侧打开独立详情，不叠加弹窗。LaTeX 详情分基础设置、片段管理、使用说明；片段可本地搜索并按全部、常用、希腊字母、函数与重音、自定义过滤。宽窗左列表右编辑，各自滚动而外层不滚动；右侧编辑字段区隐藏滚动条外观并保留滚轮/键盘滚动，左侧列表保留细无箭头滚动条。900 CSS px 以下改为列表/编辑单列切换，操作区保留可用，沿用深浅主题。正文只在点击配置或搜索结果时创建，搜索本身只读元数据，不加载输入运行时或 MathJax。会话草稿按片段 ID 保留，切片段/页签/分类及返回列表不丢失；取消清当前草稿，真正关闭及恢复清全部，旧关闭收尾不影响重开。共享分类可选 `searchTargets(query)` 与 `onReveal(target)`，先打开内部页并返回实际控件，再按原规则聚焦；其他分类保留原 DOM 搜索。接口、数据位置与验证见 `docs/note-extensions-2026-10-26.md`。
 
@@ -432,6 +434,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 | 画布 | `canvases/*.canvas` |
 | 回收站 | `canvases/回收站/` |
 | 画布附件 | 与画布同名的 `<stem>.assets/` |
+| 独立 Markdown 文件 | 原始磁盘位置与同名 `.assets/` 图片目录；不导入笔记库。`data/markdown-files.json` 只保存 `autoSave/outline/recent`，最近最多 20 个路径。简洁窗口的外观/扩展快照及 WebView2 位于 `data/desktop-sessions/markdown-files/`，独立深浅色为 `canvas:markdownDark:v1`。 |
 | Markdown 笔记库 | `notes/` 是原始正文；图片仍在同目录 `<笔记名>.assets/images/`，可见文字仍用同一行的 `<!--relatum:image-text:v1:<base64url-json>-->`，不另建侧车。伴生目录隐藏但与正文一起移动、改名、回收。 |
 | 笔记索引 | `data/note-index.sqlite3` 及 SQLite WAL/SHM；可重建的私有缓存，保存本/目录/文件状态、修订、标签、摘要、字数、引用、派生全文和位置映射。重建或版本变化不迁移旧索引、不改原始文件。损坏缓存隔离后重建，锁定/权限错误不按损坏处理。 |
 | 笔记本配置 | `data/note-notebooks.json`；版本仍为 1，保存 `colors` 路径颜色映射、`visible` 显隐覆盖及共用右栏的开关、视图、所选笔记本和右树展开状态。`visible` 仅保存值为 `false` 的记录，空路径代表默认 `notes`，缺失记录默认显示，恢复显示删除覆盖；旧配置兼容且启动不写默认。不登记笔记本、不保存正文。`ui.selectedRoot` 用 `null` 表示未选择、空字符串表示默认 `notes`、其余字符串表示自定义根路径。缺失或损坏时默认选择 `notes`，合法未选择状态可重启恢复，手动编辑重启后生效。 |
@@ -598,6 +601,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 不要把这些偏好混进 `.canvas`，除非用户明确要求改变持久化设计。
 
 ## 5. 后端路由总览
+
+独立 Markdown 窗口的 `/api/markdown-file-asset?token=…&src=…` 仅由 `markdown_desktop.py` 的本窗口服务提供，使用随机会话令牌，只读已打开文档所在文件夹内的受支持图片；该宿主拒绝其他 `/api/` 及全部 POST。Markdown 正文读写与原生文件选择走本窗口桌面桥接，没有向 `app.py` 新增任意磁盘文件读写路由。
 
 ### GET
 
@@ -1118,6 +1123,8 @@ AI 设置使用独立星芒 SVG，按当前对话预设、连接、生成参数�
 - 编辑器顶栏“归档”只移走当前画布中已划删除线的正文节点及其相邻连线，画布本身保留，并在 `data/画布归档/` 留轻量记录。
 
 ## 10. 桌面壳和打包
+
+- `desktop.py 文件.md` 或 `--markdown-file [文件]` 直接打开独立简洁窗口，支持 `.md/.markdown`；不占用完整笔记工作区，也不改变原 `.canvas` 或 `app.py` 的命令行协议。每次打开为独立窗口/进程，同文件并行编辑依靠修订检查保护。此窗口只提供静态资源和随机令牌保护的只读相对图片地址，拒绝其他 API 与 POST；文件读写/选择位置通过本窗口桌面桥接，不新增远程控制面。Windows 关联完全可选，只写当前用户的专属 ProgID、候选和能力登记，不改 `UserChoice` 或其他编辑器默认值；移动便携版后可在笔记设置修复位置，换电脑独立设置，取消前核对登记仍属于当前位置。真实关联只由用户点击执行，测试使用模拟注册表，现有发布目录不自动替换。
 
 笔记 Mermaid 的真实发布包验收另用 `node tests/note-mermaid-desktop.js <独立发布目录>`，只创建临时库、Launcher 配置与 WebView2 配置；测试仅暴露包内工作区状态供断言，不替换引擎或样式。验证开关、三种模式、阅读缩放、原生最小化恢复、矮长图控件不裁切及原文不变。专属资源与许可证随原资产复制流程打包，不新增依赖安装。
 

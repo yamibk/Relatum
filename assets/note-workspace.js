@@ -1159,6 +1159,8 @@
       if (document.querySelector('link[href="' + href + '"]')) continue;
       const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = href; document.head.append(style);
     }
+    const markdownFileSettings = window.RelatumMarkdownFilesSettings.createPanel({ language,
+      confirmAction: value => settingsDialog.confirmAction(value) });
     const categories = [
       { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-laptop-minimal', panel: appearance, keywords: '主题 Claude Apple theme 字体 font size image text scale',
         searchTargets: () => Array.from(appearance.querySelectorAll('label, [data-settings-keywords], .note-canvas-default-tabs button, .note-shortcut-row'))
@@ -1166,6 +1168,8 @@
         reset: () => { resetNoteTheme(); pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
       { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮 双向链接 补全 候选 搜索 正文 排序 wiki link completion suggestions scope search content sort', reset: resetEditingSettings },
       { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings, keywords: '排序 命名 sort name timestamp', reset: resetLibraryPreferences },
+      { id: 'markdown-files', label: ['Markdown 文件', 'Markdown files'], icon: 'note-icon-file-text', panel: markdownFileSettings.panel,
+        keywords: '外部 文件 简洁 独立 磁盘 双击 默认 打开 注册 关联 自动保存 最近 typora markdown portable default association register autosave recent', reset: () => markdownFileSettings.reset() },
       { id: 'sidebar', label: ['侧栏', 'Sidebar'], icon: 'note-icon-panel-right-frame', panel: sidebar, keywords: '页签 显示 隐藏 顺序 拖拽 tabs visibility reorder sidebar', reset: () => sidePreferences.reset() },
       { id: 'guide', label: ['引导', 'Guide'], icon: 'note-icon-file-text', panel: guide, keywords: 'callout markdown mermaid 教程 语法 syntax tutorial', reset: resetGuide },
       ...(aiEnabled() ? [
@@ -1183,7 +1187,7 @@
     ];
     settingsDialog = window.RelatumSettingsDialog.create({ content: settingsPop, categories, language,
       onSearch(query) { if (aiEnabled() && !aiSettingsHost.querySelector('[data-ai-field]') && /deepseek|api|模型|预设|提示词|思考|强度|温度|连接|接口|地址|流式|输出|超时|token|top.?p|model|preset|prompt|temperature|stream|timeout|effort|base.?url|\bkey\b|\bai\b/.test(query)) return ensureAI().then(ai => ai.prepareSettings()); },
-      async resetAll() { resetNoteSettings(); await resetNotebookVisibility(); noteSystem.reset(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); if (window.RelatumNoteExtensions.reset()) extensionSettings.reset(); if (canvasEnabled()) resetCanvas(); await resetAI(); },
+      async resetAll() { resetNoteSettings(); await resetNotebookVisibility(); noteSystem.reset(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); if (window.RelatumNoteExtensions.reset()) extensionSettings.reset(); if (canvasEnabled()) resetCanvas(); await markdownFileSettings.reset(); await resetAI(); },
       onOpen() {
         state.settingsOpen = true; aiDialogReturning = false;
         settingsTrigger.setAttribute('aria-expanded', 'true'); libraryTrigger.setAttribute('aria-expanded', 'true'); renderAI();
@@ -1193,6 +1197,7 @@
         themeChoices?.close();
         aiSequence++;
         systemSettings.setActive(false);
+        markdownFileSettings.setActive(false);
         extensionSettings.setActive(false);
         aiDialogReturning = reason === 'user' && aiSettingsCategory === 'ai-chat' && !aiPageHiding && noteWorkspaceVisible()
           && !graphPresentation && aiEnabled() && sidePages().includes('ai');
@@ -1214,6 +1219,7 @@
         if (category === 'notebooks') renderNotebookSettings();
         systemSettings.setActive(category === 'system' && !!settingsDialog?.isOpen && noteWorkspaceVisible());
         extensionSettings.setActive(category === 'extensions');
+        markdownFileSettings.setActive(category === 'markdown-files');
         stopShortcutRecording(true); canvasStylePanel?.suspend(); sidePreferences.suspend();
         if (category === 'ai') ensureAI().then(ai => { if (settingsDialog?.isOpen && aiSettingsCategory === 'ai' && noteWorkspaceVisible()) ai.settings(); }).catch(error => showToast(error.message, 'error'));
         else aiController?.closeSettings();
@@ -1261,7 +1267,7 @@
     settingsTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     libraryTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     if (canvasEnabled()) canvasStylePanel = window.RelatumNoteCanvasStyle?.initPanel(canvasSettingsContent, () => pref?.resetCanvasNodeScale?.(), { defaultsHost });
-    document.addEventListener('relatum:languagechange', () => { translateGuideOptions(); translateSidebar(); systemSettings.refresh(); extensionSettings.refresh(); renderNotebookSettings(); aiController?.setLanguage(); settingsDialog.setLanguage(); });
+    document.addEventListener('relatum:languagechange', () => { translateGuideOptions(); translateSidebar(); systemSettings.refresh(); extensionSettings.refresh(); markdownFileSettings.refresh(); renderNotebookSettings(); aiController?.setLanguage(); settingsDialog.setLanguage(); });
   }
 
   function resetEditingSettings() {

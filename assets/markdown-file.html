@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Markdown — Relatum</title>
+  <script src="note-theme.js"></script>
+  <script>
+    try { document.documentElement.lang = localStorage.getItem('canvas:toolbarLanguage') === 'en' ? 'en' : 'zh-CN'; } catch (_) {}
+    window.RelatumFeatureRuntime = { enabled: function (id) { return !['notes.canvas', 'notes.graph', 'notes.ai'].includes(id); } };
+  </script>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="settings-dialog.css">
+  <link rel="stylesheet" href="note-theme.css">
+  <link rel="stylesheet" href="markdown-file.css">
+</head>
+<body class="start-page markdown-window" data-start-workspace="notes" data-start-theme="light">
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute"><defs>
+    <symbol id="note-icon-file-text" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h8" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+    <symbol id="note-icon-laptop-minimal" viewBox="0 0 24 24"><path d="M4 4h16v12H4zM2 20h20" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  </defs></svg>
+  <div class="note-workspace markdown-root">
+  <header class="markdown-toolbar" aria-label="Markdown">
+    <div class="markdown-toolbar-group" data-role="file-tools"></div>
+    <span class="markdown-filename" data-role="filename">Untitled.md</span>
+    <div class="markdown-toolbar-group" data-role="view-tools"></div>
+  </header>
+  <div class="markdown-error" data-role="error" role="alert" hidden></div>
+  <main class="markdown-layout">
+    <aside class="markdown-outline" hidden><h2 data-role="outline-title">大纲</h2><div class="note-outline" data-role="outline"></div></aside>
+    <section class="note-document-pane"><div class="note-live-editor-host" data-role="editor"></div></section>
+  </main>
+  <footer class="markdown-footer"><output data-role="save-status" aria-live="polite"></output><output data-role="count"></output></footer>
+  <menu class="markdown-more" data-role="more" hidden></menu>
+  </div>
+  <script src="markdown.js"></script>
+  <script src="markdown-table.js"></script>
+  <script src="vendor/codemirror/relatum-codemirror.min.js"></script>
+  <script src="note-table-editor.js"></script>
+  <script src="note-media-frame.js"></script>
+  <script src="note-shortcuts.js"></script>
+  <script src="note-cards.js"></script>
+  <script src="note-extensions.js"></script>
+  <script src="note-extensions/catalog.js"></script>
+  <script src="note-live-editor.js"></script>
+  <script src="note-outline.js"></script>
+  <script src="settings-dialog.js"></script>
+  <script src="markdown-files-settings.js"></script>
+  <script src="markdown-file.js"></script>
+</body>
+</html>

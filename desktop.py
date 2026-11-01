@@ -25,8 +25,8 @@ startup_mark("python-entry")
 
 # Dispatch before importing the server, wallpaper or WebView2 runtime.
 if __name__ == "__main__" and not any(arg in {
-    "--countdown-wallpaper-child", "--no-browser", "--port", "--allow-dir"
-} for arg in sys.argv[1:]) and (
+    "--countdown-wallpaper-child", "--no-browser", "--port", "--allow-dir", "--markdown-file"
+} for arg in sys.argv[1:]) and not any(Path(arg).suffix.lower() in ('.md', '.markdown') for arg in sys.argv[1:]) and (
     (getattr(sys, "frozen", False) and Path(sys.executable).name.lower() == "relatumlauncher.exe")
     or "--launcher" in sys.argv[1:]
 ):
@@ -447,6 +447,11 @@ class DesktopBridge:
         self._preferences = None
         self._close_after_flush = False
         self._quit_after_flush = False
+        self._markdown_enabled = False
+
+    def markdown_files(self, action: str = 'status', value=None) -> dict:
+        from markdown_desktop import management
+        return management(self, action, value)
 
     def update_window_preferences(self, delta: dict, launcher_language=None) -> dict:
         return self._preferences.update(delta, launcher_language) if self._preferences is not None else {"ok": True}
@@ -773,6 +778,17 @@ def _run_wallpaper_child_from_args() -> int:
 def main() -> int:
     if "--countdown-wallpaper-child" in sys.argv[1:]:
         return _run_wallpaper_child_from_args()
+    if '--markdown-file' in sys.argv[1:] or (len(sys.argv) == 2 and Path(sys.argv[1]).suffix.lower() in ('.md', '.markdown')):
+        parser = argparse.ArgumentParser(description='Relatum Markdown 文件编辑器')
+        parser.add_argument('--markdown-file', nargs='?', const='', default=None)
+        parser.add_argument('file', nargs='?')
+        args = parser.parse_args()
+        from markdown_desktop import run
+        try:
+            return run(sys.modules[__name__], args.markdown_file or args.file)
+        except Exception as error:
+            _message_box(f'Markdown 窗口启动失败：\n{error}', 0x10)
+            return 1
     # 透传纯服务模式给 app.py（供调试 / 外部调用）。
     if any(arg in {"--no-browser", "--port", "--allow-dir"} for arg in sys.argv[1:]):
         return app.main()
@@ -917,6 +933,7 @@ def main() -> int:
 
     bridge = DesktopBridge(width, height)
     bridge._preferences = preferences
+    bridge._markdown_enabled = profile.enabled('notes')
     try:
         window = webview.create_window(
             "Relatum",
