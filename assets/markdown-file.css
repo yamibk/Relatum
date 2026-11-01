@@ -41,9 +41,10 @@ html[data-markdown-dark] body.markdown-window .markdown-root :is(.note-live-edit
 .markdown-window .note-live-editor-host { height: 100%; min-height: 0; background: transparent; }
 .markdown-window .note-live-editor-host .cm-editor { height: 100%; background: transparent; }
 .markdown-window .note-live-editor-host .cm-scroller { overflow: auto; }
-.markdown-window .note-live-editor-host .cm-content {
-  box-sizing: border-box; width: 100%; max-width: none; margin: 0;
-  padding: 38px var(--note-content-right) 36vh var(--note-content-left);
+.markdown-window .note-live-editor-host > .cm-editor > .cm-scroller > .cm-content {
+  /* drawSelection uses this box's edges; keep horizontal whitespace outside it. */
+  box-sizing: border-box; width: calc(100% - var(--note-content-left) - var(--note-content-right)); max-width: none;
+  margin: 0 var(--note-content-right) 0 var(--note-content-left); padding: 38px 0 36vh;
 }
 .markdown-window .markdown-outline {
   position: absolute; z-index: 5; inset: 0 0 0 auto; box-sizing: border-box;
