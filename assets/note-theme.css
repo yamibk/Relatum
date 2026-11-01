@@ -723,8 +723,11 @@ html[data-note-theme="apple"] body.start-page :is(.note-live-h1, .note-live-h2, 
 html[data-note-theme="apple"] body.start-page .note-workspace .mermaid-diagram { font-family: "Relatum Open Sans", "Microsoft YaHei", "Microsoft YaHei UI", "Segoe UI", "Noto Sans SC", Helvetica, Arial, sans-serif; }
 html[data-note-theme="apple"] body.start-page .note-live-editor-host :is(.note-live-link, .note-live-wikilink) { color: var(--note-theme-accent); text-decoration-color: color-mix(in srgb, var(--note-theme-accent) 40%, transparent); }
 html[data-note-theme="apple"] body.start-page .note-live-editor-host .cm-selectionBackground { background: var(--note-theme-selection) !important; }
+/* Opaque quote surfaces need native selection above their background too. */
 html[data-note-theme="apple"] body.start-page .note-live-editor-host .cm-line:is(.note-live-code-line, .note-live-callout-line)::selection,
 html[data-note-theme="apple"] body.start-page .note-live-editor-host .cm-line:is(.note-live-code-line, .note-live-callout-line) ::selection,
+html[data-note-theme="apple"] body.start-page .note-live-editor-host .cm-line.note-live-quote-line::selection,
+html[data-note-theme="apple"] body.start-page .note-live-editor-host .cm-line.note-live-quote-line ::selection,
 html[data-note-theme="apple"] body.start-page:not([data-start-theme="dark"]) .note-live-editor-host .note-live-inline-code::selection,
 html[data-note-theme="apple"] body.start-page:not([data-start-theme="dark"]) .note-live-editor-host .note-live-inline-code ::selection,
 html[data-note-theme="apple"] body.start-page .note-reading-content ::selection { background: var(--note-theme-selection) !important; }
