@@ -228,8 +228,34 @@ def association_command():
     return subprocess.list2cmdline([*launch_command(), '--markdown-file']) + ' "%1"'
 
 
+def markdown_icon_path():
+    from app import ASSETS
+    return ASSETS / 'markdown-file.ico'
+
+
+def association_icon():
+    return subprocess.list2cmdline([str(markdown_icon_path())]) + ',0'
+
+
+def default_markdown_progid():
+    """Ask the Shell: recent Windows versions can use UserChoiceLatest."""
+    if sys.platform != 'win32':
+        return None
+    try:
+        import ctypes
+        query = ctypes.windll.shlwapi.AssocQueryStringW
+        query.argtypes = [ctypes.c_uint, ctypes.c_int, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                          ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint)]
+        query.restype = ctypes.c_long
+        output = ctypes.create_unicode_buffer(1024)
+        size = ctypes.c_uint(len(output))
+        return output.value if query(0, 20, '.md', None, output, ctypes.byref(size)) == 0 else None
+    except (OSError, AttributeError, TypeError, ValueError):
+        return None
+
+
 def association_status():
-    result = {'supported': sys.platform == 'win32', 'registered': False, 'otherLocation': False, 'default': False}
+    result = {'supported': sys.platform == 'win32', 'registered': False, 'otherLocation': False, 'default': False, 'iconCurrent': False}
     if not result['supported']:
         return result
     import winreg
@@ -240,14 +266,18 @@ def association_status():
         except OSError:
             return ''
     command = read('Software\\Classes\\' + PROGID + r'\shell\open\command')
+    effective = default_markdown_progid()
     result.update(registered=command == association_command(), otherLocation=bool(command and command != association_command()),
-                  default=read(r'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.md\UserChoice', 'ProgId') == PROGID)
+                  iconCurrent=read('Software\\Classes\\' + PROGID + r'\DefaultIcon') == association_icon(),
+                  default=(effective if effective is not None else read(r'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.md\UserChoice', 'ProgId')) == PROGID)
     return result
 
 
 def register_association():
     if sys.platform != 'win32':
         raise MarkdownFileError('此操作仅适用于 Windows 桌面版。')
+    if not markdown_icon_path().is_file():
+        raise MarkdownFileError('Markdown 文档图标缺失，请使用完整的 Relatum 程序目录。')
     import winreg
     def put(key, name, value, kind=winreg.REG_SZ):
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key) as handle:
@@ -255,7 +285,7 @@ def register_association():
     base = 'Software\\Classes\\' + PROGID
     put(base, '', 'Markdown document · Relatum')
     put(base + r'\shell\open\command', '', association_command())
-    put(base + r'\DefaultIcon', '', subprocess.list2cmdline([launch_command()[0]]) + ',0')
+    put(base + r'\DefaultIcon', '', association_icon())
     capabilities = r'Software\Relatum\MarkdownCapabilities'
     put(capabilities, 'ApplicationName', 'Relatum')
     put(capabilities, 'ApplicationDescription', 'Open and edit Markdown files with Relatum')

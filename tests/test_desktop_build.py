@@ -30,7 +30,7 @@ class DesktopBuildTests(unittest.TestCase):
     def release(self, name):
         root = self.root / name
         for relative in ['Relatum.exe', 'RelatumLauncher.exe', 'Relatum.exe.config', 'RelatumLauncher.exe.config',
-                         '_internal/assets/app-icon.ico', '_internal/assets/launcher-icon.ico', '_internal/assets/feature-catalog.json']:
+                         '_internal/assets/app-icon.ico', '_internal/assets/launcher-icon.ico', '_internal/assets/markdown-file.ico', '_internal/assets/feature-catalog.json']:
             file = root / relative
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_bytes(name.encode())

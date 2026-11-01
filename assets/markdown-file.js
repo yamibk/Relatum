@@ -8,12 +8,16 @@
     new: '<path d="M14 2H5v20h14V7zM14 2v5h5M8 13h8M12 9v8"/>',
     save: '<path d="M19 21H5a2 2 0 0 1-2-2V3h15l3 3v13a2 2 0 0 1-2 2zM7 3v6h10V3M7 21v-8h10v8"/>',
     more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
-    source: '<path d="m8 5-6 7 6 7m8-14 6 7-6 7m-3-16-2 18"/>',
+    source: '<g class="note-view-icon note-view-icon-source"><use href="#note-icon-code-xml"/></g><g class="note-view-icon note-view-icon-live"><use href="#note-icon-file-pen-line"/></g>',
     outline: '<path d="M8 5h14M8 12h14M8 19h14M2 5h1M2 12h1M2 19h1"/>',
     settings: '<path d="m10 2-.7 3-2 .9-2.8-.9-2 3.5 2.2 2.1v2.8L2.5 16l2 3.5 2.8-.9 2 .9.7 2.5h4l.7-2.5 2-.9 2.8.9 2-3.5-2.2-2.6v-2.8l2.2-2.1-2-3.5-2.8.9-2-.9L14 2z"/><circle cx="12" cy="12" r="3"/>',
+    close: '<path d="m6 6 12 12M6 18 18 6"/>',
   };
   let editor, outline, current = null, generation = 0, savedGeneration = 0, saving = null, timer = 0, statsTimer = 0;
   let settings = { autoSave: true, outline: false }, outlineOpen = false, sourceMode = false, initialized = false, closing = false, hidden = false, failed = false, authorizedClose = false;
+  let disposed = false, sourceIntent = false, sourceSequence = 0, outlineSequence = 0, outlineCloseTask = null;
+  const outlinePane = document.querySelector('.markdown-outline');
+  const motion = matchMedia('(prefers-reduced-motion: reduce)');
   function icon(id, zh, en, parent, handler) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'markdown-icon'; button.dataset.action = id;
     button.title = button.ariaLabel = text(zh, en); button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + icons[id] + '</svg>';
@@ -73,27 +77,77 @@
     current = result.document; failed = false; generation++; savedGeneration = generation;
     editor.setDocument({ value: current.content, notePath: current.path }); outline.documentChanged(); updateStats(); status(); showError('');
   }
-  function setOutline(open) {
-    outlineOpen = !!open; document.querySelector('.markdown-outline').hidden = !outlineOpen;
-    document.querySelector('[data-action="outline"]').setAttribute('aria-pressed', String(outlineOpen));
-    if (outlineOpen && !hidden) outline?.resume(); else outline?.suspend();
-    editor?.view.requestMeasure();
+  function cancelOutlineClose() {
+    outlineSequence++;
+    if (!outlineCloseTask) return;
+    clearTimeout(outlineCloseTask.timer); outlinePane.removeEventListener('transitionend', outlineCloseTask.end); outlineCloseTask = null;
+  }
+  function settleOutline() {
+    cancelOutlineClose(); outlinePane.classList.add('is-instant');
+    const visible = outlineOpen && !hidden;
+    outlinePane.hidden = !visible; outlinePane.classList.toggle('is-open', visible); outlinePane.inert = !visible;
+    outlinePane.setAttribute('aria-hidden', String(!visible));
+    outlinePane.getBoundingClientRect(); outlinePane.classList.remove('is-instant');
+    if (visible) outline?.resume(); else outline?.suspend();
+  }
+  function setOutline(open, { instant = false } = {}) {
+    const changed = outlineOpen !== !!open; outlineOpen = !!open;
+    const button = document.querySelector('[data-action="outline"]');
+    button.setAttribute('aria-pressed', String(outlineOpen)); button.setAttribute('aria-expanded', String(outlineOpen));
+    button.title = button.ariaLabel = text(outlineOpen ? '收起大纲' : '显示大纲', outlineOpen ? 'Hide outline' : 'Show outline');
+    if (!outlineOpen && outlinePane.contains(document.activeElement)) button.focus({ preventScroll: true });
+    if (instant || hidden || motion.matches) { settleOutline(); return; }
+    if (!changed) return;
+    cancelOutlineClose();
+    outlinePane.inert = !outlineOpen; outlinePane.setAttribute('aria-hidden', String(!outlineOpen));
+    if (outlineOpen) {
+      if (outlinePane.hidden) { outlinePane.hidden = false; outlinePane.getBoundingClientRect(); }
+      outlinePane.classList.add('is-open'); outline?.resume();
+    } else {
+      outlinePane.classList.remove('is-open'); outline?.suspend();
+      const sequence = outlineSequence;
+      const finish = () => {
+        if (outlineCloseTask !== task || sequence !== outlineSequence || outlineOpen) return;
+        cancelOutlineClose(); outlinePane.hidden = true;
+      };
+      const task = outlineCloseTask = { timer: 0, end(event) { if (event.target === outlinePane && event.propertyName === 'transform' && getComputedStyle(outlinePane).visibility === 'hidden') finish(); } };
+      outlinePane.addEventListener('transitionend', task.end); task.timer = setTimeout(finish, 270);
+    }
+  }
+  function updateSourceButton() {
+    const button = document.querySelector('[data-action="source"]');
+    button.setAttribute('aria-pressed', String(sourceMode));
+    button.title = button.ariaLabel = text(sourceMode ? '切换到实时预览' : '切换到源码模式', sourceMode ? 'Switch to live preview' : 'Switch to source mode');
+  }
+  async function toggleSource() {
+    if (!editor || disposed) return;
+    sourceIntent = !sourceIntent;
+    const sequence = ++sourceSequence, instance = editor, path = current.path;
+    await instance.whenInputSettled();
+    if (disposed || instance !== editor || sequence !== sourceSequence || path !== current.path) return;
+    const anchor = editor.captureViewport();
+    editor.setSourceMode(sourceIntent);
+    sourceMode = $('editor').classList.contains('is-source-mode'); updateSourceButton();
+    if (anchor) editor.restoreViewport(anchor, { isCurrent: () => !disposed && sequence === sourceSequence });
   }
   const filesPanel = RelatumMarkdownFilesSettings.createPanel({ language: () => document.documentElement.lang,
     onChange(value) { settings = value; scheduleSave(); },
     confirmAction: async value => (await choose(value.title, value.message, [['cancel', text('取消', 'Cancel')], ['yes', value.confirmLabel]])) === 'yes' });
   const appearance = document.createElement('section'); appearance.className = 'markdown-appearance';
-  const themeLabel = document.createElement('label'); themeLabel.textContent = text('主题', 'Theme'); const select = document.createElement('select');
-  RelatumNoteTheme.list().forEach(theme => { const option = document.createElement('option'); option.value = theme.id; option.textContent = Array.isArray(theme.label) ? theme.label[document.documentElement.lang === 'en' ? 1 : 0] : theme.id; select.append(option); });
-  select.value = RelatumNoteTheme.read(); select.addEventListener('change', () => { if (!RelatumNoteTheme.apply(select.value)) showError(text('主题保存失败。', 'Could not save the theme.')); editor?.view.requestMeasure(); });
-  themeLabel.append(select); appearance.append(themeLabel);
   const darkLabel = document.createElement('label'); darkLabel.textContent = text('深色外观', 'Dark appearance'); const dark = document.createElement('input'); dark.type = 'checkbox';
-  try { dark.checked = localStorage.getItem('canvas:markdownDark:v1') === '1'; } catch (_) {}
-  function setDark() { document.body.dataset.startTheme = dark.checked ? 'dark' : 'light'; }
-  setDark(); dark.addEventListener('change', () => { try { localStorage.setItem('canvas:markdownDark:v1', dark.checked ? '1' : '0'); } catch (_) {} setDark(); editor?.view.requestMeasure(); }); darkLabel.append(dark); appearance.append(darkLabel);
+  dark.dataset.role = 'markdown-dark'; dark.checked = document.documentElement.dataset.markdownDark === '1';
+  function syncNativeAppearance() { api()?.markdown_set_appearance?.(dark.checked)?.catch(() => {}); }
+  function setDark() {
+    document.documentElement.dataset.markdownDark = dark.checked ? '1' : '0';
+    document.body.dataset.startTheme = dark.checked ? 'dark' : 'light'; syncNativeAppearance();
+  }
+  setDark(); dark.addEventListener('change', () => {
+    try { localStorage.setItem('canvas:markdownDark:v1', dark.checked ? '1' : '0'); }
+    catch (_) { dark.checked = document.documentElement.dataset.markdownDark === '1'; showError(text('外观保存失败，请重试。', 'Could not save appearance. Please retry.')); return; }
+    setDark();
+  }); darkLabel.append(dark); appearance.append(darkLabel);
   function resetAppearance() {
-    if (!RelatumNoteTheme.reset()) throw new Error(text('主题保存失败。', 'Could not save the theme.'));
-    localStorage.removeItem('canvas:markdownDark:v1'); dark.checked = false; select.value = RelatumNoteTheme.read(); setDark(); editor?.view.requestMeasure();
+    localStorage.removeItem('canvas:markdownDark:v1'); dark.checked = false; setDark();
   }
   const settingsHost = document.createElement('div');
   const dialog = RelatumSettingsDialog.create({ content: settingsHost, language: () => document.documentElement.lang,
@@ -142,8 +196,11 @@
     [text('撤销  Ctrl+Z', 'Undo  Ctrl+Z'), () => { RelatumCodeMirror.undo(editor.view); editor.focus(); }], [text('重做  Ctrl+Y', 'Redo  Ctrl+Y'), () => { RelatumCodeMirror.redo(editor.view); editor.focus(); }]]) {
     const button = document.createElement('button'); button.textContent = label; button.addEventListener('click', () => { menu.hidden = true; Promise.resolve(action()).catch(error => showError(error.message)); }); menu.append(button);
   }
-  icon('source', '源码 / 实时预览', 'Source / live preview', $('view-tools'), () => { sourceMode = !sourceMode; editor.setSourceMode(sourceMode); document.querySelector('[data-action="source"]').setAttribute('aria-pressed', String(sourceMode)); });
-  icon('outline', '显示 / 收起大纲', 'Show / hide outline', $('view-tools'), () => setOutline(!outlineOpen));
+  const sourceButton = icon('source', '切换到源码模式', 'Switch to source mode', $('view-tools'), toggleSource);
+  sourceButton.classList.add('note-view-toggle'); updateSourceButton();
+  const outlineButton = icon('outline', '显示大纲', 'Show outline', $('view-tools'), () => setOutline(!outlineOpen));
+  outlineButton.setAttribute('aria-controls', outlinePane.id);
+  icon('close', '收起大纲', 'Hide outline', document.querySelector('.markdown-outline-head'), () => setOutline(false));
   icon('settings', '笔记设置', 'Note settings', $('view-tools'), () => { menu.hidden = true; dialog.open(); });
   document.addEventListener('pointerdown', event => {
     if (!menu.contains(event.target) && !event.target.closest('[data-action="more"]')) menu.hidden = true;
@@ -151,7 +208,11 @@
   });
   window.addEventListener('blur', () => { menu.hidden = true; contextMenu.hidden = true; });
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { menu.hidden = true; contextMenu.hidden = true; }
+    if (event.isComposing || event.keyCode === 229) return;
+    if (event.key === 'Escape') {
+      const menuWasOpen = !menu.hidden || !contextMenu.hidden; menu.hidden = true; contextMenu.hidden = true;
+      if (!menuWasOpen && !dialog.isOpen && outlineOpen && !editor?.inputPending) { event.preventDefault(); setOutline(false); }
+    }
     if (event.isComposing || !(event.ctrlKey || event.metaKey) || event.altKey || dialog.isOpen) return;
     const key = event.key.toLowerCase();
     const action = key === 's' ? () => save(event.shiftKey) : key === 'o' ? () => api().markdown_files('open').then(check) : key === 'n' ? () => api().markdown_files('new').then(check) : null;
@@ -191,7 +252,7 @@
         getDocument: () => ({ path: current.path || 'Untitled.md', source: editor.snapshot().value, identity: editor.view.state.doc }),
         getSurface: () => ({ kind: 'live', scroller: editor.view.scrollDOM, view: editor.view }),
         navigate: heading => editor.revealPosition(heading.from, { align: 'start', unfold: true }) });
-      $('outline-title').textContent = text('大纲', 'Outline'); setOutline(settings.outline); updateStats(); status(); editor.focus();
+      $('outline-title').textContent = text('大纲', 'Outline'); setOutline(settings.outline, { instant: true }); updateStats(); status(); editor.focus(); syncNativeAppearance();
       if (!current.path) status(text('新文档 · Ctrl+S 选择保存位置', 'New document · Ctrl+S to choose a location'));
     } catch (error) { initialized = false; showError(error.message); }
   }
@@ -209,12 +270,15 @@
   function visibility() {
     hidden = document.hidden || document.documentElement.dataset.desktopMinimized === '1';
     editor?.setExtensionsActive(!hidden);
-    if (hidden) { outline?.suspend(); dialog.close({ instant: true, restoreFocus: false, reason: 'hidden' }); menu.hidden = true; contextMenu.hidden = true; }
-    else { if (outlineOpen) outline?.resume(); checkExternal(); }
+    settleOutline();
+    if (hidden) { sourceSequence++; sourceIntent = sourceMode; dialog.close({ instant: true, restoreFocus: false, reason: 'hidden' }); menu.hidden = true; contextMenu.hidden = true; }
+    else checkExternal();
   }
   window.addEventListener('focus', checkExternal);
   document.addEventListener('visibilitychange', visibility); window.addEventListener('canvasdesktop:visibility', visibility);
-  window.addEventListener('pagehide', () => { clearTimeout(timer); clearTimeout(statsTimer); outline?.suspend(); editor?.destroy(); });
+  function motionChanged() { if (motion.matches) settleOutline(); }
+  motion.addEventListener('change', motionChanged);
+  window.addEventListener('pagehide', () => { disposed = true; sourceSequence++; cancelOutlineClose(); motion.removeEventListener('change', motionChanged); clearTimeout(timer); clearTimeout(statsTimer); outline?.suspend(); editor?.destroy(); });
   window.addEventListener('beforeunload', event => { if (dirty() && !authorizedClose) { event.preventDefault(); event.returnValue = ''; } });
   window.RelatumMarkdownWindow = { async close() {
     if (closing) return;

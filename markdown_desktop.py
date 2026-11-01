@@ -15,6 +15,29 @@ from markdown_files import (MarkdownDocument, MarkdownFileError, MarkdownFiles,
                             register_association, unregister_association, safe_path, spawn_editor)
 
 
+def set_window_appearance(shell, window, dark):
+    """Color this native caption only; unsupported DWM attributes are optional."""
+    if type(dark) is not bool:
+        return {'ok': False, 'error': '外观选项无效。'}
+    if sys.platform != 'win32' or window is None:
+        return {'ok': True, 'native': False}
+    try:
+        import ctypes
+        hwnd = shell._hwnd(window)
+        dwm = ctypes.windll.dwmapi
+        setter = dwm.DwmSetWindowAttribute
+        setter.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint]
+        setter.restype = ctypes.c_long
+        values = ((20, ctypes.c_int(int(dark))),
+                  (35, ctypes.c_uint(0 if dark else 0xFFFFFF)),
+                  (36, ctypes.c_uint(0xFFFFFF if dark else 0)))
+        outcomes = [setter(hwnd, attribute, ctypes.byref(value), ctypes.sizeof(value))
+                    for attribute, value in values]
+        return {'ok': True, 'native': all(value == 0 for value in outcomes)}
+    except (OSError, AttributeError, TypeError, ValueError):
+        return {'ok': True, 'native': False}
+
+
 def result(operation):
     try:
         return {'ok': True, **(operation() or {})}
@@ -136,6 +159,13 @@ def run(shell, path=None):
             self._preferences = preferences
             self._markdown_enabled = True
             self._markdown_ready = False
+            self._markdown_dark = preferences.values.get('canvas:markdownDark:v1') == '1'
+
+        def markdown_set_appearance(self, dark):
+            if type(dark) is not bool:
+                return {'ok': False, 'error': '外观选项无效。'}
+            self._markdown_dark = dark
+            return set_window_appearance(shell, self._window, dark)
 
         def markdown_document(self, action, content=None, revision=None):
             def operate():
@@ -191,7 +221,7 @@ def run(shell, path=None):
     bridge = Bridge()
     window = webview.create_window((document.path.name if document.path else 'Untitled.md') + ' — Relatum',
         f'http://127.0.0.1:{server.server_address[1]}/markdown-file.html', js_api=bridge,
-        width=1040, height=780, min_size=(520, 400), background_color='#fbfbfa', text_select=True)
+        width=1040, height=780, min_size=(520, 400), background_color='#000000' if bridge._markdown_dark else '#ffffff', text_select=True)
     bridge._window = window
 
     def closing():
@@ -205,6 +235,7 @@ def run(shell, path=None):
         threading.Thread(target=request, daemon=True).start()
         return False
     window.events.closing += closing
+    window.events.shown += lambda: set_window_appearance(shell, window, bridge._markdown_dark)
     window.events.minimized += lambda: shell._notify_usage_visibility(window, True)
     window.events.restored += lambda: shell._notify_usage_visibility(window, False)
     try:

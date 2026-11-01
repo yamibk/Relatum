@@ -252,7 +252,7 @@ def validate_release(root):
     if findings:
         raise RuntimeError('User data or sensitive files in release: ' + ', '.join(map(str, findings[:10])))
     required = ['Relatum.exe', 'RelatumLauncher.exe', 'Relatum.exe.config', 'RelatumLauncher.exe.config',
-                '_internal/assets/app-icon.ico', '_internal/assets/launcher-icon.ico', '_internal/assets/feature-catalog.json']
+                '_internal/assets/app-icon.ico', '_internal/assets/launcher-icon.ico', '_internal/assets/markdown-file.ico', '_internal/assets/feature-catalog.json']
     for relative in required:
         if not (root / relative).is_file():
             raise RuntimeError('Release file missing: ' + relative)
@@ -341,6 +341,7 @@ def build(home, output, keep=False, force=False):
     print('[2/5] Staging offline assets: ' + str(work), flush=True)
     assets = work / 'assets'
     shutil.copytree(PROJECT / 'assets', assets)
+    run([sys.executable, '-I', '-B', PROJECT / 'packaging/make_markdown_icon.py', assets / 'markdown-file.ico'], env=environment)
     icon = next((path for path in [PROJECT / 'Relatum.ico', PROJECT / 'assets/app-icon.ico'] if path.is_file()), None)
     if icon is None:
         icon = work / 'app-icon.ico'

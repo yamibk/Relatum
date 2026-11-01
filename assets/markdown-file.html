@@ -4,20 +4,25 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Markdown — Relatum</title>
-  <script src="note-theme.js"></script>
   <script>
-    try { document.documentElement.lang = localStorage.getItem('canvas:toolbarLanguage') === 'en' ? 'en' : 'zh-CN'; } catch (_) {}
+    document.documentElement.dataset.markdownDark = '0';
+    try {
+      document.documentElement.lang = localStorage.getItem('canvas:toolbarLanguage') === 'en' ? 'en' : 'zh-CN';
+      document.documentElement.dataset.markdownDark = localStorage.getItem('canvas:markdownDark:v1') === '1' ? '1' : '0';
+    } catch (_) {}
     window.RelatumFeatureRuntime = { enabled: function (id) { return !['notes.canvas', 'notes.graph', 'notes.ai'].includes(id); } };
   </script>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="settings-dialog.css">
-  <link rel="stylesheet" href="note-theme.css">
   <link rel="stylesheet" href="markdown-file.css">
 </head>
 <body class="start-page markdown-window" data-start-workspace="notes" data-start-theme="light">
+  <script>document.body.dataset.startTheme = document.documentElement.dataset.markdownDark === '1' ? 'dark' : 'light';</script>
   <svg width="0" height="0" aria-hidden="true" style="position:absolute"><defs>
     <symbol id="note-icon-file-text" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h8" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
     <symbol id="note-icon-laptop-minimal" viewBox="0 0 24 24"><path d="M4 4h16v12H4zM2 20h20" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+    <symbol id="note-icon-code-xml" viewBox="0 0 24 24"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></symbol>
+    <symbol id="note-icon-file-pen-line" viewBox="0 0 24 24"><path d="M14.364 13.634a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506l4.013-4.009a1 1 0 0 0-3.004-3.004zM14.487 7.858A1 1 0 0 1 14 7V2M20 19.645V20a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l2.516 2.516M8 18h1"/></symbol>
   </defs></svg>
   <div class="note-workspace markdown-root">
   <header class="markdown-toolbar" aria-label="Markdown">
@@ -27,7 +32,7 @@
   </header>
   <div class="markdown-error" data-role="error" role="alert" hidden></div>
   <main class="markdown-layout">
-    <aside class="markdown-outline" hidden><h2 data-role="outline-title">大纲</h2><div class="note-outline" data-role="outline"></div></aside>
+    <aside class="markdown-outline" id="markdown-outline-panel" aria-hidden="true" inert hidden><div class="markdown-outline-head"><h2 data-role="outline-title">大纲</h2></div><div class="note-outline" data-role="outline"></div></aside>
     <section class="note-document-pane"><div class="note-live-editor-host" data-role="editor"></div></section>
   </main>
   <footer class="markdown-footer"><output data-role="save-status" aria-live="polite"></output><output data-role="count"></output></footer>

@@ -12,6 +12,7 @@ const source = '# A quiet page · 静心书写\n\n直接编辑磁盘上的 Markd
 const blank = process.argv.includes('--blank');
 const release = process.env.RELATUM_MARKDOWN_RELEASE;
 const workspace = process.argv.includes('--workspace');
+const appearance = process.argv.includes('--appearance');
 assert(!(release && blank), '--blank uses a source-only file-picker test double');
 fs.mkdirSync(path.join(root, 'data')); fs.mkdirSync(artifact, { recursive: true });
 fs.writeFileSync(file, '\ufeff' + source.replace(/\n/g, '\r\n'));
@@ -21,6 +22,11 @@ if (workspace) {
   fs.writeFileSync(path.join(root, 'data', 'desktop-sessions', 'full', 'preferences.json'), JSON.stringify({ version: 1,
     values: { 'canvas:startWorkspace:v1': 'notes' } }));
 }
+if (!workspace) {
+  const folder = path.join(root, 'data', 'desktop-sessions', 'markdown-files'); fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, 'preferences.json'), JSON.stringify({ version: 1,
+    values: { 'canvas:noteTheme:v1': 'apple', 'canvas:markdownDark:v1': '0' } }));
+}
 async function freePort() { const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r)); const n = s.address().port; await new Promise(r => s.close(r)); return n; }
 (async () => {
   const port = await freePort(), debug = 'http://127.0.0.1:' + port;
@@ -28,7 +34,7 @@ async function freePort() { const s = net.createServer(); await new Promise(r =>
   const blankHost = 'import sys, desktop, webview.window; targets=iter(' + JSON.stringify([saveTarget, copyTarget]) + '); webview.window.Window.create_file_dialog=lambda *args,**kwargs:[next(targets)]; sys.argv=["desktop.py","--markdown-file"]; sys.exit(desktop.main())';
   const argumentsList = workspace ? (release ? [] : ['-B', 'desktop.py']) : release ? [file] : blank ? ['-B', '-c', blankHost] : ['-B', 'desktop.py', file];
   const child = spawn(release ? path.join(release, 'Relatum.exe') : process.env.RELATUM_PYTHON || 'python', argumentsList, {
-    cwd: release || repo, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, RELATUM_DATA_ROOT: root,
+    cwd: release || repo, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, RELATUM_DATA_ROOT: root, LOCALAPPDATA: root,
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=' + port },
   });
   let logs = '', browser;
@@ -58,6 +64,12 @@ async function freePort() { const s = net.createServer(); await new Promise(r =>
       return;
     }
     await page.waitForFunction(() => window.RelatumMarkdownWindow?.editor);
+    if (appearance) {
+      await require('./markdown-files-appearance.js')(page, artifact);
+      assert.equal(errors.length, 0, errors.join('\n'));
+      console.log('Markdown monochrome / overlay / mode controls: OK; artifacts: ' + artifact);
+      return;
+    }
     if (blank) {
       assert.equal(await page.evaluate(() => RelatumMarkdownWindow.editor.snapshot().value), '');
       await page.evaluate(() => RelatumMarkdownWindow.editor.replaceSelection('# 新文档\n\n保留修改。\n'));
@@ -124,19 +136,21 @@ async function freePort() { const s = net.createServer(); await new Promise(r =>
     await page.locator('.relatum-settings-scroll').evaluate(node => { node.scrollTop = 0; });
     await page.screenshot({ path: path.join(artifact, 'markdown-file-setup.png') });
     await page.locator('[data-settings-category="appearance"]').first().click();
-    await page.locator('.markdown-appearance select').selectOption('apple');
+    assert.equal(await page.locator('.markdown-appearance select').count(), 0);
+    await page.locator('[data-role="markdown-dark"]').check();
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.querySelector('dialog.relatum-settings').open);
     await page.evaluate(() => { const e = RelatumMarkdownWindow.editor; e.view.dispatch({ changes: { from: e.view.state.doc.length, insert: '\nAutosaved\n' } }); });
     await page.waitForFunction(() => document.querySelector('[data-role="save-status"]').textContent === '已保存');
     assert(fs.readFileSync(file, 'utf8').includes('Autosaved'));
     await page.locator('[data-action="source"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-action="source"]').getAttribute('aria-pressed') === 'true');
     assert.equal(await page.locator('[data-action="source"]').getAttribute('aria-pressed'), 'true');
     await page.locator('[data-action="source"]').click();
     await page.evaluate(() => { document.documentElement.dataset.desktopMinimized = '1'; window.dispatchEvent(new CustomEvent('canvasdesktop:visibility', { detail: { minimized: true } })); });
     await pause(80);
     await page.evaluate(() => { document.documentElement.dataset.desktopMinimized = '0'; window.dispatchEvent(new CustomEvent('canvasdesktop:visibility', { detail: { minimized: false } })); });
-    await page.screenshot({ path: path.join(artifact, 'markdown-file-apple.png') });
+    await page.screenshot({ path: path.join(artifact, 'markdown-file-dark.png') });
     assert(!requests.some(u => /notes-tree|note-query|graph-engine|note-ai|vendor\/mathjax|note-mermaid/.test(u)), 'plain file does not load notebook, graph, AI or math runtimes');
     // Paste a real image file through the shared editor callback, then read it
     // through the window's limited asset route.
@@ -166,7 +180,7 @@ async function freePort() { const s = net.createServer(); await new Promise(r =>
     await page.locator('[data-action="settings"]').click();
     await page.locator('[data-settings-action="reset-all"]').click();
     await page.locator('[data-settings-action="accept-reset"]').click();
-    await page.waitForFunction(() => RelatumNoteTheme.read() === 'default');
+    await page.waitForFunction(() => document.documentElement.dataset.markdownDark === '0');
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'data', 'markdown-files.json'))).autoSave, true);
     assert(JSON.parse(fs.readFileSync(path.join(root, 'data', 'markdown-files.json'))).recent.length > 0, 'reset preserves recent entries');
     await page.keyboard.press('Escape');
@@ -176,6 +190,7 @@ async function freePort() { const s = net.createServer(); await new Promise(r =>
     await page.evaluate(async () => { await pywebview.api.markdown_files('autoSave', false); RelatumMarkdownWindow.editor.view.dispatch({ changes: { from: 0, insert: 'Pending ' } }); });
     await page.evaluate(() => { RelatumMarkdownWindow.close(); });
     await page.locator('.markdown-close-dialog button[value="cancel"]').click();
+    await page.locator('.markdown-close-dialog').waitFor({ state: 'detached' });
     assert((await page.evaluate(() => RelatumMarkdownWindow.editor.snapshot().value)).startsWith('Pending '));
     await page.evaluate(() => { RelatumMarkdownWindow.close(); });
     await page.locator('.markdown-close-dialog button[value="discard"]').click();

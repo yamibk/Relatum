@@ -6,7 +6,7 @@ Relatum 桌面版可以直接打开磁盘上的 `.md` / `.markdown`，使用原�
 
 - 在“笔记设置 → Markdown 文件”打开磁盘文件，或新建一个空白的独立窗口。窗口内 Ctrl+O 打开文件，Ctrl+N 新建，Ctrl+S 保存，Ctrl+Shift+S 另存为。
 - 希望双击打开时，先点“注册 / 修复”，再点“打开默认应用设置”，在 Windows 中搜索 `.md` 并选择 Relatum。注册操作不会主动更改默认程序；用户可继续保留 Typora，通过“打开方式”偶尔使用 Relatum。
-- 移动便携版后在新位置修复注册。每台电脑单独设置；删除程序前可以取消当前位置的注册。取消注册不替用户选择其他默认程序。
+- 移动便携版后在新位置修复注册。已配置的用户更新程序后，点击“注册 / 修复”或“更新文件图标”即可刷新程序位置和专用 Markdown 图标，无需再次选择默认应用。每台电脑单独设置；删除程序前可以取消当前位置的注册。取消注册不替用户选择其他默认程序。
 - 最近列表最多 20 项，支持打开、在资源管理器中定位、移除记录和清空。移除记录不会删除磁盘文件。
 - 自动保存默认开启，停止输入约 750ms 后保存。新文档第一次保存会询问位置。大纲默认收起，可设为新窗口打开时显示；窗口中的图标随时切换。
 
@@ -14,7 +14,11 @@ Relatum 桌面版可以直接打开磁盘上的 `.md` / `.markdown`，使用原�
 
 `assets/markdown-file.html/js/css` 只负责单文件外壳。编辑实例直接调用 `RelatumNoteLiveEditor.create()`，沿用 `note-live-editor.js`、`note-table-editor.js`、`note-outline.js`、扩展注册、公式和 Mermaid 按需运行时，以及现有虚拟 DOM、滚动准备、块尺寸记忆和输入法交接。没有复制或更改编辑器核心。
 
-工具栏为图标按钮，提供中英文提示、可访问名称和快捷键。唯一侧栏为大纲；设置复用原生居中的笔记设置外壳，提供 Markdown 文件管理与外观。主题复用默认 / Claude / Sky / Apple 及原有主题样式，简洁窗口有独立深浅色选择。隐藏、最小化、pagehide 暂停或释放准备、大纲和浮层。
+工具栏为图标按钮，提供中英文提示、可访问名称和快捷键。源码按钮复用完整版的源码 / 文档编辑图形，图标、提示和 `aria-pressed` 在输入法与单元格交接完成后一起更新，连续点击以最后意图为准；切换保留同一编辑器、正文、历史、选区和源码阅读锚点。
+
+唯一侧栏是右侧覆盖的大纲：宽 320px，窄窗限制在可用宽度内，正文可编辑区域不缩小、不重新换行。开合使用完整版的 230ms `cubic-bezier(.22,1,.36,1)`，允许连续反转，旧收尾不会隐藏重新展开的面板；关闭立即隔离交互并在退场完成后隐藏，内部焦点返回大纲按钮。保留原大纲树折叠、定位与当前章节提示，面板外正文可继续编辑。低动态直接切换，隐藏、最小化和 pagehide 结清动画并暂停/释放大纲和浮层，无持续动画循环。
+
+简洁窗口只保留“深色外观”开关：浅色背景为 `#ffffff`、正文黑色，深色背景为 `#000000`、正文白色。正文、顶栏、底栏、大纲、菜单和所属设置面板使用同一背景；灰阶选中、悬停、焦点、细边界及正文显式颜色保留。首帧从原独立偏好恢复深浅色；不加载 `note-theme.js/css`、主题字体或四主题下拉，也不读取/清除旧主题选择。完整笔记工作区的主题功能仍独立。原生窗口通过本窗口桥接同步沉浸深色、标题栏底色和文字色，不支持相关 DWM 属性时保留系统回退。
 
 `desktop.py 文件.md` 或 `desktop.py --markdown-file [文件]` 进入 `markdown_desktop.py`；不经过笔记工作区占用锁，可以与完整工作区同时使用。每次打开创建独立进程和窗口，相同文件多次打开也有独立编辑状态，保存时检查修订号。已有 `.canvas` 命令行协议及 `app.py` 服务入口保持原义。
 
@@ -27,10 +31,12 @@ Relatum 桌面版可以直接打开磁盘上的 `.md` / `.markdown`，使用原�
 完整笔记设置在“文件与笔记库”之后新增 `markdown-files` 分类，由 `assets/markdown-files-settings.js/css` 提供，共用简洁窗口中的管理面板。浏览器能查看说明，原生操作禁用；`pywebviewready` 到达后刷新能力。状态按进入分类或主动操作刷新，不持续轮询。
 
 - `data/markdown-files.json`：`version:1`，`autoSave:true`、`outline:false` 和 `recent` 路径列表。不保存正文。分类恢复及全部恢复只重置自动保存和大纲默认值，保留最近记录和 Windows 注册。
-- `data/desktop-sessions/markdown-files/preferences.json` 及该会话的 `WebView2/`：简洁窗口独立的外观/扩展偏好与浏览器存储。首次从已有完整会话快照继承笔记偏好，之后不回写完整工作区的快照；`canvas:markdownDark:v1` 保存此窗口外观的深浅选择。
+- `data/desktop-sessions/markdown-files/preferences.json` 及该会话的 `WebView2/`：简洁窗口独立的外观/扩展偏好与浏览器存储。首次从已有完整会话快照继承编辑偏好，之后不回写完整工作区的快照；旧主题字段保留但不使用，`canvas:markdownDark:v1` 继续保存此窗口黑白外观的深浅选择。
 - 桌面桥接 `markdown_files(action,value)`：状态、设置更新、最近记录、新建/打开、注册/取消和系统默认应用入口。文档桥接只操作本窗口的文档，选择新路径须经过原生文件对话框。
+- 独立窗口桥接 `markdown_set_appearance(dark)` 仅接受布尔值，更新本窗口的 DWM 深浅模式、标题栏背景及文字颜色，返回 `{ok,native}`。启动原生背景同步使用保存的浅深色；此接口不改变全局 Windows 外观。
+- 当前默认程序通过 Shell 的 `AssocQueryStringW / ASSOCSTR_PROGID` 只读查询，兼容新版 Windows 的默认关联存储；查询不可用时回退旧 `UserChoice` 读取，不写入任一受保护的默认选择键。
 - 独立窗口服务只有静态应用资源和随机会话令牌保护的只读图片地址 `/api/markdown-file-asset`；拒绝其他 `/api/` 和全部 POST，没有新增外部命令监听或任意文件读写 HTTP API。
-- Windows 仅注册 `HKCU` 下的 `Relatum.Markdown` ProgID、`.md/.markdown` 的 `OpenWithProgids`、`Software/Relatum/MarkdownCapabilities` 和对应 `RegisteredApplications` 值。不写 `UserChoice`，不修改其他应用的注册或扩展默认值。注册记录指向当前绝对程序位置，取消前核对仍属于当前位置。源码运行记录 Pythonw 与 desktop.py，发布版记录 Relatum.exe。
+- Windows 仅注册 `HKCU` 下的 `Relatum.Markdown` ProgID、`.md/.markdown` 的 `OpenWithProgids`、`Software/Relatum/MarkdownCapabilities` 和对应 `RegisteredApplications` 值。不写 `UserChoice`，不修改其他应用的注册或扩展默认值。注册记录指向当前绝对程序位置，取消前核对仍属于当前位置。源码运行记录 Pythonw 与 desktop.py，发布版记录 Relatum.exe。`DefaultIcon` 独立指向 `assets/markdown-file.ico`，不使用应用图标；状态字段 `association.iconCurrent` 识别旧图标，设置提供更新提示，完成注册后发送 Shell 关联变更通知。图标为透明外缘的黑白折角文档＋M↓，`packaging/make_markdown_icon.py` 使用现有 Pillow 确定生成 16/24/32/48/64/128/256 多尺寸资源，不依赖字体；打包重新生成并校验图标存在。
 
 ## 验证
 
@@ -42,6 +48,8 @@ Relatum 桌面版可以直接打开磁盘上的 `.md` / `.markdown`，使用原�
 
 加 `--workspace` 验证普通完整桌面工作区中的“笔记设置 → Markdown 文件”入口及真实桥接配置保存，初始偏好与用户数据仍全部位于临时根。独立预览 EXE 的单文件和完整工作区两种验证均通过。
 
-笔记设置七种功能配置、主题/大纲/实时编辑器、桌面偏好、功能裁剪和实例协调回归通过；后端及构建辅助检查共 88 项通过。额外运行的旧启动器测试仍因已有 `daily.images` 英文文案缺失而失败，此项不属于本次修改。
+加 `--appearance` 调用 `tests/markdown-files-appearance.js`，验证纯白/纯黑各表面、旧主题隔离和深色重开、真实标题栏调用、右侧覆盖尺寸、开合前后正文宽度/换行/选区/滚动不变、动画反转、关闭焦点、窄窗、低动态、最小化恢复、模式双图标、快速切换、预编辑交接、表格输入提交与撤销/重做。源码和实际预览 EXE 共用这一入口，截图只写临时目录。原生中文输入法候选窗仍需实际输入法手测。
 
-独立便携预览包输出到 `D:\Relatum-Markdown-preview-20261101`，保留原 release、用户数据和当前默认打开程序；使用已有锁定环境离线打包并验证实际 EXE。文件关联只有用户在新设置分类主动操作后才登记。
+笔记设置七种功能配置、主题/大纲/实时编辑器、桌面偏好、功能裁剪和实例协调回归通过；后端及构建辅助检查共 91 项，含模拟注册表的图标更新/默认选择保留、Shell 默认关联查询、ICO 多尺寸透明边界及原生标题栏配色/不支持回退。既有启动器 `daily.images` 英文文案缺项不属于本次修改。
+
+本轮独立便携预览包输出到 `D:\Relatum-Markdown-preview-20261101-v2`，保留用户目前已配置的便携目录、用户数据和当前默认打开程序；使用已有锁定环境离线打包并验证实际 EXE。文件关联只有用户在新设置分类主动操作后才登记，已使用 Relatum 的默认选择可通过一次“注册 / 修复”沿用。

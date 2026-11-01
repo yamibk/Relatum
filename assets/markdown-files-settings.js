@@ -33,7 +33,8 @@
         '只需完成下面两步。你也可以保留当前默认程序，偶尔通过“打开方式”选择 Relatum。',
         'Follow these two steps, or keep your current default and choose Relatum from “Open with” when needed.');
       const registered = state?.association?.registered;
-      const status = state?.association?.default && registered ? text('当前已设为 .md 默认程序', 'Relatum is the default for .md')
+      const status = registered && !state.association.iconCurrent ? text('已注册，可更新为独立的 Markdown 文档图标。', 'Registered. Update to the dedicated Markdown document icon.')
+        : state?.association?.default && registered ? text('当前已设为 .md 默认程序', 'Relatum is the default for .md')
         : state?.association?.default ? text('Windows 仍选择 Relatum；请重新注册，或到默认应用中选择其他程序。', 'Windows still selects Relatum. Register it again, or choose another default app.')
         : registered ? text('Windows 已识别此位置的 Relatum', 'Windows recognizes this copy of Relatum')
         : state?.association?.otherLocation ? text('检测到其他位置的注册，可更新到当前位置', 'Registration points to another location; update it here')
@@ -42,7 +43,7 @@
       const steps = element('div', '', 'markdown-files-steps'); windows.append(steps);
       const first = element('div'); first.append(element('strong', text('1 · 让 Windows 识别 Relatum', '1 · Make Relatum available to Windows')),
         element('small', text('登记此程序的位置，让它出现在“打开方式”中。', 'Register this app location so it can appear in “Open with”.')));
-      button(registered ? '更新注册' : '注册 / 修复', registered ? 'Update registration' : 'Register / repair', 'register', null, first, !state?.association?.supported); steps.append(first);
+      button(registered ? (state.association.iconCurrent ? '更新注册' : '更新文件图标') : '注册 / 修复', registered ? (state.association.iconCurrent ? 'Update registration' : 'Update file icon') : 'Register / repair', 'register', null, first, !state?.association?.supported); steps.append(first);
       const second = element('div'); second.append(element('strong', text('2 · 在 Windows 中选择默认程序', '2 · Choose your default in Windows')),
         element('small', text('进入系统设置后搜索 .md，再选择 Relatum。是否替换 Typora 等程序，由你决定。', 'In Windows Settings, search for .md and choose Relatum. You decide whether to replace your current default.')));
       button('打开默认应用设置', 'Open default app settings', 'defaults', null, second, !state?.association?.supported); steps.append(second);

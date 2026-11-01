@@ -119,6 +119,45 @@ class FakeRegistry:
 
 
 class AssociationTests(unittest.TestCase):
+    def test_default_query_uses_the_supported_shell_api(self):
+        import ctypes
+        def answer(flags, kind, extension, verb, output, size):
+            self.assertEqual((flags, kind, extension, verb), (0, 20, '.md', None))
+            output.value = files.PROGID
+            return 0
+        query = mock.Mock(side_effect=answer)
+        with mock.patch.object(ctypes, 'windll', types.SimpleNamespace(shlwapi=types.SimpleNamespace(AssocQueryStringW=query))), \
+             mock.patch.object(files.sys, 'platform', 'win32'):
+            self.assertEqual(files.default_markdown_progid(), files.PROGID)
+            query.side_effect = lambda *args: -1
+            self.assertIsNone(files.default_markdown_progid())
+
+    def test_monochrome_icon_contains_all_windows_sizes_and_transparent_margins(self):
+        from PIL import Image
+        with Image.open(files.markdown_icon_path()) as icon:
+            self.assertEqual(icon.ico.sizes(), {(size, size) for size in (16, 24, 32, 48, 64, 128, 256)})
+            for size in icon.ico.sizes():
+                frame = icon.ico.getimage(size).convert('RGBA')
+                self.assertEqual(frame.getpixel((0, 0))[3], 0)
+                self.assertTrue(all(r == g == b for r, g, b, _ in frame.get_flattened_data()))
+
+    def test_native_appearance_is_per_window_and_handles_unsupported_attributes(self):
+        import ctypes
+        import markdown_desktop
+        recorded = []
+        setter = mock.Mock(side_effect=lambda hwnd, attr, value, length: recorded.append((hwnd, attr, value._obj.value, length)) or 0)
+        shell = types.SimpleNamespace(_hwnd=lambda window: 123456)
+        with mock.patch.object(ctypes, 'windll', types.SimpleNamespace(dwmapi=types.SimpleNamespace(DwmSetWindowAttribute=setter))), \
+             mock.patch.object(files.sys, 'platform', 'win32'):
+            self.assertTrue(markdown_desktop.set_window_appearance(shell, object(), True)['native'])
+            self.assertEqual([item[:3] for item in recorded], [(123456, 20, 1), (123456, 35, 0), (123456, 36, 0xFFFFFF)])
+            recorded.clear()
+            self.assertTrue(markdown_desktop.set_window_appearance(shell, object(), False)['native'])
+            self.assertEqual([item[:3] for item in recorded], [(123456, 20, 0), (123456, 35, 0xFFFFFF), (123456, 36, 0)])
+            setter.side_effect = lambda *args: -1
+            self.assertEqual(markdown_desktop.set_window_appearance(shell, object(), True), {'ok': True, 'native': False})
+            self.assertFalse(markdown_desktop.set_window_appearance(shell, object(), 'dark')['ok'])
+
     def test_desktop_routes_markdown_without_claiming_a_workspace(self):
         import desktop
         with mock.patch('markdown_desktop.run', return_value=7) as run:
@@ -136,10 +175,23 @@ class AssociationTests(unittest.TestCase):
         choice = registry.CreateKey('USER', r'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.md\UserChoice')
         registry.SetValueEx(choice, 'ProgId', 0, 1, 'Typora')
         with mock.patch.dict('sys.modules', winreg=registry), mock.patch.object(files.sys, 'platform', 'win32'), \
-             mock.patch.object(files, 'launch_command', return_value=['D:\\My App\\Relatum.exe']), mock.patch.object(files, '_notify_associations'):
+             mock.patch.object(files, 'launch_command', return_value=['D:\\My App\\Relatum.exe']), \
+             mock.patch.object(files, 'default_markdown_progid', return_value=None), mock.patch.object(files, '_notify_associations'):
             self.assertFalse(files.association_status()['registered'])
             files.register_association()
             self.assertTrue(files.association_status()['registered'])
+            self.assertTrue(files.association_status()['iconCurrent'])
+            icon_key = r'Software\Classes\Relatum.Markdown\DefaultIcon'
+            self.assertEqual(registry.keys[icon_key][''][0], files.association_icon())
+            registry.keys[icon_key][''] = ('old Relatum.exe,0', 1)
+            self.assertTrue(files.association_status()['registered'])
+            self.assertFalse(files.association_status()['iconCurrent'])
+            registry.keys[choice.name]['ProgId'] = (files.PROGID, 1)
+            files.register_association()
+            self.assertTrue(files.association_status()['default'])
+            self.assertTrue(files.association_status()['iconCurrent'])
+            self.assertEqual(registry.keys[choice.name]['ProgId'][0], files.PROGID)
+            registry.keys[choice.name]['ProgId'] = ('Typora', 1)
             self.assertFalse(files.association_status()['default'])
             self.assertEqual(files.association_command(), '"D:\\My App\\Relatum.exe" --markdown-file "%1"')
             command = r'Software\Classes\Relatum.Markdown\shell\open\command'
