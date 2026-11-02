@@ -870,6 +870,18 @@
     }
     const metadata = options?.fragment ? null : window.MarkdownMini.frontmatter(source);
     if (metadata) customRanges.push(metadata);
+    // Inline code spans are disjoint and source-ordered. A formula/comment
+    // check only needs the first span ending after its start, even in long
+    // notes with thousands of code spans outside the current line.
+    const overlapsInlineCode = (from, to) => {
+      let low = 0, high = inlineCode.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (inlineCode[middle].to <= from) low = middle + 1;
+        else high = middle;
+      }
+      return low < inlineCode.length && inlineCode[low].from < to;
+    };
     const guards = [...protectedRanges, ...inlineCode, ...(metadata ? [metadata] : [])].sort((a, b) => a.from - b.from);
     let guardIndex = 0, offset = 0, comment = null, math = null;
     const guarded = (position) => {
@@ -903,7 +915,7 @@
         else {
           const markers = /<!--|-->|%%/g;
           const inlineMath = /<!--|%%/.test(line) ? window.MarkdownMini.mathRanges(line).filter(range =>
-            !inlineCode.some(code => code.from < offset + range.to && code.to > offset + range.from)) : [];
+            !overlapsInlineCode(offset + range.from, offset + range.to)) : [];
           let marker;
           while ((marker = markers.exec(line))) {
             const position = offset + marker.index;
