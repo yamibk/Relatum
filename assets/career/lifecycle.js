@@ -11,7 +11,7 @@ export function createCareer(onReport) {
   const mounted=new Map();
   const finishNumbers=new Set();
   const pendingReveals=new Map();
-  let entrance=null, numberStartAt=0, generationState=null;
+  let entrance=null, numberStartAt=0, generationState=null, notice=null;
   let view=null,refreshCharts=null,renderLanguage=null,renderTheme=document.body.dataset.startTheme,suspended=true,sizingWidth=0,observationVersion=0;
   const visible=()=>active&&(!document.body.dataset.startWorkspace||document.body.dataset.startWorkspace==='career')&&!document.hidden&&document.documentElement.dataset.desktopMinimized!=='1'&&!root.hidden;
   function styles() {
@@ -19,19 +19,33 @@ export function createCareer(onReport) {
     return css;
   }
   function message(error=false,text='') {
-    let box=root.querySelector('[data-career-message]');if(!box){box=el('p','career-inline-error');box.dataset.careerMessage='1';loading.after(box);}
-    box.hidden=!text;box.textContent=text;box.classList.toggle('is-error',error);
+    notice={error,text};
+    let box=root.querySelector('[data-career-message]');
+    if(!box){
+      box=el('div','career-inline-error');box.dataset.careerMessage='1';box.dataset.i18nManaged='1';box.setAttribute('role','status');box.setAttribute('aria-live','polite');
+      const close=el('button','career-message-close','×');close.type='button';close.addEventListener('click',()=>message(false,''));
+      box.append(el('span'),close);root.append(box);
+    }
+    const value=Array.isArray(text)?tr(...text):text;
+    box.hidden=!value;box.querySelector('span').textContent=value;box.classList.toggle('is-error',error);
+    const close=box.querySelector('button');close.hidden=!error;close.setAttribute('aria-label',tr('关闭提示','Dismiss message'));close.title=tr('关闭提示','Dismiss message');
+  }
+  function failure(stage,error) {
+    const names={usage:['使用记录尚未提交，请重试','Usage records have not been submitted. Please retry'],generate:['未能生成报告，请重试','Could not generate the report. Please retry'],load:['新报告未能加载，请重试','The new report could not load. Please retry']};
+    const detail=error?.message?` (${error.message})`:'';
+    return names[stage].map(text=>text+detail);
   }
   function syncEntry() {
     entry.hidden=!!report;
     entry.querySelector('h1').textContent=tr('使用报告','Usage report');
     entry.querySelector('p:not(.career-kicker)').textContent=tr('查看使用时长、内容规模和完成记录。','View usage time, content size and completed activities.');
     entry.querySelector('button').textContent=tr('生成报告','Generate report');
-    const disabled=!!job||generating;
+    const disabled=!!job||generating||!!generationState;
     root.querySelectorAll('[data-career-action="generate"]').forEach(button=>{if(button.disabled!==disabled)button.disabled=disabled;});
   }
   function pause() {
     suspended=true;refreshCharts=null;observationVersion++;
+    generationState?.animation?.cancel();
     entrance?.cancel();entrance=null;scroll.style.removeProperty('opacity');
     sequence++;observer?.disconnect();observer=null;graphObserver?.disconnect();graphObserver=null;viewportObserver?.disconnect();viewportObserver=null;interactionAbort?.abort();interactionAbort=null;
     for(const timer of pendingReveals.values())clearTimeout(timer);pendingReveals.clear();
@@ -66,10 +80,17 @@ export function createCareer(onReport) {
       entrance=animation;animation.finished.then(()=>{if(entrance===animation)entrance=null;},()=>{});
     }
   }
-  function beginGeneration() {
-    generationState={anchor:anchor()};
+  function beginGeneration(animate=true) {
+    const opacity=visible()?getComputedStyle(scroll).opacity:'0', saved=anchor();
+    pause();
+    const state={anchor:saved,animation:null,ready:Promise.resolve()};generationState=state;
     root.classList.add('is-generating');root.setAttribute('aria-busy','true');scroll.inert=true;
-    pause();scroll.scrollTop=0;numberStartAt=Infinity;
+    numberStartAt=Infinity;
+    if(animate&&visible()&&Number(opacity)>0&&!matchMedia('(prefers-reduced-motion: reduce)').matches&&typeof scroll.animate==='function'){
+      const animation=scroll.animate([{opacity},{opacity:0}],{duration:180,easing:'ease-out'});state.animation=animation;
+      state.ready=animation.finished.catch(()=>{}).then(()=>{if(generationState===state){state.animation=null;scroll.scrollTop=0;}});
+    }else scroll.scrollTop=0;
+    return state;
   }
   function endGeneration() {
     const saved=generationState?.anchor;generationState=null;
@@ -77,8 +98,9 @@ export function createCareer(onReport) {
     loading.hidden=true;
     return saved;
   }
-  function generationFailed(error) {
-    job=null;const saved=endGeneration();
+  function generationFailed(error,state) {
+    if(generationState!==state)return;
+    job=null;generating=false;const saved=endGeneration();
     message(true,error);syncEntry();
     if(visible())resume();restore(saved);
     if(visible())fadeContent();
@@ -188,14 +210,18 @@ export function createCareer(onReport) {
     if(saved)restore(saved);
   }
   async function preload() {
-    if(!initialized)initialized=(async()=>{const version=reportVersion,result=await request('/api/career/report');if(version!==reportVersion)return report;report=result.exists?result.report:null;if(result.job)job=result.job;if(result.error)message(true,result.code==='archive-report-pending'?tr('归档完成，生涯报告待重新生成', 'Archiving is complete. Regenerate the career report.'):result.error);onReport(report);return report;})().catch(error=>{initialized=null;throw error;});
+    if(!initialized){
+      const version=reportVersion;
+      const pending=(async()=>{const result=await request('/api/career/report');if(version!==reportVersion)return report;report=result.exists?result.report:null;if(result.job)job=result.job;if(result.error)message(true,result.code==='archive-report-pending'?['归档完成，生涯报告待重新生成','Archiving is complete. Regenerate the career report.']:result.error);onReport(report);return report;})().catch(error=>{if(initialized===pending)initialized=null;throw error;});
+      initialized=pending;
+    }
     return initialized;
   }
   function invalidateArchive(value={}) {
     if(report && Number(value.archiveRevision||0)<=Number(report.history.archiveRevision||0))return;
     stop();reportVersion++;initialized=null;report=null;onReport(null);host.replaceChildren();host.hidden=true;charts=[];view=null;
     context.data=null;context.graphViews.clear();context.presented.clear();context.countedNumbers.clear();context.detailsState.clear();
-    job=value.job||null;generating=false;generationState=null;root.classList.remove('is-generating');root.removeAttribute('aria-busy');scroll.inert=false;
+    job=value.job||null;generating=false;endGeneration();message(false,'');
     syncEntry();
     if(visible())activate().catch(error=>message(true,error.message));
   }
@@ -210,10 +236,10 @@ export function createCareer(onReport) {
     active=true;const own=++sequence;
     entrance?.cancel();entrance=null;scroll.style.opacity='0';
     if(await checkArchive())return;
-    await styles();await preload();
+    try{await styles();await preload();}catch(error){if(own!==sequence||!visible())return;throw error;}
     if(!visible()||own!==sequence)return;
-    if(job&&!report&&!generationState)beginGeneration();
-    if(generationState){syncEntry();scroll.scrollTop=0;scroll.style.removeProperty('opacity');if(job)poll(job);return;}
+    if(job&&!generationState)beginGeneration(false);
+    if(generationState){syncEntry();if(!generationState.animation)scroll.scrollTop=0;scroll.style.removeProperty('opacity');if(job)poll(job);return;}
     numberStartAt=Infinity;
     syncEntry();if(report){if(!host.childElementCount)render(false);else if(renderLanguage!==en())render(true);else{syncTheme();observe();}}
     // Start the delay with the visible fade, after report construction/layout.
@@ -224,20 +250,25 @@ export function createCareer(onReport) {
     return new Promise((resolve,reject)=>{const timer=setTimeout(finish,ms);function finish(){signal.removeEventListener('abort',cancel);resolve();}function cancel(){clearTimeout(timer);reject(new DOMException('Hidden','AbortError'));}signal.addEventListener('abort',cancel,{once:true});});
   }
   function progress(value) {
-    loading.hidden=false;loading.classList.toggle('is-regenerating',!!report);
-    const names={usage:tr('冻结使用记录','Freezing usage history'),notes:tr('统计笔记与真实关系','Counting notes and relationships'),canvas:tr('统计主画布与内嵌文件','Counting canvases and embedded files'),research:tr('读取研究结构','Reading research structures'),learning:tr('统计学习与习惯','Counting learning and habits'),snapshot:tr('保存新冻结快照','Saving the new snapshot')};
-    loading.querySelector('strong').textContent=tr('正在生成报告','Generating your report');loading.querySelector('p').textContent=`${value.progress}% · ${names[value.stage]||''}`;
+    loading.hidden=true;
+    const names={usage:['冻结使用记录','Freezing usage history'],notes:['统计笔记与真实关系','Counting notes and relationships'],canvas:['统计主画布与内嵌文件','Counting canvases and embedded files'],research:['读取研究结构','Reading research structures'],learning:['统计学习与习惯','Counting learning and habits'],snapshot:['保存新冻结快照','Saving the new snapshot']};
+    const stage=names[value.stage]||['',''];
+    message(false,[`正在生成报告 · ${value.progress}% · ${stage[0]}`,`Generating your report · ${value.progress}% · ${stage[1]}`]);
     root.querySelectorAll('[data-career-action="generate"]').forEach(b=>{b.disabled=true;});
   }
   async function poll(initial) {
     if(!visible()||pollController)return;
+    const state=generationState||beginGeneration(false);
     const controller=new AbortController();pollController=controller;
+    let stage='generate';
     try {
       let current=initial;
-      while(visible()&&!controller.signal.aborted){
+      while(visible()&&!controller.signal.aborted&&generationState===state){
         if(current.status==='complete'){
+          stage='load';
           const result=await request('/api/career/report',{signal:controller.signal});
-          if(controller.signal.aborted||!visible())return;
+          await state.ready;
+          if(controller.signal.aborted||!visible()||generationState!==state)return;
           if(!result.report)throw new Error(tr('新报告未能加载，请重试。','The new report could not load. Please try again.'));
           report=result.report;reportVersion++;onReport(report);initialized=Promise.resolve(report);job=null;
           endGeneration();numberStartAt=Infinity;render(false,true);message(false,'');fadeContent();return;
@@ -245,22 +276,27 @@ export function createCareer(onReport) {
         if(current.status==='error')throw new Error(current.code==='archive-report-pending'?tr('归档完成，生涯报告待重新生成','Archiving is complete. Regenerate the career report.'):current.error);
         progress(current);await waiting(500,controller.signal);
         const next=await request('/api/career/jobs/'+initial.id,{signal:controller.signal});
-        if(controller.signal.aborted||!visible())return;
+        if(controller.signal.aborted||!visible()||generationState!==state)return;
         current=next;job=current;
       }
-    }catch(error){if(error.name!=='AbortError'&&!controller.signal.aborted)generationFailed(error.message);}
+    }catch(error){await state.ready;if(error.name!=='AbortError'&&!controller.signal.aborted)generationFailed(failure(stage,error),state);}
     finally{if(pollController===controller)pollController=null;}
   }
   async function generate() {
     if(job||generating||generationState)return;
-    generating=true;beginGeneration();syncEntry();
-    message(false,tr('正在提交尚未写入的使用记录…','Flushing pending usage records…'));
+    generating=true;const state=beginGeneration();syncEntry();
+    message(false,['正在提交尚未写入的使用记录…','Flushing pending usage records…']);
+    let stage='usage';
     try {
       await window.RelatumUsage?.flush();
-      job=await request('/api/career/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      if(generationState!==state)return;
+      stage='generate';
+      const next=await request('/api/career/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      if(generationState!==state)return;
+      job=next;generating=false;
       message(false,'');syncEntry();poll(job);
-    }catch(error){generationFailed(tr('未能生成报告：','Could not generate report: ')+error.message);}
-    finally{generating=false;syncEntry();}
+    }catch(error){await state.ready;generationFailed(failure(stage,error),state);}
+    finally{if(generationState===state){generating=false;syncEntry();}}
   }
   entry.querySelector('button').addEventListener('click',generate);
   function syncTheme(){
@@ -269,26 +305,26 @@ export function createCareer(onReport) {
     for(const runtime of mounted.values())runtime.refreshTheme?.();
   }
   function resume(){if(!visible())return;if(!report&&!initialized){activate().catch(error=>message(true,error.message));return;}checkArchive();if(generationState){syncEntry();if(job)poll(job);return;}if(report&&renderLanguage!==en())render(true);else{syncTheme();observe();}if(job)poll(job);}
-  document.addEventListener('relatum:start-workspacechange',event=>{active=event.detail.workspace==='career';if(!active){if(root.hidden)stop();else if(!suspended)pause();}else resume();});
+  document.addEventListener('relatum:start-workspacechange',event=>{active=event.detail.workspace==='career';if(!active){if(root.hidden)stop();else if(!suspended||pollController||generationState?.animation)pause();}else resume();});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();else resume();});
   window.addEventListener('canvasdesktop:visibility',()=>{if(!visible())stop();else resume();});
   const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
   reducedMotion.addEventListener('change',()=>{
     if(!reducedMotion.matches)return;
     entrance?.cancel();entrance=null;scroll.style.removeProperty('opacity');
-    if(generationState)return;
+    if(generationState){generationState.animation?.cancel();return;}
     for(const finish of finishNumbers)finish();finishNumbers.clear();
     host.querySelectorAll('[data-career-number]:not([data-counted])').forEach(node=>{
       clearTimeout(pendingReveals.get(node));pendingReveals.delete(node);
       context.countedNumbers.add(node.dataset.metricKey);animateNumbers(node,schedule,()=>false);
     });
   });
-  document.addEventListener('relatum:languagechange',()=>{if(visible()&&report)render(true);else syncEntry();});
+  document.addEventListener('relatum:languagechange',()=>{if(notice)message(notice.error,notice.text);if(visible()&&report)render(true);syncEntry();if(generationState&&job)progress(job);});
   // The shared shell publishes its state before awaiting the next workspace.
   // Freeze during its visible exit, then release at the actual hidden boundary.
   const theme=new MutationObserver(records=>{
     if(records.some(record=>record.attributeName==='data-start-workspace')){
-      if(!visible()){if(root.hidden)stop();else if(!suspended)pause();}else if(suspended)resume();
+      if(!visible()){if(root.hidden)stop();else if(!suspended||pollController||generationState?.animation)pause();}else if(suspended)resume();
     }
     if(records.some(record=>record.attributeName==='data-start-theme')&&visible())syncTheme();
   });theme.observe(document.body,{attributes:true,attributeFilter:['data-start-theme','data-start-workspace']});

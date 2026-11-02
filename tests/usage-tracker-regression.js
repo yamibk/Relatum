@@ -16,7 +16,7 @@ async function host(options={}){
   const win=new Events(),ls=options.storage||storage(),ss=storage();
   const env={window:win,document:doc,localStorage:ls,sessionStorage:ss,TextEncoder,Event:class{},CustomEvent:class{},Date:class extends Date{static now(){return clock;}},JSON,Object,Math,Promise,console,
     setTimeout:(fn,ms=0)=>{timers.set(++next,{fn,at:clock+ms});return next;},clearTimeout:id=>timers.delete(id),setInterval:(fn,ms)=>{timers.set(++next,{fn,at:clock+ms,period:ms});return next;},clearInterval:id=>timers.delete(id),
-    fetch:async(url,request)=>{requests.push({url,body:request?.body?JSON.parse(request.body):null});if(url==='/api/usage/state')await stateReady;if(fail)return{ok:false};if(request?.body){for(const c of JSON.parse(request.body).settings)settings[c.category]=c.enabled;}return{ok:true,json:async()=>({settings:{...settings},since:1000000})};}};
+    fetch:async(url,request)=>{requests.push({url,body:request?.body?JSON.parse(request.body):null});if(url==='/api/usage/state')await stateReady;if(fail)return{ok:false,status:503,json:async()=>({error:'统计暂未写入，请重试'})};if(request?.body){for(const c of JSON.parse(request.body).settings)settings[c.category]=c.enabled;}return{ok:true,json:async()=>({settings:{...settings},since:1000000})};}};
   Object.assign(win,{parent:options.parent||win,crypto:{randomUUID:()=>String(++next)},CanvasNoteWorkspace:{usagePath:'A.md'},RelatumFeatures:{features:{}},RelatumI18n:{language:'zh-CN'}});
   vm.runInNewContext(source,env);const drain=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};await drain();
   return {win,doc,requests,inputs,timers,ls,drain,releaseState:()=>releaseState?.(),set fail(value){fail=value;},set focus(value){focus=value;},set hidden(value){hidden=value;},
@@ -43,5 +43,12 @@ async function host(options={}){
   late.win.emit('pageshow');await late.drain();assert.equal([...late.timers.values()].filter(t=>t.period).length,1,'page restore has one owner timer');
   await late.advance(5000);await late.win.RelatumUsage.flush();assert.equal(late.rows().at(-1).end-late.rows().at(-1).start,5000);
   late.win.emit('pagehide');await late.drain();
+  const errorHost=await host();await errorHost.advance(1000);errorHost.fail=true;
+  await assert.rejects(errorHost.win.RelatumUsage.flush(),error=>error.code==='usage-submit-failed'&&error.status===503&&error.detail==='统计暂未写入，请重试'&&error.message.includes('统计暂未写入'));
+  errorHost.win.RelatumI18n.language='en';
+  await assert.rejects(errorHost.win.RelatumUsage.flush(),error=>error.message==='Usage records could not be saved. Please retry.');
+  assert(errorHost.win.RelatumUsage.pending>0,'localized errors keep pending records');
+  errorHost.fail=false;await errorHost.win.RelatumUsage.flush();assert.equal(errorHost.win.RelatumUsage.pending,0);
+  errorHost.win.emit('pagehide');await errorHost.drain();
   console.log('usage collector: target tails, focus, sleep, switches, retries, iframe ownership, exclusions and recovery passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

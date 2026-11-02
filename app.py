@@ -10657,10 +10657,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         interval["locator"] = _canvas_activity_path_key(target)
                         interval["name"] = target.stem
                     elif category in ("notes", "embedded") and locator:
-                        interval["locator"] = NOTES_STORE.normalize_path(locator)
-                        if category == "embedded" and not locator.startswith("canvases/"):
-                            raise ValueError("无效内嵌画布目标")
-                        interval["name"] = Path(locator).name
+                        normalized = NOTES_STORE.normalize_path(locator, allow_assets=category == "embedded")
+                        if category == "embedded":
+                            parts = normalized.split("/")
+                            if len(parts) != 2 or parts[0] != "canvases" or not parts[1].lower().endswith(".canvas"):
+                                raise ValueError("无效内嵌画布目标")
+                        # Historical tails remain valid after rename/deletion;
+                        # validating a locator must not reopen or create content.
+                        interval["locator"] = normalized
+                        interval["name"] = Path(normalized).name
                     elif category == "research" and len(locator) > 160:
                         raise ValueError("无效研究页面身份")
                 return self._send_json(200, usage_store().batch(body))

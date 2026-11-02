@@ -148,9 +148,9 @@ export function buildReport(report, context, actions) {
     for(const button of segments.children){const pressed=String(button.dataset.mode===filter.mode);if(button.getAttribute('aria-pressed')!==pressed)button.setAttribute('aria-pressed',pressed);}
     if(year.hidden!==(filter.mode!=='year'))year.hidden=filter.mode!=='year';if(year.value!==String(filter.year||lastYear))year.value=String(filter.year||lastYear);if(range.hidden!==(filter.mode!=='custom'))range.hidden=filter.mode!=='custom';
     if(previousFilter.mode!=='custom'){from.value=filter.start||data.start;to.value=filter.end||data.end;}
+    updateArchivedSummary();
     if(data===previousData)return [];
     rangeCaption();
-    updateArchivedSummary();
     [data.seconds,data.activeDays,data.longest].forEach((value,i)=>{
       const node=changingMetrics[i],format=i===0?metricDuration(value):metricNumber;
       if(node.dataset.careerNumber===String(value))return;

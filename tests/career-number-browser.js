@@ -83,7 +83,8 @@ async function main(){
     const writesBefore=await page.evaluate(()=>probe.writes.length);await page.waitForTimeout(300);assert.equal(await page.evaluate(()=>probe.writes.length),writesBefore,'return/rebuild does not restart counting');
     await page.evaluate(()=>career.generate());await page.waitForTimeout(50);
     assert.notEqual(await actual('note-words'),'100,000,001','new generation resets presentation');
-    await page.waitForTimeout(1700);await assertFinal('note-words');
+    await page.waitForFunction(()=>!document.querySelector('.career-workspace').hasAttribute('aria-busy'));
+    await page.waitForTimeout(1750);await assertFinal('note-words');
     const idle=await page.evaluate(async()=>{let frames=0;const original=requestAnimationFrame;window.requestAnimationFrame=fn=>{frames++;return original(fn);};await new Promise(r=>setTimeout(r,500));window.requestAnimationFrame=original;return frames;});assert.equal(idle,0);
     results.push({scenario:'threshold/minimize/return/rebuild/generate',idleFrames:idle});
 

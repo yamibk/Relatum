@@ -105,7 +105,20 @@
           method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive,
           body
         });
-        if (!response.ok) throw new Error('Usage queue pending');
+        if (!response.ok) {
+          let result;
+          try { result = await response.json(); } catch (_) { /* Keep a useful status when the response is not JSON. */ }
+          const reasons = {
+            '统计暂未写入，请重试': 'Usage records could not be saved. Please retry.',
+            '统计功能未启用': 'This usage category is unavailable.',
+            '画布路径未授权': 'The canvas path is not authorized.',
+            '无效内嵌画布目标': 'Invalid embedded canvas target.'
+          };
+          const detail = typeof result?.error === 'string' ? result.error : '';
+          throw Object.assign(new Error(english() ? reasons[detail] || detail || `HTTP ${response.status}` : detail || `HTTP ${response.status}`), {
+            code: 'usage-submit-failed', status: response.status, detail
+          });
+        }
         const result = await response.json();
         queue.splice(0, items.length);
         settings = result.settings || settings;
