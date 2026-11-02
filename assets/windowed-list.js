@@ -28,7 +28,7 @@
     }
     function schedule() { if (!frame && active && !disposed) frame = requestAnimationFrame(render); }
     const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(function (entries) {
-      if (disposed) return;
+      if (disposed || !active) return;
       const view = metrics(), anchor = lowerBound(view.top), within = view.top - prefix[anchor];
       let changed = false;
       entries.forEach(function (entry) {
@@ -146,8 +146,18 @@
     }) : null;
     if (visibility) visibility.observe(host);
     return { setItems: setItems, scrollToKey: scrollToKey, row: function (key) { return mounted.get(key); },
-      refresh: schedule, suspend: function () { active = false; if (frame) cancelAnimationFrame(frame); frame = 0; },
-      resume: function () { active = true; schedule(); },
+      refresh: schedule, suspend: function () {
+        if (disposed || !active) return;
+        active = false; if (frame) cancelAnimationFrame(frame); frame = 0;
+        if (observer) observer.disconnect();
+      },
+      resume: function () {
+        if (disposed) return;
+        // Hidden rows may have changed width while measurement was suspended.
+        if (!active && observer) mounted.forEach(function (row) { observer.observe(row); });
+        active = true;
+        schedule();
+      },
       dispose: function () {
         disposed = true; if (frame) cancelAnimationFrame(frame); if (observer) observer.disconnect(); if (visibility) visibility.disconnect();
         scroller.removeEventListener('scroll', schedule); window.removeEventListener('resize', schedule); host.removeEventListener('focusout', schedule);

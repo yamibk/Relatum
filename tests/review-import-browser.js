@@ -133,6 +133,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await open(); await page.keyboard.press('Escape');
     await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
     assert.equal(await page.locator('.review-import-dialog').count(), 0, 'pagehide releases an unfinished exit');
+    // Continuing in the same document models a restored page, including its list.
+    await page.evaluate(() => window.dispatchEvent(new Event('pageshow')));
     if (process.argv.includes('--motion-only')) {
       assert.deepEqual(errors, []); await context.close(); console.log(JSON.stringify(report, null, 2)); return;
     }
@@ -346,6 +348,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await next().click(); await page.locator('.review-import-mappings').waitFor();
     await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
     assert.equal(await dialog.count(), 0);
+    await page.evaluate(() => window.dispatchEvent(new Event('pageshow')));
     await page.unroute('**/review-import-worker.js'); report.checks.push('cancel parser and reject late results');
     report.checks.push('native minimize, retry on restore, pagehide release');
 
@@ -382,7 +385,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.evaluate(() => RelatumI18n.setLanguage('zh-CN'));
-    for (const view of ['review', 'calendar', 'cadence']) {
+    // The focused run retains all importer checks and this page's note handling.
+    const stickyViews = process.argv.includes('--review-only') ? ['review'] : ['review', 'calendar', 'cadence'];
+    for (const view of stickyViews) {
       await page.locator('.left-spine [data-action="' + view + '-view"]').evaluate(element => { if (!element.classList.contains('active')) element.click(); });
       await page.waitForFunction(() => !document.querySelector('.book-view').classList.contains('view-switching'));
       for (const key of ['Delete', 'Backspace']) {
@@ -409,7 +414,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
         await note.click(); await page.keyboard.press(key); await note.waitFor({ state: 'detached' });
       }
     }
-    report.checks.push('Delete and Backspace notes in review, calendar, cadence; editing, selection, IME');
+    report.checks.push('Delete and Backspace notes in ' + stickyViews.join(', ') + '; editing, selection, IME');
     await page.reload(); await page.waitForTimeout(500);
     const sticky = await (await fetch(url + '/api/start-sticky-notes')).json();
     assert.equal(sticky.notes.length, 0, 'note deletions persisted');

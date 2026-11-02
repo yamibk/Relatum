@@ -48,6 +48,10 @@
   const sessionProgressEl = root.querySelector('[data-role="review-session-progress"]');
   const libraryListEl = root.querySelector('[data-role="review-library-list"]');
   let windowedLibrary = null;
+  const libraryRows = new Map();
+  let libraryAnimateNewItems = false;
+  let libraryNeedsRender = false;
+  let reviewPageHidden = false;
   const libraryEmptyEl = root.querySelector('[data-role="review-library-empty"]');
   const libraryCountEl = root.querySelector('[data-role="review-library-count"]');
   const searchEl = root.querySelector('[data-role="review-search"]');
@@ -131,6 +135,8 @@
   let celebratePulse = false;
   let reviewMode = storedReviewMode();
   let freeQueue = [];
+  let freeQueueIndex = 0;
+  let freeModel = null;
   let freeCurrentId = '';
   let freeSeenCount = 0;
   let freeInitialized = false;
@@ -454,12 +460,24 @@
   }
 
   function freeEligibleCards() {
-    return libraryCards.filter((card) => {
+    return freeReviewModel().cards;
+  }
+
+  function freeReviewModel() {
+    const scope = scopeKey();
+    if (freeModel && freeModel.source === libraryCards && freeModel.scope === scope) return freeModel;
+    const cards = libraryCards.filter((card) => {
       if (card.status !== 'active') return false;
       if (reviewSettings.scopeMode === 'unfiled') return !card.deckId;
       if (reviewSettings.scopeMode === 'deck') return card.deckId === reviewSettings.scopeDeckId;
       return true;
     });
+    const byId = new Map(cards.map((card) => [card.id, card]));
+    // Reconcile a remaining shuffle only when the source or scope changed.
+    freeQueue = freeQueue.slice(freeQueueIndex).filter((id) => byId.has(id));
+    freeQueueIndex = 0;
+    freeModel = { source: libraryCards, scope, cards, byId };
+    return freeModel;
   }
 
   function updateStats() {
@@ -687,6 +705,8 @@
 
   function resetFreeSession() {
     freeQueue = [];
+    freeQueueIndex = 0;
+    freeModel = null;
     freeCurrentId = '';
     freeSeenCount = 0;
     freeInitialized = false;
@@ -706,20 +726,19 @@
       ids[1] = value;
     }
     freeQueue = ids;
+    freeQueueIndex = 0;
   }
 
   function nextFreeCard() {
-    const cards = freeEligibleCards();
-    const byId = new Map(cards.map((card) => [card.id, card]));
-    freeQueue = freeQueue.filter((id) => byId.has(id));
+    const { cards, byId } = freeReviewModel();
     if (!cards.length) {
       freeCurrentId = '';
       current = null;
       renderCard(null);
       return;
     }
-    if (!freeQueue.length) refillFreeQueue(cards);
-    const nextId = freeQueue.shift();
+    if (freeQueueIndex >= freeQueue.length) refillFreeQueue(cards);
+    const nextId = freeQueue[freeQueueIndex++];
     const next = byId.get(nextId) || cards[0];
     freeCurrentId = next.id;
     freeSeenCount += 1;
@@ -889,10 +908,11 @@
   function schedulePreload() {
     if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
     if (window.RelatumPageLayout?.canPreload('canvas', 'review') === false) return;
-    if (preloadHandle || preloadPromise || loaded) return;
+    if (preloadHandle || preloadPromise || loaded || loading) return;
     const warm = () => {
       preloadHandle = 0;
       preloadUsesIdle = false;
+      if (loaded || loading) return;
       if (window.RelatumPageLayout?.canPreload('canvas', 'review') === false) return;
       preloadPromise = readJson('/api/review-pool').catch(() => null);
     };
@@ -1104,106 +1124,187 @@
     }
   }
 
+  function libraryRowSignature(card) {
+    return JSON.stringify([card.prompt, card.answer, card.notes, card.status,
+      card.deckName, card.tags, tr(statusLabel(card.status)), tr(dueLabel(card)), tr('编辑'), tr('选择卡片'),
+      tr('未命名问题'), tr('还没有填写答案或说明')]);
+  }
+
+  function updateLibraryItemPosition(item, index) {
+    if (item.__libraryIndex === index) return;
+    item.__libraryIndex = index;
+    item.classList.toggle('stagger-slot', index < 12);
+    if (index < 12) item.style.setProperty('--review-item-delay', (Math.min(index, 8) * 14) + 'ms');
+    else item.style.removeProperty('--review-item-delay');
+  }
+
+  function createLibraryItem(card, index) {
+    const item = document.createElement('article');
+    item.className = 'review-library-item';
+    item.dataset.cardId = card.id;
+    item.__librarySignature = libraryRowSignature(card);
+    item.classList.toggle('is-selected', selectedCardIds.has(card.id));
+    updateLibraryItemPosition(item, index);
+    if (libraryAnimateNewItems && index < 12) item.classList.add('item-enter');
+
+    const select = document.createElement('input');
+    select.type = 'checkbox';
+    select.className = 'review-library-select';
+    select.dataset.role = 'review-card-select';
+    select.dataset.cardId = card.id;
+    select.checked = selectedCardIds.has(card.id);
+    select.setAttribute('aria-label', tr('选择卡片') + '：' + (card.prompt || tr('未命名问题')));
+
+    const copy = document.createElement('div');
+    copy.className = 'review-library-copy';
+    const title = document.createElement('strong');
+    title.dataset.userContent = '1';
+    title.textContent = card.prompt || tr('未命名问题');
+    const summary = document.createElement('p');
+    summary.dataset.userContent = '1';
+    summary.textContent = card.answer || card.notes || tr('还没有填写答案或说明');
+    const meta = document.createElement('div');
+    meta.className = 'review-library-meta';
+    const statusChip = document.createElement('span');
+    statusChip.className = card.status === 'active' ? 'is-active' : (card.status === 'suspended' ? 'is-suspended' : '');
+    statusChip.textContent = tr(statusLabel(card.status));
+    const dueChip = document.createElement('span');
+    dueChip.textContent = tr(dueLabel(card));
+    meta.append(statusChip, dueChip);
+    if (card.deckName) {
+      const deckChip = document.createElement('span');
+      deckChip.className = 'is-deck';
+      deckChip.textContent = card.deckName;
+      meta.appendChild(deckChip);
+    }
+    (Array.isArray(card.tags) ? card.tags : []).slice(0, 2).forEach((tag) => {
+      const tagChip = document.createElement('span');
+      tagChip.className = 'is-tag';
+      tagChip.textContent = '#' + tag;
+      meta.appendChild(tagChip);
+    });
+    copy.append(title, summary, meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'review-library-actions';
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'review-library-action';
+    edit.dataset.action = 'review-card-edit';
+    edit.dataset.cardId = card.id;
+    edit.textContent = tr('编辑');
+    actions.append(edit);
+    item.append(select, copy, actions);
+    item.__librarySelect = select;
+    return item;
+  }
+
+  function buildLibraryItem(card, index) {
+    const existing = libraryRows.get(card.id);
+    if (existing) { updateLibraryItem(existing, card, index); return existing; }
+    return createLibraryItem(card, index);
+  }
+
+  function updateLibraryItem(item, card, index) {
+    const signature = libraryRowSignature(card);
+    if (item.__librarySignature !== signature) {
+      // Keep the checkbox/edit button and their focus while refreshing the copy.
+      const fresh = createLibraryItem(card, index);
+      item.querySelector('.review-library-copy').replaceWith(fresh.querySelector('.review-library-copy'));
+      setAttribute(item.__librarySelect, 'aria-label', fresh.__librarySelect.getAttribute('aria-label'));
+      setText(item.querySelector('[data-action="review-card-edit"]'), tr('编辑'));
+      item.__librarySignature = signature;
+    }
+    updateLibraryItemPosition(item, index);
+    const selected = selectedCardIds.has(card.id);
+    item.classList.toggle('is-selected', selected);
+    if (item.__librarySelect.checked !== selected) item.__librarySelect.checked = selected;
+  }
+
+  function renderSmallLibrary(filtered) {
+    const children = filtered.map((card, index) => {
+      const item = buildLibraryItem(card, index);
+      item.style.removeProperty('margin-bottom');
+      item.removeAttribute('aria-posinset'); item.removeAttribute('aria-setsize');
+      return item;
+    });
+    const kept = new Set(children), focused = document.activeElement;
+    Array.from(libraryListEl.children).forEach(child => { if (!kept.has(child)) child.remove(); });
+    const focusIndex = children.findIndex(child => child.contains(focused));
+    if (!libraryListEl.moveBefore && focusIndex >= 0) {
+      // Older WebView2 must reorder around the focused control without detaching it.
+      let anchor = null;
+      for (let i = children.length - 1; i > focusIndex; i--) {
+        const child = children[i];
+        if (child.parentNode !== libraryListEl || child.nextSibling !== anchor) libraryListEl.insertBefore(child, anchor);
+        anchor = child;
+      }
+      anchor = children[focusIndex];
+      for (let i = focusIndex - 1; i >= 0; i--) {
+        const child = children[i];
+        if (child.parentNode !== libraryListEl || child.nextSibling !== anchor) libraryListEl.insertBefore(child, anchor);
+        anchor = child;
+      }
+    } else {
+      let next = libraryListEl.firstChild;
+      children.forEach(child => {
+        if (child === next) next = next.nextSibling;
+        else if (libraryListEl.moveBefore && child.parentNode === libraryListEl) libraryListEl.moveBefore(child, next);
+        else libraryListEl.insertBefore(child, next);
+      });
+    }
+    libraryRows.clear();
+    children.forEach(item => libraryRows.set(item.dataset.cardId, item));
+  }
+
+  function reviewSurfaceVisible() {
+    return !reviewPageHidden && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
+      && (!document.body.dataset.startWorkspace || document.body.dataset.startWorkspace === 'canvas')
+      && root.getAttribute('aria-hidden') !== 'true';
+  }
+
+  function syncLibraryVisibility() {
+    if (!reviewSurfaceVisible() || viewMode !== 'library') {
+      if (libraryFilterTimer) libraryNeedsRender = true;
+      clearTimeout(libraryFilterTimer); libraryFilterTimer = 0;
+      windowedLibrary?.suspend();
+      return;
+    }
+    windowedLibrary?.resume();
+    if (libraryLoaded && (libraryNeedsRender || libraryRenderedDay !== todayStr())) {
+      syncLibraryOrganizers();
+      renderLibrary(false);
+    }
+  }
+
   function renderLibrary(animateItems) {
     if (!libraryListEl || !libraryEmptyEl) return;
+    if (!reviewSurfaceVisible() || viewMode !== 'library') { libraryNeedsRender = true; return; }
+    libraryNeedsRender = false;
     const existingIds = new Set(libraryCards.map((card) => card.id));
     Array.from(selectedCardIds).forEach((id) => { if (!existingIds.has(id)) selectedCardIds.delete(id); });
     const filtered = filteredLibraryCards();
     visibleLibraryIds = filtered.map((card) => card.id);
-    if (libraryCountEl) libraryCountEl.textContent = String(libraryCards.length);
-    const rowSignature = card => JSON.stringify([card.prompt, card.answer, card.notes, card.status,
-      card.deckName, card.tags, tr(statusLabel(card.status)), tr(dueLabel(card)), tr('编辑'), tr('未命名问题'), tr('还没有填写答案或说明')]);
-    const buildItem = (card, index) => {
-      const item = document.createElement('article');
-      item.className = 'review-library-item';
-      item.dataset.cardId = card.id;
-      item.__librarySignature = rowSignature(card);
-      item.classList.toggle('is-selected', selectedCardIds.has(card.id));
-      if (index < 12) {
-        item.classList.add('stagger-slot');
-        item.style.setProperty('--review-item-delay', (Math.min(index, 8) * 14) + 'ms');
-      }
-      if (animateItems && index < 12 && !reducedMotion()) {
-        item.classList.add('item-enter');
-      }
-
-      const select = document.createElement('input');
-      select.type = 'checkbox';
-      select.className = 'review-library-select';
-      select.dataset.role = 'review-card-select';
-      select.dataset.cardId = card.id;
-      select.checked = selectedCardIds.has(card.id);
-      select.setAttribute('aria-label', tr('选择卡片') + '：' + (card.prompt || tr('未命名问题')));
-
-      const copy = document.createElement('div');
-      copy.className = 'review-library-copy';
-      const title = document.createElement('strong');
-      title.dataset.userContent = '1';
-      title.textContent = card.prompt || tr('未命名问题');
-      const summary = document.createElement('p');
-      summary.dataset.userContent = '1';
-      summary.textContent = card.answer || card.notes || tr('还没有填写答案或说明');
-      const meta = document.createElement('div');
-      meta.className = 'review-library-meta';
-      const statusChip = document.createElement('span');
-      statusChip.className = card.status === 'active' ? 'is-active' : (card.status === 'suspended' ? 'is-suspended' : '');
-      statusChip.textContent = tr(statusLabel(card.status));
-      const dueChip = document.createElement('span');
-      dueChip.textContent = tr(dueLabel(card));
-      meta.append(statusChip, dueChip);
-      if (card.deckName) {
-        const deckChip = document.createElement('span');
-        deckChip.className = 'is-deck';
-        deckChip.textContent = card.deckName;
-        meta.appendChild(deckChip);
-      }
-      (Array.isArray(card.tags) ? card.tags : []).slice(0, 2).forEach((tag) => {
-        const tagChip = document.createElement('span');
-        tagChip.className = 'is-tag';
-        tagChip.textContent = '#' + tag;
-        meta.appendChild(tagChip);
-      });
-      copy.append(title, summary, meta);
-
-      const actions = document.createElement('div');
-      actions.className = 'review-library-actions';
-      const edit = document.createElement('button');
-      edit.type = 'button';
-      edit.className = 'review-library-action';
-      edit.dataset.action = 'review-card-edit';
-      edit.dataset.cardId = card.id;
-      edit.textContent = tr('编辑');
-      actions.append(edit);
-      item.append(select, copy, actions);
-      return item;
-    };
+    setText(libraryCountEl, String(libraryCards.length));
+    clearTimeout(libraryItemEnterTimer);
+    libraryListEl.querySelectorAll('.item-enter').forEach(item => item.classList.remove('item-enter'));
+    libraryAnimateNewItems = !!animateItems && !reducedMotion();
     if (filtered.length > 200 && window.RelatumWindowedList) {
       if (!windowedLibrary) windowedLibrary = RelatumWindowedList.create({ host: libraryListEl, gap: 10, estimate: 122,
-        key: card => card.id, render: (card, index) => buildItem(card, index),
-        update: (item, card, index) => {
-          const signature = rowSignature(card);
-          if (item.__librarySignature !== signature) {
-            const fresh = buildItem(card, index);
-            item.querySelector('.review-library-copy').replaceWith(fresh.querySelector('.review-library-copy'));
-            item.querySelector('[data-role="review-card-select"]').setAttribute('aria-label', fresh.querySelector('[data-role="review-card-select"]').getAttribute('aria-label'));
-            item.querySelector('[data-action="review-card-edit"]').textContent = tr('编辑');
-            item.__librarySignature = signature;
-          }
-          const selected = selectedCardIds.has(card.id);
-          item.classList.toggle('is-selected', selected);
-          item.querySelector('[data-role="review-card-select"]').checked = selected;
-        },
+        key: card => card.id, render: buildLibraryItem, update: updateLibraryItem, reuseRows: true,
       });
-      windowedLibrary.setItems(filtered, buildItem);
+      windowedLibrary.resume();
+      windowedLibrary.setItems(filtered);
+      libraryRows.clear();
     } else {
-      if (windowedLibrary) { windowedLibrary.dispose(); windowedLibrary = null; }
-      libraryListEl.innerHTML = '';
-      const fragment = document.createDocumentFragment();
-      filtered.forEach((card, index) => fragment.appendChild(buildItem(card, index)));
-      libraryListEl.appendChild(fragment);
+      if (windowedLibrary) {
+        libraryListEl.querySelectorAll('.review-library-item').forEach(item => libraryRows.set(item.dataset.cardId, item));
+        windowedLibrary.dispose(); windowedLibrary = null;
+      }
+      renderSmallLibrary(filtered);
     }
-    clearTimeout(libraryItemEnterTimer);
-    if (animateItems && !reducedMotion()) {
+    libraryAnimateNewItems = false;
+    if (libraryListEl.querySelector('.item-enter')) {
       libraryItemEnterTimer = window.setTimeout(() => {
         libraryListEl.querySelectorAll('.item-enter').forEach((item) => {
           item.classList.remove('item-enter');
@@ -1243,6 +1344,8 @@
 
   function scheduleLibraryFilterRender() {
     clearTimeout(libraryFilterTimer);
+    libraryFilterTimer = 0;
+    if (!reviewSurfaceVisible() || viewMode !== 'library') { libraryNeedsRender = true; return; }
     libraryFilterTimer = window.setTimeout(() => {
       libraryFilterTimer = 0;
       renderLibrary(false);
@@ -1252,7 +1355,7 @@
   async function loadLibrary(force, animateItems) {
     if (libraryLoading) return false;
     if (libraryLoaded && !force) {
-      if (viewMode === 'library' && libraryRenderedDay !== todayStr()) renderLibrary(false);
+      if (viewMode === 'library' && (libraryNeedsRender || libraryRenderedDay !== todayStr())) renderLibrary(false);
       return true;
     }
     libraryLoading = true;
@@ -1263,7 +1366,8 @@
       uncategorizedCount = Number(json.uncategorizedCount || 0);
       libraryLoaded = true;
       if (force) resetFreeSession();
-      syncLibraryOrganizers();
+      libraryNeedsRender = true;
+      if (reviewSurfaceVisible()) syncLibraryOrganizers();
       if (viewMode === 'library') renderLibrary(animateItems !== false);
       return true;
     } catch (error) {
@@ -1329,6 +1433,7 @@
     }
     transitionModePanels(nextViewMode);
     viewMode = nextViewMode;
+    syncLibraryVisibility();
     if (nextPrimaryMode === 'library') {
       syncPrimaryModeControls();
       updateStats();
@@ -1964,6 +2069,7 @@
   });
 
   async function activateReview() {
+    syncLibraryVisibility();
     const ok = await loadPool(false);
     if (!ok) return false;
     if (reviewMode === 'free' && (!freeInitialized || !libraryLoaded || freeCurrentId !== (current && current.id))) {
@@ -1990,6 +2096,7 @@
   };
 
   document.addEventListener('start:viewchange', (event) => {
+    syncLibraryVisibility();
     if (!event.detail || event.detail.current !== 'review') {
       sessionGeneration++; statsSequence++;
       importOpenSequence++;
@@ -2001,6 +2108,8 @@
     }
   });
   window.addEventListener('pagehide', () => {
+    reviewPageHidden = true;
+    syncLibraryVisibility();
     sessionGeneration++; statsSequence++;
     importOpenSequence++;
     importController?.close();
@@ -2009,10 +2118,13 @@
     cancelMathReadyWait();
     cancelMathLoadSchedule();
   });
+  window.addEventListener('pageshow', () => { reviewPageHidden = false; syncLibraryVisibility(); });
   const motionVisibility = () => {
     if (!statMotionVisible()) { clearStatMotion(); heldReviewKeys.clear(); }
+    syncLibraryVisibility();
   };
   document.addEventListener('visibilitychange', motionVisibility);
+  document.addEventListener('relatum:start-workspacechange', syncLibraryVisibility);
   window.addEventListener('canvasdesktop:visibility', motionVisibility);
   window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener('change', motionVisibility);
   schedulePreload();

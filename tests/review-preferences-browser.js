@@ -111,7 +111,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await options(page, { hideTextTips: true });
     assert(!(await toast(page).evaluate(element => element.classList.contains('show'))), 'muting dismisses the current ordinary review notice');
     assert.deepEqual(await stored(page), { hideTextTips: true, autoRevealAnswer: false });
-    await page.reload(); await ready(page);
+    // The start router consumes ?view=review; explicitly re-enter the same page.
+    await page.goto(url + '/index.html?view=review'); await ready(page);
     await page.evaluate(() => { window.buttons = Array.from(document.querySelectorAll('.review-actions button')); });
     await page.locator('[data-action="review-settings-open"]').click();
     assert(await option(page, 'hideTextTips').isChecked()); assert(!(await option(page, 'autoRevealAnswer').isChecked()));

@@ -116,7 +116,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await solo.keyboard.press('Space'); assert(await solo.locator('[data-role="review-answer-reveal"]').isVisible());
     await grade(solo, 'vague'); assert(await solo.locator('[data-role="review-answer-reveal"]').isHidden());
     await grade(solo); assert.equal(await seen(solo), baseCompleted);
-    await solo.reload();
+    // Startup consumes the view query rather than persisting this special page.
+    await solo.goto(url + '/index.html?view=review');
     await solo.waitForFunction(() => document.querySelector('[data-role="review-relearning"]').textContent.includes('1/2'));
     await solo.waitForFunction(() => {
       const root = document.querySelector('.review-embedded');
@@ -352,7 +353,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await check.keyboard.press('Enter');
     await check.waitForFunction(() => document.querySelector('.review-embedded').dataset.reviewPhase === 'question' && document.querySelector('[data-action="review-remembered"]').getAttribute('aria-disabled') === 'false');
     assert.equal((await allCards()).reduce((sum, card) => sum + card.reviewCount, 0), scoresBeforeDay, 'midnight continuation refreshes without rating');
-    await next.click(); await check.reload();
+    await next.click(); await check.goto(url + '/index.html?view=review');
     await check.waitForFunction(() => document.querySelector('[data-action="review-remembered"]').getAttribute('aria-disabled') === 'false');
     assert.equal(await phase(), 'question', 'answer checking is not persisted across a full reload');
     await check.context().close();
