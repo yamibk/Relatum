@@ -171,7 +171,7 @@
     }
     function suspend() { active = false; sequence++; clearTimeout(feedbackTimer); diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; cardsControl?.destroy(); cardsControl = null; }
     function media() {
-      heading('图文', 'Media');
+      heading('Media', 'Media');
       const help = document.createElement('p'); help.textContent = text('图片在左，说明在右。直接点击说明输入，Enter 换行、空行分段。拖动图片角落调整大小，文字会自动重新折行；空间不足时自动上图下文。也可以右键独立图片，选择“转换为图文块”。', 'Place an image beside editable text. Enter starts a new line; a blank line starts a paragraph. Resize the image using its corner: text reflows automatically and stacks below the image when space is limited. You can also right-click a standalone image and choose Convert to media block.'); host.append(help);
       const source = '> [!media]\n> ![' + text('图片说明', 'Image description') + '|160](' + text('图片.png', 'image.png') + ')\n>\n> **' + text('说明标题', 'Description') + '**\n> ' + text('第一行说明。', 'The first line of text.') + '\n> ' + text('按回车后仍留在右侧。', 'Enter keeps the next line on the right.') + '\n>\n> ' + text('这里是新的段落。', 'This is a new paragraph.');
       example(source);
@@ -187,7 +187,7 @@
         sequence++; diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; cardsControl?.destroy(); cardsControl = null; clearTimeout(feedbackTimer);
         topic = next; renderedLanguage = lang; host.replaceChildren(); host.dataset.language = lang; host.dataset.guideTopic = topic;
         const head = document.createElement('header'); head.className = 'note-guide-topic-head';
-        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards', media: text('图文', 'Media') }[topic];
+        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards', media: 'Media' }[topic];
         const settings = document.createElement('button'); settings.type = 'button'; settings.dataset.noteAction = 'guide-settings'; settings.textContent = text('切换内容', 'Change topic'); head.append(title, settings); host.append(head);
         if (topic === 'markdown') markdown(); else if (topic === 'mermaid') mermaid(); else if (topic === 'quiz') quiz(); else if (topic === 'cards') cards(); else if (topic === 'media') media(); else callouts();
         host.scrollTop = positions.get(topic) || 0;
