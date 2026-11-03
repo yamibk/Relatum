@@ -339,6 +339,8 @@
         "note-cards.js",
         "note-cards.css",
         "note-media-frame.js",
+        "note-media.js",
+        "note-media.css",
         "note-shortcuts.js",
         "vendor/codemirror/relatum-codemirror.min.js"
       ],

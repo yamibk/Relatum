@@ -1096,7 +1096,8 @@
       id: prior && prior.id || 'note-block-' + nextBlockSpecId++,
       source,
       ...(calloutStyle ? { calloutStyle } : {}),
-      fingerprint: spec.kind === 'table' && prior?.source === source ? prior.fingerprint : sourceFingerprint(source),
+      fingerprint: (spec.kind === 'table' || spec.kind === 'media') && prior?.source === source ? prior.fingerprint : sourceFingerprint(source),
+      ...(spec.kind === 'media' ? { mediaModel: spec.mediaModel || (prior?.source === source ? prior.mediaModel : null) || window.MarkdownMini.parseMediaBlock(source) } : {}),
       ...(spec.kind === 'table' && window.MarkdownTable ? { tableModel: spec.tableModel
         || (prior?.source === source ? prior.tableModel : null)
         || window.MarkdownTable.parse(spec.renderSource || source, { ensureBodyRow: false }).model } : {}),
@@ -1153,7 +1154,7 @@
     const metadata = documentFrontmatter(doc);
     if (metadata) protectedBlocks.push(metadata);
     const push = (spec) => {
-      if (spec.kind !== 'callout' && window.MarkdownMini.quoteLine(spec.source).depth) {
+      if (spec.kind !== 'callout' && spec.kind !== 'media' && window.MarkdownMini.quoteLine(spec.source).depth) {
         spec.container = window.MarkdownMini.noteContainerSource(spec.source);
         spec.renderSource = spec.container.text;
       }
@@ -1211,6 +1212,15 @@
           if (node.to - node.from > RICH_BLOCK_LIMIT) return false;
           const source = doc.sliceString(node.from, node.to);
           const callout = parseCalloutSource(source);
+          if (callout?.type === 'media') {
+            const from = doc.lineAt(node.from).from, mediaSource = doc.sliceString(from, node.to);
+            const mediaModel = window.RelatumNoteMedia && window.MarkdownMini.parseMediaBlock(mediaSource);
+            if (mediaModel) {
+              push({ from, to: node.to, kind: 'media', source: mediaSource, mediaModel });
+              protectedBlocks.push({ from, to: node.to });
+            }
+            return false;
+          }
           if (callout && source.length <= RICH_BLOCK_LIMIT && !rangeHasLongLine(doc, node.from, node.to)) push(Object.assign({ from: node.from, to: node.to, kind: 'callout', source }, callout));
           return undefined;
         }
@@ -2712,6 +2722,10 @@
     }
 
     const select = (event) => {
+      if (options.mediaImageInputPending?.()) {
+        if (event) { event.preventDefault(); event.stopPropagation(); }
+        options.whenMediaInputSettled().then(() => { if (frame.isConnected) select(); }); return;
+      }
       if (compositionActive(view)) return;
       if (event) { event.preventDefault(); event.stopPropagation(); }
       const current = resolveRange();
@@ -2731,13 +2745,14 @@
 
     const cleanupResize = !absoluteImageTarget(parsed.target) && window.RelatumNoteMediaFrame ? window.RelatumNoteMediaFrame.resize(frame, {
       selected: frame.classList.contains('is-selected'), label: '等比例调整图片大小', resolve: resolveRange,
-      blocked: () => !!(imageTextController && (imageTextController.draftActive || imageTextController.switchFrame)),
-      maxWidth: () => (frame.closest('.cm-line') || view.contentDOM).getBoundingClientRect().right - frame.getBoundingClientRect().left,
+      blocked: () => !!options.mediaImageInputPending?.() || !!(imageTextController && (imageTextController.draftActive || imageTextController.switchFrame)),
+      maxWidth: options.mediaImageMaxWidth || (() => (frame.closest('.cm-line') || view.contentDOM).getBoundingClientRect().right - frame.getBoundingClientRect().left),
       preview(width) {
+        options.mediaImageWidthPreview?.(width);
         frame.classList.remove('has-explicit-box'); frame.classList.add('has-explicit-size');
         frame.style.aspectRatio = ''; frame.style.width = width + 'px'; frame.style.maxWidth = '100%'; view.requestMeasure();
       },
-      restore(current) { frame.style.width = ''; frame.style.maxWidth = ''; frame.style.aspectRatio = ''; applyImageDimensions(frame, current.parsed); view.requestMeasure(); },
+      restore(current) { options.mediaImageWidthPreview?.(current.parsed.width || 240); frame.style.width = ''; frame.style.maxWidth = ''; frame.style.aspectRatio = ''; applyImageDimensions(frame, current.parsed); view.requestMeasure(); },
       commit(width) {
         const current = resolveRange(), markdownMini = window.MarkdownMini; if (!current) return;
         const resized = markdownMini.serializeImage(current.parsed.image || current.parsed, { width });
@@ -3671,10 +3686,10 @@
   }
 
   function blockIsProjected(spec, activeIds) {
-    return usesBlockReplacement(spec) && (spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'table' || !activeIds.has(spec.id));
+    return usesBlockReplacement(spec) && (spec.kind === 'media' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'table' || !activeIds.has(spec.id));
   }
 
-  const remembersBlockLayout = spec => /^(?:image|math|table|mermaid)$/.test(spec.kind);
+  const remembersBlockLayout = spec => /^(?:image|math|table|mermaid|media)$/.test(spec.kind);
   function layoutFingerprint(source) {
     let a = 2166136261, b = 2246822519;
     for (let index = 0; index < source.length; index++) {
@@ -3790,7 +3805,7 @@
         this.unwatch = watchNoteRenderLifecycle(event => {
           if (event.type === 'pagehide') this.pageActive = false;
           if (event.type === 'pageshow') this.pageActive = true;
-          if (this.foreground()) this.schedule();
+          if (this.foreground()) { coordinator.mediaController?.sync(); this.schedule(); }
         });
         view.contentDOM.addEventListener('load', this.schedule, true);
         view.contentDOM.addEventListener('error', this.schedule, true);
@@ -3857,6 +3872,7 @@
   }
 
   function blockWidget(spec, path, options, coordinator, selected) {
+    if (spec.kind === 'media' && options.mediaController) return new MeasuredBlockWidget(options.mediaController.widget(spec, path, coordinator), coordinator);
     if (editableFence(spec)) {
       const widget = new MermaidBlockWidget(spec, path, options, coordinator, selected);
       return coordinator.layout && remembersBlockLayout(spec) ? new MeasuredBlockWidget(widget, coordinator) : widget;
@@ -3874,7 +3890,7 @@
     // to deliver native input without a keydown to the selected image text box.
     const imageTextInput = spec.kind === 'image' && spec.from === 0 && spec.to === state.doc.length
       && options.imageTextController?.active;
-    return !imageTextInput && (spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz' || spec.kind === 'table' || editableFence(spec));
+    return !imageTextInput && (spec.kind === 'media' || spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz' || spec.kind === 'table' || editableFence(spec));
   }
 
   function blockAtomicRange(spec, state) {
@@ -4403,6 +4419,7 @@
   }
 
   function createInlineDecorations(view, blockField, notePath, options, mathCache = createMathHighlightCache()) {
+    const mediaLiterals = options.mediaBody ? options.mediaLiteralLines(view.state.doc) : null;
     const ranges = [];
     const seen = new Set();
     const blockValue = view.state.field(blockField);
@@ -4449,6 +4466,7 @@
       };
       const inlineMathByLine = new Map();
       const inlineMathForLine = line => {
+        if (mediaLiterals?.has(line.number - 1)) return [];
         if (inlineMathByLine.has(line.from)) return inlineMathByLine.get(line.from);
         const found = line.length <= MAX_RICH_LINE && /\$|\\\(/.test(line.text)
           ? window.MarkdownMini.mathRanges(line.text).filter(math => !math.display && math.to - math.from <= INLINE_MATH_LIMIT
@@ -4532,6 +4550,7 @@
         lineClass(view.state.doc.line(number).from, name, descriptor.style + layeredCalloutStyle(chain, calloutModel.layout, number, number, false, hasPreview));
       });
       protectedRanges.forEach((range) => {
+        if (options.mediaBody) return;
         if (/^(?:FencedCode|CodeBlock|IndentedCode)$/.test(range.kind)) {
           // A projected diagram or quiz owns the entire fence. Decorating its
           // hidden first line leaves an empty code-colored stripe above it.
@@ -4585,6 +4604,7 @@
       tree.iterate({
         from: first.from, to: last.to,
         enter(nodeRef) {
+          if (mediaLiterals && nodeRef.name !== 'Document' && mediaLiterals.has(view.state.doc.lineAt(nodeRef.from).number - 1)) return false;
           // Protected blocks were handled above, bounded to visible lines. Do
           // not walk all lines again or interpret embedded code as Markdown.
           if (/^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock|HTMLTag)$/.test(nodeRef.name)) return false;
@@ -4718,6 +4738,7 @@
       const visited = new Set();
       for (let number = first.number; number <= last.number; number += 1) {
         const line = view.state.doc.line(number);
+        if (mediaLiterals?.has(number - 1)) continue;
         if (visited.has(line.from)) continue;
         visited.add(line.from);
         if (line.length > MAX_RICH_LINE) {
@@ -5733,6 +5754,7 @@
     let selectionMatchHighlightWait = false;
     let pendingDocumentState = null;
     let pendingDocumentWait = false;
+    let mediaBodyTarget = null;
     let sourceMode = !!options.sourceMode;
     let selectionMatchHighlight = options.selectionMatchHighlight === true;
     let documentNoteSyntax = emptyNoteSyntax;
@@ -6236,6 +6258,82 @@
     const tableController = window.RelatumNoteTableEditor
       ? window.RelatumNoteTableEditor.createController(safeOptions) : null;
     safeOptions.tableController = tableController;
+    safeOptions.createMediaImage = (owner, parent, path, resolve, maxWidth, onWidth) => {
+      const range = resolve();
+      return range ? createInteractiveImage(owner, parent, range.parsed, path, Object.assign({}, safeOptions, { mediaImageMaxWidth: maxWidth, mediaImageWidthPreview: onWidth, mediaImageInputPending: inputPending }), resolve, true) : null;
+    };
+    safeOptions.mediaImageRange = currentImageRange;
+    safeOptions.mediaEditing = active => host.classList.toggle('has-media-input', active);
+    safeOptions.releaseMediaBody = root => { try { window.MathJax?.typesetClear?.([root]); } catch (_) {} releaseImageFailures(root); };
+    safeOptions.typesetMedia = typesetMath;
+    safeOptions.mediaForeground = () => highlightActive && !destroyed && noteRenderForeground(view);
+    safeOptions.whenMediaInputSettled = whenInputSettled;
+    safeOptions.onWikiLink = safeOptions.onOpenWiki;
+    const mediaLayoutIds = new Set(); let mediaLayoutQueued = false;
+    safeOptions.mediaLayout = id => {
+      mediaLayoutIds.add(id); if (mediaLayoutQueued) return;
+      mediaLayoutQueued = true; const epoch = coordinator.epoch;
+      Promise.resolve().then(() => {
+        mediaLayoutQueued = false; const ids = Array.from(mediaLayoutIds); mediaLayoutIds.clear();
+        if (destroyed || epoch !== coordinator.epoch || inputPending() || !noteRenderForeground(view)) return;
+        const blocks = view.state.field(blockField, false), current = ids.filter(id => blocks?.byId.get(id)?.kind === 'media');
+        if (current.length) view.dispatch({ effects: blockLayoutEffect.of(current), annotations: Transaction.addToHistory.of(false) });
+      });
+    };
+    safeOptions.mediaReconcile = () => inputReconcileEffect.of([]);
+    safeOptions.mediaCommandContext = () => commandContext();
+    safeOptions.mediaBodyExtensions = surface => {
+      const empty = StateField.define({ create: () => ({ specs: [], activeIds: new Set() }), update: value => value });
+      let literalDoc, literalLines;
+      const nested = Object.assign({}, safeOptions, { mediaBody: true, coordinator: { epoch: 1, records: [], field: empty }, mediaLiteralLines(doc) {
+        if (literalDoc !== doc) { literalDoc = doc; literalLines = window.MarkdownMini.mediaLiteralLines(doc.toString()); }
+        return literalLines;
+      } });
+      return [empty, createInlinePlugin(empty, () => currentPath, nested),
+        createHighlightExtension({ ...highlightLifecycle, pending: () => surface.pending(), active: () => highlightActive && !destroyed }),
+        safeOptions.createLinkCompletionExtension?.(() => surface.pending(), () => surface.whenSettled()) || []];
+    };
+    safeOptions.mediaCommand = (input, name) => {
+      if (name.startsWith('highlight-color:')) return applyHighlightColor(input, name.slice(16));
+      if (name.startsWith('paragraph:')) return paragraphCommand(input, name.slice(10));
+      if (INLINE_FORMATS[name]) return toggleInlineFormat(input, name);
+      return false;
+    };
+    safeOptions.onMediaShortcut = (event, input) => {
+      const binding = shortcutRegistry ? shortcutRegistry.bindingFromEvent(event) : [(event.ctrlKey || event.metaKey) && 'Mod', event.altKey && 'Alt', event.shiftKey && 'Shift', event.key.length === 1 ? event.key.toLowerCase() : event.key].filter(Boolean).join('-');
+      const name = Object.keys(INLINE_FORMATS).find(name => (currentShortcutBindings[name] || []).includes(binding));
+      if (!name) return inactiveDefaultShortcutBindings().includes(binding);
+      event.preventDefault(); return safeOptions.mediaCommand(input, name);
+    };
+    safeOptions.onMediaLink = (event, input) => {
+      if (!(event.ctrlKey || event.metaKey) || event.button !== 0) return false;
+      const position = input.posAtCoords({ x: event.clientX, y: event.clientY }), link = position == null ? null : linkAt(input.state, position);
+      if (!link) return false;
+      event.preventDefault();
+      if (link.kind === 'wiki') safeOptions.onOpenWiki(link.target, { reuseActiveTab: false });
+      else if (!isDangerousTarget(link.target)) safeOptions.onOpenExternal(normalizedImageTarget(link.target));
+      return true;
+    };
+    const mediaController = window.RelatumNoteMedia?.createController(safeOptions);
+    safeOptions.mediaController = mediaController;
+    coordinator.mediaController = mediaController;
+    safeOptions.mediaBodyBoundary = (id, side) => {
+      mediaController?.close(); const spec = coordinator.spec(view, id); if (!spec) return;
+      const doc = view.state.doc; let position, changes;
+      if (side === 'before') {
+        if (!spec.from) { changes = { from: 0, insert: '\n\n' }; position = 0; } else position = doc.lineAt(spec.from - 1).from;
+      } else if (spec.to === doc.length) { changes = { from: doc.length, insert: '\n\n' }; position = doc.length + 2; }
+      else position = spec.to + 1;
+      view.dispatch({ ...(changes ? { changes, userEvent: 'input.media-boundary' } : {}), selection: EditorSelection.cursor(position), scrollIntoView: true }); view.focus();
+    };
+    safeOptions.routeMediaBody = position => {
+      const target = mediaBodyTarget = { position, path: currentPath, epoch: coordinator.epoch };
+      whenInputSettled().then(() => {
+        if (destroyed || sourceMode || mediaBodyTarget !== target || currentPath !== target.path || coordinator.epoch !== target.epoch || !view.dom.isConnected) return;
+        mediaBodyTarget = null; mediaController?.close();
+        view.dispatch({ selection: EditorSelection.cursor(clamp(target.position, 0, view.state.doc.length)) }); view.focus();
+      });
+    };
     // A block replacement has a visual cursor at its end even when that source
     // position is still on its last Markdown row. Body input needs a real line.
     safeOptions.onTableBodyRequest = (id, side) => {
@@ -6463,6 +6561,11 @@
       }
       const image = adjacentImageRange(view.state, backward);
       if (!image) return false;
+      const media = view.state.field(blockField, false)?.specs.find(spec => spec.kind === 'media' && spec.from <= image.from && spec.to >= image.to);
+      if (media) {
+        const body = window.MarkdownMini.parseMediaBlock(media.source)?.body || '';
+        view.dispatch({ changes: { from: media.from, to: media.to, insert: body }, selection: EditorSelection.cursor(media.from), userEvent: 'delete.image-object' }); return true;
+      }
       view.dispatch({
         changes: { from: image.from, to: image.to, insert: '' },
         selection: EditorSelection.cursor(image.from),
@@ -6755,6 +6858,8 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (mediaBodyTarget && update.docChanged) mediaBodyTarget.position = update.changes.mapPos(mediaBodyTarget.position, 1);
+          mediaController?.sync();
           if (mathPointerScroll) {
             const pointerCommit = update.transactions.flatMap(transaction => transaction.effects)
               .find(effect => effect.is(mathPointerSelectionEffect))?.value;
@@ -6924,6 +7029,10 @@
             return false;
           },
           mousedown(event, view) {
+            if (!sourceMode && mediaController?.pending() && event.button === 0 && !event.target.closest('.note-media')) {
+              const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+              if (position != null) { event.preventDefault(); safeOptions.routeMediaBody(position); return true; }
+            }
             rememberMathPointerScroll(event, view);
             if (event.button === 0 || event.button === 2) cancelMermaidOperation();
             // Focus must use the clicked body position, not a stale selection
@@ -7164,6 +7273,7 @@
       const seq = ++documentSetSeq;
       const scrollSeq = ++scrollRestoreSeq;
       if (tableController) tableController.close();
+      mediaController?.close();
       coordinator.epoch += 1;
       coordinator.folds.clear(); coordinator.foldPositions.clear(); coordinator.records = [];
       coordinator.mermaidHeights?.clear();
@@ -7341,6 +7451,7 @@
       if (next === sourceMode) return;
       sourceMode = next;
       if (tableController) tableController.close();
+      mediaController?.close();
       if (next) imageTextController.setActive(false);
       coordinator.epoch += 1;
       const imageRange = next ? null : imageRangeForLiveMode(view.state);
@@ -7407,7 +7518,8 @@
     }
 
     function commandContext() {
-      return { doc: view.state.doc, selection: view.state.selection, path: currentPath };
+      const media = mediaController?.context();
+      return { doc: media?.doc || view.state.doc, selection: media?.selection || view.state.selection, path: currentPath, ...(media ? { media } : {}) };
     }
     function applyMediaRemoval(changes, before) {
       if (destroyed || inputPending() || view.state.doc.toString() !== before) return false;
@@ -7433,7 +7545,13 @@
         || (context.doc === view.state.doc && context.path === currentPath && context.selection.eq(view.state.selection)));
     }
     function queryCommand(name, context) {
+      if (context?.media) return { enabled: !destroyed && context.path === currentPath && !!mediaController?.valid(context.media)
+        && !name.startsWith('insert:') && (!/^(?:copy|cut)$/.test(name) || !context.selection.main.empty), checked: false };
       if (!validCommandContext(context)) return { enabled: false, checked: false };
+      if (name === 'image:media') {
+        const image = exactSelectedImageRange(view.state);
+        return { enabled: !sourceMode && !!mediaController && !!image && !!view.state.field(blockField, false)?.specs.some(spec => spec.kind === 'image' && spec.from === image.from && spec.to === image.to), checked: false };
+      }
       if (name.startsWith('highlight-color:')) {
         const color = name.slice(16);
         return { enabled: highlightColors.some(item => item.id === color) && view.state.selection.ranges.every(range => highlightAllowed(view.state, range)),
@@ -7471,6 +7589,16 @@
     }
     function executeCommand(name, context, text, html) {
       if (!queryCommand(name, context).enabled) return false;
+      if (context?.media) return mediaController.command(name, context.media, text);
+      if (name === 'image:media') {
+        const image = exactSelectedImageRange(view.state), raw = view.state.doc.sliceString(image.from, image.to);
+        const container = window.MarkdownMini.noteContainerSource(raw), prefix = container.prefix;
+        const source = prefix + '> [!media]\n' + prefix + '> ' + container.text + '\n' + prefix + '>\n' + prefix + '> ';
+        const position = image.from + source.length;
+        view.dispatch({ changes: { from: image.from, to: image.to, insert: source }, selection: EditorSelection.cursor(position),
+          userEvent: 'input.media-convert', annotations: CM.isolateHistory.of('full') });
+        Promise.resolve().then(() => { if (!destroyed) mediaController.reveal(position); }); return true;
+      }
       let done;
       if (name.startsWith('highlight-color:')) done = applyHighlightColor(view, name.slice(16));
       else if (name.startsWith('paragraph:')) done = paragraphCommand(view, name.slice(10));
@@ -7531,6 +7659,7 @@
       cancelViewportRestore(view.scrollDOM);
       scrollRestoreSeq++;
       const target = clamp(position, 0, view.state.doc.length);
+      if (!sourceMode && mediaController?.reveal(target, options?.end)) return;
       const effects = [];
       const blocks = view.state.field(blockField, false);
       const visual = blocks?.specs.find(spec => spec.kind === 'cards' && spec.from <= target && spec.to >= target);
@@ -7544,6 +7673,7 @@
       view.dispatch({ selection: options?.end != null ? EditorSelection.range(target, clamp(options.end, target, view.state.doc.length)) : EditorSelection.cursor(target), effects,
         scrollIntoView: options?.align !== 'start' });
       view.focus();
+      if (!sourceMode) mediaController?.queueReveal(target, options?.end, view);
     }
 
     function setImageTextMode(active) {
@@ -7563,9 +7693,14 @@
       const tree = syntaxTree(view.state);
       if (!tree || tree.length < view.state.doc.length) throw new Error('笔记语法尚未解析完成，请重试');
       const specs = scanBlockSpecs(view.state, 0, view.state.doc.length, [], tree);
-      return specs.filter((spec) => spec.kind === 'image'
+      const images = specs.filter((spec) => spec.kind === 'image'
         && !specs.some((outer) => outer.kind !== 'image' && outer.from <= spec.from && outer.to >= spec.to))
         .map((spec) => view.state.doc.lineAt(spec.from).number);
+      for (const spec of specs) if (spec.kind === 'media') {
+        const model = window.MarkdownMini.parseMediaBlock(spec.source);
+        if (model) images.push(view.state.doc.lineAt(spec.from + model.imageFrom).number);
+      }
+      return images.sort((a, b) => a - b);
     }
 
     async function exportImageTextPng() {
@@ -7632,12 +7767,12 @@
 
     function inputPending() {
       return inputSession.pending() || imageTextController.draftActive || !!imageTextController.switchFrame
-        || !!(tableController && tableController.pending());
+        || !!(tableController && tableController.pending()) || !!mediaController?.pending();
     }
 
     function whenInputSettled() {
       return Promise.all([inputSession.whenSettled(), imageTextController.whenSettled(),
-        tableController ? tableController.whenSettled() : Promise.resolve(true)]);
+        tableController ? tableController.whenSettled() : Promise.resolve(true), mediaController?.whenSettled() || Promise.resolve(true)]);
     }
 
     return {
@@ -7657,7 +7792,7 @@
       whenInputSettled, createImageInsertion, imageTextTarget, imageTextRenderedLines, exportImageTextPng,
       commandContext, queryCommand, executeCommand, applyMediaRemoval,
       get inputPending() { return inputPending(); },
-      focus() { view.focus(); },
+      focus() { if (mediaController?.active()) mediaController.active().input.focus(); else view.focus(); },
       destroy() {
         cancelMathPointerScroll();
         cancelViewportRestore(view.scrollDOM);
@@ -7673,6 +7808,7 @@
         imageTextController.setActive(false);
         imageTextSizer.destroy();
         if (tableController) tableController.destroy();
+        mediaController?.destroy();
         inputSession.destroy();
         delete view.__relatumInputSession;
         window.removeEventListener('blur', cancelMermaidOperation);

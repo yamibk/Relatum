@@ -1516,6 +1516,104 @@
     if (!container?.depth) return source;
     return String(source).split('\n').map((line, index) => (container.prefixes[index] ?? container.prefix) + line).join('\n');
   }
+  // Source offsets include the original quote prefixes; consumers never save HTML.
+  function parseMediaBlock(source) {
+    const value = String(source || '');
+    if (value.length > 256 * 1024) return null;
+    const container = noteContainerSource(value), rows = container.lines;
+    if (!container.depth || !/^\[!media\][ \t]*\r?$/i.test(rows[0]) || rows.some(row => row.length > 64 * 1024)) return null;
+    if (value.split('\n').some(row => quoteLine(row).depth < container.depth)) return null;
+    const image = parseImageBlock((rows[1] || '').replace(/\r$/, ''));
+    if (!image || isRemoteImageTarget(image.target) || isCanvasImage(image)) return null;
+    const bodyLine = rows.length > 2 && !rows[2].trim() ? 3 : 2;
+    const rawRows = value.split('\n');
+    const lineFrom = index => rawRows.slice(0, index).reduce((n, row) => n + row.length + 1, 0);
+    const body = rows.slice(bodyLine).join('\n').replace(/\r\n?/g, '\n'), bodyOffsets = [0];
+    for (let at = body.indexOf('\n'); at >= 0; at = body.indexOf('\n', at + 1)) bodyOffsets.push(at + 1);
+    return { source: value, container, image, imageFrom: lineFrom(1), imageTo: lineFrom(1) + rawRows[1].length,
+      bodyLine, bodyFrom: Math.min(value.length, lineFrom(bodyLine)), body, bodyOffsets };
+  }
+
+  // Unsupported rich structures remain literal, in both live and reading views.
+  function mediaLiteralLines(source) {
+    const rows = String(source || '').split('\n'), result = new Set();
+    let fence = null, math = '';
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i], marker = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(row);
+      if (fence) { result.add(i); if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !row.slice(marker[0].length).trim()) fence = null; continue; }
+      if (marker) { fence = marker[1]; result.add(i); continue; }
+      if (math) { result.add(i); if (row.trim() === math) math = ''; continue; }
+      let mathSource = row;
+      if (/\$\$|\\\[|\\begin\{/.test(row)) {
+        const code = protectInlineCode(row).protected;
+        mathSource = maskNoteRanges(code, mathRanges(code).filter(range => !range.display));
+      }
+      if (/\$\$|\\\[|\\begin\{/.test(mathSource)) {
+        result.add(i);
+        if (mathSource.trim() === '$$') math = '$$'; else if (mathSource.trim() === '\\[') math = '\\]';
+        else { const m = /\\begin\{([^}]+)\}/.exec(mathSource); if (m && !mathSource.includes('\\end{' + m[1] + '}')) math = '\\end{' + m[1] + '}'; }
+        continue;
+      }
+      if (/^\s*>|!\[|^\s*(?:---+|\*\*\*+|___+)\s*$|^\s*</.test(row)) result.add(i);
+      if (global.MarkdownTable && i + 1 < rows.length && global.MarkdownTable.rowHasDelimiter(row) && global.MarkdownTable.isSeparatorLine(rows[i + 1])) {
+        result.add(i++); result.add(i);
+        while (i + 1 < rows.length && rows[i + 1].trim() && global.MarkdownTable.rowHasDelimiter(rows[i + 1])) result.add(++i);
+      }
+    }
+    return result;
+  }
+
+  function renderMediaBody(source) {
+    const rows = String(source || '').split('\n'), literals = mediaLiteralLines(source), out = [];
+    let paragraph = [], list = [], ordered = false, start = 1, math = false;
+    const inline = value => {
+      const result = renderLabelResult(value, { links: true, wikiLinks: true }); math ||= result.features.math; return result.html;
+    };
+    const flushParagraph = () => { if (paragraph.length) out.push('<p>' + inline(paragraph.join('\n')) + '</p>'); paragraph = []; };
+    const flushList = () => { if (list.length) out.push((ordered ? '<ol start="' + start + '">' : '<ul>') + list.map(item => '<li>' + inline(item) + '</li>').join('') + (ordered ? '</ol>' : '</ul>')); list = []; };
+    rows.forEach((row, index) => {
+      if (literals.has(index)) { flushParagraph(); flushList(); out.push('<div class="note-media-literal">' + escapeHtml(row) + '</div>'); return; }
+      const heading = /^ {0,3}(#{1,6})[ \t]+(.+)$/.exec(row), item = /^\s*(?:([-+*]) |(\d{1,9})[.)] )(.*)$/.exec(row);
+      if (heading) { flushParagraph(); flushList(); const tag = 'h' + heading[1].length; out.push('<' + tag + '>' + inline(heading[2]) + '</' + tag + '>'); }
+      else if (item) {
+        flushParagraph(); const next = !!item[2]; if (list.length && next !== ordered) flushList();
+        if (!list.length) { ordered = next; start = next ? Number(item[2]) : 1; } list.push(item[3]);
+      } else { flushList(); if (!row.trim()) flushParagraph(); else paragraph.push(row); }
+    });
+    flushParagraph(); flushList();
+    return { html: out.join(''), features: { math, mermaid: false } };
+  }
+
+  function renderMediaBlock(model) {
+    global.RelatumNoteMedia?.ensureStyle();
+    const image = renderResult(model.container.lines[1], { localImages: true });
+    const body = renderMediaBody(model.body);
+    return { html: '<div class="note-media" data-note-media><div class="note-media-image" style="width:' + (model.image.width || 240) + 'px">' + image.html + '</div><div class="note-media-body">' + body.html + '</div></div>', features: body.features };
+  }
+
+  function protectMediaBlocks(source, options) {
+    if (!options.noteBlocks || !/>\s*\[!media\]/i.test(source)) return { protected: source, blocks: [] };
+    const rows = source.split('\n'), visible = noteMask(source).split('\n'), blocks = [], parts = [];
+    let offset = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const quote = quoteLine(visible[i] || '');
+      if (quote.depth && /^\[!media\][ \t]*$/i.test(quote.text)) {
+        let end = i + 1, length = rows[i].length;
+        while (end < rows.length && quoteLine(rows[end]).depth >= quote.depth && length <= 256 * 1024) length += rows[end++].length + 1;
+        const model = parseMediaBlock(rows.slice(i, end).join('\n'));
+        if (model) {
+          const result = renderMediaBlock(model), to = offset + model.source.length;
+          const attributes = options.noteSourceMap ? ' data-note-block-from="' + options.noteBlockPosition(i, false) + '" data-note-block-to="' + options.noteBlockPosition(end, true) + '"' : '';
+          blocks.push({ html: result.html.replace(' data-note-media', attributes + ' data-note-media'), features: result.features });
+          const prefix = '> '.repeat(quote.depth - 1);
+          parts.push(prefix + '\x00MEDIA' + (blocks.length - 1) + '\x00' + ('\n' + prefix).repeat(end - i - 1));
+          offset = to + 1; i = end - 1; continue;
+        }
+      }
+      parts.push(rows[i]); offset += rows[i].length + 1;
+    }
+    return { protected: parts.join('\n'), blocks };
+  }
   function parseNoteBlockHeader(source) {
     const match = /^\[!([A-Za-z][\w-]*)\]([+-]?)[ \t]*(.*)$/.exec(String(source || '').trimStart());
     return match ? { type: match[1].toLowerCase(), suffix: match[2], title: match[3].trim(), collapsed: match[2] === '-' } : null;
@@ -1908,7 +2006,9 @@
     const features = scanFeatures(body);
     if (opts.mermaid === false) features.mermaid = false;
     try {
-      const codeGuard = protectCode(body, opts.noteBlocks);
+      const mediaGuard = protectMediaBlocks(body, opts);
+      const codeGuard = protectCode(mediaGuard.protected, opts.noteBlocks);
+      if (mediaGuard.blocks.length) features.mermaid = opts.mermaid !== false && scanFeatures(mediaGuard.protected).mermaid;
       const inlineCodeGuard = protectInlineCode(codeGuard.protected);
       const imageGuard = protectLocalImages(inlineCodeGuard.protected, opts.localImages === true);
       const wikiGuard = protectWikiLinks(imageGuard.protected);   // 先抠 [[双链]]（早于 [文字](url)）
@@ -1973,6 +2073,11 @@
         html += '</section>';
       }
       if (header) html = '<pre class="note-frontmatter"' + (opts.noteSourceMap ? ' data-note-block-from="0" data-note-block-to="' + header.to + '"' : '') + '><code>' + escapeHtml(source.slice(0, header.to)) + '</code></pre>' + html;
+      if (mediaGuard.blocks.length) {
+        html = html.replace(/<p[^>]*>\s*(\x00MEDIA\d+\x00)\s*<\/p>/g, '$1');
+        html = html.replace(/\x00MEDIA(\d+)\x00/g, (_, index) => mediaGuard.blocks[+index].html);
+        features.math ||= mediaGuard.blocks.some(block => block.features.math);
+      }
       return { html: html, features: features, error: false };
     } catch (error) {
       return {
@@ -1993,7 +2098,8 @@
     const source = normalizeSource(src);
     try {
       const code = protectInlineCode(source);
-      const links = options?.links ? protectLinks(code.protected) : { protected: code.protected, links: [] };
+      const wiki = options?.wikiLinks ? protectWikiLinks(code.protected) : { protected: code.protected, wikis: [] };
+      const links = options?.links ? protectLinks(wiki.protected) : { protected: wiki.protected, links: [] };
       const math = protectMath(links.protected, false);
       const escapes = protectEscapes(math.protected);
       let html = renderInlineSafe(escapes.protected, options?.noteSyntax).replace(/\n/g, '<br>');
@@ -2004,6 +2110,7 @@
       html = restoreEscapes(html, escapes.chars);
       html = restoreInlineCode(html, code.codes);
       html = restoreLinks(html, links.links, { safe: true });
+      html = restoreWikiLinks(html, wiki.wikis);
       return { html: html, features: { math: math.maths.length > 0, mermaid: false }, error: false };
     } catch (error) {
       return { html: escapeHtml(source).replace(/\n/g, '<br>'),
@@ -2116,6 +2223,7 @@
     stripQuote: stripQuote,
     noteBlock: noteBlock,
     parseNoteBlockHeader, noteContainerSource, wrapNoteContainer,
+    parseMediaBlock, mediaLiteralLines, renderMediaBody, renderMediaBlock,
     foldButton: foldButton,
     noteBlockCatalog: Object.freeze({ types: NOTE_TYPES, colors: NOTE_COLORS }),
   };

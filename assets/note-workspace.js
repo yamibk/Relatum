@@ -94,7 +94,7 @@
   const appleSelectionSelect = $('[data-role="note-apple-selection"]');
   const GUIDE_TOPIC_KEY = 'canvas:noteGuideTopic:v1';
   let guideTopic = 'callout';
-  try { const saved = localStorage.getItem(GUIDE_TOPIC_KEY); if (['callout', 'markdown', 'mermaid', 'quiz', 'cards'].includes(saved)) guideTopic = saved; } catch (_) {}
+  try { const saved = localStorage.getItem(GUIDE_TOPIC_KEY); if (['callout', 'markdown', 'mermaid', 'quiz', 'cards', 'media'].includes(saved)) guideTopic = saved; } catch (_) {}
   let liveEditor = null;
   let noteBrowser = null, browserLoader = null, browserSequence = 0, browserIntent = false;
   let browserFolderIndex = null, browserFolderSize = -1, browserFolderPaths = [];
@@ -1079,7 +1079,7 @@
   });
 
   function applyGuideTopic(value, persist) {
-    const next = ['callout', 'markdown', 'mermaid', 'quiz', 'cards'].includes(value) ? value : 'callout';
+    const next = ['callout', 'markdown', 'mermaid', 'quiz', 'cards', 'media'].includes(value) ? value : 'callout';
     guideTopic = next;
     if (persist) try { if (localStorage.getItem(GUIDE_TOPIC_KEY) !== next) localStorage.setItem(GUIDE_TOPIC_KEY, next); } catch (_) {}
     settingsPop?.querySelectorAll('[name="note-guide-topic"]').forEach(input => { input.checked = input.value === next; });
@@ -1118,6 +1118,7 @@
       mermaid: ['用文字绘制常用图表', 'Create diagrams using text'],
       quiz: ['交互单选题与答案解析', 'Interactive questions and explanations'],
       cards: ['并列概念、图标与轻量卡片排版', 'Concept cards, icons and lightweight layouts'],
+      media: ['左图右文、直接编辑与自动换行', 'Images beside editable, wrapping text'],
     };
     function translateGuideOptions() {
       const focusedTopic = guide.contains(document.activeElement) ? document.activeElement.value : '';
@@ -1126,7 +1127,7 @@
         const label = document.createElement('label'); label.className = 'relatum-settings-guide-option';
         const input = document.createElement('input'); input.type = 'radio'; input.name = 'note-guide-topic'; input.value = id; input.checked = guideTopic === id;
         const body = document.createElement('span'), title = document.createElement('strong'), description = document.createElement('small');
-        title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards' }[id]; description.textContent = names[language() === 'en' ? 1 : 0];
+        title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards', media: language() === 'en' ? 'Media' : '图文' }[id]; description.textContent = names[language() === 'en' ? 1 : 0];
         body.append(title, description); label.append(input, body); guide.append(label);
       });
       const hint = document.createElement('p'); hint.textContent = language() === 'en' ? 'Choose what the Guide sidebar displays. Changes apply immediately.' : '选择右侧“引导”面板展示的内容，更改立即生效。'; guide.append(hint);
@@ -4411,6 +4412,7 @@
     'highlight-color': ['高亮颜色', 'Highlight color'],
   };
   function bodyCommandLabel(name) {
+    if (name === 'image:media') return language() === 'en' ? 'Convert to media block' : '转换为图文块';
     if (name.startsWith('highlight-color:')) {
       const color = window.MarkdownMini.noteSyntax.highlightColors.find(item => item.id === name.slice(16));
       return color[language() === 'en' ? 'en' : 'zh'];
@@ -4898,8 +4900,12 @@
       return button;
     });
     items.push(separator(), ...['cut', 'copy', 'paste', 'paste-plain', 'select-all'].map(bodyCommandButton));
-    if (payload.image) items.push(separator(), imageRevealButton(payload.image, payload.context), separator(),
-      mediaRecycleButton(payload.image, payload.context));
+    if (payload.image) {
+      if (liveEditor.queryCommand('image:media', bodyMenuContext).enabled) {
+        const convert = bodyCommandButton('image:media'); convert.textContent = language() === 'en' ? 'Convert to media block' : '转换为图文块'; items.push(separator(), convert);
+      }
+      items.push(separator(), imageRevealButton(payload.image, payload.context), separator(), mediaRecycleButton(payload.image, payload.context));
+    }
     showContext(items, payload.x, payload.y, 'body'); fitBodyMenu(contextMenu, payload.x, payload.y);
     if (payload.keyboard) menuButtons(contextMenu)[0]?.focus({ preventScroll: true });
   }

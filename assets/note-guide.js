@@ -170,6 +170,15 @@
       const detail = document.createElement('p'); detail.textContent = text('标题前写 [图标名]，省略时不占位；未知名称显示为标题文字。支持段落、列表、强调、行内代码、普通链接和行内公式；不支持图片、表格、块公式或嵌套卡片。', 'Add [icon-name] before a title, or omit it. Unknown names remain title text. Supports paragraphs, lists, emphasis, inline code, regular links and inline math; images, tables, display math and nested cards are not supported.'); host.append(detail);
     }
     function suspend() { active = false; sequence++; clearTimeout(feedbackTimer); diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; cardsControl?.destroy(); cardsControl = null; }
+    function media() {
+      heading('图文', 'Media');
+      const help = document.createElement('p'); help.textContent = text('图片在左，说明在右。直接点击说明输入，Enter 换行、空行分段。拖动图片角落调整大小，文字会自动重新折行；空间不足时自动上图下文。也可以右键独立图片，选择“转换为图文块”。', 'Place an image beside editable text. Enter starts a new line; a blank line starts a paragraph. Resize the image using its corner: text reflows automatically and stacks below the image when space is limited. You can also right-click a standalone image and choose Convert to media block.'); host.append(help);
+      const source = '> [!media]\n> ![' + text('图片说明', 'Image description') + '|160](' + text('图片.png', 'image.png') + ')\n>\n> **' + text('说明标题', 'Description') + '**\n> ' + text('第一行说明。', 'The first line of text.') + '\n> ' + text('按回车后仍留在右侧。', 'Enter keeps the next line on the right.') + '\n>\n> ' + text('这里是新的段落。', 'This is a new paragraph.');
+      example(source);
+      const image = host.querySelector('.note-media-image');
+      if (image) image.innerHTML = '<svg viewBox="0 0 160 110" width="160" role="img" aria-label="' + text('图片示例', 'Image example') + '" style="max-width:100%;border-radius:7px;background:rgba(128,128,128,.08)"><path d="m0 110 48-65 36 40 30-30 46 55" fill="currentColor" opacity=".16"/><circle cx="125" cy="25" r="12" fill="currentColor" opacity=".25"/></svg>';
+      const detail = document.createElement('p'); detail.textContent = text('支持标题、段落、列表、强调、高亮、链接、行内代码与行内公式。首行图片沿用现有图片语法，其他富块显示源码。Ctrl+Enter 跳到块后，Ctrl+Shift+Enter 跳到块前。', 'Supports headings, paragraphs, lists, emphasis, highlights, links, inline code and inline math. The first image uses the existing image syntax; other rich blocks remain source text. Ctrl+Enter moves after the block; Ctrl+Shift+Enter moves before it.'); host.append(detail);
+    }
     function show(next) {
       active = true;
       const lang = options.language();
@@ -178,9 +187,9 @@
         sequence++; diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; cardsControl?.destroy(); cardsControl = null; clearTimeout(feedbackTimer);
         topic = next; renderedLanguage = lang; host.replaceChildren(); host.dataset.language = lang; host.dataset.guideTopic = topic;
         const head = document.createElement('header'); head.className = 'note-guide-topic-head';
-        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards' }[topic];
+        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards', media: text('图文', 'Media') }[topic];
         const settings = document.createElement('button'); settings.type = 'button'; settings.dataset.noteAction = 'guide-settings'; settings.textContent = text('切换内容', 'Change topic'); head.append(title, settings); host.append(head);
-        if (topic === 'markdown') markdown(); else if (topic === 'mermaid') mermaid(); else if (topic === 'quiz') quiz(); else if (topic === 'cards') cards(); else callouts();
+        if (topic === 'markdown') markdown(); else if (topic === 'mermaid') mermaid(); else if (topic === 'quiz') quiz(); else if (topic === 'cards') cards(); else if (topic === 'media') media(); else callouts();
         host.scrollTop = positions.get(topic) || 0;
       }
       attachDiagrams(); attachQuizzes();

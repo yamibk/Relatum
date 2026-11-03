@@ -166,6 +166,7 @@
       .then(() => loadScript('note-shortcuts.js', () => !!window.RelatumNoteShortcuts))
       .then(() => loadScript('windowed-list.js', () => !!window.RelatumWindowedList))
       .then(() => loadScript('note-media-frame.js', () => !!window.RelatumNoteMediaFrame))
+      .then(() => loadScript('note-media.js', () => !!window.RelatumNoteMedia))
       .then(() => loadScript('note-cards.js', () => !!window.RelatumNoteCards))
       .then(() => loadScript('note-link-completion.js', () => !!window.RelatumNoteLinkCompletion))
       .then(() => loadScript('note-live-editor.js', () => !!window.RelatumNoteLiveEditor))

@@ -26,6 +26,8 @@ for (const source of [
   '> [!', '> [!blue', '> [!blue]+', '> [!blue]-', '> [!blue]--',
   '> [!answer]-\n>', '> [!theorem]+\n> > [!proof]-\n> >',
   '> [!cream]-\n> $$\n> unfinished', '> [!brown]+\n> ```\n> unfinished',
+  '> [!media]', '> [!media]\n>', '> [!media]\n> ![', '> [!media]\n> ![](x.png)\n>\n> ```',
+  '> [!media]\n> ![](x.png)\n>\n> $$', '> [!media]\n> ![](x.png)\n>\n> > [!media]',
 ]) {
   const result = global.MarkdownMini.renderResult(source, {noteBlocks:true});
   if (result.error || typeof result.html !== 'string' || result.html.length > 10000) {

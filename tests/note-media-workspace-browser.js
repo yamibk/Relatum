@@ -1,0 +1,55 @@
+'use strict';
+const assert = require('node:assert/strict'), fs = require('node:fs'), os = require('node:os'), path = require('node:path'), net = require('node:net');
+const { spawn } = require('node:child_process'), { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
+const repo = path.resolve(__dirname, '..'), root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-media-workspace-'));
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const waitForDisk = async text => { for (let i = 0; i < 100; i++) { const value = fs.readFileSync(path.join(root, 'notes/Media.md'), 'utf8'); if (value.includes(text)) return value; await sleep(30); } throw new Error('Save did not reach disk: ' + text); };
+fs.mkdirSync(path.join(root, 'notes/Media.assets/images'), { recursive: true });
+fs.writeFileSync(path.join(root, 'notes/Media.md'), '# Media\n\n![图|200](Media.assets/images/a.svg)\n\nAfter');
+fs.writeFileSync(path.join(root, 'notes/Other.md'), '# Other\n\nUnchanged');
+fs.writeFileSync(path.join(root, 'notes/Media.assets/images/a.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="260"><rect width="400" height="260" fill="#987b6e"/></svg>');
+(async () => {
+  const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve)); const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
+  const url = 'http://127.0.0.1:' + port;
+  const server = spawn(process.env.RELATUM_PYTHON || 'python', ['app.py', '--no-browser', '--port', String(port)], { cwd: repo, env: { ...process.env, RELATUM_DATA_ROOT: root }, windowsHide: true, stdio: 'ignore' });
+  let browser, page; const errors = [];
+  try {
+    let ready = false; for (let i = 0; i < 100; i++) { try { ready = (await fetch(url + '/api/runtime')).ok; } catch (_) {} if (ready) break; await sleep(100); } assert(ready, 'isolated server starts');
+    browser = await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, reducedMotion: 'reduce', permissions: ['clipboard-read', 'clipboard-write'] }); page = await context.newPage(); page.setDefaultTimeout(12000); page.on('pageerror', error => errors.push(error.stack));
+    const workspace = fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8').replace('  window.CanvasNoteWorkspace = {', '  window.__mediaTest = {state,openNote,flushSave,setViewMode,checkExternalChanges,get editor(){return liveEditor;}};\n  window.CanvasNoteWorkspace = {');
+    await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: workspace }));
+    await page.goto(url); await page.waitForFunction(() => window.CanvasNoteWorkspace); await page.locator('button[data-start-workspace="notes"]').click();
+    await page.waitForFunction(() => window.__mediaTest?.state.initialized); await page.evaluate(() => __mediaTest.openNote('Media.md', { reuseActiveTab: false }));
+    const frame = () => page.locator('.note-live-editor-host .note-live-image-frame'); const input = () => page.locator('.note-media-input .cm-content');
+    await frame().click({ button: 'right' }); await page.locator('[data-note-command="image:media"]').click(); await input().waitFor();
+    await input().pressSequentially('first line'); await input().press('Enter'); await input().pressSequentially('second line'); await page.evaluate(() => __mediaTest.flushSave());
+    let disk = fs.readFileSync(path.join(root, 'notes/Media.md'), 'utf8'); assert(disk.includes('> first line\n> second line')); assert(disk.includes('> ![图|200](Media.assets/images/a.svg)'));
+    const cdp = await context.newCDPSession(page); await cdp.send('Input.imeSetComposition', { text: 'zhong', selectionStart: 5, selectionEnd: 5 });
+    assert.equal(await page.evaluate(() => __mediaTest.editor.snapshot().value), disk);
+    await cdp.send('Input.insertText', { text: '中' }); await page.waitForFunction(() => !__mediaTest.editor.inputPending); await page.evaluate(() => __mediaTest.flushSave());
+    disk = fs.readFileSync(path.join(root, 'notes/Media.md'), 'utf8'); assert(disk.includes('second line中')); assert(!disk.includes('zhong'));
+    await input().press('Control+a'); await input().click({ button: 'right' }); await page.locator('[data-note-command="copy"]').click();
+    assert.equal((await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n?/g, '\n'), 'first line\nsecond line中');
+    await input().press('Control+End'); await page.evaluate(() => navigator.clipboard.writeText('!')); await input().press('Shift+F10'); await page.locator('[data-note-command="paste-plain"]').click();
+    await page.waitForFunction(() => __mediaTest.editor.snapshot().value.includes('second line中!'));
+    await page.evaluate(() => __mediaTest.flushSave()); assert(fs.readFileSync(path.join(root, 'notes/Media.md'), 'utf8').includes('second line中!'));
+    await input().press('Control+z'); await page.evaluate(() => __mediaTest.flushSave());
+    await page.evaluate(() => __mediaTest.setViewMode('source')); assert.equal(await input().count(), 0);
+    await page.evaluate(() => __mediaTest.setViewMode('reading')); assert.equal(await page.locator('.note-reading-content .note-media').count(), 1);
+    await page.evaluate(() => __mediaTest.setViewMode('live')); await page.locator('.note-media-body').click(); await input().waitFor(); await input().press('Control+End');
+    await input().pressSequentially('X'); await page.evaluate(() => __mediaTest.openNote('Other.md', { reuseActiveTab: false }));
+    await waitForDisk('second line中X');
+    assert(fs.readFileSync(path.join(root, 'notes/Media.md'), 'utf8').includes('second line中X')); assert.equal(fs.readFileSync(path.join(root, 'notes/Other.md'), 'utf8'), '# Other\n\nUnchanged');
+    await page.evaluate(() => __mediaTest.openNote('Media.md', { reuseActiveTab: false })); await page.locator('.note-media').waitFor();
+    await page.evaluate(() => __mediaTest.checkExternalChanges()); assert.equal(await page.locator('.note-media').count(), 1);
+    await frame().click(); const handle = frame().locator('.note-live-image-resize-handle'), rect = await handle.boundingBox();
+    await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2); await page.mouse.down(); await page.mouse.move(rect.x + 80, rect.y, { steps: 5 }); await page.mouse.up(); await page.evaluate(() => __mediaTest.flushSave());
+    disk = fs.readFileSync(path.join(root, 'notes/Media.md'), 'utf8'); assert(!disk.includes('图|200]')); assert(disk.includes('second line中X'));
+    await page.screenshot({ path: path.join(root, 'workspace.png') }); await page.reload(); await page.waitForFunction(() => window.__mediaTest?.state.initialized);
+    await page.evaluate(() => __mediaTest.openNote('Media.md', { reuseActiveTab: false })); await page.locator('.note-media').waitFor(); assert.equal(await page.evaluate(() => __mediaTest.editor.snapshot().value), disk);
+    assert.equal(await page.locator('.note-media-image img').evaluate(image => image.complete && image.naturalWidth > 0), true);
+    assert.deepEqual(errors, []); fs.writeFileSync(path.join(root, 'validation.json'), JSON.stringify({ saved: true, roundtrip: true, ime: true, resize: true, errors }, null, 2)); console.log('note media workspace browser: ok ' + root);
+  } catch (error) { if (page) { await page.screenshot({ path: path.join(root, 'failure.png') }).catch(() => {}); fs.writeFileSync(path.join(root, 'failure.json'), JSON.stringify({ error: error.stack, errors, state: await page.evaluate(() => ({ value: window.__mediaTest?.editor?.snapshot().value, body: document.body.innerText })).catch(() => null) }, null, 2)); } console.error(root); throw error; }
+  finally { await browser?.close(); if (server.exitCode === null) await new Promise(resolve => { server.once('exit', resolve); server.kill(); }); }
+})().catch(error => { console.error(error); process.exitCode = 1; });
