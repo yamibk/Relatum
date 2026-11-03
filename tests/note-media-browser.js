@@ -40,7 +40,7 @@ const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><bas
     await load(source);
     await page.screenshot({ path: path.join(output, 'initial.png') });
     const input = () => page.locator('#editor .note-media-input .cm-content');
-    await page.locator('#editor .note-media-body').click(); await input().waitFor();
+    await page.locator('#editor .note-media-body').click({ position: { x: 15, y: 10 } }); await input().waitFor();
     assert.notEqual(await input().locator('.cm-line').first().evaluate(line => getComputedStyle(line, '::selection').backgroundColor), 'rgba(0, 0, 0, 0)', 'native child selection must stay visible above the parent selection theme');
     await input().press('Control+End'); await input().press('Enter'); await input().pressSequentially('new line'); await settle();
     assert((await value()).includes('> - new line'), await value());
@@ -77,7 +77,7 @@ const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><bas
     await input().pressSequentially('description'); await settle(); assert((await value()).endsWith('> description'));
     await input().press('Control+z'); await settle(); await input().press('Control+z'); await settle(); assert.equal(await value(), '![图|180](image.svg)');
     const long = '> [!media]\n> ![测试|240](image.svg)\n>\n> ' + '自动折行1234567890'.repeat(80);
-    await load(long); await page.locator('#editor .note-media-body').click(); await input().waitFor();
+    await load(long); await page.locator('#editor .note-media-body').click({ position: { x: 15, y: 10 } }); await input().waitFor();
     await input().press('Control+Home'); await input().press('Backspace'); assert.equal(await value(), long, 'body boundary Backspace never removes the image or container');
     await input().press('Control+a'); await input().press('Control+c'); assert.equal(await page.evaluate(() => navigator.clipboard.readText()), '自动折行1234567890'.repeat(80));
     await page.setViewportSize({ width: 700, height: 1000 }); await settle(); assert.equal(await value(), long, 'visual wrapping does not add source newlines');
@@ -113,7 +113,7 @@ const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><bas
     await load(source); await settle(); await page.waitForTimeout(100);
     const idle = await page.evaluate(() => { const dispatch = editor.view.dispatch, start = performance.now(); let updates = 0; editor.view.dispatch = function(...args) { updates++; return dispatch.apply(this, args); }; return new Promise(resolve => setTimeout(() => { editor.view.dispatch = dispatch; resolve({ updates, milliseconds: performance.now() - start }); }, 300)); });
     assert.equal(idle.updates, 0, 'stable idle media must not dispatch recurring layout work'); performanceChecks.push({ idle });
-    await load(source); await page.locator('#editor .note-media-body').click(); await input().waitFor();
+    await load(source); await page.locator('#editor .note-media-body').click({ position: { x: 15, y: 10 } }); await input().waitFor();
     await page.evaluate(() => { const surface = document.querySelector('#editor .note-media').__noteMedia; surface.input.dispatch({ changes: { from: 0, to: surface.input.state.doc.length, insert: 'x'.repeat(70 * 1024) } }); });
     await settle(); assert((await value()).includes('x'.repeat(70 * 1024)), 'oversized edits remain in Markdown when rich projection falls back');
     for (const language of ['zh-CN', 'en']) {
@@ -126,15 +126,15 @@ const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><bas
     await page.waitForTimeout(100); assert(!requests.some(url => /mathjax|mermaid|pele/i.test(url)), 'minimized media does not start formula runtimes');
     await page.evaluate(() => { delete document.documentElement.dataset.desktopMinimized; window.dispatchEvent(new CustomEvent('canvasdesktop:visibility')); });
     await page.locator('#editor .note-media-body mjx-container').waitFor({ timeout: 30000 });
-    await page.locator('#editor .note-media-body').click(); await input().waitFor(); await input().press('Control+End'); await input().press('Enter'); await input().pressSequentially('after math'); await input().press('Escape');
+    await page.locator('#editor .note-media-body').click({ position: { x: 15, y: 10 } }); await input().waitFor(); await input().press('Control+End'); await input().press('Enter'); await input().pressSequentially('after math'); await input().press('Escape');
     await page.locator('#editor .note-media-body mjx-container').waitFor(); assert((await value()).includes('> after math'));
     await load(source); await settle(); assert.equal(await page.locator('#editor mjx-container').count(), 0); assert.deepEqual(errors, []);
     const nested = '> [!white]\n> before\n>\n> > [!media]\n> > ![测试|180](image.svg)\n> >\n> > nested body\n>\n> after';
     await load(nested); assert.equal(await page.locator('#editor .note-media.note-live-callout-layered').count(), 1);
-    await page.locator('#editor .note-media-body').click(); await input().waitFor(); await input().press('Control+End'); await input().press('Enter'); await input().pressSequentially('nested line'); await settle(); assert((await value()).includes('> > nested line'));
+    await page.locator('#editor .note-media-body').click({ position: { x: 15, y: 10 } }); await input().waitFor(); await input().press('Control+End'); await input().press('Enter'); await input().pressSequentially('nested line'); await settle(); assert((await value()).includes('> > nested line'));
     await page.addStyleTag({ url: '/assets/markdown-file.css' });
     await page.evaluate(() => { document.body.classList.add('markdown-window'); document.querySelector('main').classList.add('markdown-root'); });
-    await load(source); await page.locator('#editor .note-media-body').click(); await input().waitFor(); await input().press('Control+End'); await input().press('Enter'); await input().pressSequentially('file window'); await settle(); assert((await value()).includes('> - file window'));
+    await load(source); await page.locator('#editor .note-media-body').click({ position: { x: 15, y: 10 } }); await input().waitFor(); await input().press('Control+End'); await input().press('Enter'); await input().pressSequentially('file window'); await settle(); assert((await value()).includes('> - file window'));
     const standalone = await input().evaluate(dom => ({ content: dom.clientHeight, scroll: dom.parentElement.getBoundingClientRect().height })); assert(Math.abs(standalone.content - standalone.scroll) <= 2); assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(output, 'validation.json'), JSON.stringify({ matrix, performanceChecks, errors }, null, 2)); console.log('note media browser: ok ' + output);
   } catch (error) {

@@ -10,13 +10,22 @@
 .note-media-image :is(.note-live-image-frame, .md-local-image) { margin: 0 !important; max-width: 100%; vertical-align: top; }
 .note-media-image :is(.note-live-image-frame, .md-local-image):not(.has-explicit-size) { width: max-content; max-width: min(240px, 100%); }
 .note-media-image img { max-width: 100%; }
-.note-media-body { flex: 1 1 240px; min-width: min(240px, 100%); max-width: 100%; min-height: 1.5em; outline: none; overflow-wrap: anywhere; cursor: text; }
+.note-media-body { flex: 1 1 240px; align-self: stretch; min-width: min(240px, 100%); max-width: 100%; min-height: 1.5em; outline: none; overflow-wrap: anywhere; cursor: text; }
 .note-media-body > :first-child { margin-top: 0; }
 .note-media-body > :last-child { margin-bottom: 0; }
-.note-media-body p { white-space: pre-wrap; margin: 0 0 .8em; }
-.note-media-body :is(h1,h2,h3,h4,h5,h6) { margin-top: .8em; }
-.note-media-body :is(ul,ol) { padding-left: 1.6em; margin: 0 0 .8em; }
-.note-media-literal { white-space: pre-wrap; min-height: 1.5em; }
+.note-media-body p { white-space: break-spaces; margin: 0 !important; }
+.note-media-body > .note-live-heading { white-space: break-spaces; }
+.note-media-body > .note-live-heading > :is(h1,h2,h3,h4,h5,h6) {
+  font: inherit; letter-spacing: inherit; margin: 0; padding: 0; border: 0;
+}
+.note-media-body > .note-live-heading:first-child { padding-top: 0 !important; }
+.note-media-body > .note-live-heading.follows-gap { padding-top: calc(3.2px * var(--note-font-scale, 1)) !important; }
+.note-media-body > :is(.note-live-h1,.note-live-h2) { border-bottom: 1px solid var(--note-heading-rule); }
+.note-media-body :is(ul,ol) { padding: 0 0 0 .15em; margin: 0; list-style: none; }
+.note-media-body :is(ul,ol) > li { position: static; white-space: break-spaces; margin: 0; padding: 0; list-style: none; }
+.note-media-body :is(ul,ol) > li::before { content: none; }
+.note-media-gap { line-height: inherit; }
+.note-media-literal { white-space: break-spaces; min-height: 1.5em; }
 .note-media-body .note-media-input.cm-editor { height: auto; min-height: 1.5em; background: transparent; font: inherit; color: inherit; }
 .note-media-body .note-media-input .cm-scroller { overflow: visible; font: inherit; }
 .note-media-body .note-media-input .cm-content {
@@ -26,5 +35,8 @@
 .note-media-body .note-media-input .cm-line { padding-left: 0; padding-right: 0; caret-color: currentColor !important; }
 .note-media-body .note-media-input .cm-line::selection,
 .note-media-body .note-media-input .cm-line ::selection { background-color: var(--note-theme-selection, rgba(65,131,196,.22)) !important; }
-.note-media-body .note-media-input .cm-widgetBuffer { display: inline; margin: 0; max-width: none; max-height: none; border-radius: 0; box-shadow: none; }
+.note-media-body .note-media-input .cm-widgetBuffer {
+  display: inline; width: 0; height: 0; vertical-align: baseline;
+  margin: 0; max-width: none; max-height: none; border-radius: 0; box-shadow: none;
+}
 .note-live-editor-host.has-media-input > .cm-editor > .cm-scroller > .cm-cursorLayer { visibility: hidden; }

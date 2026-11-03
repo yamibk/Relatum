@@ -13,7 +13,7 @@ assert.equal(md.parseMediaBlock(source.replace(/\n/g, '\r\n')).body, model.body)
 assert(md.parseMediaBlock('> [!MEDIA]\n> ![[图.png|123]]')); assert(md.parseMediaBlock('> [!media]\n> ![](a.png)\n>\n> '));
 for (const invalid of ['> [!media]', '> [!media]\n> 正文', '> [!media]+\n> ![](a.png)', '> [!media] 标题\n> ![](a.png)', '> [!media]\n> ![](https://example.com/x.png)', '> [!media]\n> ![](x.canvas)', source + '\n未引用']) assert.equal(md.parseMediaBlock(invalid), null, invalid);
 const result = md.renderResult(source, { noteBlocks: true, localImages: true });
-assert(result.html.includes('data-note-media')); assert(result.html.includes('<h1>标题</h1>')); assert(result.html.includes('<strong>粗体</strong>。<br>第二行。')); assert(result.html.includes('<li>二</li>')); assert.equal(result.features.math, false);
+assert(result.html.includes('data-note-media')); assert(result.html.includes('<h1>标题</h1>')); assert(result.html.includes('<strong>粗体</strong>。<br>第二行。')); assert(result.html.includes('</span> 二</li>')); assert.equal(result.features.math, false);
 assert(!md.renderResult(source).html.includes('data-note-media'), 'ordinary canvas Markdown keeps its existing grammar');
 assert(!md.renderResult('```markdown\n' + source + '\n```', { noteBlocks: true }).html.includes('data-note-media'), 'fences protect examples');
 assert(!md.renderResult('<!--\n' + source + '\n-->', { noteBlocks: true }).html.includes('data-note-media'), 'comments protect examples');
@@ -29,6 +29,6 @@ const headed = '# Heading\n\n' + source;
 assert(md.renderResult(headed, { noteBlocks: true, noteSourceMap: true, noteHeadings: [{ from: 0, to: 9, level: 1, text: 'Heading' }] }).html.includes('data-note-block-from="' + headed.indexOf('> [!media]') + '"'), 'heading placeholders do not shift media positions');
 assert.equal(md.renderMediaBody('前文 $$x^2$$ 后文').features.math, false, 'unsupported display math stays literal even inside a paragraph');
 assert.equal(md.renderMediaBody('inline $\\begin{matrix}1&2\\end{matrix}$').features.math, true, 'inline math environments remain supported');
-assert(md.renderMediaBody('**code:** `$$literal$$`').html.includes('<strong>code:</strong> <code>$$literal$$</code>'), 'code containing math markers does not disable surrounding formatting');
+assert(md.renderMediaBody('**code:** `$$literal$$`').html.includes('<strong>code:</strong> <code class="note-live-inline-code">$$literal$$</code>'), 'code containing math markers does not disable surrounding formatting');
 assert.deepEqual(model.bodyOffsets, [0, 5, 16, 21, 22, 26]);
 console.log('note media regression: ok');

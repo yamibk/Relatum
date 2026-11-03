@@ -1150,6 +1150,7 @@
     const end = clamp(typeof to === 'number' ? to : doc.length, start, doc.length);
     const raw = [];
     const seen = new Set();
+    let reusableMedia;
     const protectedBlocks = [];
     const metadata = documentFrontmatter(doc);
     if (metadata) protectedBlocks.push(metadata);
@@ -1214,7 +1215,12 @@
           const callout = parseCalloutSource(source);
           if (callout?.type === 'media') {
             const from = doc.lineAt(node.from).from, mediaSource = doc.sliceString(from, node.to);
-            const mediaModel = window.RelatumNoteMedia && window.MarkdownMini.parseMediaBlock(mediaSource);
+            // Viewport preparation can revisit a large, unchanged block. Its
+            // parsed offsets/body belong to the source, independent of layout.
+            reusableMedia ||= new Map((reusable || []).filter(spec => spec.kind === 'media').map(spec => [spec.from, spec]));
+            const prior = reusableMedia.get(from);
+            const mediaModel = window.RelatumNoteMedia && (prior?.source === mediaSource && prior.mediaModel
+              || window.MarkdownMini.parseMediaBlock(mediaSource));
             if (mediaModel) {
               push({ from, to: node.to, kind: 'media', source: mediaSource, mediaModel });
               protectedBlocks.push({ from, to: node.to });
@@ -3700,10 +3706,19 @@
 
   function createBlockLayoutMemory() {
     const entries = new Map();
+    let fingerprints = new WeakMap();
     return { signature: '', fontRevision: 0, bytes: 0, restoring: false, mounts: new Map(), schedule() {},
       key(spec, path, signature = this.signature) {
+        // A mounted spec is queried by widgets and measurements repeatedly.
+        // Keep the exact existing key, hashing its content once per identity.
+        let content = fingerprints.get(spec);
+        if (!content || content.source !== spec.source || content.context !== spec.calloutContext) {
+          content = { source: spec.source, context: spec.calloutContext,
+            key: layoutFingerprint(spec.source) + ':' + layoutFingerprint(spec.calloutContext || '') };
+          fingerprints.set(spec, content);
+        }
         return layoutFingerprint(path) + ':' + layoutFingerprint(signature) + ':' + spec.kind + ':'
-          + layoutFingerprint(spec.source) + ':' + layoutFingerprint(spec.calloutContext || '');
+          + content.key;
       },
       get(key) {
         const value = entries.get(key);
@@ -3721,7 +3736,7 @@
         }
         return true;
       },
-      clear() { entries.clear(); this.bytes = 0; this.mounts.clear(); this.signature = ''; },
+      clear() { entries.clear(); fingerprints = new WeakMap(); this.bytes = 0; this.mounts.clear(); this.signature = ''; },
     };
   }
 
@@ -6269,17 +6284,9 @@
     safeOptions.mediaForeground = () => highlightActive && !destroyed && noteRenderForeground(view);
     safeOptions.whenMediaInputSettled = whenInputSettled;
     safeOptions.onWikiLink = safeOptions.onOpenWiki;
-    const mediaLayoutIds = new Set(); let mediaLayoutQueued = false;
-    safeOptions.mediaLayout = id => {
-      mediaLayoutIds.add(id); if (mediaLayoutQueued) return;
-      mediaLayoutQueued = true; const epoch = coordinator.epoch;
-      Promise.resolve().then(() => {
-        mediaLayoutQueued = false; const ids = Array.from(mediaLayoutIds); mediaLayoutIds.clear();
-        if (destroyed || epoch !== coordinator.epoch || inputPending() || !noteRenderForeground(view)) return;
-        const blocks = view.state.field(blockField, false), current = ids.filter(id => blocks?.byId.get(id)?.kind === 'media');
-        if (current.length) view.dispatch({ effects: blockLayoutEffect.of(current), annotations: Transaction.addToHistory.of(false) });
-      });
-    };
+    // The shared measurement pass already batches work, checks lifecycle and
+    // invalidates the height map when the measured size/content really changes.
+    safeOptions.mediaLayout = () => coordinator.layout.schedule();
     safeOptions.mediaReconcile = () => inputReconcileEffect.of([]);
     safeOptions.mediaCommandContext = () => commandContext();
     safeOptions.mediaBodyExtensions = surface => {

@@ -48,12 +48,13 @@
     return { from: base + from, to: base + before.length - tail, insert: after.slice(from, after.length - tail) };
   }
   function createController(options) {
-    const surfaces = new Set(); let active = null, disposed = false, revealRequest = null, revealQueued = false;
+    const surfaces = new Set(); let active = null, disposed = false, revealRequest = null, revealQueued = false, placement = null;
+    const cancelPlacement = () => { placement?.cancel(); };
     const controller = {
       pending: () => Array.from(surfaces).some(surface => surface.pending()),
       whenSettled: () => Promise.all(Array.from(surfaces, surface => surface.whenSettled())),
-      close() { revealRequest = null; for (const surface of surfaces) surface.close(); },
-      destroy() { disposed = true; revealRequest = null; for (const surface of Array.from(surfaces)) surface.destroy(); },
+      close() { cancelPlacement(); revealRequest = null; for (const surface of surfaces) surface.close(); },
+      destroy() { cancelPlacement(); disposed = true; revealRequest = null; for (const surface of Array.from(surfaces)) surface.destroy(); },
       sync() { for (const surface of surfaces) surface.sync(); this.revealMounted(); },
       queueReveal(position, end, view) { revealRequest = { position, end, view, doc: view.state.doc, selection: view.state.selection }; this.revealMounted(); },
       revealMounted() {
@@ -112,8 +113,13 @@
           if (event.target === this.root) { event.preventDefault(); const current = this.current(); if (!current || this.pending()) return; this.close(); view.dispatch({ selection: CM.EditorSelection.range(current.from, current.to) }); view.focus(); }
         });
         this.body.addEventListener('pointerdown', event => {
-          if (event.button !== 0 || this.input || event.target.closest('a')) return;
-          event.preventDefault(); event.stopPropagation(); const point = { x: event.clientX, y: event.clientY };
+          if (event.button !== 0 || event.target.closest('a')) return;
+          const point = { x: event.clientX, y: event.clientY };
+          if (event.pointerType === 'mouse' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && this.belowContent(point)) {
+            event.preventDefault(); event.stopPropagation(); this.blankGesture(event, point); return;
+          }
+          if (this.input) return;
+          event.preventDefault(); event.stopPropagation();
           this.route(() => this.open(point));
         });
         this.body.addEventListener('keydown', event => { if (!this.input && event.key === 'Enter') { event.preventDefault(); this.route(() => this.open()); } });
@@ -129,9 +135,66 @@
       current() { if (disposed || this.widget.epoch !== this.widget.coordinator.epoch) return null; return this.widget.coordinator.spec(this.view, this.widget.spec.id); }
       pending() { return this.phase !== 'idle' || !!(this.input?.composing || this.input?.compositionStarted); }
       whenSettled() { return this.pending() ? new Promise(resolve => this.waiters.push(resolve)) : Promise.resolve(true); }
-      route(run) {
+      route(run, valid = () => true) {
         const epoch = this.widget.epoch;
-        Promise.resolve(options.whenMediaInputSettled()).then(() => { if (this.current() && epoch === this.widget.epoch && this.root.isConnected) run(); });
+        return Promise.resolve(options.whenMediaInputSettled()).then(() => { if (valid() && this.current() && epoch === this.widget.epoch && this.root.isConnected) run(); });
+      }
+      belowContent(point) {
+        const bounds = this.body.getBoundingClientRect(), content = this.input?.contentDOM || this.body.lastElementChild;
+        return point.x >= bounds.left && point.x < bounds.right && point.y < bounds.bottom
+          && point.y >= (content?.getBoundingClientRect().bottom ?? bounds.top);
+      }
+      blankGesture(event, point) {
+        cancelPlacement();
+        let released = false;
+        const surface = this, listeners = [], request = { surface, cancel() {
+          for (const [target, type, handler] of listeners) target.removeEventListener(type, handler, true);
+          if (placement === request) placement = null;
+        } };
+        const on = (target, type, handler) => { target.addEventListener(type, handler, true); listeners.push([target, type, handler]); };
+        const moved = next => Math.hypot(next.clientX - point.x, next.clientY - point.y) > 4;
+        on(window, 'pointermove', next => { if (!released && next.pointerId === event.pointerId && moved(next)) request.cancel(); });
+        on(window, 'pointerup', next => {
+          if (released || next.pointerId !== event.pointerId || placement !== request) return;
+          released = true;
+          if (next.button !== 0 || moved(next) || next.ctrlKey || next.metaKey || next.altKey || next.shiftKey) { request.cancel(); return; }
+          // Keep cancellation active while IME settles; a newer click, leaving
+          // the document or destroying the widget must never append late lines.
+          surface.route(() => {
+            if (!options.mediaForeground() || !surface.belowContent(point)) return;
+            surface.open(); surface.place(point, true);
+          }, () => placement === request).finally(() => request.cancel());
+        });
+        on(window, 'pointerdown', request.cancel);
+        on(window, 'pointercancel', request.cancel);
+        on(window, 'blur', request.cancel);
+        on(window, 'pagehide', request.cancel);
+        on(window, 'keydown', next => { if (next.key === 'Escape') request.cancel(); });
+        on(window, 'canvasdesktop:visibility', () => { if (!options.mediaForeground()) request.cancel(); });
+        on(document, 'relatum:start-workspacechange', () => { if (!options.mediaForeground()) request.cancel(); });
+        on(document, 'visibilitychange', () => { if (document.hidden) request.cancel(); });
+        placement = request;
+      }
+      place(point, append = false) {
+        const input = this.input, current = this.current(); if (!input || !current || this.pending()) return;
+        const end = input.state.doc.length;
+        // posAtCoords refreshes CodeMirror's measured layout before querying the
+        // last (possibly wrapped or styled) line's bottom in screen coordinates.
+        const at = point ? input.posAtCoords(point, false) ?? end : end;
+        if (append && point) {
+          const bottom = input.documentTop + input.lineBlockAt(end).bottom;
+          const step = parseFloat(getComputedStyle(input.contentDOM).lineHeight) * input.scaleY || input.defaultLineHeight;
+          const count = Math.floor((point.y - bottom) / step) + 1;
+          const model = current.mediaModel || this.model;
+          if (count > 0 && count <= 256 * 1024 && Number.isFinite(count)) {
+            const insert = '\n'.repeat(count);
+            if (serializeBody(model, input.state.doc.toString() + insert).length <= 256 * 1024) {
+              input.dispatch({ changes: { from: end, insert }, selection: CM.EditorSelection.cursor(end + count), userEvent: 'input.media-blank' });
+              input.focus(); return;
+            }
+          }
+        }
+        input.dispatch({ selection: CM.EditorSelection.cursor(at) }); input.focus();
       }
       measure() { if (this.current() && this.root.isConnected) { this.view.requestMeasure(); options.mediaLayout(this.widget.spec.id); } }
       sync() {
@@ -216,7 +279,10 @@
           CM.keymap.of(CM.markdownKeymap.concat(CM.defaultKeymap)),
           CM.EditorView.updateListener.of(update => {
             if (surface.input !== update.view || surface.syncing) return;
-            if (update.docChanged && !surface.pending()) surface.commit(update.transactions.some(transaction => transaction.isUserEvent('input.paste')) ? 'input.paste.media' : 'input.type.media');
+            if (update.docChanged && !surface.pending()) {
+              const blank = update.transactions.some(transaction => transaction.isUserEvent('input.media-blank'));
+              surface.commit(blank ? 'input.media-blank' : update.transactions.some(transaction => transaction.isUserEvent('input.paste')) ? 'input.paste.media' : 'input.type.media', blank);
+            }
             else if (update.selectionSet && !surface.pending()) {
               const current = surface.current(), range = update.state.selection.main;
               if (current) surface.view.dispatch({ selection: CM.EditorSelection.range(current.from + bodyPosition(surface.model, range.anchor), current.from + bodyPosition(surface.model, range.head)), userEvent: 'select.media' });
@@ -231,8 +297,7 @@
           if (this.blurQueued && !this.body.contains(document.activeElement) && !document.activeElement?.closest('.note-context-menu')) this.close();
         }); });
         this.input.focus();
-        const at = point ? this.input.posAtCoords(point, false) ?? this.input.state.doc.length : this.input.state.doc.length;
-        this.input.dispatch({ selection: CM.EditorSelection.cursor(at) }); this.measure();
+        this.place(point); this.measure();
       }
       endComposition() {
         this.phase = 'settling'; const seq = ++this.sequence;
@@ -248,7 +313,7 @@
         };
         this.timer = setTimeout(finish, 0);
       }
-      commit(userEvent = 'input.type.media') {
+      commit(userEvent = 'input.type.media', isolated = false) {
         const current = this.current(); if (!current || !this.input || this.pending() || this.syncing) return;
         const value = this.input.state.doc.toString(), model = current.mediaModel || (this.model?.source === current.source ? this.model : md.parseMediaBlock(current.source));
         if (!model || model.body === value) return;
@@ -257,7 +322,7 @@
         this.syncing = true;
         try { this.view.dispatch({ changes: difference(current.source, source, current.from),
           selection: CM.EditorSelection.range(current.from + bodyPosition(next, range.anchor), current.from + bodyPosition(next, range.head)),
-          ...(this.compositionCommit ? { annotations: CM.isolateHistory.of('full') } : {}), userEvent }); }
+          ...(this.compositionCommit || isolated ? { annotations: CM.isolateHistory.of('full') } : {}), userEvent }); }
         finally { this.syncing = false; }
       }
       history(redo) {
@@ -270,6 +335,7 @@
         }
       }
       close() {
+        if (placement?.surface === this) cancelPlacement();
         if (!this.input || this.pending()) return;
         this.commit(); const input = this.input; if (!input) return; this.input = null; input.destroy();
         this.body.classList.remove('is-editing'); this.body.replaceChildren(); this.blurQueued = false;
@@ -277,6 +343,7 @@
         if (active === this) { active = null; options.mediaEditing(false); } if (this.current()) this.preview(); this.measure();
       }
       destroy() {
+        if (placement?.surface === this) cancelPlacement();
         this.sequence++; clearTimeout(this.timer); this.observer?.disconnect();
         this.imageOwner?.imageCleanup?.(); options.releaseMediaBody(this.body);
         if (this.input) { const input = this.input; this.input = null; input.destroy(); }

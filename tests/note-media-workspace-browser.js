@@ -37,7 +37,7 @@ fs.writeFileSync(path.join(root, 'notes/Media.assets/images/a.svg'), '<svg xmlns
     await input().press('Control+z'); await page.evaluate(() => __mediaTest.flushSave());
     await page.evaluate(() => __mediaTest.setViewMode('source')); assert.equal(await input().count(), 0);
     await page.evaluate(() => __mediaTest.setViewMode('reading')); assert.equal(await page.locator('.note-reading-content .note-media').count(), 1);
-    await page.evaluate(() => __mediaTest.setViewMode('live')); await page.locator('.note-media-body').click(); await input().waitFor(); await input().press('Control+End');
+    await page.evaluate(() => __mediaTest.setViewMode('live')); await page.locator('.note-media-body').click({ position: { x: 15, y: 10 } }); await input().waitFor(); await input().press('Control+End');
     await input().pressSequentially('X'); await page.evaluate(() => __mediaTest.openNote('Other.md', { reuseActiveTab: false }));
     await waitForDisk('second line中X');
     assert(fs.readFileSync(path.join(root, 'notes/Media.md'), 'utf8').includes('second line中X')); assert.equal(fs.readFileSync(path.join(root, 'notes/Other.md'), 'utf8'), '# Other\n\nUnchanged');
@@ -49,6 +49,20 @@ fs.writeFileSync(path.join(root, 'notes/Media.assets/images/a.svg'), '<svg xmlns
     await page.screenshot({ path: path.join(root, 'workspace.png') }); await page.reload(); await page.waitForFunction(() => window.__mediaTest?.state.initialized);
     await page.evaluate(() => __mediaTest.openNote('Media.md', { reuseActiveTab: false })); await page.locator('.note-media').waitFor(); assert.equal(await page.evaluate(() => __mediaTest.editor.snapshot().value), disk);
     assert.equal(await page.locator('.note-media-image img').evaluate(image => image.complete && image.naturalWidth > 0), true);
+    await page.locator('.note-media-body').click({ position: { x: 15, y: 10 } }); await input().waitFor();
+    const blankPoint = await page.locator('.note-media').evaluate(root => {
+      const input = root.__noteMedia.input, body = root.querySelector('.note-media-body').getBoundingClientRect(); input.posAtCoords({ x: body.x + 5, y: body.y + 5 }, false);
+      return { x: body.x + body.width * .7, y: input.documentTop + input.lineBlockAt(input.state.doc.length).bottom + parseFloat(getComputedStyle(input.contentDOM).lineHeight) * input.scaleY * 1.5 };
+    });
+    await page.mouse.click(blankPoint.x, blankPoint.y);
+    await page.waitForFunction(() => document.querySelector('.note-media').__noteMedia.model.body.endsWith('\n\n'));
+    await page.evaluate(() => __mediaTest.flushSave());
+    const blankDisk = fs.readFileSync(path.join(root, 'notes/Media.md'), 'utf8'); assert.notEqual(blankDisk, disk); assert.equal(blankDisk, await page.evaluate(() => __mediaTest.editor.snapshot().value));
+    await input().press('Control+z'); await page.evaluate(() => __mediaTest.flushSave()); assert.equal(fs.readFileSync(path.join(root, 'notes/Media.md'), 'utf8'), disk);
+    await input().press('Control+y'); await page.evaluate(() => __mediaTest.flushSave()); assert.equal(fs.readFileSync(path.join(root, 'notes/Media.md'), 'utf8'), blankDisk);
+    await page.reload(); await page.waitForFunction(() => window.__mediaTest?.state.initialized);
+    await page.evaluate(() => __mediaTest.openNote('Media.md', { reuseActiveTab: false })); await page.locator('.note-media').waitFor();
+    assert.equal(await page.evaluate(() => __mediaTest.editor.snapshot().value), blankDisk, 'blank clicks survive actual disk save and reload');
     assert.deepEqual(errors, []); fs.writeFileSync(path.join(root, 'validation.json'), JSON.stringify({ saved: true, roundtrip: true, ime: true, resize: true, errors }, null, 2)); console.log('note media workspace browser: ok ' + root);
   } catch (error) { if (page) { await page.screenshot({ path: path.join(root, 'failure.png') }).catch(() => {}); fs.writeFileSync(path.join(root, 'failure.json'), JSON.stringify({ error: error.stack, errors, state: await page.evaluate(() => ({ value: window.__mediaTest?.editor?.snapshot().value, body: document.body.innerText })).catch(() => null) }, null, 2)); } console.error(root); throw error; }
   finally { await browser?.close(); if (server.exitCode === null) await new Promise(resolve => { server.once('exit', resolve); server.kill(); }); }

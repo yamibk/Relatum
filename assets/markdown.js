@@ -1567,18 +1567,29 @@
     const rows = String(source || '').split('\n'), literals = mediaLiteralLines(source), out = [];
     let paragraph = [], list = [], ordered = false, start = 1, math = false;
     const inline = value => {
-      const result = renderLabelResult(value, { links: true, wikiLinks: true }); math ||= result.features.math; return result.html;
+      const result = renderLabelResult(value, { links: true, wikiLinks: true }); math ||= result.features.math;
+      return result.html.replace(/<code>/g, '<code class="note-live-inline-code">');
     };
     const flushParagraph = () => { if (paragraph.length) out.push('<p>' + inline(paragraph.join('\n')) + '</p>'); paragraph = []; };
-    const flushList = () => { if (list.length) out.push((ordered ? '<ol start="' + start + '">' : '<ul>') + list.map(item => '<li>' + inline(item) + '</li>').join('') + (ordered ? '</ol>' : '</ul>')); list = []; };
+    const flushList = () => { if (list.length) out.push((ordered ? '<ol start="' + start + '">' : '<ul>') + list.map(item => '<li>' + item + '</li>').join('') + (ordered ? '</ol>' : '</ul>')); list = []; };
     rows.forEach((row, index) => {
       if (literals.has(index)) { flushParagraph(); flushList(); out.push('<div class="note-media-literal">' + escapeHtml(row) + '</div>'); return; }
-      const heading = /^ {0,3}(#{1,6})[ \t]+(.+)$/.exec(row), item = /^\s*(?:([-+*]) |(\d{1,9})[.)] )(.*)$/.exec(row);
-      if (heading) { flushParagraph(); flushList(); const tag = 'h' + heading[1].length; out.push('<' + tag + '>' + inline(heading[2]) + '</' + tag + '>'); }
+      const heading = /^ {0,3}(#{1,6})[ \t]+(.+)$/.exec(row), item = /^(\s*)(?:([-+*])|(\d{1,9}[.)]))( )(.*)$/.exec(row);
+      if (heading) {
+        flushParagraph(); flushList(); const tag = 'h' + heading[1].length;
+        // Use the live editor's heading metrics. The semantic heading inherits
+        // from its line box so generic reading/HTML heading margins cannot win.
+        out.push('<div class="note-live-heading note-live-' + tag + (index && !rows[index - 1].trim() ? ' follows-gap' : '') + '"><' + tag + '>' + inline(heading[2]) + '</' + tag + '></div>');
+      }
       else if (item) {
-        flushParagraph(); const next = !!item[2]; if (list.length && next !== ordered) flushList();
-        if (!list.length) { ordered = next; start = next ? Number(item[2]) : 1; } list.push(item[3]);
-      } else { flushList(); if (!row.trim()) flushParagraph(); else paragraph.push(row); }
+        flushParagraph(); const next = !!item[3]; if (list.length && next !== ordered) flushList();
+        if (!list.length) { ordered = next; start = next ? parseInt(item[3], 10) : 1; }
+        list.push(escapeHtml(item[1]) + '<span class="note-live-list-marker' + (next ? '' : ' is-unordered') + '" aria-hidden="true">' + (next ? item[3] : '•') + '</span> ' + inline(item[5]));
+      } else {
+        flushList();
+        if (!row.trim()) { flushParagraph(); out.push('<div class="note-media-gap"><br></div>'); }
+        else paragraph.push(row);
+      }
     });
     flushParagraph(); flushList();
     return { html: out.join(''), features: { math, mermaid: false } };
