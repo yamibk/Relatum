@@ -1608,7 +1608,7 @@
         const writtenTarget = String(rawTarget || '').split('|', 1)[0];
         const hashAt = writtenTarget.indexOf('#');
         const fragment = hashAt >= 0 ? writtenTarget.slice(hashAt + 1) : '';
-        if (await openNote(outgoing.path, { reuseActiveTab })) scheduleHeadingJump(fragment);
+        if (await openNote(outgoing.path, { reuseActiveTab })) scheduleHeadingJump(fragment, outgoing.path, visibility);
         return;
       }
       if (outgoing && outgoing.state === 'ambiguous') { showToast(tr('ambiguous'), 'warning'); return; }
@@ -1680,9 +1680,14 @@
     return true;
   }
 
-  function scheduleHeadingJump(fragment) {
-    if (!fragment) return;
-    requestAnimationFrame(() => requestAnimationFrame(() => jumpToHeading(fragment)));
+  function scheduleHeadingJump(fragment, path, visibility = noteVisibilityEpoch) {
+    if (!fragment || state.current?.path !== path || visibility !== noteVisibilityEpoch) return;
+    const current = viewportRestoreCurrent(), sequence = state.openSeq;
+    // A delayed link must yield to a new document or the user's own navigation.
+    const valid = () => current() && sequence === state.openSeq && state.current?.path === path;
+    requestAnimationFrame(() => {
+      if (valid()) requestAnimationFrame(() => { if (valid()) jumpToHeading(fragment); });
+    });
   }
 
   function outlineVisible() {
@@ -1790,7 +1795,8 @@
     const resolved = resolveRelativeNotePath(state.current.path, pathPart);
     const entry = findEntry(resolved);
     if (/\.md$/i.test(resolved) && (!entry || entry.kind === 'note')) {
-      if (await openNote(resolved)) scheduleHeadingJump(fragment);
+      const visibility = noteVisibilityEpoch;
+      if (await openNote(resolved)) scheduleHeadingJump(fragment, resolved, visibility);
       return true;
     }
     return openLocalNoteFile(pathPart);
