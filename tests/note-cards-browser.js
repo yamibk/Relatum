@@ -184,13 +184,25 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
     await page.locator('#guide .note-guide-copy').first().click(); assert((await page.evaluate(()=>navigator.clipboard.readText())).startsWith('```cards'));
     for (const language of ['zh', 'en']) {
       await page.evaluate(language => { window.guideLanguage = language; cardsGuide.show('cards'); }, language);
+      const singleExample = page.locator('#guide .note-guide-example').first();
+      assert.equal(await singleExample.evaluate(node=>node.previousElementSibling.textContent),language==='zh'?'单张卡片':'Single card');
+      assert.equal(await singleExample.locator('.note-card').count(),1,'the guide starts with a complete single-card example');
+      assert.equal(await singleExample.locator('.note-card').getAttribute('data-note-card-color'),'blue');
+      assert.equal(await singleExample.locator('.note-card').getAttribute('data-style'),'soft');
+      assert.equal(await singleExample.locator('.note-card').getAttribute('data-span'),'full');
+      for(const selector of ['.note-card-icon','.note-card-subtitle','.note-card-badge','.note-card-value','.note-card-body','.note-card-footer']) assert(await singleExample.locator(selector).isVisible());
+      await singleExample.locator('.note-guide-copy').click();
+      const singleSource = await page.evaluate(()=>navigator.clipboard.readText());
+      for(const field of ['[layers] [!blue]','@style: soft','@span: full','@subtitle:','@badge:','@value:','@footer:']) assert(singleSource.includes(field),'the single-card copy includes '+field);
+      assert(singleSource.includes(language==='zh'?'第三章：把零散知识串起来':'Chapter 3: Connect the ideas'));
       assert(await page.locator('#guide h3').filter({hasText:language === 'zh' ? '卡片染色' : 'Card colors'}).isVisible());
-      await page.locator('#guide .note-guide-example').nth(1).locator('.note-guide-copy').click();
+      const colorExample = page.locator('#guide .note-guide-example').nth(2);
+      await colorExample.locator('.note-guide-copy').click();
       const copied = await page.evaluate(() => navigator.clipboard.readText());
       assert(copied.includes('[book] [!purple]')); assert(copied.includes('[!rose]'));
-      assert.equal(await page.locator('#guide [data-note-card-color]').count(), 4);
+      assert.equal(await colorExample.locator('[data-note-card-color]').count(), 4);
       assert(await page.locator('#guide .note-card-value').first().isVisible());
-      const layoutExample = page.locator('#guide .note-guide-example').nth(3);
+      const layoutExample = page.locator('#guide .note-guide-example').nth(4);
       assert.equal(await layoutExample.locator('.note-card').count(),4);
       assert.equal(await layoutExample.locator('.note-card:not([data-span="full"])').count(),3,'layout example has three ordinary cards before its full-width summary');
     }
