@@ -51,6 +51,11 @@ const source = '# 文档\n\n```cards\n@style: outline\n##[book][!Purple]整理�
       await page.keyboard.press('Control+s'); await page.waitForFunction(() => fixture.saved === RelatumMarkdownWindow.editor.snapshot().value);
       assert((await page.evaluate(() => fixture.saved)).includes('@value: 5 个核心概念'));
       await page.keyboard.press('Control+z'); assert.equal(await page.evaluate(() => RelatumMarkdownWindow.editor.snapshot().value), source);
+      await page.evaluate(()=>{const editor=RelatumMarkdownWindow.editor;editor.view.dispatch({selection:{anchor:editor.view.state.doc.length}});editor.focus();});
+      await page.keyboard.press('Control+f');
+      assert.equal(await page.evaluate(()=>RelatumMarkdownWindow.editor.snapshot().value),source+'\n```cards\n### \n\n```','standalone Ctrl+F inserts an empty Cards template');
+      assert.equal(await page.evaluate(()=>RelatumMarkdownWindow.editor.view.state.selection.main.head),source.length+14);
+      await page.keyboard.press('Control+z'); assert.equal(await page.evaluate(()=>RelatumMarkdownWindow.editor.snapshot().value),source);
       await page.keyboard.press('Control+s'); await page.waitForFunction(() => fixture.saved === RelatumMarkdownWindow.editor.snapshot().value);
       await page.locator('.cm-line').filter({ hasText: /^after$/ }).click({ button: 'right' });
       await page.getByRole('button', { name: language === 'en' ? 'Insert Cards' : '插入 Cards', exact: true }).click();

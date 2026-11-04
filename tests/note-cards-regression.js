@@ -96,5 +96,8 @@ assert(MarkdownMini.renderResult('```cards\nmissing title\n```', { renderFence }
 assert(MarkdownMini.renderResult('> [!white]\n>\n' + fenced.split('\n').map(line => '> ' + line).join('\n'), { noteBlocks: true, renderFence }).html.includes('note-cards-grid'));
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '../assets/vendor/codemirror/relatum-codemirror.min.js'), 'utf8'));
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '../assets/note-live-editor.js'), 'utf8'));
+assert(RelatumNoteLiveSyntax.cardsTemplateAllowed('', 0));
+assert(RelatumNoteLiveSyntax.cardsTemplateAllowed('ordinary text', 5));
+for (const [source, position] of [['```js\nlet x\n```', 8], ['$$\nx\n$$', 4], ['---\ntitle: a\n---\ntext', 6], ['> [!note]\n> text', 13]]) assert(!RelatumNoteLiveSyntax.cardsTemplateAllowed(source, position), 'protected source cannot contain another Cards template');
 assert.deepEqual(RelatumNoteLiveSyntax.noteHeadingsFromString('# Outside\n\n' + fenced).map(item => item.label), ['Outside']);
 console.log('note cards regression: ok');

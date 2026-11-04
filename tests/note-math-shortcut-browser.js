@@ -22,6 +22,15 @@ const cases = [
   { value: 'x+y\n\n', anchor: 0, head: 5, expected: '$$\nx+y\n\n$$', caret: 3 },
   { value: 'x+y\nrest', anchor: 0, head: 4, expected: '$$\nx+y\n$$\n\nrest', caret: 3 },
 ];
+const cardsCases = [
+  { value: '', anchor: 0, expected: '```cards\n### \n\n```', caret: 13 },
+  { value: 'above\n', anchor: 6, expected: 'above\n```cards\n### \n\n```', caret: 19 },
+  { value: 'above\n\nbelow', anchor: 6, expected: 'above\n```cards\n### \n\n```\n\nbelow', caret: 19 },
+  { value: 'beforeafter', anchor: 6, expected: 'before\n```cards\n### \n\n```\n\nafter', caret: 20 },
+  { value: 'text', anchor: 0, head: 4, expected: '```cards\n### \ntext\n```', caret: 13 },
+  { value: 'text', anchor: 4, head: 0, expected: '```cards\n### \ntext\n```', caret: 13 },
+  { value: 'text\n', anchor: 0, head: 5, expected: '```cards\n### \ntext\n```', caret: 13 },
+];
 
 (async () => {
   const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
@@ -92,6 +101,23 @@ const cases = [
       await page.keyboard.press('Control+z'); assert.equal(await value(), item.value, 'one undo restores the original source');
       await page.keyboard.press('Control+y'); assert.equal(await value(), item.expected, 'one redo restores the complete block');
     }
+    for (const mode of ['source', 'live']) for (const item of cardsCases) {
+      await reset(item, mode); await page.keyboard.press('Control+f');
+      const result = await page.evaluate(() => T.editor.snapshot());
+      assert.equal(result.value, item.expected, `Cards/${mode}: ${JSON.stringify(item)}`);
+      assert.equal(result.anchor, item.caret); assert.equal(result.head, item.caret);
+      assert.equal(await page.locator('.cm-search').count(), 0, 'Cards replaces the editor Find chord');
+      await page.keyboard.press('Control+z'); assert.equal(await value(), item.value, 'one undo restores the source before Cards');
+      await page.keyboard.press('Control+y'); assert.equal(await value(), item.expected);
+    }
+    for (const [source, at] of [['```js\nlet x\n```', 8], ['$$\nx\n$$', 4], ['---\ntitle: a\n---\ntext', 6], ['> [!note]\n> text', 13]]) {
+      await reset({value:source,anchor:at}); await page.keyboard.press('Control+f'); assert.equal(await value(),source,'Cards does not nest in protected Markdown');
+      assert.equal(await page.locator('.cm-search').count(),0);
+    }
+    await reset(cardsCases[0]);
+    await page.evaluate(()=>{window.cardsReadOnly = new RelatumCodeMirror.Compartment(); T.editor.view.dispatch({effects:RelatumCodeMirror.StateEffect.appendConfig.of(cardsReadOnly.of(RelatumCodeMirror.EditorState.readOnly.of(true)))});});
+    await page.keyboard.press('Control+f'); assert.equal(await value(),'','readonly editors cannot insert Cards');
+    await page.evaluate(()=>T.editor.view.dispatch({effects:cardsReadOnly.reconfigure(RelatumCodeMirror.EditorState.readOnly.of(false))}));
     await reset({ value: 'above\n', anchor: 6 }, 'live'); await page.keyboard.press('Control+g');
     await page.keyboard.insertText('x^2');
     assert(await page.evaluate(() => T.flushSave()));
@@ -108,10 +134,14 @@ const cases = [
     await page.evaluate(() => T.editor.view.contentDOM.dispatchEvent(new KeyboardEvent('keydown',
       { key: 'g', code: 'KeyG', ctrlKey: true, isComposing: true, keyCode: 229, bubbles: true })));
     assert.equal(await page.evaluate(() => T.editor.view.state.doc.toString()), composing, 'composition does not insert a math block');
+    await page.evaluate(() => T.editor.view.contentDOM.dispatchEvent(new KeyboardEvent('keydown',
+      { key: 'f', code: 'KeyF', ctrlKey: true, isComposing: true, keyCode: 229, bubbles: true })));
+    assert.equal(await page.evaluate(() => T.editor.view.state.doc.toString()), composing, 'composition does not insert Cards');
     await cdp.send('Input.insertText', { text: '拼' }); await page.evaluate(() => T.editor.whenInputSettled());
     const readingSource = await value();
     await page.evaluate(() => T.setViewMode('reading')); await page.keyboard.press('Control+g');
     assert.equal(await value(), readingSource, 'reading mode does not change Markdown');
+    await page.keyboard.press('Control+f'); assert.equal(await value(), readingSource, 'reading mode cannot insert Cards');
     await page.evaluate(() => T.setViewMode('source'));
 
     const dialog = page.locator('[data-role="note-settings-dialog"]');
@@ -121,11 +151,21 @@ const cases = [
     }
     async function closeSettings() { await page.evaluate(() => T.setNoteSettingsOpen(false)); await dialog.waitFor({ state: 'hidden' }); }
     const mathRow = dialog.locator('.note-shortcut-row').filter({ has: page.locator('[data-note-shortcut-command="math"]') });
+    const cardsRow = dialog.locator('.note-shortcut-row').filter({ has: page.locator('[data-note-shortcut-command="cards"]') });
     await settings();
     assert((await mathRow.innerText()).includes('数学块')); assert((await mathRow.innerText()).includes('Ctrl + G'));
+    assert((await cardsRow.innerText()).includes('Cards 卡片')); assert((await cardsRow.innerText()).includes('Ctrl + F'));
     const beforeSettings = await value();
     await dialog.locator('[data-settings-search]').focus(); await page.keyboard.press('Control+g');
     assert.equal(await value(), beforeSettings, 'settings input does not insert into the hidden editor');
+    await page.keyboard.press('Control+f'); assert.equal(await value(),beforeSettings,'settings input does not insert Cards');
+    await cardsRow.locator('[data-note-shortcut-action="remove"]').click(); await closeSettings();
+    await reset({value:'keep',anchor:4}); await page.keyboard.press('Control+f'); assert.equal(await value(),'keep');
+    assert.equal(await page.locator('.cm-search').count(),0,'cancelled Cards cannot fall back to Find');
+    await settings(); await cardsRow.locator('[data-note-shortcut-action="record"]').click(); await page.keyboard.press('Alt+f');
+    assert.deepEqual(await page.evaluate(()=>T.state.shortcutBindings.cards),['Alt-f']);
+    await closeSettings(); await reset(cardsCases[0]); await page.keyboard.press('Alt+f'); assert.equal(await value(),cardsCases[0].expected);
+    await settings();
     await mathRow.locator('[data-note-shortcut-action="remove"]').click();
     await closeSettings(); await reset({ value: 'keep', anchor: 4 }); await page.keyboard.press('Control+g');
     assert.equal(await value(), 'keep'); assert.equal(await page.locator('.cm-search').count(), 0, 'removed Ctrl+G is consumed before CodeMirror search');
@@ -135,10 +175,12 @@ const cases = [
     await page.evaluate(() => T.flushSave()); await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.T?.state.active && T.state.current?.path === 'Main.md' && !T.state.openingPath && T.editor);
     assert.deepEqual(await page.evaluate(() => T.state.shortcutBindings.math), ['Alt-m'], 'custom binding survives reload');
+    assert.deepEqual(await page.evaluate(() => T.state.shortcutBindings.cards), ['Alt-f'], 'custom Cards binding survives reload');
     await reset(cases[0]); await page.keyboard.press('Alt+m'); assert.equal(await value(), cases[0].expected);
     await settings(); await dialog.locator('[data-settings-action="reset-category"]').click();
     await dialog.locator('[data-settings-action="accept-reset"]').click();
     assert.deepEqual(await page.evaluate(() => T.state.shortcutBindings.math), ['Mod-g']);
+    assert.deepEqual(await page.evaluate(() => T.state.shortcutBindings.cards), ['Mod-f']);
     await page.screenshot({ path: path.join(output, 'math-shortcut-settings.png') });
     await closeSettings(); await reset(cases[1], 'live'); await page.keyboard.press('Control+g');
     assert.equal(await value(), cases[1].expected);
@@ -152,6 +194,13 @@ const cases = [
     await legacy.context().close();
 
     const fallback = await open({ fallback: true }), area = fallback.locator('[data-role="note-editor-fallback"]');
+    for (const mode of ['source','live']) for(const item of cardsCases) {
+      await fallback.evaluate(mode=>T.setViewMode(mode),mode); await area.fill(item.value);
+      await area.evaluate((el,item)=>el.setSelectionRange(Math.min(item.anchor,item.head??item.anchor),Math.max(item.anchor,item.head??item.anchor)),item);
+      await area.press('Control+f'); assert.equal(await area.inputValue(),item.expected,'fallback Cards matches the main editor');
+      assert.deepEqual(await area.evaluate(el=>[el.selectionStart,el.selectionEnd]),[item.caret,item.caret]);
+      await area.press('Control+z'); assert.equal(await area.inputValue(),item.value); await area.press('Control+y'); assert.equal(await area.inputValue(),item.expected);
+    }
     for (const mode of ['source', 'live']) for (const item of cases) {
       await fallback.evaluate(mode => T.setViewMode(mode), mode);
       await area.fill(item.value);
@@ -165,13 +214,16 @@ const cases = [
     await area.evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown',
       { key: 'g', code: 'KeyG', ctrlKey: true, isComposing: true, keyCode: 229, bubbles: true })));
     assert.equal(await area.inputValue(), 'candidate', 'fallback composition preserves text');
+    await area.evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', {key:'f',code:'KeyF',ctrlKey:true,isComposing:true,keyCode:229,bubbles:true})));
+    assert.equal(await area.inputValue(),'candidate','fallback Cards preserves composition');
     await area.evaluate(el => { el.readOnly = true; }); await area.press('Control+g');
     assert.equal(await area.inputValue(), 'candidate', 'readonly fallback is protected');
+    await area.press('Control+f'); assert.equal(await area.inputValue(),'candidate','readonly fallback cannot insert Cards');
     await area.evaluate(el => { el.readOnly = false; });
     assert(await fallback.evaluate(() => T.flushSave()));
     await fallback.context().close();
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ output, insertionCases: cases.length * 6, settings: true, legacy: true, history: true, composition: true, errors }));
+    console.log(JSON.stringify({ output, insertionCases: cases.length * 6, cardsInsertionCases: cardsCases.length * 4, settings: true, legacy: true, history: true, composition: true, errors }));
   } catch (error) {
     console.error(logs.slice(-1500));
     if (page) await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});

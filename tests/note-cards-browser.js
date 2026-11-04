@@ -63,6 +63,10 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
       await page.evaluate(text => { document.getElementById('editor').hidden=false; document.getElementById('reading').hidden=true; document.getElementById('guide').hidden=true; window.cardsGuide?.suspend(); editor.setSourceMode(false); editor.setDocument({value:text,notePath:'cards.md',head:text.length,anchor:text.length,scrollTop:0}); editor.focus(); }, text);
       await settle();
     }
+    await reset(''); await page.keyboard.press('Control+f');
+    assert.equal(await value(),'```cards\n### \n\n```'); assert.equal(await page.evaluate(()=>editor.view.state.selection.main.head),13);
+    await page.keyboard.insertText('快捷卡片'); await preview().waitFor(); await page.keyboard.press('Escape'); await group().waitFor();
+    assert.equal(await group().locator('.note-card-title').textContent(),'快捷卡片','completing the shortcut title uses the existing Cards preview');
     await reset(); await group().waitFor();
     for (const skin of ['default','claude','sky','apple']) for (const theme of ['light','dark']) for (const width of [1500,700]) for (const scale of [1,1.35]) {
       await page.setViewportSize({width,height:1000});

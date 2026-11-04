@@ -21,11 +21,11 @@ const shortcuts = sandbox.window.RelatumNoteShortcuts;
 assert(shortcuts && shortcuts.STORAGE_KEY === 'canvas:noteShortcuts:v1', 'the local shortcut registry must be available');
 assert.deepStrictEqual(JSON.parse(JSON.stringify(shortcuts.defaultBindings())), {
   save: ['Mod-s'], bold: ['Mod-b'], italic: ['Mod-i'], strike: [], highlight: [], link: ['Mod-k'],
-  'inline-code': ['Mod-`'], 'code-block': ['Mod-Shift-k'], math: ['Mod-g'],
+  'inline-code': ['Mod-`'], 'code-block': ['Mod-Shift-k'], math: ['Mod-g'], cards: ['Mod-f'],
 }, 'every initial Note command must keep its existing default binding');
 assert.deepStrictEqual(
   JSON.parse(JSON.stringify(shortcuts.COMMANDS.map((command) => command.id))),
-  ['save', 'bold', 'italic', 'strike', 'highlight', 'link', 'inline-code', 'code-block', 'math'],
+  ['save', 'bold', 'italic', 'strike', 'highlight', 'link', 'inline-code', 'code-block', 'math', 'cards'],
   'formatting commands must appear in the intended settings order',
 );
 assert.strictEqual(shortcuts.normalizeBinding('Shift-Mod-K'), 'Mod-Shift-k', 'modifier order must normalize before persistence');
@@ -45,6 +45,10 @@ assert.strictEqual(shortcuts.conflictFor('Mod-n', 'bold', reloaded).command.id, 
 assert.strictEqual(shortcuts.conflictFor('Mod-g', 'bold', reloaded).command.id, 'math', 'the math factory chord participates in conflict checks');
 assert.strictEqual(shortcuts.displayBinding('Mod-g', false), 'Ctrl + G');
 assert.strictEqual(shortcuts.displayBinding('Mod-g', true), '⌘G');
+assert.strictEqual(shortcuts.conflictFor('Mod-f', 'bold', reloaded).command.id, 'cards', 'Cards owns its default chord');
+assert.strictEqual(shortcuts.conflictFor('Mod-f', 'cards', reloaded), null, 'Find no longer reserves the Cards chord');
+assert.strictEqual(shortcuts.displayBinding('Mod-f', false), 'Ctrl + F');
+assert.strictEqual(shortcuts.displayBinding('Mod-f', true), '⌘F');
 
 const cancelled = shortcuts.defaultBindings();
 cancelled.link = [];
@@ -70,6 +74,7 @@ assert.deepStrictEqual(JSON.parse(JSON.stringify(legacyV1.strike)), [], 'older v
 assert.deepStrictEqual(JSON.parse(JSON.stringify(legacyV1.highlight)), [], 'older v1 preferences must add highlight as unassigned');
 assert.deepStrictEqual(JSON.parse(JSON.stringify(shortcuts.inactiveDefaultBindings(legacyV1))), ['Mod-k', 'Mod-Shift-k']);
 assert.deepStrictEqual(JSON.parse(JSON.stringify(legacyV1.math)), ['Mod-g'], 'older preferences add the math default when its chord is free');
+assert.deepStrictEqual(JSON.parse(JSON.stringify(legacyV1.cards)), ['Mod-f'], 'adding Cards preserves existing v1 customizations');
 
 values.set(shortcuts.STORAGE_KEY, JSON.stringify({ version: 1, commands: { bold: ['Ctrl-G'], italic: [], strike: ['Alt-s'] } }));
 const claimedMath = shortcuts.load(sandbox.localStorage);
@@ -89,6 +94,20 @@ assert(shortcuts.inactiveDefaultBindings(customMath).includes('Mod-g'), 'a remov
 customMath.math = [];
 shortcuts.save(customMath, sandbox.localStorage);
 assert.deepStrictEqual(JSON.parse(JSON.stringify(shortcuts.load(sandbox.localStorage).math)), [], 'explicit removal survives reload');
+
+const customCards = shortcuts.defaultBindings();
+customCards.cards = ['Alt-f']; shortcuts.save(customCards, sandbox.localStorage);
+assert.deepStrictEqual(JSON.parse(JSON.stringify(shortcuts.load(sandbox.localStorage).cards)), ['Alt-f']);
+assert(shortcuts.inactiveDefaultBindings(customCards).includes('Mod-f'), 'removed Cards default must not open CodeMirror Find');
+customCards.cards = []; shortcuts.save(customCards, sandbox.localStorage);
+assert.deepStrictEqual(JSON.parse(JSON.stringify(shortcuts.load(sandbox.localStorage).cards)), []);
+customCards.bold = ['Mod-f'];
+assert(!shortcuts.inactiveDefaultBindings(customCards).includes('Mod-f'), 'a reassigned Cards chord runs its new command');
+values.set(shortcuts.STORAGE_KEY, JSON.stringify({ version: 1, commands: { bold: ['Ctrl-F'], italic: [] } }));
+const claimedCards = shortcuts.load(sandbox.localStorage);
+assert.deepStrictEqual(JSON.parse(JSON.stringify(claimedCards.cards)), []);
+assert.deepStrictEqual(JSON.parse(JSON.stringify(claimedCards.bold)), ['Mod-f']);
+assert.deepStrictEqual(JSON.parse(JSON.stringify(claimedCards.italic)), []);
 
 values.set(shortcuts.STORAGE_KEY, '{broken');
 assert.deepStrictEqual(JSON.parse(JSON.stringify(shortcuts.load(sandbox.localStorage))), JSON.parse(JSON.stringify(shortcuts.defaultBindings())),

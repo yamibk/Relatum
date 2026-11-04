@@ -13,6 +13,7 @@
     { id: 'inline-code', zh: '行内代码', en: 'Inline code', defaults: ['Mod-`'] },
     { id: 'code-block', zh: '代码块', en: 'Code block', defaults: ['Mod-Shift-k'] },
     { id: 'math', zh: '数学块', en: 'Math block', defaults: ['Mod-g'] },
+    { id: 'cards', zh: 'Cards 卡片', en: 'Cards block', defaults: ['Mod-f'] },
   ].map((command) => Object.freeze(command)));
   const COMMAND_INDEX = new Map(COMMANDS.map((command) => [command.id, command]));
   const MODIFIER_ORDER = Object.freeze(['Mod', 'Ctrl', 'Alt', 'Shift', 'Meta']);
@@ -38,7 +39,6 @@
     { id: 'select-all', zh: '全选', en: 'Select all', bindings: ['Mod-a'] },
     { id: 'undo', zh: '撤销', en: 'Undo', bindings: ['Mod-z'] },
     { id: 'redo', zh: '重做', en: 'Redo', bindings: ['Mod-y', 'Mod-Shift-z'] },
-    { id: 'find', zh: '查找', en: 'Find', bindings: ['Mod-f'] },
     { id: 'reload', zh: '应用刷新', en: 'Reload application', bindings: ['Mod-r'] },
     { id: 'print', zh: '系统打印', en: 'System print', bindings: ['Mod-p'] },
   ].map((entry) => Object.freeze(entry)));
@@ -177,6 +177,8 @@
     // An older customization owns its chord before a newly added default does.
     if (!Object.prototype.hasOwnProperty.call(raw.commands, 'math')
         && COMMANDS.some((command) => command.id !== 'math' && next[command.id].includes('Mod-g'))) next.math = [];
+    if (!Object.prototype.hasOwnProperty.call(raw.commands, 'cards')
+        && COMMANDS.some((command) => command.id !== 'cards' && next[command.id].includes('Mod-f'))) next.cards = [];
     for (const command of COMMANDS) {
       const seen = new Set();
       for (const binding of next[command.id]) {

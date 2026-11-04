@@ -5654,16 +5654,23 @@
     return Array.from(numbers).sort((a, b) => a - b).map((number) => state.doc.line(number));
   }
 
-  function protectedParagraph(state, lines) {
+  function protectedParagraph(state, lines, completeTree) {
     let protectedRange = false;
     const from = lines[0].from, to = lines[lines.length - 1].to;
-    const tree = syntaxTree(state);
+    const tree = completeTree || syntaxTree(state);
     if (typeof tree.length === 'number' && tree.length < to) return true;
     tree.iterate({ from, to, enter(node) {
       if (/^(FencedCode|CodeBlock|IndentedCode|Table|Image|HTMLBlock|HorizontalRule)$/.test(node.name)
           && node.from <= to && node.to >= from) { protectedRange = true; return false; }
     } });
     return protectedRange || lines.some((line) => /<!--relatum:image-text:|^\s*(?:!\[|!\[\[|`{3,}|~{3,}|\|)/.test(line.text));
+  }
+
+  function cardsTemplateAllowed(state, completeTree) {
+    if (state.readOnly || state.selection.ranges.length !== 1) return false;
+    const range = state.selection.main, metadata = documentFrontmatter(state.doc), lines = paragraphLines(state);
+    if (metadata && range.from < metadata.to || protectedParagraph(state, lines, completeTree)) return false;
+    return !scanBlockSpecs(state, lines[0].from, lines[lines.length - 1].to, [], completeTree).length;
   }
 
   function paragraphParts(text) {
@@ -5710,12 +5717,13 @@
       const to = independent ? from : range.to;
       let leading = from > 0 ? (doc.sliceString(Math.max(0, from - 2), from).endsWith('\n\n') ? ''
         : doc.sliceString(from - 1, from) === '\n' ? '\n' : '\n\n') : '';
-      if (kind === 'math' || kind === 'code-block') leading = from > 0 && doc.sliceString(from - 1, from) !== '\n' ? '\n' : '';
+      if (kind === 'math' || kind === 'code-block' || kind === 'cards-template') leading = from > 0 && doc.sliceString(from - 1, from) !== '\n' ? '\n' : '';
       const trailing = to < doc.length ? (doc.sliceString(to, to + 2).startsWith('\n\n') ? ''
         : doc.sliceString(to, to + 1) === '\n' ? '\n' : '\n\n') : '';
       let block, offset;
       if (kind === 'canvas') { block = canvasSource; offset = block.length; }
       else if (kind === 'cards') { block = '```cards\n### ' + (english ? 'Card title' : '卡片标题') + '\n\n```'; offset = 13; }
+      else if (kind === 'cards-template') { block = '```cards\n### \n' + selected + (selected.endsWith('\n') ? '' : '\n') + '```'; offset = 13; }
       else if (kind === 'table') {
         block = '|  |  |\n| --- | --- |\n|  |  |\n|  |  |'; offset = 2;
       } else if (kind === 'rule') { block = '---'; offset = block.length; }
@@ -6611,7 +6619,7 @@
     const fallbackShortcutDefaults = Object.freeze({
       save: ['Mod-s'], bold: ['Mod-b'], italic: ['Mod-i'], strike: [], highlight: [], link: ['Mod-k'],
       'inline-code': ['Mod-`'], 'code-block': ['Mod-Shift-k'],
-      math: ['Mod-g'],
+      math: ['Mod-g'], cards: ['Mod-f'],
     });
 
     function normalizedShortcutBindings(bindings) {
@@ -6744,6 +6752,12 @@
         if (!view.state.readOnly && view.hasFocus && !document.hidden && !host.closest('[inert]') && host.getClientRects().length) {
           executeCommand('insert:math');
         }
+        return true;
+      },
+      cards(view) {
+        if (!view.state.readOnly && view.hasFocus && document.activeElement === view.contentDOM && !compositionActive(view) && !document.hidden && !host.closest('[hidden],[inert]')
+            && document.documentElement.dataset.desktopMinimized !== '1' && host.getClientRects().length
+            && (!host.closest('.note-workspace') || document.body.dataset.startWorkspace === 'notes')) executeCommand('insert:cards-template');
         return true;
       },
       link(view) {
@@ -7651,6 +7665,7 @@
       }
       if (name === 'copy' || name === 'cut') return { enabled: view.state.selection.ranges.some((range) => !range.empty), checked: false };
       if (name === 'insert:canvas' && !canvasEnabled()) return { enabled: false, checked: false };
+      if (name === 'insert:cards-template') return { enabled: cardsTemplateAllowed(view.state), checked: false };
       if (name === 'insert:cards') return { enabled: view.state.selection.ranges.length === 1 && !protectedParagraph(view.state, paragraphLines(view.state)), checked: false };
       if (name === 'insert:table' || name === 'insert:rule' || name === 'insert:canvas') {
         const ends = view.state.selection.ranges.map((range) => view.state.doc.lineAt(range.to > range.from ? range.to - 1 : range.to).to);
@@ -7923,6 +7938,11 @@
     scanBlockSpecsFromString(source) {
       const state = EditorState.create({ doc: String(source || ''), extensions: [markdown({ base: markdownLanguage })] });
       return scanBlockSpecs(state, 0, state.doc.length).map((spec) => Object.assign({}, spec));
+    },
+    cardsTemplateAllowed(source, from, to = from) {
+      const state = EditorState.create({ doc: String(source || ''), selection: EditorSelection.range(from, to), extensions: [markdown({ base: markdownLanguage })] });
+      // A textarea has no viewport parser to prepare its distant caret position.
+      return cardsTemplateAllowed(state, markdownLanguage.parser.parse(state.doc.toString()));
     },
     parseStandaloneImage,
     parseCalloutSource,
