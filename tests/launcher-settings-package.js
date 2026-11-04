@@ -52,13 +52,13 @@ async function connect(port, app) {
   return page;
 }
 async function setToggle(page, value) {
-  await page.locator('[data-action="desktop-settings-open"]').click();
-  const toggle = page.locator('[data-role="launcher-skip-selection"]');
+  await page.evaluate(() => RelatumGlobalSettings.open({ category: 'system' }));
+  const toggle = page.locator('[data-role="global-launcher-skip-selection"]');
   await toggle.waitFor({ state: 'visible' });
-  await page.waitForFunction(() => !document.querySelector('[data-role="launcher-skip-selection"]').disabled);
+  await page.waitForFunction(() => !document.querySelector('[data-role="global-launcher-skip-selection"]').disabled);
   await toggle.setChecked(value);
   await page.waitForFunction(value => {
-    const input = document.querySelector('[data-role="launcher-skip-selection"]');
+    const input = document.querySelector('[data-role="global-launcher-skip-selection"]');
     return !input.disabled && input.checked === value;
   }, value);
   assert.equal(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).skipSelection, value);
@@ -134,7 +134,7 @@ async function checkGuide(page) {
     await checkGuide(page);
     await setToggle(page, true);
     await page.evaluate(() => window.RelatumI18n.setLanguage('en'));
-    assert.equal(await page.locator('[data-role="launcher-setting"] strong').textContent(), 'Skip the RelatumLauncher selection window');
+    assert.equal(await page.locator('[data-role="global-launcher-skip-selection"]').locator('..').locator('strong').textContent(), 'Skip the RelatumLauncher selection window');
     await closeMain(page, port);
     assert.equal(JSON.parse(fs.readFileSync(languageFile, 'utf8')).language, 'en');
     port = await freePort();

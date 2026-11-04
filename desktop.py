@@ -3,7 +3,7 @@
 设计取舍：
 - 用 WebView2 渲染，观感与浏览器（Edge）完全一致，渐变等视觉零差异。
 - 无边框，复用前端既有的集成标题栏（desktop-shell.js）。
-- 可拖动；按产品约定禁用拖边缩放，尺寸只从起步页设置调整。
+- 可拖动及原生拖边缩放；全局设置提供精确尺寸调整。
 - 记住窗口大小 / 位置 / 最大化状态：下次启动恢复到上次的样子。
 - 承载既有 app.py 本地服务，画布数据与交互核心完全不变。
 
@@ -61,6 +61,16 @@ WM_NCCALCSIZE = 0x0083
 WM_NCHITTEST = 0x0084
 WM_WINDOWPOSCHANGING = 0x0046
 WM_WINDOWPOSCHANGED = 0x0047
+WM_GETMINMAXINFO = 0x0024
+WM_ENTERSIZEMOVE = 0x0231
+WM_EXITSIZEMOVE = 0x0232
+WM_SYSCOMMAND = 0x0112
+SC_RESTORE = 0xF120
+WM_DPICHANGED = 0x02E0
+WM_DISPLAYCHANGE = 0x007E
+WM_SETTINGCHANGE = 0x001A
+WM_NCPAINT = 0x0085
+WM_NCACTIVATE = 0x0086
 HTCLIENT = 1
 SW_MINIMIZE = 6
 SW_MAXIMIZE = 3
@@ -78,9 +88,7 @@ PYWEBVIEW_MOVE_FLAGS = SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW
 
 MIN_WIDTH, MIN_HEIGHT = 720, 480
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 800
-MAX_WIDTH, MAX_HEIGHT = 1920, 1200
 WINDOW_STATE_VERSION = 2
-RESTORED_WINDOW_MARGIN = 32
 WEBVIEW2_CLIENT_ID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 WEBVIEW2_DOWNLOAD_URL = "https://developer.microsoft.com/microsoft-edge/webview2/"
 WEBVIEW2_DISK_CACHE_BYTES = 64 * 1024 * 1024
@@ -110,6 +118,48 @@ class _WINDOWPOS(ctypes.Structure):
     ]
 
 
+class _MINMAXINFO(ctypes.Structure):
+    _fields_ = [(name, wintypes.POINT) for name in (
+        'ptReserved', 'ptMaxSize', 'ptMaxPosition', 'ptMinTrackSize', 'ptMaxTrackSize')]
+
+
+def _resize_hit_test(rect, x: int, y: int, border_x: int, border_y: int) -> int:
+    """Screen coordinates are signed (monitors can sit left/above the primary)."""
+    if not (rect.left <= x < rect.right and rect.top <= y < rect.bottom):
+        return HTCLIENT
+    left, right = x < rect.left + border_x, x >= rect.right - border_x
+    top, bottom = y < rect.top + border_y, y >= rect.bottom - border_y
+    if top:
+        return 13 if left else 14 if right else 12
+    if bottom:
+        return 16 if left else 17 if right else 15
+    return 10 if left else 11 if right else HTCLIENT
+
+
+def _native_resize_hit(hwnd: int, lparam: int) -> int:
+    user = ctypes.windll.user32
+    if user.IsZoomed(hwnd) or user.IsIconic(hwnd):
+        return HTCLIENT
+    rect = wintypes.RECT()
+    if not user.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return HTCLIENT
+    border_x, border_y = _resize_frame(hwnd)
+    return _resize_hit_test(rect, ctypes.c_short(lparam & 0xffff).value,
+                            ctypes.c_short((lparam >> 16) & 0xffff).value, border_x, border_y)
+
+
+def _resize_frame(hwnd: int) -> tuple[int, int]:
+    user = ctypes.windll.user32
+    dpi = round(96 * _window_scale_from_hwnd(hwnd))
+    try:
+        metric = user.GetSystemMetricsForDpi
+        padding = metric(92, dpi)  # SM_CXPADDEDBORDER
+        border_x, border_y = metric(32, dpi) + padding, metric(33, dpi) + padding
+    except AttributeError:
+        border_x = border_y = round(8 * dpi / 96)
+    return max(1, border_x), max(1, border_y)
+
+
 def _reassert_corners(hwnd: int) -> None:
     """让圆角常驻：清掉 WinForms 可能设的矩形 Region（会把 DWM 圆角裁成方角），
     再断言 ROUND。仅在【未最大化】时执行——最大化无圆角，且其动画期间频繁重断言
@@ -132,10 +182,15 @@ def _reassert_corners(hwnd: int) -> None:
 
 
 def _work_area(hwnd: int) -> wintypes.RECT | None:
-    monitor = ctypes.windll.user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+    query = ctypes.windll.user32.MonitorFromWindow
+    query.argtypes = [wintypes.HWND, wintypes.DWORD]
+    query.restype = wintypes.HANDLE
+    monitor = query(hwnd, MONITOR_DEFAULTTONEAREST)
     info = _MONITORINFO()
     info.cbSize = ctypes.sizeof(_MONITORINFO)
-    if not ctypes.windll.user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+    get_info = ctypes.windll.user32.GetMonitorInfoW
+    get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(_MONITORINFO)]
+    if not get_info(monitor, ctypes.byref(info)):
         return None
     return info.rcWork
 
@@ -165,10 +220,20 @@ def _set_window_long(hwnd: int, index: int, value: int) -> int:
     return int(func(hwnd, index, value))
 
 
-def _install_frameless(window) -> None:
+def _install_frameless(window, size_move_ended=None) -> None:
     """让 WebView 客户区铺满整窗，同时保留系统窗口过渡和放置行为。"""
     if sys.platform != "win32":
         return
+    # Keep WinForms' restore-bounds bookkeeping consistent with the native
+    # sizing frame we install below. The window procedure still hides its caption.
+    from System import Action
+    from System.Windows.Forms import FormBorderStyle
+    def sizable():
+        window.native.FormBorderStyle = FormBorderStyle.Sizable
+    if window.native.InvokeRequired:
+        window.native.Invoke(Action(sizable))
+    else:
+        sizable()
     hwnd = _hwnd(window)
     # 关键：保留 WS_CAPTION（标题栏样式）——视觉上被 WM_NCCALCSIZE 吃掉不显示，但 Windows
     # 凭它给窗口放原生最大化/最小化过渡动画。这是无边框窗口找回系统动画的标准手法。
@@ -176,22 +241,46 @@ def _install_frameless(window) -> None:
              | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX)
     _set_window_long(hwnd, GWL_STYLE, style)
     if hwnd not in _native_window_procs:
+        window._relatum_hwnd = hwnd
         original = _get_window_long(hwnd, GWLP_WNDPROC)
         call_window_proc = ctypes.windll.user32.CallWindowProcW
         call_window_proc.argtypes = [ctypes.c_void_p, wintypes.HWND, wintypes.UINT,
                                      wintypes.WPARAM, wintypes.LPARAM]
         call_window_proc.restype = ctypes.c_ssize_t
 
+        sizing = False
+
         @_WNDPROC
         def proc(h, msg, wparam, lparam):
+            nonlocal sizing
+            # The retained sizing frame is input-only. Do not paint a clipped
+            # standard caption/buttons into its narrow top strip.
+            if msg == WM_NCPAINT:
+                return 0
+            if msg == WM_NCACTIVATE:
+                return call_window_proc(ctypes.c_void_p(original), h, msg, wparam, -1)
+            restore_size = (_normal_window_size(window)
+                            if msg == WM_SYSCOMMAND and (int(wparam) & 0xfff0) == SC_RESTORE
+                            and (ctypes.windll.user32.IsZoomed(h) or ctypes.windll.user32.IsIconic(h))
+                            else None)
             if msg == WM_NCCALCSIZE and wparam:
-                # 声明整个矩形为客户区 → 去掉系统非客户区（标题栏/边框），WebView 铺满。
+                # 隐藏系统标题栏，保留 WebView 外侧的原生缩放边框。
                 # 最大化时按显示器工作区裁剪，避免无边框最大化盖住任务栏。
                 if ctypes.windll.user32.IsZoomed(int(h)):
                     rect = _work_area(int(h))
                     if rect is not None:
                         params = ctypes.cast(lparam, ctypes.POINTER(_NCCALCSIZE_PARAMS))
                         params.contents.rgrc[0] = rect
+                else:
+                    # Keep the system resize frame outside the WebView2 child
+                    # HWND. Otherwise Chromium consumes the edge mouse input.
+                    params = ctypes.cast(lparam, ctypes.POINTER(_NCCALCSIZE_PARAMS))
+                    rect = params.contents.rgrc[0]
+                    bx, by = _resize_frame(int(h))
+                    rect.left += bx
+                    rect.right -= bx
+                    rect.top += by
+                    rect.bottom -= by
                 return 0
             if (msg == WM_WINDOWPOSCHANGING and lparam
                     and ctypes.windll.user32.IsZoomed(int(h))):
@@ -203,12 +292,36 @@ def _install_frameless(window) -> None:
                 if flags == PYWEBVIEW_MOVE_FLAGS:
                     position.contents.flags = flags | SWP_NOMOVE
             if msg == WM_NCHITTEST:
-                # 禁用边缘缩放：把本会落在缩放边框上的命中（HTLEFT..HTBOTTOMRIGHT=10..17）
-                # 改成客户区，原生拖边缩放彻底失效；最大化/移动/动画不受影响。
+                hit = _native_resize_hit(int(h), int(lparam))
+                if hit != HTCLIENT:
+                    return hit
                 res = call_window_proc(ctypes.c_void_p(original), h, msg, wparam, lparam)
-                return HTCLIENT if 10 <= int(res) <= 17 else res
+                inactive = ctypes.windll.user32.IsZoomed(h) or ctypes.windll.user32.IsIconic(h)
+                return HTCLIENT if inactive and 10 <= int(res) <= 17 else res
             result = call_window_proc(ctypes.c_void_p(original), h, msg, wparam, lparam)
-            if msg == WM_WINDOWPOSCHANGED:
+            if restore_size is not None and not ctypes.windll.user32.IsZoomed(h):
+                _fit_restored_window(window, *restore_size)
+            if msg == WM_GETMINMAXINFO and lparam:
+                area = _work_area(int(h))
+                if area is not None:
+                    scale = _window_scale_from_hwnd(int(h))
+                    bounds = ctypes.cast(lparam, ctypes.POINTER(_MINMAXINFO)).contents
+                    bounds.ptMinTrackSize.x = round(MIN_WIDTH * scale)
+                    bounds.ptMinTrackSize.y = round(MIN_HEIGHT * scale)
+                    bounds.ptMaxTrackSize.x = max(bounds.ptMinTrackSize.x, round(int((area.right - area.left) / scale) * scale))
+                    bounds.ptMaxTrackSize.y = max(bounds.ptMinTrackSize.y, round(int((area.bottom - area.top) / scale) * scale))
+            if msg == WM_ENTERSIZEMOVE:
+                sizing = True
+            if msg == WM_EXITSIZEMOVE:
+                sizing = False
+                _reassert_corners(int(h))
+                if size_move_ended is not None:
+                    size_move_ended()  # Only queues work; never evaluates JS/writes on the UI thread.
+            elif (not sizing and size_move_ended is not None
+                  and (msg in (WM_DPICHANGED, WM_DISPLAYCHANGE)
+                       or (msg == WM_SETTINGCHANGE and int(wparam) == 0x002f))):
+                size_move_ended()  # DPI/display/work-area changes can also arrive without a mouse gesture.
+            elif msg == WM_WINDOWPOSCHANGED and not sizing:
                 # 尺寸/位置/层级/状态变化后，重新断言圆角，防止被 WinForms 的矩形 Region 裁方。
                 _reassert_corners(int(h))
             return result
@@ -251,7 +364,16 @@ def _show_window(window, cmd: int) -> None:
     """走 Windows 原生 ShowWindow，触发系统最小化/最大化/还原的过渡动画。"""
     if sys.platform != "win32" or window is None:
         return
-    ctypes.windll.user32.ShowWindow(_hwnd(window), cmd)
+    hwnd = _hwnd(window)
+    user = ctypes.windll.user32
+    restore_size = (_normal_window_size(window)
+                    if cmd == SW_RESTORE and getattr(window, '_relatum_hwnd', None)
+                    and (user.IsZoomed(hwnd) or user.IsIconic(hwnd)) else None)
+    user.ShowWindow(hwnd, cmd)
+    # WinForms computes restore bounds using its standard caption height. Our
+    # caption is hidden, so commit the real native restore rectangle unchanged.
+    if restore_size is not None and not user.IsZoomed(hwnd):
+        _fit_restored_window(window, *restore_size)
 
 
 def _is_maximized(window) -> bool:
@@ -293,26 +415,35 @@ def _notify_usage_visibility(window, minimized: bool) -> None:
 
 # ── 窗口状态记忆（大小 / 位置 / 最大化） ────────────────────────
 
-def _window_scale(window) -> float:
-    """Return the logical-to-physical scale used by pywebview for this window."""
-    if sys.platform != "win32" or window is None:
-        return 1.0
+def _window_scale_from_hwnd(hwnd: int) -> float:
     try:
-        dpi = int(ctypes.windll.user32.GetDpiForWindow(_hwnd(window)))
+        dpi = int(ctypes.windll.user32.GetDpiForWindow(hwnd))
         return dpi / 96.0 if dpi > 0 else 1.0
     except Exception:
         return 1.0
 
 
+def _window_scale(window) -> float:
+    """Return the logical-to-physical scale used by pywebview for this window."""
+    if sys.platform != "win32" or window is None:
+        return 1.0
+    try:
+        return _window_scale_from_hwnd(_hwnd(window))
+    except Exception:
+        return 1.0
+
+
 def _size_limits(window=None) -> dict:
-    max_width, max_height = MAX_WIDTH, MAX_HEIGHT
+    # Do not truncate a saved large-screen size before the HWND exists. Startup
+    # fits it to the actual monitor after the frameless style has been installed.
+    max_width = max_height = 0x7fffffff
     if window is not None:
         try:
             area = _work_area(_hwnd(window))
             scale = _window_scale(window)
             if area is not None:
-                max_width = min(max_width, int((area.right - area.left) / scale) - RESTORED_WINDOW_MARGIN)
-                max_height = min(max_height, int((area.bottom - area.top) / scale) - RESTORED_WINDOW_MARGIN)
+                max_width = int((area.right - area.left) / scale)
+                max_height = int((area.bottom - area.top) / scale)
         except Exception:
             pass
     return {
@@ -334,24 +465,21 @@ def _clamp_size(width: int, height: int, window=None) -> tuple[int, int]:
 def _fit_restored_window(window, width: int, height: int) -> tuple[int, int]:
     """按当前显示器约束还原尺寸，并把窗口拉回最近显示器的工作区。"""
     width, height = _clamp_size(width, height, window)
-    window.resize(width, height)
     if sys.platform != "win32":
+        window.resize(width, height)
         return width, height
-    try:
-        hwnd = _hwnd(window)
-        area = _work_area(hwnd)
-        rect = wintypes.RECT()
-        if area is None or not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-            return width, height
-        window_width = rect.right - rect.left
-        window_height = rect.bottom - rect.top
-        left = max(area.left, min(rect.left, area.right - window_width))
-        top = max(area.top, min(rect.top, area.bottom - window_height))
+    hwnd = _hwnd(window)
+    user, scale = ctypes.windll.user32, _window_scale(window)
+    # pywebview caches its initial DPI; native sizing uses this monitor's current DPI.
+    if not user.SetWindowPos(hwnd, None, 0, 0, round(width * scale), round(height * scale),
+                             SWP_NOMOVE | SWP_NOZORDER | 0x0010):
+        raise OSError('Cannot resize the desktop window')
+    area, rect = _work_area(hwnd), wintypes.RECT()
+    if area is not None and user.GetWindowRect(hwnd, ctypes.byref(rect)):
+        left = max(area.left, min(rect.left, area.right - (rect.right - rect.left)))
+        top = max(area.top, min(rect.top, area.bottom - (rect.bottom - rect.top)))
         if left != rect.left or top != rect.top:
-            # SWP: NOSIZE|NOZORDER|NOACTIVATE
-            ctypes.windll.user32.SetWindowPos(hwnd, None, left, top, 0, 0, 0x0001 | 0x0004 | 0x0010)
-    except Exception:
-        pass
+            user.SetWindowPos(hwnd, None, left, top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | 0x0010)
     return width, height
 
 
@@ -373,9 +501,18 @@ def _read_window_state() -> dict | None:
     return data
 
 
-def _save_window_state(
-    window, maximized_hint: bool, restored_size: tuple[int, int] | None = None,
-) -> None:
+def _normal_window_size(window) -> tuple[int, int] | None:
+    if sys.platform != 'win32' or window is None:
+        return None
+    wp = _WINDOWPLACEMENT()
+    wp.length = ctypes.sizeof(wp)
+    if not ctypes.windll.user32.GetWindowPlacement(_hwnd(window), ctypes.byref(wp)):
+        return None
+    rect, scale = wp.rcNormalPosition, _window_scale(window)
+    return round((rect.right - rect.left) / scale), round((rect.bottom - rect.top) / scale)
+
+
+def _save_window_state(window, maximized_hint: bool) -> None:
     """用 GetWindowPlacement 取"还原后"的矩形，这样即便当前是最大化也记下正常尺寸。"""
     if sys.platform != "win32":
         return
@@ -387,7 +524,7 @@ def _save_window_state(
             return
         r = wp.rcNormalPosition
         scale = _window_scale(window)
-        width, height = restored_size or (
+        width, height = (
             int(round((r.right - r.left) / scale)),
             int(round((r.bottom - r.top) / scale)),
         )
@@ -448,6 +585,54 @@ class DesktopBridge:
         self._close_after_flush = False
         self._quit_after_flush = False
         self._markdown_enabled = False
+        self._geometry_lock = threading.RLock()
+        self._geometry_timer = None
+        self._geometry_closed = False
+
+    def _sync_window_size(self, *, persist=False, notify=False) -> dict:
+        with self._geometry_lock:
+            actual = _normal_window_size(self._window)
+            if actual is not None:
+                self.restored_width, self.restored_height = actual
+            width, height = _clamp_size(self.restored_width, self.restored_height, self._window)
+            self.restored_width, self.restored_height = width, height
+            size = {"width": width, "height": height, "limits": _size_limits(self._window)}
+            if persist and not self._geometry_closed:
+                _save_window_state(self._window, self.maximized)
+        if notify and not self._geometry_closed and self._window is not None:
+            try:
+                self._window.evaluate_js("window.dispatchEvent(new CustomEvent('canvasdesktop:window-size',"
+                                         "{detail:" + json.dumps(size) + "}));")
+            except Exception:
+                pass  # Navigation/closing must not turn a successful native resize into a failed API call.
+        return size
+
+    def _queue_window_size_sync(self) -> None:
+        with self._geometry_lock:
+            if self._geometry_closed:
+                return
+            if self._geometry_timer is not None:
+                self._geometry_timer.cancel()
+            def commit():
+                with self._geometry_lock:
+                    if self._geometry_closed or self._geometry_timer is not task:
+                        return
+                    self._geometry_timer = None
+                try:
+                    self._sync_window_size(persist=True, notify=True)
+                except Exception:
+                    pass  # A page can leave while a completed native gesture is delivered.
+            task = threading.Timer(.05, commit)
+            self._geometry_timer = task
+            task.daemon = True
+            task.start()
+
+    def _close_window_geometry(self) -> None:
+        with self._geometry_lock:
+            self._geometry_closed = True
+            if self._geometry_timer is not None:
+                self._geometry_timer.cancel()
+                self._geometry_timer = None
 
     def markdown_files(self, action: str = 'status', value=None) -> dict:
         from markdown_desktop import management
@@ -499,31 +684,20 @@ class DesktopBridge:
                 return {"supported": True, **save_launcher_settings(app.ROOT, value)}
 
     def get_restored_size(self) -> dict:
-        width, height = _clamp_size(
-            self.restored_width,
-            self.restored_height,
-            self._window,
-        )
-        self.restored_width, self.restored_height = width, height
-        return {"width": width, "height": height, "limits": _size_limits(self._window)}
+        return self._sync_window_size()
 
     def set_restored_size(self, width: int, height: int) -> dict:
         width, height = _clamp_size(width, height, self._window)
         if self._window is None:
             self.restored_width, self.restored_height = width, height
             return {"width": width, "height": height, "limits": _size_limits()}
-        try:
+        with self._geometry_lock:
             if _is_maximized(self._window):
                 _show_window(self._window, SW_RESTORE)
                 self.maximized = False
-            # pywebview converts logical pixels to the monitor's physical pixels.
-            width, height = _fit_restored_window(self._window, width, height)
-            self.restored_width, self.restored_height = width, height
+            _fit_restored_window(self._window, width, height)
             _apply_corners(self._window, maximized=False)
-            _save_window_state(self._window, False, (width, height))
-        except Exception:
-            pass
-        return {"width": width, "height": height, "limits": _size_limits(self._window)}
+        return self._sync_window_size(persist=True, notify=True)
 
     def toggle_maximize(self) -> dict:
         if self._window is None:
@@ -1050,7 +1224,7 @@ def main() -> int:
 
     def on_shown() -> None:
         startup_mark("window-shown")
-        _install_frameless(window)
+        _install_frameless(window, bridge._queue_window_size_sync)
         # 安装无边框样式会重算非客户区。先在普通态重新落实保存的逻辑尺寸，
         # 再按需最大化，确保稍后 SW_RESTORE 使用的是准确的 normal placement。
         bridge.restored_width, bridge.restored_height = _fit_restored_window(
@@ -1088,9 +1262,7 @@ def main() -> int:
 
     def confirm_close() -> bool | None:
         # 先记住窗口状态，再处理后台隐藏或未保存提示。
-        _save_window_state(
-            window, bridge.maximized, (bridge.restored_width, bridge.restored_height),
-        )
+        bridge._sync_window_size(persist=True)
         with lifecycle_lock:
             quitting = lifecycle["quitting"]
         wallpaper_active = bool(bridge.wallpaper and bridge.wallpaper.state().get("active"))
@@ -1141,6 +1313,7 @@ def main() -> int:
     window.events.minimized += on_minimized
     window.events.closing += confirm_close
     window.events.closed += stop_server
+    window.events.closed += bridge._close_window_geometry
 
     try:
         local = os.environ.get("LOCALAPPDATA")
@@ -1162,6 +1335,9 @@ def main() -> int:
         _message_box(f"桌面窗口打开失败：\n{err}", 0x10)
         return 1
     finally:
+        bridge._close_window_geometry()
+        # The GUI loop has ended; no native callback can still be executing.
+        _native_window_procs.pop(getattr(window, '_relatum_hwnd', 0), None)
         # closed 事件通常已先执行；finally 兜底覆盖启动失败或事件未触发。
         if bridge.wallpaper is not None:
             bridge.wallpaper.stop()

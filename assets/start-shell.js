@@ -272,32 +272,6 @@
   }
   background(read('canvas:startBackgroundStyle', 'simple'), false);
   document.querySelectorAll('[data-role="start-background-switch"] button').forEach(button => button.addEventListener('click', () => background(button.dataset.backgroundStyle, true)));
-  const settings = query('desktop-settings');
-  const settingsOpen = document.querySelector('[data-action="desktop-settings-open"]');
-  const sizeForm = query('desktop-size-form');
-  function syncSize(size) {
-    if (!sizeForm || !size) return;
-    const limits = size.limits || {};
-    for (const axis of ['width','height']) {
-      const input = sizeForm.elements[axis], label = axis === 'width' ? 'Width' : 'Height';
-      input.value = size[axis];
-      if (limits['min'+label]) input.min = limits['min'+label];
-      if (limits['max'+label]) input.max = limits['max'+label];
-    }
-  }
-  async function setSize(width, height) {
-    if (window.CanvasDesktop) syncSize(await window.CanvasDesktop.setRestoredSize(Number(width), Number(height)));
-  }
-  if (settingsOpen) settingsOpen.addEventListener('click', async () => {
-    settings.hidden = false;
-    if (window.CanvasDesktop) syncSize(await window.CanvasDesktop.getRestoredSize());
-  });
-  document.querySelectorAll('[data-action="desktop-settings-close"]').forEach(button => button.addEventListener('click', () => { settings.hidden = true; }));
-  if (sizeForm) sizeForm.addEventListener('submit', event => { event.preventDefault(); setSize(sizeForm.elements.width.value, sizeForm.elements.height.value); });
-  document.querySelectorAll('[data-role="desktop-size-presets"] button').forEach(button => button.addEventListener('click', () => setSize(button.dataset.width, button.dataset.height)));
-  document.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { if (settings) settings.hidden = true; }
-  });
   window.RelatumWorkspaceRuntime.create({
     turnSpeed: () => startTurnSpeed, onChange() {}, onCanvasReveal() {},
     notice(title, message) { window.alert(title + '\n' + message); },

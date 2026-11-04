@@ -48,13 +48,29 @@
 .global-settings-dialog .global-system-choices label:has(:checked) { background: var(--settings-selected); border-color: var(--settings-text); }
 .global-settings-dialog .global-system-choices input { margin: 0; flex: 0 0 auto; accent-color: var(--settings-text); }
 @media (max-width: 720px) { .global-settings-dialog .global-system-choices { grid-template-columns: 1fr; } }
+.global-settings-dialog .global-window-size { min-width: 0; padding: 18px 20px; border-radius: 14px; background: var(--settings-card); }
+.global-settings-dialog .global-window-size h4 { margin: 0; font-size: 13px; font-weight: 580; }
+.global-settings-dialog .global-window-size p { margin: 8px 0 14px; color: var(--settings-muted); font-size: 11px; line-height: 1.6; }
+.global-settings-dialog .global-window-presets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.global-settings-dialog .global-window-size button { padding: 10px 8px; border: 1px solid var(--settings-selected); border-radius: 9px; background: var(--settings-bg); color: var(--settings-text); font: inherit; cursor: pointer; }
+.global-settings-dialog .global-window-presets button { display: grid; gap: 5px; font-size: 12px; }
+.global-settings-dialog .global-window-presets button strong { font-weight: 580; }
+.global-settings-dialog .global-window-presets button span { font-size: 11px; color: var(--settings-muted); font-variant-numeric: tabular-nums; }
+.global-settings-dialog .global-window-size button:is(:hover, [aria-pressed="true"]) { border-color: var(--settings-text); background: var(--settings-selected); }
+.global-settings-dialog .global-window-size :disabled { opacity: .5; cursor: default; }
+.global-settings-dialog .global-window-size form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 10px; margin-top: 16px; }
+.global-settings-dialog .global-window-size label { min-width: 0; display: grid; gap: 7px; font-size: 11px; }
+.global-settings-dialog .global-window-size input { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px; border: 1px solid var(--settings-selected); border-radius: 9px; background: var(--settings-bg); color: var(--settings-text); font: inherit; font-size: 13px; }
+.global-settings-dialog .global-window-size [data-size-error] { color: var(--settings-text); }
+.global-settings-dialog .global-window-size [hidden] { display: none; }
+@media (max-width: 520px) { .global-settings-dialog .global-window-size form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .global-settings-dialog .global-window-size form > button { grid-column: 1 / -1; } }
 html[data-start-theme="dark"] { --workspace-active-ink: #1b1d1b; }
 html[data-start-workspace="none"] body.start-page { height: 100vh; overflow: hidden; }
-html[data-start-workspace="none"] :is(.start-sky, .start-workspace-stage, .top-actions, .desktop-settings-trigger, .start-workspace-switch) { display: none !important; }
+html[data-start-workspace="none"] :is(.start-sky, .start-workspace-stage, .top-actions, .start-workspace-switch) { display: none !important; }
 html[data-start-workspace="none"] body.start-page { background: #fbfbfa; }
 html[data-start-theme="dark"][data-start-workspace="none"] body.start-page { background: #111213; }
 html[data-canvas-pages-empty="1"] #start-canvas-workspace,
 html[data-daily-pages-empty="1"] #start-daily-workspace > :is(.daily-navigation, .daily-stage),
-html[data-start-workspace="canvas"][data-canvas-pages-empty="1"] :is(.top-actions, .desktop-settings-trigger, .start-sky),
-html[data-start-workspace="daily"][data-daily-pages-empty="1"] :is(.desktop-settings-trigger, .start-sky) { display: none !important; }
+html[data-start-workspace="canvas"][data-canvas-pages-empty="1"] :is(.top-actions, .start-sky),
+html[data-start-workspace="daily"][data-daily-pages-empty="1"] .start-sky { display: none !important; }
 .left-spine [data-page-hidden="1"], .daily-navigation[hidden], .daily-navigation button[hidden] { display: none !important; }

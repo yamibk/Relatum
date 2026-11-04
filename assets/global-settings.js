@@ -29,7 +29,7 @@
     ['starmap', ['星图', 'Star map'], '<circle cx="5" cy="5" r="2"/><circle cx="19" cy="7" r="2"/><circle cx="12" cy="19" r="2"/><path d="m7 5 10 2M6 7l5 10m7-8-5 8"/>', 'graph animation physics fit 动画 生长 阻尼 取景'],
     ['career', ['生涯', 'Career'], '<path d="M4 3v17h17M8 15l4-5 4 2 5-7"/>', 'career scroll inertia reveal 生涯 滚动 惯性 揭示'],
     ['usage', ['使用统计', 'Usage statistics'], '<path d="M5 21V11m7 10V3m7 18V7"/>', 'usage statistics tracking time archive backup data 统计 记录 时间 归档 备份 数据管理'],
-    ['system', ['系统', 'System'], '<path d="M4 4h16v12H4zM8 20h8m-4-4v4"/>', 'system desktop launcher startup preload daily retention memory 系统 启动器 启动 弹窗 预加载 日常 保留 内存'],
+    ['system', ['系统', 'System'], '<path d="M4 4h16v12H4zM8 20h8m-4-4v4"/>', 'system desktop window size width height resize launcher startup preload daily retention memory 系统 窗口 尺寸 宽度 高度 缩放 启动器 启动 弹窗 预加载 日常 保留 内存'],
   ];
   definitions.forEach(([id, label, iconMarkup, keywords]) => {
     const panel = document.createElement('section'); panels.set(id, panel);
@@ -91,13 +91,107 @@
   const usage = document.querySelector('[data-usage-panel]');
   const usageFeatures = ['notes', 'canvas.editor', 'canvas.library', 'notes.canvas', 'research', 'canvas.study', 'canvas.tree', 'canvas.quicknotes', 'canvas.review', 'daily.tasks'];
   if (usage && usageFeatures.some(features.enabled)) panels.get('usage').append(usage); else usage?.remove();
-  const launcherSetting = document.querySelector('[data-role="launcher-setting"]');
-  const systemEntry = window.CanvasDesktop && launcherSetting ? launcherSetting.cloneNode(true) : null;
+  const systemEntry = window.CanvasDesktop ? document.createElement('label') : null;
+  let launcherSupported = false, savedSkipSelection = false, requestedSkipSelection = false, savingLauncher = false, launcherRevision = 0;
   if (systemEntry) {
-    systemEntry.className = 'start-setting-toggle';
-    systemEntry.querySelector('input').dataset.role = 'global-launcher-skip-selection';
+    systemEntry.className = 'start-setting-toggle'; systemEntry.hidden = true; systemEntry.dataset.i18nManaged = 'true';
+    systemEntry.innerHTML = '<span><strong></strong><small></small></span><input type="checkbox" data-role="global-launcher-skip-selection" disabled>';
+    systemEntry.querySelector('input').addEventListener('change', async event => {
+      if (savingLauncher || !launcherSupported) return;
+      const requested = event.target.checked; requestedSkipSelection = requested; launcherRevision++; savingLauncher = true; renderLauncher();
+      try {
+        const value = await window.CanvasDesktop.setLauncherSkipSelection(requested);
+        launcherSupported = value.supported === true; savedSkipSelection = value.skipSelection === true;
+      } catch (_) { dialog?.setStatus(text('保存启动器设置失败，请重试。', 'Could not save launcher settings. Please retry.')); }
+      finally { savingLauncher = false; renderLauncher(); }
+    });
     panels.get('system').append(systemEntry);
   }
+  function renderLauncher() {
+    if (!systemEntry) return;
+    systemEntry.hidden = !launcherSupported;
+    const input = systemEntry.querySelector('input'); input.checked = savingLauncher ? requestedSkipSelection : savedSkipSelection; input.disabled = savingLauncher || !launcherSupported;
+    systemEntry.querySelector('strong').textContent = text('启动 RelatumLauncher 时不再弹窗', 'Skip the RelatumLauncher selection window');
+    systemEntry.querySelector('small').textContent = text('按上次选择直接启动；取消勾选可恢复功能选择窗口', 'Start with your last selection; uncheck to show the feature picker again.');
+  }
+  async function refreshLauncher() {
+    if (!systemEntry || savingLauncher) return;
+    const revision = ++launcherRevision;
+    try {
+      const value = await window.CanvasDesktop.getLauncherSettings();
+      if (revision !== launcherRevision) return;
+      launcherSupported = value.supported === true; savedSkipSelection = value.skipSelection === true;
+    } catch (_) { if (revision !== launcherRevision) return; launcherSupported = false; }
+    renderLauncher();
+  }
+  const sizeSection = window.CanvasDesktop ? document.createElement('section') : null;
+  let latestSize = null, sizeBusy = false, sizeRevision = 0, desktopSystemActive = false;
+  const editedSizeFields = new Set();
+  if (sizeSection) {
+    sizeSection.className = 'global-window-size'; sizeSection.dataset.i18nManaged = 'true';
+    sizeSection.dataset.settingsKeywords = '窗口 尺寸 宽度 高度 拖边 紧凑 均衡 宽敞 window size width height resize compact balanced spacious';
+    sizeSection.innerHTML = '<h4></h4><p data-size-description></p><div class="global-window-presets">'
+      + [[900,600],[1080,700],[1280,800]].map(([width,height]) => '<button type="button" data-width="'+width+'" data-height="'+height+'"><strong></strong><span>'+width+' × '+height+'</span></button>').join('')
+      + '</div><form data-role="global-window-size-form"><label><span></span><input type="number" name="width" step="1" min="720" required disabled></label><label><span></span><input type="number" name="height" step="1" min="480" required disabled></label><button type="submit" disabled></button></form><p data-size-limits></p><p data-size-error role="status" hidden></p>';
+    sizeSection.querySelectorAll('input').forEach(input => input.addEventListener('input', () => editedSizeFields.add(input.name)));
+    sizeSection.querySelector('form').addEventListener('submit', event => {
+      event.preventDefault(); const form = event.currentTarget;
+      applyWindowSize(Number(form.elements.width.value), Number(form.elements.height.value));
+    });
+    sizeSection.querySelectorAll('[data-width]').forEach(button => button.addEventListener('click', () => applyWindowSize(Number(button.dataset.width), Number(button.dataset.height))));
+    panels.get('system').append(sizeSection);
+  }
+  function renderWindowSize() {
+    if (!sizeSection) return;
+    sizeSection.querySelector('h4').textContent = text('窗口尺寸', 'Window size');
+    sizeSection.querySelector('[data-size-description]').textContent = text('拖动窗口边缘可调整大小，并自动记忆。也可在此设置精确尺寸；最大化时应用会先还原窗口。', 'Drag the window edges to resize; your size is remembered automatically. Set an exact size here; applying while maximized restores the window first.');
+    const form = sizeSection.querySelector('form'), limits = latestSize?.limits || {};
+    for (const [axis, zh, en] of [['width','宽度','Width'],['height','高度','Height']]) {
+      const input = form.elements[axis], key = axis === 'width' ? 'Width' : 'Height';
+      input.previousElementSibling.textContent = text(zh, en);
+      input.disabled = sizeBusy || !latestSize;
+      if (limits['min'+key]) input.min = limits['min'+key];
+      if (limits['max'+key]) input.max = limits['max'+key];
+      if (latestSize && !editedSizeFields.has(axis)) input.value = latestSize[axis];
+    }
+    form.querySelector('button').textContent = text('应用', 'Apply'); form.querySelector('button').disabled = sizeBusy || !latestSize;
+    sizeSection.querySelectorAll('[data-width]').forEach((button, index) => {
+      button.querySelector('strong').textContent = [text('紧凑','Compact'),text('均衡','Balanced'),text('宽敞','Spacious')][index];
+      const unavailable = !latestSize || Number(button.dataset.width) > limits.maxWidth || Number(button.dataset.height) > limits.maxHeight;
+      button.disabled = sizeBusy || unavailable;
+      button.title = unavailable ? text('当前显示器可用区域不足', 'Not enough space on this display') : '';
+      const active = !!latestSize && Number(button.dataset.width) === latestSize.width && Number(button.dataset.height) === latestSize.height;
+      button.setAttribute('aria-pressed', String(active));
+    });
+    sizeSection.querySelector('[data-size-limits]').textContent = latestSize ? text('当前显示器可选范围：', 'Available on this display: ')
+      + limits.minWidth+' × '+limits.minHeight+' — '+limits.maxWidth+' × '+limits.maxHeight : text('正在读取窗口尺寸…', 'Reading window size…');
+  }
+  function sizeError(message) {
+    if (!sizeSection) return;
+    const error = sizeSection.querySelector('[data-size-error]'); error.textContent = message; error.hidden = !message;
+  }
+  async function refreshWindowSize() {
+    if (!sizeSection || sizeBusy) return;
+    const revision = ++sizeRevision;
+    try {
+      const size = await window.CanvasDesktop.getRestoredSize();
+      if (revision !== sizeRevision || !desktopSystemActive || !dialog?.isOpen) return;
+      latestSize = size; sizeError(''); renderWindowSize();
+    } catch (_) { if (revision === sizeRevision && desktopSystemActive && dialog?.isOpen) sizeError(text('未能读取窗口尺寸，请重新打开后重试。', 'Could not read window size. Reopen to retry.')); }
+  }
+  async function applyWindowSize(width, height) {
+    if (sizeBusy || !Number.isFinite(width) || !Number.isFinite(height)) return;
+    sizeBusy = true; ++sizeRevision; sizeError(''); renderWindowSize();
+    try {
+      const size = await window.CanvasDesktop.setRestoredSize(width, height);
+      latestSize = size; editedSizeFields.clear();
+    } catch (_) { sizeError(text('调整窗口大小失败，请重试。', 'Could not resize the window. Please retry.')); }
+    finally { sizeBusy = false; renderWindowSize(); }
+  }
+  window.addEventListener('canvasdesktop:window-size', event => {
+    if (!desktopSystemActive || !dialog?.isOpen || sizeBusy) return;
+    ++sizeRevision; latestSize = event.detail; renderWindowSize();
+  });
   const systemPolicy = window.RelatumGlobalSystem;
   const systemIntro = document.createElement('p'); systemIntro.dataset.i18nManaged = 'true';
   const preloadSetting = document.createElement('label'); preloadSetting.className = 'start-setting-toggle'; preloadSetting.dataset.i18nManaged = 'true';
@@ -167,10 +261,14 @@
         await resetCategory('workspaces');
         for (const category of activeCategories) if (category.id !== 'workspaces') await resetCategory(category.id);
       },
-      onCategoryChange(id) { usageVisibility(id === 'usage'); if (id !== 'workspaces') orderList?.suspend(); if (id !== 'navigation') pageLists.forEach(list => list.suspend()); },
+      onCategoryChange(id) {
+        usageVisibility(id === 'usage'); if (id !== 'workspaces') orderList?.suspend(); if (id !== 'navigation') pageLists.forEach(list => list.suspend());
+        desktopSystemActive = id === 'system'; ++sizeRevision;
+        if (desktopSystemActive) refreshWindowSize();
+      },
       onKeyDown(event) { return usageActive && usageManager?.onKeyDown(event); },
-      onOpen() { trigger.setAttribute('aria-expanded', 'true'); orderList?.sync(); pageLists.forEach(list => list.sync()); },
-      onClose() { usageVisibility(false); trigger.setAttribute('aria-expanded', 'false'); orderList?.suspend(); pageLists.forEach(list => list.suspend()); },
+      onOpen() { trigger.setAttribute('aria-expanded', 'true'); orderList?.sync(); pageLists.forEach(list => list.sync()); refreshLauncher(); },
+      onClose() { desktopSystemActive = false; ++sizeRevision; editedSizeFields.clear(); usageVisibility(false); trigger.setAttribute('aria-expanded', 'false'); orderList?.suspend(); pageLists.forEach(list => list.suspend()); },
     });
     dialog.dialog.classList.add('global-settings-dialog'); ensureOrderList(); ensurePageLists(); translate();
     return dialog;
@@ -223,6 +321,7 @@
   }
   function translate() {
     refreshSystem();
+    renderLauncher(); renderWindowSize();
     trigger.title = text('全局设置', 'Settings');
     trigger.setAttribute('aria-label', text('全局设置', 'Settings'));
     themeLabel.textContent = text('主题', 'Theme');
@@ -249,4 +348,5 @@
     open(options) { ensureDialog().open({ trigger, ...options }); }, close(options) { dialog?.close(options); }, get dialog() { return ensureDialog().dialog; },
   });
   translate();
+  refreshLauncher();
 })();

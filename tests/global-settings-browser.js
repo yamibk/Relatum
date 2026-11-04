@@ -10,7 +10,7 @@ async function freePort() { const server = net.createServer(); await new Promise
 async function run(browser, mode) {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-global-data-'));
   fs.mkdirSync(path.join(data, 'notes')); fs.writeFileSync(path.join(data, 'notes/Main.md'), '# Main\n\nOriginal text\n');
-  const enabled = { notes: ['notes'], research: ['research'], career: ['career'], library: ['canvas', 'canvas.library'], mixed: ['notes', 'career'] }[mode];
+  const enabled = { notes: ['notes'], 'system-notes': ['notes'], 'system-late': ['notes'], research: ['research'], career: ['career'], library: ['canvas', 'canvas.library'], mixed: ['notes', 'career'] }[mode];
   const choices = Object.fromEntries(catalog.features.map(item => [item.id, enabled ? enabled.includes(item.id) : mode === 'cold' || item.id !== 'runtime.preload']));
   const args = ['app.py', '--no-browser', '--port', String(await freePort()), '--launch-profile', JSON.stringify({ version: 1, features: choices })];
   const url = 'http://127.0.0.1:' + args[3];
@@ -29,11 +29,22 @@ async function run(browser, mode) {
   try {
     for (let i = 0; i < 150; i++) { try { if ((await fetch(url + '/api/runtime')).ok) break; } catch (_) {} await pause(100); }
     await context.addInitScript(() => { localStorage.setItem('canvas:noteFocusMode:v1', '0'); localStorage.setItem('canvas:noteActivePath:v1', 'Main.md'); localStorage.setItem('canvas:noteOpenTabs:v1', '["Main.md"]'); });
-    if (mode === 'system') await context.addInitScript(() => {
-      window.__launcherSupported = true; window.__launcherCalls = [];
-      window.pywebview = { api: {
+    if (mode.startsWith('system')) await context.addInitScript(({ late }) => {
+      window.__launcherSupported = true; window.__launcherCalls = []; window.__sizeCalls = [];
+      window.__windowSize = { width: 1080, height: 700, limits: { minWidth: 720, minHeight: 480, maxWidth: 2400, maxHeight: 1440 } };
+      const api = {
         set_dirty() {}, set_note_workspace_active() {}, get_window_state: async () => ({ maximized: false }),
-        get_restored_size: async () => ({ width: 1080, height: 700, minWidth: 720, minHeight: 480, maxWidth: 1800, maxHeight: 1100 }),
+        get_restored_size: async () => {
+          if (window.__holdSizeRead) await new Promise(resolve => { window.__releaseSizeRead = resolve; });
+          return JSON.parse(JSON.stringify(__windowSize));
+        },
+        set_restored_size: async (width, height) => {
+          __sizeCalls.push([width,height]);
+          if (window.__holdSizeSave) await new Promise(resolve => { window.__releaseSizeSave = resolve; });
+          if (window.__failSizeSave) throw new Error('resize failed');
+          __windowSize.width = Math.max(720, Math.min(2400, width)); __windowSize.height = Math.max(480, Math.min(1440, height));
+          return JSON.parse(JSON.stringify(__windowSize));
+        },
         get_launcher_settings: async () => ({ supported: __launcherSupported, skipSelection: localStorage.getItem('qa:launcher-skip') === '1' }),
         set_launcher_skip_selection: async value => {
           __launcherCalls.push(value);
@@ -41,8 +52,10 @@ async function run(browser, mode) {
           if (window.__failLauncherSave) throw new Error('test failure');
           localStorage.setItem('qa:launcher-skip', value ? '1' : '0'); return { supported: true, skipSelection: value };
         },
-      } };
-    });
+      };
+      if (late) setTimeout(() => { window.pywebview = { api }; dispatchEvent(new Event('pywebviewready')); }, 1200);
+      else window.pywebview = { api };
+    }, { late: mode === 'system-late' });
     if (mode === 'cold') await context.addInitScript(({ ids, key }) => {
       localStorage.setItem(key, JSON.stringify({ order: ids, hidden: ids }));
       localStorage.setItem('canvas:startBackgroundStyle', 'scenic'); localStorage.setItem('canvas:noteGraphPreload:v1', '1');
@@ -53,54 +66,90 @@ async function run(browser, mode) {
       }
       requestAnimationFrame(firstFrame);
     }, { ids, key });
-    await page.goto(url + (mode === 'system' ? '/?desktop=1' : '')); await page.waitForFunction(() => window.RelatumStartWorkspace && window.RelatumGlobalSettings);
-    if (mode === 'system') {
-      await page.waitForFunction(() => !document.querySelector('[data-role="launcher-skip-selection"]').disabled);
+    await page.goto(url + (mode.startsWith('system') ? '/?desktop=1' : '')); await page.waitForFunction(() => window.RelatumStartWorkspace && window.RelatumGlobalSettings);
+    if (mode.startsWith('system')) {
+      await page.waitForFunction(() => !document.querySelector('[data-role="global-launcher-skip-selection"]').disabled);
       await page.evaluate(() => RelatumGlobalSettings.open({ category: 'system' }));
       const globalToggle = dialog.locator('[data-role="global-launcher-skip-selection"]');
       await globalToggle.waitFor({ state: 'visible' });
       const categories = await dialog.locator('nav [data-settings-category]').evaluateAll(nodes => nodes.map(node => node.dataset.settingsCategory));
       assert.deepEqual(categories.slice(-2), ['usage', 'system']);
-      assert.equal(await dialog.locator('[data-role="global-daily-retention"]').count(), 4);
+      assert.equal(await dialog.locator('[data-role="global-daily-retention"]').count(), mode === 'system' ? 4 : 0);
       assert(await dialog.locator('[data-settings-action="reset-category"]').isVisible(), 'resource policy supports category reset');
-      const original = page.locator('[data-role="launcher-skip-selection"]');
+      assert.equal(await page.locator('[data-role="launcher-skip-selection"], [data-action="desktop-settings-open"], .desktop-settings-overlay').count(), 0, 'legacy entry and source DOM are removed');
       await page.evaluate(() => { window.__holdLauncherSave = true; });
       await globalToggle.click();
       await page.waitForFunction(() => !!window.__releaseLauncherSave);
-      assert(await globalToggle.isDisabled()); assert(await original.isDisabled());
-      assert(await original.isChecked());
+      assert(await globalToggle.isDisabled()); assert(await globalToggle.isChecked());
       await page.evaluate(() => { __holdLauncherSave = false; __releaseLauncherSave(); });
       await page.waitForFunction(() => !document.querySelector('[data-role="global-launcher-skip-selection"]').disabled);
-      assert(await globalToggle.isChecked()); assert(await original.isChecked());
+      assert(await globalToggle.isChecked());
       await dialog.locator('[data-settings-action="reset-all"]').click(); await dialog.locator('[data-settings-action="accept-reset"]').click();
       assert(await globalToggle.isChecked(), 'global reset preserves launcher settings');
-      await page.evaluate(() => RelatumGlobalSettings.close({ instant: true }));
-      await page.locator('[data-action="desktop-settings-open"]').click(); await original.uncheck();
-      await page.waitForFunction(() => !document.querySelector('[data-role="launcher-skip-selection"]').disabled);
-      assert.equal(await globalToggle.isChecked(), false, 'original entry synchronizes the global entry');
-      await page.locator('.desktop-settings-close').click();
-      await page.evaluate(() => RelatumGlobalSettings.open({ category: 'system' }));
-      page.once('dialog', alert => alert.dismiss()); await page.evaluate(() => { window.__failLauncherSave = true; });
+      await globalToggle.uncheck();
+      await page.waitForFunction(() => !document.querySelector('[data-role="global-launcher-skip-selection"]').disabled);
+      await page.evaluate(() => { window.__failLauncherSave = true; });
       await globalToggle.click();
       await page.waitForFunction(() => !document.querySelector('[data-role="global-launcher-skip-selection"]').disabled);
-      assert.equal(await globalToggle.isChecked(), false); assert.equal(await original.isChecked(), false);
+      assert.equal(await globalToggle.isChecked(), false);
+      assert((await dialog.locator('[data-settings-status]').textContent()).includes('保存启动器设置失败'));
+      const form = dialog.locator('[data-role="global-window-size-form"]'), width = form.locator('[name="width"]'), height = form.locator('[name="height"]');
+      await width.waitFor(); assert.equal(await width.inputValue(), '1080'); assert.equal(await width.getAttribute('max'), '2400');
+      await dialog.locator('.global-window-presets [data-width="900"]').click();
+      await page.waitForFunction(() => !document.querySelector('[name="width"]').disabled);
+      assert.equal(await width.inputValue(), '900');
+      await width.fill('1001');
+      await page.evaluate(() => dispatchEvent(new CustomEvent('canvasdesktop:window-size', { detail: { ...__windowSize, width: 1100, height: 680 } })));
+      assert.equal(await width.inputValue(), '1001', 'native notifications retain the input draft'); assert.equal(await height.inputValue(), '680');
+      await page.evaluate(() => { window.__holdSizeSave = true; }); await form.locator('button').click();
+      await page.waitForFunction(() => !!window.__releaseSizeSave);
+      assert(await width.isDisabled());
+      await form.evaluate(node => node.requestSubmit());
+      assert.equal(await page.evaluate(() => __sizeCalls.length), 2, 'one request per submission while busy');
+      await page.evaluate(() => { __holdSizeSave = false; __releaseSizeSave(); });
+      await page.waitForFunction(() => !document.querySelector('[name="width"]').disabled);
+      assert.equal(await width.inputValue(), '1001');
+      await width.fill('2200'); await height.fill('1250'); await form.locator('button').click();
+      await page.waitForFunction(() => !document.querySelector('[name="width"]').disabled);
+      assert.equal(await width.inputValue(), '2200', 'large displays have no fixed 1920 cap');
+      await width.fill('2100'); await page.evaluate(() => { window.__failSizeSave = true; }); await form.locator('button').click();
+      await page.waitForFunction(() => !document.querySelector('[name="width"]').disabled);
+      assert.equal(await width.inputValue(), '2100', 'failed resize retains input');
+      assert(await dialog.locator('[data-size-error]').isVisible());
+      await page.evaluate(() => { __failSizeSave = false; });
+      await form.locator('button').click(); await page.waitForFunction(() => !document.querySelector('[name="width"]').disabled);
+      await dialog.locator('[data-settings-action="reset-category"]').click(); await dialog.locator('[data-settings-action="accept-reset"]').click();
+      assert.equal(await width.inputValue(), '2100', 'system reset preserves actual window size');
+      await page.evaluate(() => { RelatumGlobalSettings.close({ instant: true }); __holdSizeRead = true; __windowSize.width = 1101; RelatumGlobalSettings.open({category:'system'}); });
+      await page.waitForFunction(() => !!window.__releaseSizeRead);
+      await category('appearance').click();
+      await page.evaluate(() => { __holdSizeRead = false; __releaseSizeRead(); }); await pause(30);
+      assert.equal(await width.inputValue(),'2100','a late read after leaving the category is discarded');
+      await category('system').click(); await page.waitForFunction(() => document.querySelector('[data-role="global-window-size-form"] [name="width"]').value === '1101');
       await page.evaluate(() => { window.__failLauncherSave = false; RelatumI18n.setLanguage('en'); });
       assert.equal(await category('system').textContent(), 'System');
       assert((await globalToggle.locator('..').textContent()).includes('RelatumLauncher'));
       await page.screenshot({ path: path.join(artifacts, 'system.png') });
       await page.evaluate(() => RelatumGlobalSettings.close({ instant: true }));
-      await page.reload(); await page.waitForFunction(() => window.RelatumGlobalSettings && !document.querySelector('[data-role="launcher-skip-selection"]').disabled);
+      await page.reload(); await page.waitForFunction(() => window.RelatumGlobalSettings && !document.querySelector('[data-role="global-launcher-skip-selection"]').disabled);
       await page.evaluate(() => RelatumGlobalSettings.open({ category: 'system' }));
       assert.equal(await globalToggle.isChecked(), false, 'saved value is read again after reload');
       await page.evaluate(() => { RelatumGlobalSettings.close({ instant: true }); window.__launcherSupported = false; });
-      await page.locator('[data-action="desktop-settings-open"]').click();
-      await page.waitForFunction(() => document.querySelector('[data-role="launcher-setting"]').hidden);
-      await page.locator('.desktop-settings-close').click();
-      await page.evaluate(() => RelatumGlobalSettings.open());
+      await page.evaluate(() => RelatumGlobalSettings.open({ category: 'system' }));
       assert.equal(await category('system').count(), 1, 'resource settings keep System available without a launcher');
       await category('system').click();
       assert(await globalToggle.locator('..').isHidden(), 'unsupported launcher hides only its own row');
-      assert.deepEqual(errors, []); console.log('system: category placement, shared toggle, single-flight save, failure rollback, reset protection, language, reload and unsupported host passed');
+      await page.waitForFunction(() => document.querySelector('[data-role="global-launcher-skip-selection"]').closest('label').hidden);
+      for (const dark of [false, true]) {
+        await page.evaluate(dark => { document.body.dataset.startTheme = dark ? 'dark' : 'light'; document.documentElement.dataset.startTheme = dark ? 'dark' : 'light'; }, dark);
+        for (const size of [{ width: 1440, height: 980 }, { width: 640, height: 760 }]) {
+          await page.setViewportSize(size);
+          await page.screenshot({ path: path.join(artifacts, `${mode}-${dark ? 'dark' : 'light'}-${size.width}.png`) });
+          assert(await form.locator('button').isVisible());
+          assert(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth + 1), 'no horizontal overflow');
+        }
+      }
+      assert.deepEqual(errors, []); console.log(mode + ': window presets/drafts/busy/failure/large sizes/reset, single launcher entry, language, reload and unsupported host passed');
       return;
     }
     if (mode === 'cold') {
@@ -137,6 +186,7 @@ async function run(browser, mode) {
       console.log('cold: first frame, hidden preloads, failed load/retry and queued changes passed');
       return;
     }
+    assert.equal(await page.locator('.global-window-size, [data-role="global-launcher-skip-selection"]').count(), 0, 'browser has no desktop-only controls');
     const available = await page.evaluate(() => RelatumFeatureRuntime.workspaces.filter(item => RelatumFeatureRuntime.workspaceEnabled(item.id)).map(item => item.id));
     assert.equal(await page.evaluate(key => localStorage.getItem(key), key), null, 'startup does not write layout defaults');
     await page.evaluate(() => RelatumGlobalSettings.open()); await dialog.waitFor();

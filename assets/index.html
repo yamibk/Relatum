@@ -1728,53 +1728,6 @@
     </section>
   </div>
 
-  <button type="button" class="desktop-settings-trigger" data-action="desktop-settings-open"
-    title="客户端设置" aria-label="客户端设置">
-    <span aria-hidden="true">⚙</span>
-  </button>
-
-  <div class="desktop-settings-overlay" data-role="desktop-settings" hidden>
-    <button type="button" class="desktop-settings-backdrop" data-action="desktop-settings-close"
-      aria-label="关闭设置"></button>
-    <section class="desktop-settings-card" role="dialog" aria-modal="true"
-      aria-labelledby="desktop-settings-title">
-      <header>
-        <div>
-          <p class="desktop-settings-eyebrow">DESKTOP CLIENT</p>
-          <h2 id="desktop-settings-title">客户端设置</h2>
-        </div>
-        <button type="button" class="desktop-settings-close" data-action="desktop-settings-close"
-          aria-label="关闭">×</button>
-      </header>
-      <p class="desktop-settings-copy">设置窗口从最大化恢复后使用的大小。标题栏的最小化按钮仍会将窗口收进任务栏。</p>
-      <label class="desktop-language-setting desktop-launcher-setting" data-role="launcher-setting" hidden>
-        <span>
-          <strong>启动 RelatumLauncher 时不再弹窗</strong>
-          <small>按上次选择直接启动；取消勾选可恢复功能选择窗口</small>
-        </span>
-        <input type="checkbox" data-role="launcher-skip-selection" disabled>
-      </label>
-      <div class="desktop-size-presets" data-role="desktop-size-presets">
-        <button type="button" data-width="900" data-height="600">
-          <strong>紧凑</strong><span>900 × 600</span>
-        </button>
-        <button type="button" data-width="1080" data-height="700">
-          <strong>均衡</strong><span>1080 × 700</span>
-        </button>
-        <button type="button" data-width="1280" data-height="800">
-          <strong>宽敞</strong><span>1280 × 800</span>
-        </button>
-      </div>
-      <form class="desktop-size-custom" data-role="desktop-size-form">
-        <label><span>宽度</span><input type="number" name="width" min="720" max="1920" step="1" required></label>
-        <span class="desktop-size-times">×</span>
-        <label><span>高度</span><input type="number" name="height" min="480" max="1200" step="1" required></label>
-        <button type="submit" class="btn btn-primary">应用</button>
-      </form>
-      <p class="desktop-settings-hint" data-role="desktop-size-hint">可选范围会按当前显示器自动调整</p>
-    </section>
-  </div>
-
   <!-- 右键菜单（内容由 start.js 动态构建：文件操作 / 分组操作）-->
   <div class="context-menu" data-role="context-menu" hidden></div>
 

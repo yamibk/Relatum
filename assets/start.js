@@ -1148,7 +1148,7 @@
           ['Markdown 窗口记忆', '<code>data/desktop-sessions/markdown-files/window-state.json</code>：所有独立 Markdown 窗口共用最近调整的大小、位置和最大化状态，不按文件保存。'],
           ['WebView2 运行数据', '桌面浏览器内核管理的本机缓存与运行数据。'],
           ['启动器功能选择', '<code>data/launcher-profile.json</code>：上次选择的工作区与功能。'],
-          ['跳过启动选择', '<code>data/launcher-settings.json</code>：是否跳过功能选择窗口。可在全局设置“系统”或客户端设置中修改。'],
+          ['跳过启动选择', '<code>data/launcher-settings.json</code>：是否跳过功能选择窗口。可在全局设置“系统”中修改。'],
           ['启动器语言', '<code>data/launcher-language.json</code>：桌面版最近一次主动切换的语言。恢复其他窗口的旧偏好不会覆盖它；删除此文件后，启动器默认使用中文。'],
           ['浏览器版', '浏览器的站点存储。更换浏览器或清除站点数据后，偏好会重置。'],
         ]],
@@ -1294,7 +1294,7 @@
           ['Markdown window state', '<code>data/desktop-sessions/markdown-files/window-state.json</code>: the most recently adjusted size, position and maximized state, shared by all standalone Markdown windows rather than saved per file.'],
           ['WebView2 runtime data', 'Local caches and runtime data managed by the desktop browser engine.'],
           ['Launcher feature choices', '<code>data/launcher-profile.json</code>: the previously selected workspaces and features.'],
-          ['Skip launcher selection', '<code>data/launcher-settings.json</code>: whether to skip the feature selection window. Change it in global Settings → System or Desktop Settings.'],
+          ['Skip launcher selection', '<code>data/launcher-settings.json</code>: whether to skip the feature selection window. Change it in Settings → System.'],
           ['Launcher language', '<code>data/launcher-language.json</code>: the most recent deliberate desktop language choice. Restoring another window’s saved settings does not override it. Deleting this file makes the launcher default to Chinese.'],
           ['Browser', 'Browser site storage. Switching browsers or clearing site data resets these preferences.'],
         ]],
@@ -1652,13 +1652,8 @@
     });
   }
 
-  const desktopSettings = document.querySelector('[data-role="desktop-settings"]');
-  const desktopSettingsOpen = document.querySelector('[data-action="desktop-settings-open"]');
   const noteFontScaleRange = document.querySelector('[data-role="note-font-scale"]');
   const noteFontScaleValue = document.querySelector('[data-role="note-font-scale-value"]');
-  const desktopSizeForm = document.querySelector('[data-role="desktop-size-form"]');
-  const desktopSizeHint = document.querySelector('[data-role="desktop-size-hint"]');
-  const desktopPresetButtons = Array.from(document.querySelectorAll('[data-role="desktop-size-presets"] button'));
   const starmapMotionRanges = Array.from(document.querySelectorAll('[data-role="starmap-motion-range"]'));
   const starmapMotionToggles = Array.from(document.querySelectorAll('[data-role="starmap-motion-toggle"]'));
   const starmapMotionValues = Array.from(document.querySelectorAll('[data-role="starmap-motion-value"]'));
@@ -1819,60 +1814,6 @@
     if (category === 'career') { remove(CAREER_SCROLL_FEEL_KEY, CAREER_SCROLL_IDLE_KEY); applyCareerScrollFeel(readCareerScrollFeel(), false); }
   } });
 
-  function syncDesktopSizeForm(size) {
-    if (!desktopSizeForm || !size) return;
-    const limits = size.limits || {};
-    const widthInput = desktopSizeForm.elements.width;
-    const heightInput = desktopSizeForm.elements.height;
-    if (limits.minWidth) widthInput.min = limits.minWidth;
-    if (limits.maxWidth) widthInput.max = limits.maxWidth;
-    if (limits.minHeight) heightInput.min = limits.minHeight;
-    if (limits.maxHeight) heightInput.max = limits.maxHeight;
-    desktopSizeForm.elements.width.value = size.width;
-    desktopSizeForm.elements.height.value = size.height;
-    if (desktopSizeHint && limits.minWidth && limits.maxWidth && limits.minHeight && limits.maxHeight) {
-      desktopSizeHint.textContent = '当前显示器可选范围：'
-        + limits.minWidth + ' × ' + limits.minHeight + ' 至 '
-        + limits.maxWidth + ' × ' + limits.maxHeight;
-    }
-    desktopPresetButtons.forEach((button) => {
-      const unavailable = Number(button.dataset.width) > Number(limits.maxWidth || Infinity)
-        || Number(button.dataset.height) > Number(limits.maxHeight || Infinity);
-      button.disabled = unavailable;
-      button.title = unavailable ? '当前显示器可用区域不足' : '';
-      button.classList.toggle(
-        'active',
-        Number(button.dataset.width) === Number(size.width)
-          && Number(button.dataset.height) === Number(size.height),
-      );
-    });
-  }
-
-  async function applyDesktopSize(width, height) {
-    if (!window.CanvasDesktop) return;
-    try {
-      const size = await window.CanvasDesktop.setRestoredSize(Number(width), Number(height));
-      syncDesktopSizeForm(size);
-    } catch (e) {
-      window.alert('调整窗口大小失败，请重试。');
-    }
-  }
-
-  async function openDesktopSettings() {
-    if (!desktopSettings) return;
-    desktopSettings.hidden = false;
-    applyNoteFontScale(readNoteFontScale(), false);
-    syncStarmapMotionForm();
-    if (window.CanvasDesktop) {
-      try { syncDesktopSizeForm(await window.CanvasDesktop.getRestoredSize()); } catch (e) {}
-    }
-  }
-
-  function closeDesktopSettings() {
-    if (desktopSettings) desktopSettings.hidden = true;
-  }
-
-  if (desktopSettingsOpen) desktopSettingsOpen.addEventListener('click', openDesktopSettings);
   applyNoteFontScale(readNoteFontScale(), false);
   if (noteFontScaleRange) noteFontScaleRange.addEventListener('input', () => applyNoteFontScale(noteFontScaleRange.value, true));
   window.RelatumNotePreferences = Object.freeze({
@@ -1901,18 +1842,12 @@
   graphPreloadToggle?.addEventListener('change', () => applyGraphPreload(graphPreloadToggle.checked, true));
   const graphSpacingRange = document.querySelector('[data-role="note-graph-spacing"]');
   if (graphSpacingRange) graphSpacingRange.addEventListener('input', () => applyGraphSpacing(graphSpacingRange.value, true));
-  document.querySelectorAll('[data-action="desktop-settings-close"]').forEach((button) => {
-    button.addEventListener('click', closeDesktopSettings);
-  });
   applyImageTextScale(readImageTextScale(), false);
   const imageTextScaleRange = document.querySelector('[data-role="note-image-text-scale"]');
   if (imageTextScaleRange) imageTextScaleRange.addEventListener('input', () => applyImageTextScale(imageTextScaleRange.value, true));
   try { applyCanvasNodeScale(localStorage.getItem(NOTE_CANVAS_NODE_SCALE_KEY) ?? 100, false); } catch (_) { applyCanvasNodeScale(100, false); }
   const canvasNodeScaleRange = document.querySelector('[data-role="note-canvas-node-scale"]');
   if (canvasNodeScaleRange) canvasNodeScaleRange.addEventListener('input', () => applyCanvasNodeScale(canvasNodeScaleRange.value, true));
-  desktopPresetButtons.forEach((button) => {
-    button.addEventListener('click', () => applyDesktopSize(button.dataset.width, button.dataset.height));
-  });
   syncStarmapMotionForm();
   starmapMotionRanges.forEach((input) => {
     input.addEventListener('input', () => {
@@ -1927,19 +1862,6 @@
       next.finalFitOnConverge = !!toggle.checked;
       saveStarmapMotionSettings(next);
     });
-  });
-  if (desktopSizeForm) {
-    desktopSizeForm.addEventListener('submit', (event) => {
-      event.preventDefault();
-      applyDesktopSize(desktopSizeForm.elements.width.value, desktopSizeForm.elements.height.value);
-    });
-  }
-  document.addEventListener('keydown', (event) => {
-    if (desktopSettings && !desktopSettings.hidden && event.key === 'Escape') {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      closeDesktopSettings();
-    }
   });
 
   function saveActive() {
