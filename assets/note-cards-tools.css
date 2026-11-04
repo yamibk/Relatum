@@ -1,0 +1,18 @@
+.note-cards-tools { box-sizing: border-box; width: min(430px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); margin: auto; padding: 22px; overflow: auto; border: 1px solid var(--border, #ddd); border-radius: 16px; background: var(--note-theme-paper, var(--bg, #fff)); color: var(--text, #222); font: 13px/1.5 var(--font-ui, sans-serif); }
+.note-cards-tools::backdrop { background: rgb(0 0 0 / .16); }
+.note-cards-tools h2 { margin: 0 0 18px; color: inherit; font: 600 17px/1.4 var(--font-ui, sans-serif); }
+.note-cards-tools label { display: grid; grid-template-columns: minmax(90px, .8fr) minmax(0, 1.2fr); align-items: center; gap: 12px; margin-bottom: 12px; }
+.note-cards-tools .review-choice { width: 100%; min-width: 0; }
+.note-cards-tools .review-choice-trigger { width: 100%; }
+.note-cards-tools input { box-sizing: border-box; width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--note-theme-surface, var(--bg)); color: inherit; font: inherit; }
+.note-cards-tools button { font-family: var(--font-ui, sans-serif); }
+.note-cards-tools-fields small { display: block; color: var(--text-secondary); }
+.note-cards-tools-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.note-cards-tools-actions button { padding: 7px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--note-theme-surface, var(--bg)); color: inherit; cursor: pointer; }
+.note-cards-tools-actions .is-primary { background: var(--text); color: var(--note-theme-paper, var(--bg)); border-color: transparent; }
+.note-cards-tools :is(button,input):focus-visible { outline: 2px solid var(--note-theme-accent, #777); outline-offset: 2px; }
+.note-cards-tools-status { margin: 8px 0; color: var(--text-secondary); font-size: 12px; }
+.note-cards-tools-status:empty { display: none; }
+.note-cards-tools-portal { position: absolute; inset: 0; pointer-events: none; }
+.note-cards-tools-portal .review-choice-popup { pointer-events: auto; background: var(--note-theme-paper, var(--bg)); color: var(--text); }
+@media (max-width: 420px) { .note-cards-tools { padding: 16px; } .note-cards-tools label { grid-template-columns: minmax(0, 1fr); gap: 5px; } }

@@ -392,6 +392,27 @@
   // Cards share the existing fence selection/edit/clipboard machinery. Block
   // IDs and height caches remain separate; Mermaid's renderer is never loaded.
   const editableFence = spec => !!spec && (spec.kind === 'mermaid' || spec.kind === 'cards');
+  let cardsToolsLoader = null;
+  function loadCardsTools() {
+    if (cardsToolsLoader) return cardsToolsLoader;
+    const own = document.querySelector('script[src*="note-live-editor.js"]')?.src || new URL('note-live-editor.js', document.baseURI).href;
+    function asset(name, style, ready) {
+      if (ready?.() || style && Array.from(document.querySelectorAll('link[rel="stylesheet"]')).some(link => link.href === new URL(name, own).href)) return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        const node = document.createElement(style ? 'link' : 'script');
+        node.dataset.cardsToolAsset = name;
+        if (style) { node.rel = 'stylesheet'; node.href = new URL(name, own).href; } else node.src = new URL(name, own).href;
+        const timer = setTimeout(() => finish(new Error('Cards tools unavailable')), 15000);
+        function finish(error) { clearTimeout(timer); node.onload = node.onerror = null; if (error) { node.remove(); reject(error); } else resolve(); }
+        node.onload = () => finish(); node.onerror = () => finish(new Error('Cards tools unavailable')); document.head.append(node);
+      });
+    }
+    cardsToolsLoader = Promise.all([asset('review-controls.css', true), asset('note-cards-tools.css', true),
+      asset('review-controls.js', false, () => !!window.RelatumReviewControls).then(() => asset('note-cards-tools.js', false, () => !!window.RelatumNoteCardsTools))])
+      .then(() => { if (!window.RelatumNoteCardsTools) throw new Error('Cards tools unavailable'); return window.RelatumNoteCardsTools; })
+      .catch(error => { cardsToolsLoader = null; throw error; });
+    return cardsToolsLoader;
+  }
   function noteFence(block) {
     return block.language === 'cards' ? window.RelatumNoteCards?.render(block.source)?.html ?? null : quizFence(block);
   }
@@ -3166,7 +3187,7 @@
       const entry = dom.__relatumMermaidBlock = { widget: this, control: null };
       dom.innerHTML = safeIsolatedResult(this.spec.renderSource || this.spec.source).html;
       dom.addEventListener('mousedown', event => {
-        if (event.target.closest('[data-note-mermaid-control], a')) return;
+        if (event.target.closest('[data-note-mermaid-control], [data-note-cards-control], a')) return;
         if (event.button !== 0 && event.button !== 2) return;
         event.preventDefault(); event.stopPropagation();
         const widget = entry.widget, diagram = dom.querySelector('.mermaid-diagram, .note-cards'), rect = diagram?.getBoundingClientRect();
@@ -3178,7 +3199,7 @@
       });
       dom.addEventListener('dblclick', event => { event.preventDefault(); event.stopPropagation(); });
       dom.addEventListener('keydown', event => {
-        if (event.key !== 'Enter' || event.target.closest('[data-note-mermaid-control], a')) return;
+        if (event.key !== 'Enter' || event.target.closest('[data-note-mermaid-control], [data-note-cards-control], a')) return;
         event.preventDefault(); event.stopPropagation(); entry.widget.options.onMermaidEdit(entry.widget.spec.id);
       });
       const current = () => {
@@ -3212,6 +3233,13 @@
       const height = this.coordinator.mermaidHeights?.get(this.spec.id);
       if (this.spec.kind !== 'cards' && height && !dom.querySelector('.note-mermaid-stage > svg')) dom.style.minHeight = height + 'px';
       entry.control?.update(fencedCodeBody(this.spec.renderSource || this.spec.source), this.spec.language);
+      if (this.spec.kind === 'cards' && !dom.querySelector('[data-note-cards-control]')) {
+        const button = document.createElement('button'); button.type = 'button'; button.dataset.noteCardsControl = 'style'; button.className = 'note-cards-style-trigger';
+        button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); const widget = entry.widget; widget.options.onCardsStyle(widget.spec.id, button); });
+        dom.append(button);
+      }
+      const styleButton = dom.querySelector('[data-note-cards-control]');
+      if (styleButton) styleButton.textContent = document.documentElement.lang === 'en' ? 'Style' : '样式';
       return true;
     }
     destroy(dom) { dom.__relatumMermaidBlock?.control.destroy(); delete dom.__relatumMermaidBlock; }
@@ -5677,7 +5705,7 @@
     const transaction = view.state.changeByRange((range) => {
       const doc = view.state.doc;
       const selected = doc.sliceString(range.from, range.to);
-      const independent = kind === 'table' || kind === 'rule' || kind === 'canvas';
+      const independent = kind === 'table' || kind === 'rule' || kind === 'canvas' || kind === 'cards';
       const from = independent ? doc.lineAt(range.to > range.from ? range.to - 1 : range.to).to : range.from;
       const to = independent ? from : range.to;
       let leading = from > 0 ? (doc.sliceString(Math.max(0, from - 2), from).endsWith('\n\n') ? ''
@@ -5687,6 +5715,7 @@
         : doc.sliceString(to, to + 1) === '\n' ? '\n' : '\n\n') : '';
       let block, offset;
       if (kind === 'canvas') { block = canvasSource; offset = block.length; }
+      else if (kind === 'cards') { block = '```cards\n### ' + (english ? 'Card title' : '卡片标题') + '\n\n```'; offset = 13; }
       else if (kind === 'table') {
         block = '|  |  |\n| --- | --- |\n|  |  |\n|  |  |'; offset = 2;
       } else if (kind === 'rule') { block = '---'; offset = block.length; }
@@ -5699,8 +5728,9 @@
         block = fence + '\n' + selected + (selected.endsWith('\n') ? '' : '\n') + fence; offset = fence.length + 1;
       }
       const contentFrom = from + leading.length + offset;
-      return { changes: { from, to, insert: leading + block + ((kind === 'table' || kind === 'canvas') && to === doc.length ? '\n\n' : trailing) },
-        range: kind === 'code-block' && selected ? EditorSelection.range(contentFrom, contentFrom + selected.length) : EditorSelection.cursor(contentFrom) };
+      return { changes: { from, to, insert: leading + block + ((kind === 'table' || kind === 'canvas' || kind === 'cards') && to === doc.length ? '\n\n' : trailing) },
+        range: kind === 'cards' ? EditorSelection.range(contentFrom, contentFrom + (english ? 10 : 4))
+          : kind === 'code-block' && selected ? EditorSelection.range(contentFrom, contentFrom + selected.length) : EditorSelection.cursor(contentFrom) };
     });
     view.dispatch(Object.assign({}, transaction, { userEvent: 'input.note-command', scrollIntoView: true }));
     return true;
@@ -6373,12 +6403,19 @@
       tableController.routeBody(run);
     };
     let mermaidOperation = 0;
-    const cancelMermaidOperation = () => { mermaidOperation++; };
+    let cardsToolsSession = null, cardsToolsRequest = 0;
+    function closeCardsTools() { cardsToolsRequest++; cardsToolsSession?.close(false); cardsToolsSession = null; }
+    const cardsLanguage = () => {
+      closeCardsTools(); host.querySelectorAll('[data-note-cards-control]').forEach(button => { button.textContent = document.documentElement.lang === 'en' ? 'Style' : '样式'; });
+    };
+    const cancelMermaidOperation = () => { mermaidOperation++; closeCardsTools(); };
     const mermaidVisibility = () => { if (document.hidden || document.documentElement.dataset.desktopMinimized === '1') cancelMermaidOperation(); };
     window.addEventListener('blur', cancelMermaidOperation);
     window.addEventListener('pagehide', cancelMermaidOperation);
     window.addEventListener('canvasdesktop:visibility', mermaidVisibility);
     document.addEventListener('visibilitychange', mermaidVisibility);
+    document.addEventListener('relatum:start-workspacechange', cancelMermaidOperation);
+    document.addEventListener('relatum:languagechange', cardsLanguage);
     function currentMermaid(id) {
       if (destroyed || sourceMode || document.hidden || document.documentElement.dataset.desktopMinimized === '1'
           || !view.dom.isConnected || host.closest('[hidden]')
@@ -6395,6 +6432,43 @@
     safeOptions.onMermaidSelect = id => routeMermaid(id, spec => {
       view.dispatch({ selection: EditorSelection.range(spec.from, spec.to), userEvent: 'select.pointer' }); view.focus();
     });
+    safeOptions.onCardsStyle = async (id, anchor) => {
+      closeCardsTools();
+      const ticket = cardsToolsRequest, spec = currentMermaid(id), doc = view.state.doc, epoch = coordinator.epoch;
+      if (spec?.kind !== 'cards') return;
+      const current = () => ticket === cardsToolsRequest && doc === view.state.doc && epoch === coordinator.epoch && anchor.isConnected && currentMermaid(id)?.source === spec.source;
+      anchor.disabled = true;
+      try {
+        await whenInputSettled();
+        const tools = await loadCardsTools();
+        if (!current()) return;
+        const container = window.MarkdownMini.noteContainerSource(spec.source), source = fencedCodeBody(container.text);
+        const starts = [0]; for (let at = source.indexOf('\n'); at >= 0; at = source.indexOf('\n', at + 1)) starts.push(at + 1);
+        function locate(position) {
+          let low = 0, high = starts.length;
+          while (low + 1 < high) { const mid = (low + high) >> 1; if (starts[mid] <= position) low = mid; else high = mid; }
+          return { offset: container.offsets[low + 1] + position - starts[low], prefix: container.prefixes[low + 1] || '' };
+        }
+        cardsToolsSession = tools.open({ source, anchor, host: host.closest('.note-workspace, .markdown-root') || host.parentElement,
+          isCurrent: current, whenSettled: whenInputSettled,
+          onClose() { cardsToolsSession = null; },
+          onApply(edits) {
+            if (!current() || inputPending()) return false;
+            const changes = edits.map(edit => { const from = locate(edit.from), to = locate(edit.to); return {
+              from: spec.from + from.offset, to: spec.from + to.offset, insert: edit.insert.replace(/\n/g, '\n' + from.prefix),
+            }; });
+            if (spec.source.length + changes.reduce((sum, change) => sum + change.insert.length - (change.to - change.from), 0) > RICH_BLOCK_LIMIT) return false;
+            if (changes.length) {
+              const changeSet = view.state.changes(changes);
+              view.dispatch({ changes: changeSet, selection: view.state.selection.map(changeSet), userEvent: 'input.cards-style', annotations: CM.isolateHistory.of('full') });
+            }
+            view.focus(); return true;
+          },
+        });
+      } catch (_) {
+        if (current()) { anchor.textContent = document.documentElement.lang === 'en' ? 'Retry style' : '重试样式'; anchor.title = document.documentElement.lang === 'en' ? 'Could not load style tools. Click to retry.' : '样式工具加载失败，点击重试。'; }
+      } finally { if (anchor.isConnected) anchor.disabled = false; }
+    };
     safeOptions.onMermaidEdit = (id, end = false) => routeMermaid(id, (spec, valid) => {
       // Unproject before resolving a native text caret inside the source.
       view.dispatch({ selection: EditorSelection.cursor(spec.from), effects: [focusEffect.of(true), mermaidEditEffect.of(spec.id)] }); view.focus();
@@ -6865,6 +6939,7 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (update.docChanged) cardsToolsSession?.check();
           if (mediaBodyTarget && update.docChanged) mediaBodyTarget.position = update.changes.mapPos(mediaBodyTarget.position, 1);
           mediaController?.sync();
           if (mathPointerScroll) {
@@ -7250,6 +7325,7 @@
     }
 
     function setDocument(documentState) {
+      closeCardsTools();
       cancelMathPointerScroll();
       imagePreviewPointer = null;
       cancelViewportRestore(view.scrollDOM);
@@ -7437,6 +7513,7 @@
     }
 
     function setSourceMode(active) {
+      closeCardsTools();
       cancelMathPointerScroll();
       cancelViewportRestore(view.scrollDOM);
       window.RelatumNoteLinkCompletion?.closeAll();
@@ -7574,6 +7651,7 @@
       }
       if (name === 'copy' || name === 'cut') return { enabled: view.state.selection.ranges.some((range) => !range.empty), checked: false };
       if (name === 'insert:canvas' && !canvasEnabled()) return { enabled: false, checked: false };
+      if (name === 'insert:cards') return { enabled: view.state.selection.ranges.length === 1 && !protectedParagraph(view.state, paragraphLines(view.state)), checked: false };
       if (name === 'insert:table' || name === 'insert:rule' || name === 'insert:canvas') {
         const ends = view.state.selection.ranges.map((range) => view.state.doc.lineAt(range.to > range.from ? range.to - 1 : range.to).to);
         return { enabled: new Set(ends).size === ends.length, checked: false };
@@ -7624,6 +7702,10 @@
       if (done) {
         view.focus();
         if (name === 'insert:table' && !sourceMode && tableController) tableController.editAtSelection(view);
+        if (name === 'insert:cards' && !sourceMode) {
+          const at = view.state.selection.main.from, spec = view.state.field(blockField, false)?.specs.find(item => item.kind === 'cards' && item.from <= at && item.to >= at);
+          if (spec) view.dispatch({ effects: [focusEffect.of(true), mermaidEditEffect.of(spec.id)] });
+        }
       }
       return !!done;
     }
@@ -7803,6 +7885,7 @@
       destroy() {
         cancelMathPointerScroll();
         cancelViewportRestore(view.scrollDOM);
+        closeCardsTools();
         destroyed = true;
         imagePreviewPointer = null;
         view.dom.removeEventListener('pointerdown', rememberPreviewImage, true);
@@ -7822,6 +7905,8 @@
         window.removeEventListener('pagehide', cancelMermaidOperation);
         window.removeEventListener('canvasdesktop:visibility', mermaidVisibility);
         document.removeEventListener('visibilitychange', mermaidVisibility);
+        document.removeEventListener('relatum:start-workspacechange', cancelMermaidOperation);
+        document.removeEventListener('relatum:languagechange', cardsLanguage);
         host.classList.remove('is-composing', 'has-image-selection', 'has-mermaid-selection', 'is-image-text-mode');
         coordinator.epoch += 1;
         view.destroy();

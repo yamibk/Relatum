@@ -82,6 +82,62 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
       matrix.push({skin,theme,width,scale,...layout,tints});
     }
     await page.setViewportSize({width:1500,height:1000}); await page.evaluate(()=>{document.documentElement.dataset.noteTheme='default';document.body.dataset.startTheme='light';document.body.style.setProperty('--note-font-scale',1);}); await reset();
+    assert(!requests.some(url => /note-cards-tools\.(js|css)/.test(url)), 'style tools are not loaded by rendering cards');
+    const richBody = '@style: outline\n@columns: 3\n\n##[book][!Purple]信息卡\n@subtitle: 第三章 · 知识摘要\n@badge: 待复习\n@value: 3 个核心概念\n@footer: 来源：[课程资料](https://example.com)\n\n正文 **重点**';
+    const richFence = '```cards\n' + richBody + '\n```';
+    for (const skin of ['default','claude','sky','apple']) for (const theme of ['light','dark']) for (const width of [1500, 700]) {
+      await page.setViewportSize({width,height:1000}); await page.evaluate(([skin,theme]) => { document.documentElement.dataset.noteTheme=skin; document.body.dataset.startTheme=theme; }, [skin,theme]);
+      await reset(richFence); await group().waitFor();
+      const box = await group().evaluate(root => { const grid = root.querySelector('.note-cards-grid').getBoundingClientRect(), card = root.querySelector('.note-card').getBoundingClientRect(); return { grid: grid.width, card: card.width, overflow: root.scrollWidth > root.clientWidth + 1 }; });
+      assert(Math.abs(box.grid-box.card)<1, 'a single information card fills the available width even with columns=3'); assert(!box.overflow);
+      for (const selector of ['.note-card-subtitle','.note-card-badge','.note-card-value','.note-card-footer']) assert(await group().locator(selector).isVisible());
+    }
+    await page.setViewportSize({width:1500,height:1000}); await page.evaluate(()=>{document.documentElement.dataset.noteTheme='default';document.body.dataset.startTheme='light';});
+    await reset(richFence); await group().locator('.note-card').screenshot({path:path.join(output,'information-card-light.png')});
+    await page.evaluate(()=>document.body.dataset.startTheme='dark'); await settle(); await group().locator('.note-card').screenshot({path:path.join(output,'information-card-dark.png')}); await page.evaluate(()=>document.body.dataset.startTheme='light');
+    for (const width of [1000, 800, 720, 719, 560, 559, 400]) for (const count of [1,2,3,4,5,6]) {
+      await reset('```cards\n@columns: 3\n@density: compact\n' + Array.from({length:count},(_,i)=>'# '+(i+1)+'\n'+(i===2?'@span: full\n':'')+'内容').join('\n')+'\n```');
+      await page.evaluate(width => document.querySelector('.note-cards').style.width=width+'px',width); await settle();
+      const geometry = await group().evaluate(root => { const host=root.querySelector('.note-cards'),grid=host.firstElementChild,cards=[...grid.querySelectorAll('.note-card')]; return { width:host.clientWidth, columns:getComputedStyle(grid).gridTemplateColumns.split(' ').length,padding:getComputedStyle(cards[0]).paddingTop, full:cards[2]?.getBoundingClientRect().width, grid:grid.clientWidth }; });
+      assert.equal(geometry.columns,count===1?1:geometry.width>=720?3:geometry.width>=560?2:1);
+      assert.equal(geometry.padding,'12px'); if(count>=3) assert(Math.abs(geometry.full-geometry.grid)<1,'explicit span fills its row: '+JSON.stringify({count,width,...geometry}));
+    }
+    await page.evaluate(()=>document.querySelector('.note-workspace').style.width='');
+    await reset('# before\n\n```cards\n# Good\n正文\n# Bad\n![x](a.png)\n# Other\n@oops: unknown\n正文\n```');
+    assert.equal(await group().locator('.note-card').count(),2); assert.equal(await group().locator('.note-card-notice').count(),2);
+    await reset(source);
+    async function openStyle() { await group().locator('.note-card-title').first().click(); await group().locator('[data-note-cards-control]').click(); await page.locator('dialog.note-cards-tools').waitFor(); }
+    async function choose(key, value) { await page.locator('dialog [data-cards-field="'+key+'"]').evaluate((select,value)=>{select.value=value;select.dispatchEvent(new Event('change',{bubbles:true}));},value); }
+    const styleDialog = () => page.locator('dialog.note-cards-tools');
+    await openStyle(); await styleDialog().getByRole('combobox',{name:'样式',exact:true}).click(); await styleDialog().getByRole('option',{name:'顶部色带',exact:true}).click();
+    await page.screenshot({path:path.join(output,'cards-style-tools.png')});
+    await styleDialog().getByRole('button',{name:'取消',exact:true}).click(); assert.equal(await value(),source,'cancel discards the draft');
+    await openStyle(); await styleDialog().getByRole('combobox',{name:'样式',exact:true}).press('ArrowDown'); await page.keyboard.press('Escape'); assert(await styleDialog().isVisible(),'Escape closes the dropdown first'); await page.keyboard.press('Escape'); await styleDialog().waitFor({state:'detached'});
+    await openStyle(); await choose('style','outline'); await choose('columns','3'); await choose('target','0'); await choose('color','rose'); await choose('span','full');
+    await styleDialog().locator('[data-cards-field="subtitle"]').fill('章节摘要'); await styleDialog().locator('[data-cards-field="badge"]').fill('重点');
+    await choose('target','1'); await styleDialog().locator('[data-cards-field="value"]').fill('3/5');
+    await styleDialog().getByRole('button',{name:'应用',exact:true}).click(); await styleDialog().waitFor({state:'detached'}); await group().waitFor();
+    assert.equal(await group().locator('.note-card').first().getAttribute('data-style'),'outline'); assert.equal(await group().locator('.note-card').first().getAttribute('data-note-card-color'),'rose');
+    assert.equal(await group().locator('.note-card-subtitle').textContent(),'章节摘要'); assert.equal(await group().locator('.note-card-value').textContent(),'3/5');
+    assert((await value()).includes('减少**转换损耗**，优化电力分配。'),'style changes preserve body text');
+    await page.locator('.cm-line').filter({hasText:/^after$/}).click(); assert.equal(await page.evaluate(()=>editor.view.state.doc.lineAt(editor.view.state.selection.main.head).text),'after','style height changes preserve the following caret position');
+    await page.keyboard.press('Control+z'); await group().waitFor(); assert.equal(await value(),source,'all targets apply in one undo step');
+    await openStyle(); await choose('target','0'); const subtitleInput = styleDialog().locator('[data-cards-field="subtitle"]'); await subtitleInput.focus();
+    const toolsCdp=await context.newCDPSession(page); await toolsCdp.send('Input.imeSetComposition',{text:'zhong',selectionStart:5,selectionEnd:5});
+    await page.evaluate(()=>document.querySelector('dialog form').requestSubmit()); assert.equal(await value(),source,'applying while composing does not save preedit');
+    await toolsCdp.send('Input.insertText',{text:'中文摘要'}); await styleDialog().waitFor({state:'detached'}); assert((await value()).includes('@subtitle: 中文摘要'));
+    await reset(source); await openStyle(); await page.evaluate(()=>editor.setDocument({value:'new note',notePath:'new.md'})); await styleDialog().waitFor({state:'detached'}); assert.equal(await value(),'new note');
+    await reset(source); await openStyle(); await page.evaluate(()=>{document.documentElement.dataset.desktopMinimized='1';window.dispatchEvent(new Event('canvasdesktop:visibility'));}); await styleDialog().waitFor({state:'detached'});
+    await page.evaluate(()=>{document.documentElement.dataset.desktopMinimized='0';window.dispatchEvent(new Event('canvasdesktop:visibility'));});
+    const nested = '> [!note]\n>\n> ```cards\n> ##[book][!Purple]卡片\n> 正文\n> ```';
+    await reset(nested); await openStyle(); await choose('style','outline'); await choose('target','0'); await styleDialog().locator('[data-cards-field="badge"]').fill('重点');
+    await styleDialog().getByRole('button',{name:'应用',exact:true}).click(); await styleDialog().waitFor({state:'detached'});
+    assert((await value()).includes('> @style: outline\n> ##[book][!Purple]卡片\n> @badge: 重点\n> 正文'),'style edits preserve quote prefixes');
+    await page.keyboard.press('Control+z'); assert.equal(await value(),nested);
+    await reset('before\n\nafter'); await page.locator('.cm-line').filter({hasText:/^after$/}).click();
+    await page.evaluate(()=>editor.executeCommand('insert:cards',editor.commandContext())); await preview().waitFor();
+    assert((await value()).includes('```cards\n### 卡片标题')); await page.keyboard.press('Escape'); await group().waitFor();
+    await reset(source);
     await page.setViewportSize({width:700,height:1000});await settle();await page.locator('.cm-line').filter({hasText:/^after$/}).click();assert.equal(await page.evaluate(()=>editor.view.state.doc.lineAt(editor.view.state.selection.main.head).text),'after');await page.setViewportSize({width:1500,height:1000});await settle();
     await group().locator('a').click(); assert.equal(await page.evaluate(()=>window.opened),'https://example.com');
     await group().locator('.note-card-title').first().click();
@@ -122,6 +178,10 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
       const copied = await page.evaluate(() => navigator.clipboard.readText());
       assert(copied.includes('[book] [!purple]')); assert(copied.includes('[!rose]'));
       assert.equal(await page.locator('#guide [data-note-card-color]').count(), 4);
+      assert(await page.locator('#guide .note-card-value').first().isVisible());
+      const layoutExample = page.locator('#guide .note-guide-example').nth(3);
+      assert.equal(await layoutExample.locator('.note-card').count(),4);
+      assert.equal(await layoutExample.locator('.note-card:not([data-span="full"])').count(),3,'layout example has three ordinary cards before its full-width summary');
     }
     await reset(source.replace('减少**转换损耗**','公式 $I=U/R$ 与**转换损耗**')); await group().locator('mjx-container').waitFor();
     await page.evaluate(()=>document.querySelector('.note-workspace').style.width='700px');await settle();await page.locator('.cm-line').filter({hasText:/^after$/}).click();assert.equal(await page.evaluate(()=>editor.view.state.doc.lineAt(editor.view.state.selection.main.head).text),'after');await page.evaluate(()=>document.querySelector('.note-workspace').style.width='');await settle();
@@ -134,8 +194,24 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
     await page.evaluate(text=>{document.getElementById('editor').hidden=true;const root=document.getElementById('reading');root.hidden=false;RelatumNoteLiveEditor.renderMarkdown(root,'> [!white]- 折叠卡片\n>\n'+text.split('\n').map(line=>'> '+line).join('\n'),'folded.md',{});},fence.replace('减少','公式 $x$ 减少'));await settle();assert.equal(await page.locator('#reading mjx-container').count(),0);await page.locator('#reading .note-callout-fold').click();await page.locator('#reading .note-cards mjx-container').waitFor();await page.evaluate(()=>RelatumNoteLiveEditor.releaseReadingDocument(document.getElementById('reading')));
     await reset(source);await page.evaluate(()=>{window.lateResolve=null;window.MathJax={typesetPromise:()=>new Promise(resolve=>window.lateResolve=resolve),typesetClear:()=>{}};});
     await reset(source.replace('减少','公式 $x$ 减少'));await page.waitForFunction(()=>!!window.lateResolve);await reset('new document');await page.evaluate(()=>lateResolve());await settle();assert.equal(await value(),'new document');assert.equal(await page.locator('#editor .note-cards').count(),0,'late math cannot restore the old document');
+    for (const mode of ['stale', 'retry']) {
+      const fresh = await context.newPage(); fresh.on('pageerror', error => errors.push(error.message));
+      let release, started; const gate = new Promise(resolve => { release = resolve; }), requested = new Promise(resolve => { started = resolve; }); let attempts = 0;
+      await fresh.route('**/note-cards-tools.js', async route => { attempts++; started(); if (mode === 'stale') { await gate; await route.continue(); } else if (attempts === 1) await route.abort(); else await route.continue(); });
+      await fresh.goto(origin); await fresh.evaluate(text=>editor.setDocument({value:text,notePath:'late.md'}), source);
+      await fresh.locator('.note-card-title').first().click(); await fresh.locator('[data-note-cards-control]').click(); await requested;
+      if (mode === 'stale') {
+        await fresh.evaluate(()=>{window.dispatchEvent(new Event('pagehide'));window.dispatchEvent(new Event('pageshow'));}); release();
+        await fresh.waitForFunction(()=>!!window.RelatumNoteCardsTools); assert.equal(await fresh.locator('dialog.note-cards-tools').count(),0,'late tools cannot reopen after leaving');
+      } else {
+        await fresh.getByRole('button',{name:'重试样式',exact:true}).waitFor(); await fresh.locator('[data-note-cards-control]').click(); await fresh.locator('dialog.note-cards-tools').waitFor();
+        await fresh.evaluate(()=>editor.view.dispatch({changes:{from:editor.view.state.doc.length,insert:' changed'}}));
+        assert.equal(await fresh.locator('dialog.note-cards-tools').count(),0,'document changes invalidate the style draft');
+      }
+      await fresh.close();
+    }
     assert.deepEqual(errors,[]); assert(!requests.some(url=>!url.startsWith(origin)), 'no outgoing requests');
-    fs.writeFileSync(path.join(output,'validation.json'),JSON.stringify({matrix,checks:['palette/theme/tint-edit/selection/edit/clipboard/history/IME/source/reading/bilingual-guide/search/boundaries/math/reopen/stale'],errors},null,2));
+    fs.writeFileSync(path.join(output,'validation.json'),JSON.stringify({matrix,informationMatrix:16,layoutCases:42,checks:['palette/theme/tint-edit/selection/edit/clipboard/history/IME/source/reading/bilingual-guide/search/boundaries/math/reopen/stale','single-full-width/columns/span/density/information/partial-fallback','lazy-tools/dropdown/keyboard/cancel/multiple-targets/one-undo/composition/lifecycle/quote-prefix/insert/style-height'],errors},null,2));
     console.log('note cards browser: ok; '+output);
   } finally { await browser?.close(); await new Promise(resolve=>server.close(resolve)); }
 })().catch(error=>{console.error(error);process.exitCode=1;});

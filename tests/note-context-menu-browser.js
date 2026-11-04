@@ -112,12 +112,12 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
       await page.keyboard.press('Escape');
       assert.equal(await value(), protectedText);
     }
-    for (const kind of ['table', 'callout', 'rule', 'code-block', 'math']) {
+    for (const kind of ['table', 'callout', 'cards', 'rule', 'code-block', 'math']) {
       await set('selected\nend', 0, 8);
       await command('insert', kind);
       const changed = await value();
       assert(changed.includes('selected'), `${kind} preserves selected words`);
-      assert(changed.includes({ table: '| --- | --- |', callout: '> [!note]', rule: '\n---', 'code-block': '```', math: '$$' }[kind]));
+      assert(changed.includes({ table: '| --- | --- |', callout: '> [!note]', cards: '```cards\n### 卡片标题', rule: '\n---', 'code-block': '```', math: '$$' }[kind]));
       await content.press('Control+z');
       assert.equal(await value(), 'selected\nend');
     }
@@ -223,17 +223,19 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(await page.locator('[data-role="note-editor-fallback"]').inputValue(), '');
     assert(await page.evaluate(async () => {
       const previousMath = window.MathJax, host = document.createElement('div'), cleared = [];
-      let finish, content;
+      let finish, content, signalStarted, deadline;
+      const started = new Promise(resolve => { signalStarted = resolve; });
       document.body.appendChild(host);
-      window.MathJax = { typesetPromise(nodes) { content = nodes[0]; return new Promise(resolve => { finish = resolve; }); },
+      window.MathJax = { typesetPromise(nodes) { content = nodes[0]; return new Promise(resolve => { finish = resolve; signalStarted(); }); },
         typesetClear(nodes) { cleared.push(...nodes); } };
       try {
         RelatumNoteLiveEditor.renderMarkdown(host, '$$x^2$$', 'Main.md');
-        await Promise.resolve();
+        // Input settling may cross rendering frames; wait for the work being tested.
+        await Promise.race([started, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('Reading math did not start')), 5000); })]);
         RelatumNoteLiveEditor.releaseReadingDocument(host);
         finish(); await Promise.resolve(); await Promise.resolve();
         return !host.firstChild && cleared.includes(content);
-      } finally { window.MathJax = previousMath; host.remove(); }
+      } finally { clearTimeout(deadline); window.MathJax = previousMath; host.remove(); }
     }), 'formula records finishing after reading was released must also be cleared');
 
     // Chinese, astral characters, joiners and image annotations retain the old counting rules.

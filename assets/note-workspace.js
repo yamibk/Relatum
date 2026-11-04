@@ -4412,7 +4412,7 @@
     bullet: ['无序列表', 'Bulleted list'], ordered: ['有序列表', 'Numbered list'], task: ['任务列表', 'Task list'],
     body: ['正文', 'Normal text'], quote: ['引用', 'Quote'], table: ['表格', 'Table'], callout: ['标注', 'Callout'],
     rule: ['分隔线', 'Horizontal rule'], 'code-block': ['代码块', 'Code block'], math: ['数学块', 'Math block'],
-    canvas: ['画布', 'Canvas'],
+    canvas: ['画布', 'Canvas'], cards: ['Cards', 'Cards'],
     cut: ['剪切', 'Cut'], copy: ['复制', 'Copy'], paste: ['粘贴', 'Paste'], 'paste-plain': ['以纯文本形式粘贴', 'Paste as plain text'],
     'select-all': ['全选', 'Select all'], paragraph: ['段落设置', 'Paragraph'], insert: ['插入', 'Insert'],
     'highlight-color': ['高亮颜色', 'Highlight color'],
@@ -4876,7 +4876,7 @@
     const paragraph = parent.dataset.noteSubmenu === 'paragraph';
     const highlight = parent.dataset.noteSubmenu === 'highlight-color';
     const commands = paragraph ? ['bullet', 'ordered', 'task', 'heading-1', 'heading-2', 'heading-3', 'heading-4', 'heading-5', 'heading-6', 'body', 'quote']
-      : ['table', 'callout', 'rule', 'code-block', 'math'];
+      : ['table', 'callout', 'cards', 'rule', 'code-block', 'math'];
     if (!paragraph && !highlight && canvasEnabled()) commands.splice(3, 0, 'canvas');
     const submenu = document.createElement('div'); submenu.className = 'note-context-menu note-context-submenu';
     submenu.setAttribute('role', 'menu'); submenu.setAttribute('aria-label', parent.textContent);

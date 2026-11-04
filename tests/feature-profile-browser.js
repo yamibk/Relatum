@@ -121,6 +121,20 @@ const cases = [
             assert(requests.some(url => url.endsWith('/note-cards.js')));
             assert(requests.some(url => url.endsWith('/note-cards.css')));
             assert(!requests.some(url => /note-mermaid|note-quiz|mathjax/.test(url)), 'plain cards do not load optional runtimes');
+            assert(!requests.some(url => /note-cards-tools/.test(url)), 'cards authoring tools load only when requested');
+            const original = fs.readFileSync(path.join(root, 'notes', 'Diagram.md'), 'utf8');
+            await page.locator('.note-cards-block .note-card-title').click(); await page.locator('[data-note-cards-control]').click();
+            const tools = page.locator('dialog.note-cards-tools'); await tools.waitFor();
+            await tools.getByRole('combobox', { name: '样式', exact: true }).click(); await tools.getByRole('option', { name: '简洁描边', exact: true }).click();
+            await tools.locator('[data-cards-field="target"]').evaluate(select => { select.value = '0'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+            await tools.locator('[data-cards-field="badge"]').fill('重点'); await tools.getByRole('button', { name: '应用', exact: true }).click(); await tools.waitFor({ state: 'detached' });
+            await page.waitForSelector('.note-card-badge'); assert.equal(await page.locator('.note-card').getAttribute('data-style'), 'outline');
+            await page.keyboard.press('Control+s');
+            for (let i = 0; i < 100 && !fs.readFileSync(path.join(root, 'notes', 'Diagram.md'), 'utf8').includes('@badge: 重点'); i++) await sleep(50);
+            assert(fs.readFileSync(path.join(root, 'notes', 'Diagram.md'), 'utf8').includes('@style: outline'), 'tool changes save as Markdown');
+            await page.keyboard.press('Control+z'); await page.keyboard.press('Control+s');
+            for (let i = 0; i < 100 && fs.readFileSync(path.join(root, 'notes', 'Diagram.md'), 'utf8') !== original; i++) await sleep(50);
+            assert.equal(fs.readFileSync(path.join(root, 'notes', 'Diagram.md'), 'utf8'), original, 'one undo restores the original disk document');
           } else if (quizFixture) {
             if (enabled('notes.quiz')) { await page.waitForSelector('.note-live-rich-block.is-quiz .note-quiz'); await page.locator('.note-quiz [data-quiz-option="1"]').click(); assert.equal(await page.locator('.note-quiz').getAttribute('data-quiz-state'), 'correct'); }
             else { assert.equal(await page.locator('.note-quiz').count(), 0); assert(!requests.some(url => url.includes('note-quiz')), 'disabled quizzes stay cold'); }

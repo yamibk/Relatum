@@ -338,6 +338,8 @@
         "note-live-editor.js",
         "note-cards.js",
         "note-cards.css",
+        "note-cards-tools.js",
+        "note-cards-tools.css",
         "note-media-frame.js",
         "note-media.js",
         "note-media.css",

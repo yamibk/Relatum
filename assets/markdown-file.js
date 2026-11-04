@@ -179,7 +179,7 @@
   function openContextMenu(request) {
     menu.hidden = true; contextMenu.replaceChildren();
     for (const [command, zh, en] of [['copy', '复制', 'Copy'], ['cut', '剪切', 'Cut'], ['paste', '粘贴', 'Paste'], ['select-all', '全选', 'Select all'],
-      ['bold', '加粗', 'Bold'], ['italic', '斜体', 'Italic'], ['highlight', '高亮', 'Highlight'], ['insert:table', '插入表格', 'Insert table']]) {
+      ['bold', '加粗', 'Bold'], ['italic', '斜体', 'Italic'], ['highlight', '高亮', 'Highlight'], ['insert:table', '插入表格', 'Insert table'], ['insert:cards', '插入 Cards', 'Insert Cards']]) {
       const button = document.createElement('button'); button.type = 'button'; button.textContent = text(zh, en);
       button.disabled = !editor.queryCommand(command, request.context).enabled;
       button.addEventListener('click', async () => {

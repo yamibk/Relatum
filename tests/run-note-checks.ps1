@@ -14,6 +14,8 @@ if ($Browser) {
     if ($LASTEXITCODE -ne 0) { throw 'Link completion browser checks failed.' }
     & $Node (Join-Path $PSScriptRoot 'note-cards-browser.js')
     if ($LASTEXITCODE -ne 0) { throw 'Cards browser checks failed.' }
+    & $Node (Join-Path $PSScriptRoot 'note-cards-markdown-browser.js')
+    if ($LASTEXITCODE -ne 0) { throw 'Cards standalone Markdown checks failed.' }
     & $Node (Join-Path $PSScriptRoot 'note-scroll-preparation-browser.js')
     if ($LASTEXITCODE -ne 0) { throw 'Long note scroll preparation checks failed.' }
     & $Node (Join-Path $PSScriptRoot 'note-scroll-scan-browser.js') --quick
