@@ -136,6 +136,36 @@ const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><bas
     await page.evaluate(() => { document.body.classList.add('markdown-window'); document.querySelector('main').classList.add('markdown-root'); });
     await load(source); await page.locator('#editor .note-media-body').click({ position: { x: 15, y: 10 } }); await input().waitFor(); await input().press('Control+End'); await input().press('Enter'); await input().pressSequentially('file window'); await settle(); assert((await value()).includes('> - file window'));
     const standalone = await input().evaluate(dom => ({ content: dom.clientHeight, scroll: dom.parentElement.getBoundingClientRect().height })); assert(Math.abs(standalone.content - standalone.scroll) <= 2); assert.deepEqual(errors, []);
+    // The source spec survives viewport eviction. A pending formula must still
+    // lose its mounted identity, even when the same block is mounted again.
+    await page.evaluate(() => {
+      editor.destroy();
+      const media = RelatumNoteMedia; window.pendingMediaMath = [];
+      window.RelatumNoteMedia = { ...media, createController(options) {
+        options.typesetMedia = (body, current) => new Promise(resolve => pendingMediaMath.push({ body, current, resolve }));
+        return media.createController(options);
+      } };
+      try {
+        window.editor = RelatumNoteLiveEditor.create(document.getElementById('editor'), { value: '> [!media]\n> ![测试|200](image.svg)\n>\n> Formula $x^2$\n\n' + 'ordinary paragraph with some words\n\n'.repeat(2000), notePath: 'eviction.md', imageUrl: () => '/image.svg' });
+      } finally { window.RelatumNoteMedia = media; }
+      window.evictedMedia = document.querySelector('#editor .note-media').__noteMedia;
+      if (!pendingMediaMath[0]?.current()) throw Error('Mounted formula should be current');
+      const view = editor.view;
+      view.dispatch({ selection: RelatumCodeMirror.EditorSelection.cursor(view.state.doc.length), effects: RelatumCodeMirror.EditorView.scrollIntoView(view.state.doc.length, { y: 'end' }) });
+    });
+    await page.waitForFunction(() => !document.querySelector('#editor .note-media'));
+    assert.equal(await page.evaluate(() => pendingMediaMath[0].current()), false, 'viewport eviction invalidates pending formula work without changing the document');
+    await page.evaluate(() => {
+      const view = editor.view;
+      view.dispatch({ selection: RelatumCodeMirror.EditorSelection.cursor(0), effects: RelatumCodeMirror.EditorView.scrollIntoView(0, { y: 'start' }) });
+    });
+    await page.waitForFunction(() => pendingMediaMath.length >= 2 && document.querySelector('#editor .note-media'));
+    assert.equal(await page.evaluate(() => pendingMediaMath[0].current()), false, 'remounting cannot revive the old surface');
+    assert.equal(await page.evaluate(() => pendingMediaMath.at(-1).current()), true);
+    await page.evaluate(() => { evictedMedia.destroy(); pendingMediaMath[0].resolve(true); }); await settle();
+    assert.equal(await page.evaluate(() => document.querySelector('#editor .note-media').__noteMedia !== evictedMedia), true);
+    await page.evaluate(() => { editor.destroy(); pendingMediaMath.forEach(slot => slot.resolve(false)); }); await settle();
+    assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(output, 'validation.json'), JSON.stringify({ matrix, performanceChecks, errors }, null, 2)); console.log('note media browser: ok ' + output);
   } catch (error) {
     if (page) { await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {}); fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: error.stack, errors, state: await page.evaluate(() => ({ value: window.editor?.snapshot().value, html: document.getElementById('editor')?.innerHTML })).catch(() => null) }, null, 2)); }

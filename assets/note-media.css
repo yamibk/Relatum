@@ -1,3 +1,7 @@
+.note-live-media-block {
+  width: 100%; box-sizing: border-box; margin: 0; padding: 12px 0;
+}
+.note-live-media-block > .note-media { margin: 0; }
 .note-media {
   display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px;
   width: 100%; box-sizing: border-box; padding: 12px; margin: 12px 0;

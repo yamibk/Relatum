@@ -94,8 +94,8 @@
     class MediaWidget extends CM.WidgetType {
       constructor(spec, notePath, coordinator) { super(); Object.assign(this, { spec, notePath, coordinator, epoch: coordinator.epoch }); }
       eq(other) { return this.spec.id === other.spec.id && this.spec.source === other.spec.source && this.spec.from === other.spec.from && this.epoch === other.epoch && this.notePath === other.notePath; }
-      get estimatedHeight() { return 180; }
-      toDOM(view) { const surface = new Surface(this, view); return surface.root; }
+      get estimatedHeight() { return 204; }
+      toDOM(view) { const surface = new Surface(this, view); return surface.dom; }
       updateDOM(root) { const surface = root.__noteMedia; if (!surface || surface.widget.epoch !== this.epoch || surface.widget.spec.id !== this.spec.id) return false; surface.widget = this; surface.sync(); return true; }
       destroy(root) { root.__noteMedia?.destroy(); }
       ignoreEvent(event) { return event.type !== 'contextmenu'; }
@@ -103,8 +103,12 @@
     class Surface {
       constructor(widget, view) {
         ensureStyle();
-        Object.assign(this, { widget, view, input: null, phase: 'idle', waiters: [], sequence: 0, syncing: false });
+        Object.assign(this, { widget, view, input: null, phase: 'idle', waiters: [], sequence: 0, syncing: false, destroyed: false });
+        // CodeMirror measures the widget's border box, excluding margins.
+        // Keep the visual frame inside a measured host that owns its spacing.
+        this.dom = document.createElement('div'); this.dom.className = 'note-live-media-block'; this.dom.__noteMedia = this;
         this.root = document.createElement('div'); this.root.className = 'note-live-rich-block note-media'; this.root.dataset.noteMedia = ''; this.root.__noteMedia = this;
+        this.dom.append(this.root);
         this.imageHost = document.createElement('div'); this.imageHost.className = 'note-media-image';
         this.body = document.createElement('div'); this.body.className = 'note-media-body'; this.body.tabIndex = 0; this.body.setAttribute('aria-label', label());
         this.root.append(this.imageHost, this.body); surfaces.add(this); this.sync(); controller.revealMounted();
@@ -132,7 +136,7 @@
         this.observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (this.current()) this.measure(); }) : null;
         this.observer?.observe(this.root);
       }
-      current() { if (disposed || this.widget.epoch !== this.widget.coordinator.epoch) return null; return this.widget.coordinator.spec(this.view, this.widget.spec.id); }
+      current() { if (this.destroyed || disposed || this.widget.epoch !== this.widget.coordinator.epoch) return null; return this.widget.coordinator.spec(this.view, this.widget.spec.id); }
       pending() { return this.phase !== 'idle' || !!(this.input?.composing || this.input?.compositionStarted); }
       whenSettled() { return this.pending() ? new Promise(resolve => this.waiters.push(resolve)) : Promise.resolve(true); }
       route(run, valid = () => true) {
@@ -343,12 +347,15 @@
         if (active === this) { active = null; options.mediaEditing(false); } if (this.current()) this.preview(); this.measure();
       }
       destroy() {
+        if (this.destroyed) return;
+        this.destroyed = true;
         if (placement?.surface === this) cancelPlacement();
         this.sequence++; clearTimeout(this.timer); this.observer?.disconnect();
         this.imageOwner?.imageCleanup?.(); options.releaseMediaBody(this.body);
         if (this.input) { const input = this.input; this.input = null; input.destroy(); }
         this.waiters.splice(0).forEach(resolve => resolve(false)); surfaces.delete(this); if (active === this) { active = null; options.mediaEditing(false); }
         delete this.root.__noteMedia;
+        delete this.dom.__noteMedia;
       }
     }
     return controller;
