@@ -109,7 +109,18 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
     async function openStyle() { await group().locator('.note-card-title').first().click(); await group().locator('[data-note-cards-control]').click(); await page.locator('dialog.note-cards-tools').waitFor(); }
     async function choose(key, value) { await page.locator('dialog [data-cards-field="'+key+'"]').evaluate((select,value)=>{select.value=value;select.dispatchEvent(new Event('change',{bubbles:true}));},value); }
     const styleDialog = () => page.locator('dialog.note-cards-tools');
-    await openStyle(); await styleDialog().getByRole('combobox',{name:'样式',exact:true}).click(); await styleDialog().getByRole('option',{name:'顶部色带',exact:true}).click();
+    await reset(richFence); await openStyle();
+    assert.equal(await styleDialog().locator('[data-cards-field="target"]').inputValue(),'0','a single card is the initial editing target');
+    assert(await styleDialog().getByRole('combobox',{name:'颜色',exact:true}).isVisible()); assert(await styleDialog().locator('[data-cards-field="subtitle"]').isVisible());
+    assert.equal(await value(),richFence,'opening a single-card style panel leaves Markdown unchanged');
+    await styleDialog().locator('[data-cards-field="badge"]').fill('草稿'); await choose('target','group');
+    assert(await styleDialog().getByRole('combobox',{name:'间距',exact:true}).isVisible(),'single cards can still edit group spacing');
+    await styleDialog().getByRole('button',{name:'取消',exact:true}).click(); assert.equal(await value(),richFence);
+    await openStyle(); assert.equal(await styleDialog().locator('[data-cards-field="target"]').inputValue(),'0','reopening recomputes the target instead of remembering the group');
+    assert.equal(await styleDialog().locator('[data-cards-field="badge"]').inputValue(),'待复习','cancel discards the single-card draft');
+    await styleDialog().getByRole('button',{name:'取消',exact:true}).click(); await reset(source);
+    await openStyle(); assert.equal(await styleDialog().locator('[data-cards-field="target"]').inputValue(),'group','multiple cards default to the entire group');
+    await styleDialog().getByRole('combobox',{name:'样式',exact:true}).click(); await styleDialog().getByRole('option',{name:'顶部色带',exact:true}).click();
     await page.screenshot({path:path.join(output,'cards-style-tools.png')});
     await styleDialog().getByRole('button',{name:'取消',exact:true}).click(); assert.equal(await value(),source,'cancel discards the draft');
     await openStyle(); await styleDialog().getByRole('combobox',{name:'样式',exact:true}).press('ArrowDown'); await page.keyboard.press('Escape'); assert(await styleDialog().isVisible(),'Escape closes the dropdown first'); await page.keyboard.press('Escape'); await styleDialog().waitFor({state:'detached'});
@@ -130,7 +141,7 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
     await reset(source); await openStyle(); await page.evaluate(()=>{document.documentElement.dataset.desktopMinimized='1';window.dispatchEvent(new Event('canvasdesktop:visibility'));}); await styleDialog().waitFor({state:'detached'});
     await page.evaluate(()=>{document.documentElement.dataset.desktopMinimized='0';window.dispatchEvent(new Event('canvasdesktop:visibility'));});
     const nested = '> [!note]\n>\n> ```cards\n> ##[book][!Purple]卡片\n> 正文\n> ```';
-    await reset(nested); await openStyle(); await choose('style','outline'); await choose('target','0'); await styleDialog().locator('[data-cards-field="badge"]').fill('重点');
+    await reset(nested); await openStyle(); await choose('target','group'); await choose('style','outline'); await choose('target','0'); await styleDialog().locator('[data-cards-field="badge"]').fill('重点');
     await styleDialog().getByRole('button',{name:'应用',exact:true}).click(); await styleDialog().waitFor({state:'detached'});
     assert((await value()).includes('> @style: outline\n> ##[book][!Purple]卡片\n> @badge: 重点\n> 正文'),'style edits preserve quote prefixes');
     await page.keyboard.press('Control+z'); assert.equal(await value(),nested);

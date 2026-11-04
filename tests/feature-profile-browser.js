@@ -125,8 +125,8 @@ const cases = [
             const original = fs.readFileSync(path.join(root, 'notes', 'Diagram.md'), 'utf8');
             await page.locator('.note-cards-block .note-card-title').click(); await page.locator('[data-note-cards-control]').click();
             const tools = page.locator('dialog.note-cards-tools'); await tools.waitFor();
+            assert.equal(await tools.locator('[data-cards-field="target"]').inputValue(), '0', 'a single card opens its settings directly in the real workspace');
             await tools.getByRole('combobox', { name: '样式', exact: true }).click(); await tools.getByRole('option', { name: '简洁描边', exact: true }).click();
-            await tools.locator('[data-cards-field="target"]').evaluate(select => { select.value = '0'; select.dispatchEvent(new Event('change', { bubbles: true })); });
             await tools.locator('[data-cards-field="badge"]').fill('重点'); await tools.getByRole('button', { name: '应用', exact: true }).click(); await tools.waitFor({ state: 'detached' });
             await page.waitForSelector('.note-card-badge'); assert.equal(await page.locator('.note-card').getAttribute('data-style'), 'outline');
             await page.keyboard.press('Control+s');

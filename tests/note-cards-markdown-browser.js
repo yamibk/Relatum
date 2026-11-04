@@ -39,10 +39,11 @@ const source = '# 文档\n\n```cards\n@style: outline\n##[book][!Purple]整理�
       assert(!requests.some(url => url.includes('note-cards-tools')), 'standalone tools stay cold until clicked');
       await page.locator('.note-card-title').click(); await page.locator('[data-note-cards-control]').click();
       const dialog = page.locator('dialog.note-cards-tools'); await dialog.waitFor();
+      assert.equal(await dialog.locator('[data-cards-field="target"]').inputValue(), '0', 'standalone single cards open directly in card settings');
+      assert(await dialog.locator('[data-cards-field="value"]').isVisible());
       assert.deepEqual(await dialog.evaluate(node => [getComputedStyle(node).backgroundColor, getComputedStyle(node).color]), dark ? ['rgb(0, 0, 0)', 'rgb(255, 255, 255)'] : ['rgb(255, 255, 255)', 'rgb(0, 0, 0)']);
       await dialog.getByRole('combobox', { name: language === 'en' ? 'Style' : '样式', exact: true }).click();
       await dialog.getByRole('option', { name: language === 'en' ? 'Side stripe' : '侧边色条', exact: true }).click();
-      await dialog.locator('[data-cards-field="target"]').evaluate(node => { node.value = '0'; node.dispatchEvent(new Event('change', { bubbles: true })); });
       await dialog.locator('[data-cards-field="value"]').fill('5 个核心概念');
       await page.screenshot({ path: path.join(output, 'tools-' + language + '-' + dark + '-' + width + '.png') });
       await dialog.getByRole('button', { name: language === 'en' ? 'Apply' : '应用', exact: true }).click(); await dialog.waitFor({ state: 'detached' });

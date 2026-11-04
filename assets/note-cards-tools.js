@@ -20,7 +20,7 @@
     const portal = document.createElement('div'); portal.className = 'note-cards-tools-portal';
     dialog.append(form, portal); options.host.append(dialog);
     const choices = RelatumReviewControls.createManager(dialog, portal), drafts = new Map(), controls = new Map();
-    let target = 'group', disposed = false, composing = false, pendingApply = false, busy = false;
+    let target = model.cards.length === 1 ? '0' : 'group', disposed = false, composing = false, pendingApply = false, busy = false;
     const targets = [['group', text('整组卡片', 'Entire group')], ...model.cards.map((card, index) => [String(index), (index + 1) + '. ' + card.title.slice(0, 48)])];
     function select(label, key, entries, value, parent, onChange) {
       const row = document.createElement('label'), name = document.createElement('span'), input = document.createElement('select');
