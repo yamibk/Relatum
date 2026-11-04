@@ -3,7 +3,7 @@
 设计取舍：
 - 用 WebView2 渲染，观感与浏览器（Edge）完全一致，渐变等视觉零差异。
 - 无边框，复用前端既有的集成标题栏（desktop-shell.js）。
-- 可拖动及原生拖边缩放；全局设置提供精确尺寸调整。
+- 可通过标题栏移动；禁用拖边缩放，尺寸从全局设置调整。
 - 记住窗口大小 / 位置 / 最大化状态：下次启动恢复到上次的样子。
 - 承载既有 app.py 本地服务，画布数据与交互核心完全不变。
 
@@ -61,16 +61,9 @@ WM_NCCALCSIZE = 0x0083
 WM_NCHITTEST = 0x0084
 WM_WINDOWPOSCHANGING = 0x0046
 WM_WINDOWPOSCHANGED = 0x0047
-WM_GETMINMAXINFO = 0x0024
-WM_ENTERSIZEMOVE = 0x0231
-WM_EXITSIZEMOVE = 0x0232
-WM_SYSCOMMAND = 0x0112
-SC_RESTORE = 0xF120
 WM_DPICHANGED = 0x02E0
 WM_DISPLAYCHANGE = 0x007E
 WM_SETTINGCHANGE = 0x001A
-WM_NCPAINT = 0x0085
-WM_NCACTIVATE = 0x0086
 HTCLIENT = 1
 SW_MINIMIZE = 6
 SW_MAXIMIZE = 3
@@ -116,48 +109,6 @@ class _WINDOWPOS(ctypes.Structure):
         ("x", ctypes.c_int), ("y", ctypes.c_int),
         ("cx", ctypes.c_int), ("cy", ctypes.c_int), ("flags", wintypes.UINT),
     ]
-
-
-class _MINMAXINFO(ctypes.Structure):
-    _fields_ = [(name, wintypes.POINT) for name in (
-        'ptReserved', 'ptMaxSize', 'ptMaxPosition', 'ptMinTrackSize', 'ptMaxTrackSize')]
-
-
-def _resize_hit_test(rect, x: int, y: int, border_x: int, border_y: int) -> int:
-    """Screen coordinates are signed (monitors can sit left/above the primary)."""
-    if not (rect.left <= x < rect.right and rect.top <= y < rect.bottom):
-        return HTCLIENT
-    left, right = x < rect.left + border_x, x >= rect.right - border_x
-    top, bottom = y < rect.top + border_y, y >= rect.bottom - border_y
-    if top:
-        return 13 if left else 14 if right else 12
-    if bottom:
-        return 16 if left else 17 if right else 15
-    return 10 if left else 11 if right else HTCLIENT
-
-
-def _native_resize_hit(hwnd: int, lparam: int) -> int:
-    user = ctypes.windll.user32
-    if user.IsZoomed(hwnd) or user.IsIconic(hwnd):
-        return HTCLIENT
-    rect = wintypes.RECT()
-    if not user.GetWindowRect(hwnd, ctypes.byref(rect)):
-        return HTCLIENT
-    border_x, border_y = _resize_frame(hwnd)
-    return _resize_hit_test(rect, ctypes.c_short(lparam & 0xffff).value,
-                            ctypes.c_short((lparam >> 16) & 0xffff).value, border_x, border_y)
-
-
-def _resize_frame(hwnd: int) -> tuple[int, int]:
-    user = ctypes.windll.user32
-    dpi = round(96 * _window_scale_from_hwnd(hwnd))
-    try:
-        metric = user.GetSystemMetricsForDpi
-        padding = metric(92, dpi)  # SM_CXPADDEDBORDER
-        border_x, border_y = metric(32, dpi) + padding, metric(33, dpi) + padding
-    except AttributeError:
-        border_x = border_y = round(8 * dpi / 96)
-    return max(1, border_x), max(1, border_y)
 
 
 def _reassert_corners(hwnd: int) -> None:
@@ -220,20 +171,10 @@ def _set_window_long(hwnd: int, index: int, value: int) -> int:
     return int(func(hwnd, index, value))
 
 
-def _install_frameless(window, size_move_ended=None) -> None:
+def _install_frameless(window, geometry_changed=None) -> None:
     """让 WebView 客户区铺满整窗，同时保留系统窗口过渡和放置行为。"""
     if sys.platform != "win32":
         return
-    # Keep WinForms' restore-bounds bookkeeping consistent with the native
-    # sizing frame we install below. The window procedure still hides its caption.
-    from System import Action
-    from System.Windows.Forms import FormBorderStyle
-    def sizable():
-        window.native.FormBorderStyle = FormBorderStyle.Sizable
-    if window.native.InvokeRequired:
-        window.native.Invoke(Action(sizable))
-    else:
-        sizable()
     hwnd = _hwnd(window)
     # 关键：保留 WS_CAPTION（标题栏样式）——视觉上被 WM_NCCALCSIZE 吃掉不显示，但 Windows
     # 凭它给窗口放原生最大化/最小化过渡动画。这是无边框窗口找回系统动画的标准手法。
@@ -248,39 +189,16 @@ def _install_frameless(window, size_move_ended=None) -> None:
                                      wintypes.WPARAM, wintypes.LPARAM]
         call_window_proc.restype = ctypes.c_ssize_t
 
-        sizing = False
-
         @_WNDPROC
         def proc(h, msg, wparam, lparam):
-            nonlocal sizing
-            # The retained sizing frame is input-only. Do not paint a clipped
-            # standard caption/buttons into its narrow top strip.
-            if msg == WM_NCPAINT:
-                return 0
-            if msg == WM_NCACTIVATE:
-                return call_window_proc(ctypes.c_void_p(original), h, msg, wparam, -1)
-            restore_size = (_normal_window_size(window)
-                            if msg == WM_SYSCOMMAND and (int(wparam) & 0xfff0) == SC_RESTORE
-                            and (ctypes.windll.user32.IsZoomed(h) or ctypes.windll.user32.IsIconic(h))
-                            else None)
             if msg == WM_NCCALCSIZE and wparam:
-                # 隐藏系统标题栏，保留 WebView 外侧的原生缩放边框。
+                # 整窗作为客户区，不预留系统标题栏或缩放边框。
                 # 最大化时按显示器工作区裁剪，避免无边框最大化盖住任务栏。
                 if ctypes.windll.user32.IsZoomed(int(h)):
                     rect = _work_area(int(h))
                     if rect is not None:
                         params = ctypes.cast(lparam, ctypes.POINTER(_NCCALCSIZE_PARAMS))
                         params.contents.rgrc[0] = rect
-                else:
-                    # Keep the system resize frame outside the WebView2 child
-                    # HWND. Otherwise Chromium consumes the edge mouse input.
-                    params = ctypes.cast(lparam, ctypes.POINTER(_NCCALCSIZE_PARAMS))
-                    rect = params.contents.rgrc[0]
-                    bx, by = _resize_frame(int(h))
-                    rect.left += bx
-                    rect.right -= bx
-                    rect.top += by
-                    rect.bottom -= by
                 return 0
             if (msg == WM_WINDOWPOSCHANGING and lparam
                     and ctypes.windll.user32.IsZoomed(int(h))):
@@ -292,36 +210,15 @@ def _install_frameless(window, size_move_ended=None) -> None:
                 if flags == PYWEBVIEW_MOVE_FLAGS:
                     position.contents.flags = flags | SWP_NOMOVE
             if msg == WM_NCHITTEST:
-                hit = _native_resize_hit(int(h), int(lparam))
-                if hit != HTCLIENT:
-                    return hit
+                # 保持旧版策略：四边及四角的缩放命中都归为客户区。
                 res = call_window_proc(ctypes.c_void_p(original), h, msg, wparam, lparam)
-                inactive = ctypes.windll.user32.IsZoomed(h) or ctypes.windll.user32.IsIconic(h)
-                return HTCLIENT if inactive and 10 <= int(res) <= 17 else res
+                return HTCLIENT if 10 <= int(res) <= 17 else res
             result = call_window_proc(ctypes.c_void_p(original), h, msg, wparam, lparam)
-            if restore_size is not None and not ctypes.windll.user32.IsZoomed(h):
-                _fit_restored_window(window, *restore_size)
-            if msg == WM_GETMINMAXINFO and lparam:
-                area = _work_area(int(h))
-                if area is not None:
-                    scale = _window_scale_from_hwnd(int(h))
-                    bounds = ctypes.cast(lparam, ctypes.POINTER(_MINMAXINFO)).contents
-                    bounds.ptMinTrackSize.x = round(MIN_WIDTH * scale)
-                    bounds.ptMinTrackSize.y = round(MIN_HEIGHT * scale)
-                    bounds.ptMaxTrackSize.x = max(bounds.ptMinTrackSize.x, round(int((area.right - area.left) / scale) * scale))
-                    bounds.ptMaxTrackSize.y = max(bounds.ptMinTrackSize.y, round(int((area.bottom - area.top) / scale) * scale))
-            if msg == WM_ENTERSIZEMOVE:
-                sizing = True
-            if msg == WM_EXITSIZEMOVE:
-                sizing = False
-                _reassert_corners(int(h))
-                if size_move_ended is not None:
-                    size_move_ended()  # Only queues work; never evaluates JS/writes on the UI thread.
-            elif (not sizing and size_move_ended is not None
-                  and (msg in (WM_DPICHANGED, WM_DISPLAYCHANGE)
-                       or (msg == WM_SETTINGCHANGE and int(wparam) == 0x002f))):
-                size_move_ended()  # DPI/display/work-area changes can also arrive without a mouse gesture.
-            elif msg == WM_WINDOWPOSCHANGED and not sizing:
+            if (geometry_changed is not None
+                    and (msg in (WM_DPICHANGED, WM_DISPLAYCHANGE)
+                         or (msg == WM_SETTINGCHANGE and int(wparam) == 0x002f))):
+                geometry_changed()  # Only queues work for monitor/DPI/work-area changes.
+            if msg == WM_WINDOWPOSCHANGED:
                 # 尺寸/位置/层级/状态变化后，重新断言圆角，防止被 WinForms 的矩形 Region 裁方。
                 _reassert_corners(int(h))
             return result
@@ -364,16 +261,7 @@ def _show_window(window, cmd: int) -> None:
     """走 Windows 原生 ShowWindow，触发系统最小化/最大化/还原的过渡动画。"""
     if sys.platform != "win32" or window is None:
         return
-    hwnd = _hwnd(window)
-    user = ctypes.windll.user32
-    restore_size = (_normal_window_size(window)
-                    if cmd == SW_RESTORE and getattr(window, '_relatum_hwnd', None)
-                    and (user.IsZoomed(hwnd) or user.IsIconic(hwnd)) else None)
-    user.ShowWindow(hwnd, cmd)
-    # WinForms computes restore bounds using its standard caption height. Our
-    # caption is hidden, so commit the real native restore rectangle unchanged.
-    if restore_size is not None and not user.IsZoomed(hwnd):
-        _fit_restored_window(window, *restore_size)
+    ctypes.windll.user32.ShowWindow(_hwnd(window), cmd)
 
 
 def _is_maximized(window) -> bool:
@@ -621,7 +509,7 @@ class DesktopBridge:
                 try:
                     self._sync_window_size(persist=True, notify=True)
                 except Exception:
-                    pass  # A page can leave while a completed native gesture is delivered.
+                    pass  # A page can leave while a display change is delivered.
             task = threading.Timer(.05, commit)
             self._geometry_timer = task
             task.daemon = True

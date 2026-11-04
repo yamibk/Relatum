@@ -11,35 +11,6 @@ import desktop
 
 
 class DesktopWindowTests(unittest.TestCase):
-    def test_all_edges_corners_and_signed_screen_coordinates(self):
-        rect = desktop.wintypes.RECT(-1600, -900, -600, -200)
-        samples = [(-1598, -550, 10), (-602, -550, 11), (-1100, -898, 12),
-                   (-1598, -898, 13), (-602, -898, 14), (-1100, -202, 15),
-                   (-1598, -202, 16), (-602, -202, 17), (-1100, -550, 1),
-                   (-1601, -550, 1), (-600, -550, 1)]
-        for x, y, expected in samples:
-            with self.subTest(x=x, y=y):
-                self.assertEqual(desktop._resize_hit_test(rect, x, y, 8, 8), expected)
-
-    def test_native_hit_tracks_dpi_and_disables_maximized_and_minimized(self):
-        user = Mock()
-        user.IsZoomed.return_value = user.IsIconic.return_value = False
-        def rect(hwnd, pointer):
-            pointer._obj.left, pointer._obj.top = -1800, -1000
-            pointer._obj.right, pointer._obj.bottom = -600, -200
-            return 1
-        user.GetWindowRect.side_effect = rect
-        user.GetSystemMetricsForDpi.side_effect = lambda metric, dpi: round((4 if metric == 92 else 4) * dpi / 96)
-        with patch.object(ctypes, 'windll', SimpleNamespace(user32=user)), patch.object(desktop, '_window_scale_from_hwnd', return_value=2):
-            point = ((-500 & 0xffff) << 16) | (-1786 & 0xffff)
-            self.assertEqual(desktop._native_resize_hit(1, point), 10)
-            user.GetSystemMetricsForDpi.assert_any_call(32, 192)
-            user.IsZoomed.return_value = True
-            self.assertEqual(desktop._native_resize_hit(1, point), 1)
-            user.IsZoomed.return_value = False
-            user.IsIconic.return_value = True
-            self.assertEqual(desktop._native_resize_hit(1, point), 1)
-
     def test_large_monitor_limits_have_no_fixed_cap_or_margin(self):
         window = object()
         with patch.object(desktop, '_hwnd', return_value=1), patch.object(desktop, '_window_scale', return_value=1.5), patch.object(desktop, '_work_area', return_value=desktop.wintypes.RECT(-3840, 0, 0, 2160)):
@@ -75,7 +46,7 @@ class DesktopWindowTests(unittest.TestCase):
             self.assertEqual((bridge.restored_width, bridge.restored_height), (900, 600))
             save.assert_not_called()
 
-    def test_completed_gestures_coalesce_and_close_cancels_pending_work(self):
+    def test_display_changes_coalesce_and_close_cancels_pending_work(self):
         tasks = []
         class Timer:
             def __init__(self, delay, fn):

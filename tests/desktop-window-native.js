@@ -1,5 +1,6 @@
 'use strict';
-// Real source WinForms/WebView2, including Windows mouse input. No release or user data.
+// Source WinForms/WebView2: full-client frameless window, disabled edge resizing and size settings.
+// Uses disposable data; no release or user data is touched.
 const assert = require('node:assert/strict'), fs = require('node:fs'), os = require('node:os'), path = require('node:path'), net = require('node:net');
 const { spawn, execFileSync } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
@@ -25,12 +26,14 @@ def geometry(self):
     h = desktop._hwnd(self._window)
     r = desktop.wintypes.RECT()
     u.GetWindowRect(h, ctypes.byref(r))
-    tracking = desktop._MINMAXINFO()
-    u.SendMessageW(h, desktop.WM_GETMINMAXINFO, 0, ctypes.addressof(tracking))
+    client = desktop.wintypes.RECT()
+    origin = desktop.wintypes.POINT()
+    u.GetClientRect(h, ctypes.byref(client))
+    u.ClientToScreen(h, ctypes.byref(origin))
     return dict(rect=[r.left,r.top,r.right,r.bottom], scale=desktop._window_scale(self._window),
         size=self.get_restored_size(), maximized=bool(u.IsZoomed(h)), minimized=bool(u.IsIconic(h)),
         writes=saves, pending=self._geometry_timer is not None,
-        tracking=[tracking.ptMinTrackSize.x,tracking.ptMinTrackSize.y,tracking.ptMaxTrackSize.x,tracking.ptMaxTrackSize.y])
+        client=[origin.x,origin.y,origin.x+client.right,origin.y+client.bottom])
 def drag(self, direction, dx, dy):
     h = desktop._hwnd(self._window)
     r = desktop.wintypes.RECT()
@@ -66,7 +69,7 @@ def move(self):
 def restore(self):
     desktop._show_window(self._window, desktop.SW_RESTORE)
 def system_restore(self):
-    u.PostMessageW(desktop._hwnd(self._window), desktop.WM_SYSCOMMAND, desktop.SC_RESTORE, 0)
+    u.PostMessageW(desktop._hwnd(self._window), 0x0112, 0xF120, 0)  # WM_SYSCOMMAND / SC_RESTORE
 def screenshot(self, target):
     from PIL import ImageGrab
     h = desktop._hwnd(self._window)
@@ -115,26 +118,26 @@ async function close() {
     const first = await open(); assert.equal(first.size.width,990); assert.equal(first.size.height,660);
     await page.evaluate(() => RelatumGlobalSettings.open({ category:'system' }));
     await page.waitForFunction(() => !document.querySelector('[data-role="global-window-size-form"] input').disabled);
-    const directions = [['left',10,-24,0],['right',11,24,0],['top',12,0,-24],['bottom',15,0,24],
-      ['top-left',13,-24,-24],['top-right',14,24,-24],['bottom-left',16,-24,24],['bottom-right',17,24,24]];
-    for (const [direction,hit,dx,dy] of directions) {
+    const directions = [['left',-24,0],['right',24,0],['top',0,-24],['bottom',0,24],
+      ['top-left',-24,-24],['top-right',24,-24],['bottom-left',-24,24],['bottom-right',24,24]];
+    for (const [direction,dx,dy] of directions) {
       await page.evaluate(async () => { await CanvasDesktop.setRestoredSize(900,600); await pywebview.api.window_test_move(); });
       const before = await geometry();
+      assert.deepEqual(before.client,before.rect,'client fills the full window without a resize band');
       const result = await page.evaluate(([direction,dx,dy]) => pywebview.api.window_test_drag(direction,dx,dy),[direction,dx,dy]);
-      assert.equal(result.hit,hit,direction+' native hit');
+      assert.equal(result.hit,1,direction+' is a client hit, not a resize hit');
       const after = result.geometry;
       const dw = (after.rect[2]-after.rect[0])-(before.rect[2]-before.rect[0]);
       const dh = (after.rect[3]-after.rect[1])-(before.rect[3]-before.rect[1]);
-      assert(Math.abs(dw-Math.abs(dx))<=2 && Math.abs(dh-Math.abs(dy))<=2, JSON.stringify({direction,before,result,dw,dh}));
-      await wait(async () => !(await geometry()).pending,'gesture commit');
-      assert.equal(JSON.parse(fs.readFileSync(stateFile)).width, after.size.width, direction+' saves real size');
+      assert.equal(dw,0,direction+' does not change width');
+      assert.equal(dh,0,direction+' does not change height');
+      assert.equal(JSON.parse(fs.readFileSync(stateFile)).width, after.size.width, direction+' preserves the size set in settings');
       await page.waitForFunction(width => Number(document.querySelector('[data-role="global-window-size-form"] [name="width"]').value) === width,after.size.width);
-      console.log(direction+': native mouse resize and settings synchronization passed');
+      console.log(direction+': edge dragging does not resize the window');
     }
     const settled = await geometry(); await pause(700); const idle = await geometry();
     assert.equal(idle.writes,settled.writes,'idle has no geometry writes'); assert.equal(idle.pending,false);
     const limits = idle.size.limits;
-    assert.deepEqual(idle.tracking,[Math.round(720*idle.scale),Math.round(480*idle.scale),Math.round(limits.maxWidth*idle.scale),Math.round(limits.maxHeight*idle.scale)],'native tracking and settings share the same limits');
     const minimum = await page.evaluate(() => CanvasDesktop.setRestoredSize(1,1)); assert.deepEqual([minimum.width,minimum.height],[720,480]);
     const maximum = await page.evaluate(() => CanvasDesktop.setRestoredSize(99999,99999)); assert.deepEqual([maximum.width,maximum.height],[limits.maxWidth,limits.maxHeight]);
     await page.evaluate(() => CanvasDesktop.setRestoredSize(960,640));
@@ -154,7 +157,7 @@ async function close() {
     await page.screenshot({path:path.join(root,'native-settings.png')});
     await page.evaluate(target => pywebview.api.window_test_screenshot(target),path.join(root,'native-frame.png'));
     await close(); const third = await open(); assert.deepEqual([third.size.width,third.size.height],[960,640]); assert.equal(third.maximized,false); await close();
-    console.log('Native WebView2: v2 restore, eight real edge/corner drags, idle, bounds, maximize/reopen, minimize/restore and normal reopen passed. Artifacts: '+root);
+    console.log('Native WebView2: full-window client, eight disabled resize directions, settings bounds, idle, maximize/reopen, minimize/restore and normal reopen passed. Artifacts: '+root);
   } catch (error) { if (page) await page.screenshot({path:path.join(root,'failure.png')}).catch(()=>{}); throw error; }
   finally {
     if (browser) await browser.close().catch(()=>{});

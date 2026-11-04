@@ -129,7 +129,7 @@
   const editedSizeFields = new Set();
   if (sizeSection) {
     sizeSection.className = 'global-window-size'; sizeSection.dataset.i18nManaged = 'true';
-    sizeSection.dataset.settingsKeywords = '窗口 尺寸 宽度 高度 拖边 紧凑 均衡 宽敞 window size width height resize compact balanced spacious';
+    sizeSection.dataset.settingsKeywords = '窗口 尺寸 宽度 高度 紧凑 均衡 宽敞 window size width height compact balanced spacious';
     sizeSection.innerHTML = '<h4></h4><p data-size-description></p><div class="global-window-presets">'
       + [[900,600],[1080,700],[1280,800]].map(([width,height]) => '<button type="button" data-width="'+width+'" data-height="'+height+'"><strong></strong><span>'+width+' × '+height+'</span></button>').join('')
       + '</div><form data-role="global-window-size-form"><label><span></span><input type="number" name="width" step="1" min="720" required disabled></label><label><span></span><input type="number" name="height" step="1" min="480" required disabled></label><button type="submit" disabled></button></form><p data-size-limits></p><p data-size-error role="status" hidden></p>';
@@ -144,7 +144,7 @@
   function renderWindowSize() {
     if (!sizeSection) return;
     sizeSection.querySelector('h4').textContent = text('窗口尺寸', 'Window size');
-    sizeSection.querySelector('[data-size-description]').textContent = text('拖动窗口边缘可调整大小，并自动记忆。也可在此设置精确尺寸；最大化时应用会先还原窗口。', 'Drag the window edges to resize; your size is remembered automatically. Set an exact size here; applying while maximized restores the window first.');
+    sizeSection.querySelector('[data-size-description]').textContent = text('在此设置窗口大小，并自动记忆。最大化时应用会先还原窗口。', 'Set the window size here; your size is remembered automatically. Applying while maximized restores the window first.');
     const form = sizeSection.querySelector('form'), limits = latestSize?.limits || {};
     for (const [axis, zh, en] of [['width','宽度','Width'],['height','高度','Height']]) {
       const input = form.elements[axis], key = axis === 'width' ? 'Width' : 'Height';
