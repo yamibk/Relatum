@@ -314,7 +314,7 @@
       document.dispatchEvent(new Event('daily:settings-reset'));
     } else if (id === 'system') {
       if (!systemPolicy.reset()) throw new Error(text('未能恢复系统设置，请重试。', 'Could not reset system settings. Please retry.'));
-    } else if (id === 'usage') window.RelatumUsage?.resetSettings();
+    } else if (id === 'usage') await window.RelatumUsage?.resetSettings();
     else await adapter?.reset(id);
   }
   function translate() {

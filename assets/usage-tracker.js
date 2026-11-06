@@ -19,7 +19,7 @@
   const settingsKey = 'canvas:usageTracking:v2';
   const pauseOnMinimizeKey = 'canvas:usagePauseOnMinimize:v1';
   const desktop = Boolean(window.RelatumDesktopPreferencesSeed);
-  let pauseOnMinimize = true, minimizeControl = null;
+  let pauseOnMinimize = true, minimizeControl = null, minimizeSave = Promise.resolve();
   let queue = [], settings = {}, ready = false, active = [], cursor = 0, probeAt = 0;
   let sending = null, retry = 0, timer = 0, disposed = false, explicit = null, bootEpoch = 0;
   const uuid = () => window.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -36,10 +36,24 @@
   function readPauseOnMinimize() {
     try { return localStorage.getItem(pauseOnMinimizeKey) !== '0'; } catch (_) { return true; }
   }
-  function savePauseOnMinimize(value) {
+  function writePauseOnMinimize(value) {
     if (value) localStorage.removeItem(pauseOnMinimizeKey);
     else localStorage.setItem(pauseOnMinimizeKey, '0');
-    pauseOnMinimize = value;
+  }
+  function savePauseOnMinimize(value) {
+    const save = minimizeSave.then(async () => {
+      const previous = pauseOnMinimize;
+      writePauseOnMinimize(value);
+      try {
+        if (!await window.RelatumDesktopPreferences.flush()) throw new Error('Could not save desktop preferences');
+      } catch (error) {
+        writePauseOnMinimize(previous);
+        throw error;
+      }
+      pauseOnMinimize = value;
+    });
+    minimizeSave = save.catch(() => {});
+    return save;
   }
   function canTrackUsage() {
     const { desktopMinimized, desktopHiddenToTray } = document.documentElement.dataset;
@@ -187,16 +201,18 @@
     status.setAttribute('role', 'status');
     status.dataset.i18nManaged = 'true';
     minimizeControl = { input, caption, status };
-    input.addEventListener('change', () => {
+    input.addEventListener('change', async () => {
+      input.disabled = true;
+      status.hidden = true;
       try {
-        savePauseOnMinimize(input.checked);
+        await savePauseOnMinimize(input.checked);
       } catch (_) {
         status.hidden = false;
-        updateMinimizeControl();
         return;
+      } finally {
+        input.disabled = false;
+        updateMinimizeControl();
       }
-      status.hidden = true;
-      updateMinimizeControl();
       syncVisibility();
     });
     label.append(caption, input);
@@ -259,9 +275,9 @@
     setTarget(value) { capture(Date.now()); explicit = value; active = []; cursor = 0; sync(); },
     async flush() { capture(Date.now()); await flush(false); return true; },
     waitForIdle() { return this.flush().then(() => true, () => false); },
-    resetSettings() {
+    async resetSettings() {
       if (desktop) {
-        savePauseOnMinimize(true);
+        await savePauseOnMinimize(true);
         if (minimizeControl) minimizeControl.status.hidden = true;
         updateMinimizeControl();
       }
