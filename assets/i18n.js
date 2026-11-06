@@ -741,7 +741,11 @@
     '中心节点': 'Center node', '一级分支': 'First-level branches', '二级及以后': 'Level 2 and deeper', '恢复自动': 'Auto size',
     '同级等宽': 'Equal width', '整理重叠': 'Fix overlaps', '未选择': 'Nothing selected',
     '先选中一个节点': 'Select a node first', '配色刷': 'Color brush', '匹配父分支': 'Match parent branch',
+    '自由节点': 'Freeform node', '混合配色': 'Mixed colors',
+    '没有可整理的相连结构': 'No connected structure to arrange.',
+    '请先单选一个节点作为颜色来源': 'Select one node to sample its colors.',
     '思维导图模式': 'Mind Map Mode',
+    '当前思维导图预设的三层效果预览': 'Three-level preview of the current mind map preset',
     '将整理与此节点相连的整张结构': 'The whole structure connected to this node will be arranged.',
     '经典枝桠': 'Classic Branches', '学术曲线': 'Academic Curves',
     '中心聚焦': 'Focused Center', '圆角树枝': 'Rounded Branches',
@@ -812,13 +816,19 @@
     '正文编辑内': 'While editing body text', '插入 Markdown 代码块': 'Insert a Markdown code block',
     '独立表格': 'Standalone Table', '右键表格单元格': 'Right-click a table cell',
     '打开“删除所选行 / 删除所选列”菜单': 'Open the “Delete selected rows / Delete selected columns” menu',
+    '在所选位置插入或删除行列': 'Insert or delete rows and columns at the selection',
     '表格内': 'Inside a table', '用键盘打开同一删除菜单': 'Open the same delete menu from the keyboard',
+    '用键盘打开同一行列菜单': 'Open the same row and column menu from the keyboard',
     '只清空所选内容，不删除行列': 'Clear selected content without deleting rows or columns',
     '方向键': 'Arrow key', '扩展单元格选择范围': 'Extend the cell selection',
     '选中表格后拖动内部竖线': 'Drag an inner vertical divider on a selected table',
     '调整这一列宽度；双击按内容自动适宽': 'Resize that column; double-click to fit its content',
     '选中表格后拖动内部横线': 'Drag an inner horizontal divider on a selected table',
     '调整这一行高度；双击恢复默认行高': 'Resize that row; double-click to restore its default height',
+    '工作室“尺寸”': 'Size in Table Studio',
+    '展开省略内容、全部适宽、列等宽或恢复默认尺寸': 'Expand truncated content, fit all columns, equalize widths, or restore default sizes',
+    '矩阵工作室“转置”': 'Transpose in Matrix Studio',
+    '交换整张矩阵的行与列，并恢复合适的默认尺寸': 'Swap rows and columns across the matrix and reset their sizes to fit',
     '选中表格 +': 'Selected table +', '打开表格工作室，集中编辑与设置外观': 'Open Table Studio to edit the grid and appearance',
     '思维导图': 'Mind Map', '单选节点 +': 'One selected node +', '整理整条相连结构': 'Arrange the entire connected structure',
     '多选节点 +': 'Multiple selected nodes +', '只整理所选节点': 'Arrange selected nodes only',
@@ -1391,6 +1401,10 @@
     if (match) return `Available range on this display: ${match[1]} to ${match[2]}`;
     match = source.match(/^将只整理已选中的\s*(\d+)\s*个节点$/);
     if (match) return `Only the ${match[1]} selected nodes will be arranged.`;
+    match = source.match(/^(\d+)\s*个手工尺寸$/);
+    if (match) return `${match[1]} custom ${match[1] === '1' ? 'size' : 'sizes'}`;
+    match = source.match(/^已应用“(.+)”并整理$/);
+    if (match) return `Applied “${EN[match[1]] || match[1]}” and arranged the mind map.`;
     match = source.match(/^(.+)\s*·\s*(?:预设|Preset)$/);
     if (match) return `${EN[match[1]] || translateDynamic(match[1])} · Preset`;
     match = source.match(/^分组\s*·\s*(\d+)\s*个节点$/);

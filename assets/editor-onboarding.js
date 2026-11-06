@@ -695,11 +695,6 @@
     if (overlay && !overlay.hidden) { renderLanguage(); renderPage(false); }
     if (practice) renderPractice();
   });
-  document.addEventListener('editor:languagechange', function () {
-    renderReplayEntry();
-    if (overlay && !overlay.hidden) { renderLanguage(); renderPage(false); }
-    if (practice) renderPractice();
-  });
 
   renderReplayEntry();
   if (replayButton) replayButton.addEventListener('click', function (event) {

@@ -169,8 +169,6 @@
   const toolbarLanguageSelect = document.querySelector('[data-role="toolbar-language"]');
   const toolbarLanguageLabel = document.querySelector('[data-role="toolbar-language-label"]');
 
-  // 界面语言与起始页共用同一偏好；本文件负责画布特有控件，通用文字由 i18n.js 补齐。
-  const TOOLBAR_LANGUAGE_KEY = 'canvas:toolbarLanguage';
   const toolLayerMotionTimers = new WeakMap();
 
   function prefersReducedToolMotion() {
@@ -279,7 +277,7 @@
     'zh-CN': {
       back: '起步页', canvas: '画布', mindmap: '导图', patterns: '图案', tools: '工具',
       notebookShortcut: '笔记', taskbookShortcut: '任务',
-      ruler: '尺子', rulerHint: '对齐笔迹与节点',
+      toolsMenu: '画布工具', ruler: '尺子', rulerHint: '对齐笔迹与节点',
       removeRuler: '移除尺子',
       markdownNotebook: '笔记坞', markdownNotebookHint: '长期笔记与导图快照',
       markdownNotebookKicker: '画布工具', markdownNotebookTitle: '笔记坞',
@@ -595,7 +593,7 @@
     en: {
       back: 'Home', canvas: 'Canvas', mindmap: 'Mind Map', patterns: 'Shapes', tools: 'Tools',
       notebookShortcut: 'Notes', taskbookShortcut: 'Tasks',
-      ruler: 'Ruler', rulerHint: 'Align strokes and nodes',
+      toolsMenu: 'Canvas tools', ruler: 'Ruler', rulerHint: 'Align strokes and nodes',
       removeRuler: 'Remove Ruler',
       markdownNotebook: 'Notebook', markdownNotebookHint: 'Long-term notes and mind-map snapshots',
       markdownNotebookKicker: 'CANVAS TOOL', markdownNotebookTitle: 'Notebook',
@@ -925,8 +923,7 @@
     '已归档，正在刷新同步…': 'Archived · Syncing…',
     '保存失败': 'Save failed',
   };
-  let toolbarLanguage = 'zh-CN';
-  try { toolbarLanguage = localStorage.getItem(TOOLBAR_LANGUAGE_KEY) === 'en' ? 'en' : 'zh-CN'; } catch (e) {}
+  let toolbarLanguage = window.RelatumI18n?.language || 'zh-CN';
 
   function toolbarCopy(key) {
     const copy = TOOLBAR_COPY[toolbarLanguage] || TOOLBAR_COPY['zh-CN'];
@@ -1001,11 +998,8 @@
     });
   }
 
-  function applyToolbarLanguage(nextLanguage, persist) {
-    toolbarLanguage = nextLanguage === 'en' ? 'en' : 'zh-CN';
-    if (persist) {
-      try { localStorage.setItem(TOOLBAR_LANGUAGE_KEY, toolbarLanguage); } catch (e) {}
-    }
+  function applyToolbarLanguage() {
+    toolbarLanguage = window.RelatumI18n?.language || 'zh-CN';
     document.body.dataset.toolbarLanguage = toolbarLanguage;
     if (topBarEl) topBarEl.lang = toolbarLanguage;
     document.querySelectorAll('[data-toolbar-i18n]').forEach((element) => {
@@ -1045,12 +1039,9 @@
     requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
   }
 
-  if (toolbarLanguageSelect) {
-    toolbarLanguageSelect.addEventListener('change', () => {
-      applyToolbarLanguage(toolbarLanguageSelect.value, true);
-    });
-  }
-  applyToolbarLanguage(toolbarLanguage, false);
+  // 设置下拉与首次引导都通过共享语言控制器提交。
+  document.addEventListener('relatum:languagechange', applyToolbarLanguage);
+  applyToolbarLanguage();
 
   function closeRenameNotice() {
     if (renameNotice) renameNotice.hidden = true;
@@ -7195,7 +7186,8 @@
         card.classList.add('preset-applied');
         window.setTimeout(() => card.classList.remove('preset-applied'), 460);
         const name = card.querySelector('.mindmap-preset-name');
-        updateSelectionState(selectedNodeCount, '已应用“' + (name ? name.textContent : '预设') + '”并整理');
+        const sourceName = TOOLBAR_COPY['zh-CN'][name?.dataset.editorI18n] || '预设';
+        updateSelectionState(selectedNodeCount, '已应用“' + sourceName + '”并整理');
         if (selectionStatusTimer) window.clearTimeout(selectionStatusTimer);
         selectionStatusTimer = window.setTimeout(() => updateSelectionState(selectedNodeCount), 1500);
       }

@@ -181,7 +181,7 @@
                 aria-controls="canvas-taskbook-dialog" hidden>任务</button>
       </div>
       <div class="editor-tools-pop" id="editor-tools-pop" data-role="tools-pop"
-           role="dialog" aria-label="画布工具" hidden>
+           role="dialog" data-editor-i18n-aria="toolsMenu" aria-label="画布工具" hidden>
         <div class="editor-tool-group">
           <button type="button" class="editor-tool-card" data-action="use-ruler">
             <span class="editor-tool-icon editor-tool-ruler-icon" aria-hidden="true">
@@ -3225,9 +3225,9 @@
 
   <!-- 快捷键速查浮层（按 ? 或点右下角 ? 按钮打开）-->
   <div class="shortcuts-overlay" data-role="shortcuts" hidden>
-    <div class="shortcuts-card" role="dialog" aria-label="快捷键速查" aria-modal="true">
+    <div class="shortcuts-card" role="dialog" aria-labelledby="canvas-shortcuts-title" aria-modal="true">
       <div class="shortcuts-head">
-        <h2 class="shortcuts-title">快捷键速查</h2>
+        <h2 class="shortcuts-title" id="canvas-shortcuts-title">快捷键速查</h2>
         <button type="button" class="shortcuts-close" data-role="shortcuts-close"
                 aria-label="关闭">×</button>
       </div>
@@ -3322,6 +3322,8 @@
             <div><dt>左侧工具栏 <kbd>连接锚点</kbd></dt><dd>双击空白放置；拖动空白框选；选中后按住 <kbd>Alt</kbd> 拖动连线，按 <kbd>Delete</kbd> 即可删除</dd></div>
             <div><dt><kbd>双击连线</kbd></dt><dd>给连线写文字</dd></div>
           </dl>
+        </section>
+        <section class="shortcuts-group">
           <h3 data-i18n="shortcutsSelectionHeading" data-i18n-zh="选择">选择</h3>
           <dl>
             <div><dt><kbd>Shift</kbd>+点击</dt><dd>加选 / 减选</dd></div>
@@ -3338,6 +3340,8 @@
             <div><dt>画布空白处<kbd>右键拖动</kbd></dt><dd>在任意模式按拖拽范围创建纯色色块</dd></div>
             <div><dt>画布空白处<kbd>右键单击</kbd></dt><dd>退出绘制并切回「选择」工具</dd></div>
           </dl>
+        </section>
+        <section class="shortcuts-group">
           <h3>界面 / 工具</h3>
           <dl>
             <div><dt>鼠标移到<kbd>画布左缘</kbd></dt><dd>浮现左侧手写工具栏（笔 / 橡皮 / 文字 / 箭头 / 手绘图形）</dd></div>
@@ -3395,6 +3399,8 @@
             <div><dt>顶栏<kbd>导出 PNG</kbd></dt><dd>把整张画布导出为 PNG 图片</dd></div>
             <div><dt>顶栏<kbd>清理附件</kbd></dt><dd>删除 .assets 里未被引用的图片 / 附件</dd></div>
           </dl>
+        </section>
+        <section class="shortcuts-group">
           <h3>编辑节点时</h3>
           <dl>
             <div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>提交</dd></div>
