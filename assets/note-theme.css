@@ -137,7 +137,7 @@ html[data-note-theme="claude"] body.start-page .note-workspace {
 html[data-note-theme="claude"] body.start-page .note-document-pane { margin: 0 12px 12px; isolation: isolate; background: transparent; }
 html[data-note-theme="claude"] body.start-page .note-document-pane::before {
   content: ""; position: absolute; z-index: -1; pointer-events: none; top: 40px; right: 0; bottom: 0; left: 0;
-  border-radius: 20px; background: var(--note-theme-paper); box-shadow: 0 2px 12px rgba(20,20,19,.035);
+  border-radius: var(--note-theme-paper-radius); background: var(--note-theme-paper); box-shadow: 0 2px 12px rgba(20,20,19,.035);
 }
 html[data-note-theme="claude"] body.start-page :is(.note-document-body, .note-document-head) { background: transparent; }
 html[data-note-theme="claude"] body.start-page .note-document-head { border-radius: 20px 20px 0 0; }
@@ -164,7 +164,6 @@ html[data-note-theme="claude"] body.start-page[data-start-theme="dark"] .note-do
 }
 @media (max-width: 760px) {
   html[data-note-theme="claude"] body.start-page .note-document-pane { width: auto; margin: 0 8px 8px; }
-  html[data-note-theme="claude"] body.start-page .note-document-pane::before { border-radius: 16px; }
   html[data-note-theme="claude"] body.start-page .note-document-head { border-radius: 16px 16px 0 0; }
   html[data-note-theme="claude"] body.start-page .note-document-body { border-radius: 0 0 16px 16px; }
   html[data-note-theme="claude"] body.start-page .note-tree-pane { top: 8px; left: 8px; bottom: 8px; border-radius: 16px; box-shadow: var(--note-theme-shadow); }
@@ -612,7 +611,7 @@ html[data-note-theme="apple"] body.start-page .note-workspace { --note-chrome-li
 html[data-note-theme="apple"] body.start-page .note-document-pane { margin: 0 12px 12px; isolation: isolate; background: transparent; }
 html[data-note-theme="apple"] body.start-page .note-document-pane::before {
   content: ""; position: absolute; z-index: -1; pointer-events: none; top: 40px; right: 0; bottom: 0; left: 0;
-  border-radius: 20px; background: var(--note-theme-paper); box-shadow: 0 2px 12px rgba(29,29,31,.035);
+  border-radius: var(--note-theme-paper-radius); background: var(--note-theme-paper); box-shadow: 0 2px 12px rgba(29,29,31,.035);
 }
 html[data-note-theme="apple"] body.start-page :is(.note-document-body, .note-document-head) { background: transparent; }
 html[data-note-theme="apple"] body.start-page .note-document-body { border-radius: 0 0 20px 20px; }
@@ -639,7 +638,6 @@ html[data-note-theme="apple"] body.start-page[data-start-theme="dark"] .note-doc
 }
 @media (max-width: 760px) {
   html[data-note-theme="apple"] body.start-page .note-document-pane { width: auto; margin: 0 8px 8px; }
-  html[data-note-theme="apple"] body.start-page .note-document-pane::before { border-radius: 16px; }
   html[data-note-theme="apple"] body.start-page .note-document-head { border-radius: 16px 16px 0 0; }
   html[data-note-theme="apple"] body.start-page .note-document-body { border-radius: 0 0 16px 16px; }
   html[data-note-theme="apple"] body.start-page .note-tree-pane { top: 8px; left: 8px; bottom: 8px; border-radius: 16px; box-shadow: var(--note-theme-shadow); }
@@ -850,3 +848,12 @@ html[data-note-theme="apple"][data-note-reduced-motion="1"] body.start-page[data
   html[data-note-theme="apple"] body.start-page[data-start-workspace="notes"] > .top-bar .start-speed-trigger,
   html[data-note-theme="apple"] body.start-page[data-start-workspace="notes"] > .top-bar .start-speed-trigger svg { transition: none; }
 }
+
+/* The graph fills the pane underneath the sidebar overlay. */
+html:is([data-note-theme="claude"], [data-note-theme="apple"]) body.start-page .note-document-pane { --note-theme-paper-radius: 20px; }
+@media (max-width: 760px) {
+  html:is([data-note-theme="claude"], [data-note-theme="apple"]) body.start-page .note-document-pane { --note-theme-paper-radius: 16px; }
+}
+html:is([data-note-theme="claude"], [data-note-theme="apple"]) body.start-page .note-graph-active .note-document-pane::before { right: 0; }
+html:is([data-note-theme="claude"], [data-note-theme="apple"]) body.start-page .note-graph-active .note-graph-panel { border-radius: var(--note-theme-paper-radius); }
+html:is([data-note-theme="claude"], [data-note-theme="apple"]) body.start-page:not([data-start-background="scenic"]) .note-graph-panel .note-graph-tools { background-color: var(--note-theme-paper); }

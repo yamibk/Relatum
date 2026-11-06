@@ -44,7 +44,7 @@ async function run(browser, minimal) {
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTheme:v1')), 'unknown-old-theme');
     assert(!requests.some(u => /source-serif-4/.test(u)), 'default keeps new fonts cold');
     assert(!requests.some(u => /inter-variable/.test(u)), 'default does not request Apple fonts');
-    const dialog = page.locator('#note-settings-dialog'), trigger = dialog.locator('.note-settings-theme .review-choice-trigger');
+    const dialog = page.locator('#note-settings-dialog'), trigger = dialog.locator('.note-settings-theme:has(#note-theme-select) .review-choice-trigger');
     const panelLayout = async () => {
       const layout = await dialog.evaluate(node => {
         const box = node.getBoundingClientRect(), sidebar = node.querySelector('.relatum-settings-sidebar').getBoundingClientRect();
@@ -259,6 +259,56 @@ async function run(browser, minimal) {
         assert(Math.abs(text.size - 16 * scale / 100) < .1); assert(Math.abs(text.line / text.size - 1.75) < .01);
       }
       matrix.push({ skin, mode, bg, width, scale, ...result });
+    }
+    if (!minimal) {
+      const pane = page.locator('.note-document-pane'), graph = pane.locator('.note-graph-panel');
+      const notebookToggle = graph.locator('[data-note-action="graph-notebooks"]');
+      const closeSidebar = page.locator('[data-note-action="close-links"]');
+      const paperInset = () => pane.evaluate(node => parseFloat(getComputedStyle(node, '::before').right));
+      for (const skin of ['claude', 'apple']) {
+        await page.setViewportSize({ width: 1440, height: 980 });
+        await page.evaluate(skin => {
+          RelatumNoteTheme.apply(skin); document.body.dataset.startTheme = 'light'; document.body.dataset.startBackground = 'simple';
+        }, skin);
+        const documentInset = await paperInset();
+        assert(documentInset > 0, 'wide document paper reserves space for the right sidebar');
+        await page.locator('[data-note-action="toggle-graph"]').click();
+        await notebookToggle.waitFor();
+        for (const width of [1440, 650]) {
+          await page.setViewportSize({ width, height: 980 });
+          for (const mode of ['light', 'dark']) for (const bg of ['simple', 'scenic']) {
+            await page.evaluate(({ mode, bg }) => {
+              document.body.dataset.startTheme = mode; document.body.dataset.startBackground = bg;
+            }, { mode, bg });
+            const appearance = await graph.evaluate(node => {
+              const paper = getComputedStyle(node.parentElement, '::before'), graphStyle = getComputedStyle(node);
+              return { right: paper.right, paper: paper.backgroundColor, radius: paper.borderRadius,
+                graphRadius: graphStyle.borderRadius, graphBackground: graphStyle.backgroundColor,
+                tools: getComputedStyle(node.querySelector('.note-graph-tools')).backgroundColor };
+            });
+            assert.equal(appearance.right, '0px', `${skin} paper spans the full graph width`);
+            assert.equal(appearance.radius, width > 760 ? '20px' : '16px');
+            assert.equal(appearance.graphRadius, appearance.radius);
+            assert.equal(appearance.graphBackground, 'rgba(0, 0, 0, 0)');
+            if (bg === 'simple') assert.equal(appearance.tools, appearance.paper);
+            else assert(appearance.paper.endsWith(mode === 'light' ? '0.8)' : '0.84)'), 'graph paper retains scenic transparency');
+            if (width === 1440 && mode === 'light' && bg === 'simple') {
+              await page.screenshot({ path: path.join(artifacts, `full-${skin}-graph.png`) });
+            }
+          }
+          const graphBox = await graph.boundingBox();
+          await notebookToggle.click(); await closeSidebar.waitFor();
+          if (width > 1120) await notebookToggle.click({ trial: true });
+          assert.deepEqual(await graph.boundingBox(), graphBox, 'sidebar overlays the graph without resizing it');
+          assert.equal(await paperInset(), 0);
+          await closeSidebar.click(); await closeSidebar.waitFor({ state: 'hidden' });
+          await notebookToggle.click({ trial: true });
+        }
+        await page.setViewportSize({ width: 1440, height: 980 });
+        await page.locator('[data-note-tab-path="Main.md"]').click();
+        await graph.waitFor({ state: 'hidden' }); await loaded();
+        assert.equal(await paperInset(), documentInset, 'returning to a note restores its paper inset');
+      }
     }
     // A round trip may change the theme's design, but cannot accumulate typography or layout changes.
     const typography = [];
