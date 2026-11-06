@@ -17,6 +17,9 @@
   try { owner=sessionStorage.getItem('relatum:usage-owner');if(!owner){owner=window.crypto?.randomUUID?.()||String(Date.now())+Math.random();sessionStorage.setItem('relatum:usage-owner',owner);} } catch (_) { owner=String(Date.now())+Math.random(); }
   const queueKey = queuePrefix + owner;
   const settingsKey = 'canvas:usageTracking:v2';
+  const pauseOnMinimizeKey = 'canvas:usagePauseOnMinimize:v1';
+  const desktop = Boolean(window.RelatumDesktopPreferencesSeed);
+  let pauseOnMinimize = true, minimizeControl = null;
   let queue = [], settings = {}, ready = false, active = [], cursor = 0, probeAt = 0;
   let sending = null, retry = 0, timer = 0, disposed = false, explicit = null, bootEpoch = 0;
   const uuid = () => window.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -29,6 +32,20 @@
   } catch (_) {}
   function persist() {
     try { if(queue.length)localStorage.setItem(queueKey, JSON.stringify({items:queue,at:Date.now(),closed:disposed}));else localStorage.removeItem(queueKey); } catch (_) { /* In-memory retries still work when storage is full. */ }
+  }
+  function readPauseOnMinimize() {
+    try { return localStorage.getItem(pauseOnMinimizeKey) !== '0'; } catch (_) { return true; }
+  }
+  function savePauseOnMinimize(value) {
+    if (value) localStorage.removeItem(pauseOnMinimizeKey);
+    else localStorage.setItem(pauseOnMinimizeKey, '0');
+    pauseOnMinimize = value;
+  }
+  function canTrackUsage() {
+    const { desktopMinimized, desktopHiddenToTray } = document.documentElement.dataset;
+    if (desktopHiddenToTray === '1') return false;
+    if (desktopMinimized === '1') return !pauseOnMinimize;
+    return !document.hidden && document.hasFocus();
   }
   function target() {
     if (explicit) return [explicit];
@@ -77,7 +94,7 @@
     // A suspended OS/event loop must never turn the elapsed sleep into time.
     if (probeAt && (now - probeAt > 15000 || now < probeAt)) cursor = 0;
     probeAt = now;
-    const next = !document.hidden && document.documentElement.dataset.desktopMinimized!=='1' && document.hasFocus()
+    const next = canTrackUsage()
       ? target().filter((t) => enabledFeature(t.category) && settings[t.category] !== false) : [];
     if (signature(next) !== signature(active)) {
       capture(now);
@@ -145,6 +162,46 @@
     flush(true).catch(() => {});
     if (close) { disposed = true; ready = false; bootEpoch++; clearInterval(timer); clearTimeout(retry); timer = retry = 0; persist(); }
   }
+  function syncVisibility() {
+    if (disposed) return;
+    if (canTrackUsage()) sync();
+    else pause();
+  }
+  function updateMinimizeControl() {
+    if (!minimizeControl) return;
+    const { input, caption, status } = minimizeControl;
+    input.checked = pauseOnMinimize;
+    caption.textContent = english() ? 'Pause usage tracking when minimized' : '最小化窗口时暂停计时';
+    status.textContent = status.hidden ? '' : (english() ? 'Could not save the setting. Your previous choice was restored.' : '未能保存设置，已恢复上一次选择。');
+  }
+  function addMinimizeControl(host) {
+    const label = document.createElement('label');
+    label.className = 'start-setting-row';
+    label.dataset.i18nManaged = 'true';
+    const caption = document.createElement('span');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.dataset.usagePauseOnMinimize = '';
+    const status = document.createElement('p');
+    status.hidden = true;
+    status.setAttribute('role', 'status');
+    status.dataset.i18nManaged = 'true';
+    minimizeControl = { input, caption, status };
+    input.addEventListener('change', () => {
+      try {
+        savePauseOnMinimize(input.checked);
+      } catch (_) {
+        status.hidden = false;
+        updateMinimizeControl();
+        return;
+      }
+      status.hidden = true;
+      updateMinimizeControl();
+      syncVisibility();
+    });
+    label.append(caption, input);
+    host.append(label, status);
+  }
   function updateControls() {
     document.querySelectorAll('[data-usage-category]').forEach(input => {
       const category = input.dataset.usageCategory;
@@ -161,6 +218,7 @@
     document.querySelectorAll('[data-usage-settings]').forEach(host => {
       if (host.dataset.ready) return;
       host.dataset.ready = 'true';
+      if (desktop) addMinimizeControl(host);
       for (const category of categories) {
         const label = document.createElement('label'); label.className = 'start-setting-row';
         const text = document.createElement('span'), input = document.createElement('input');
@@ -174,10 +232,12 @@
         label.append(text, input); host.append(label);
       }
     });
+    updateMinimizeControl();
     updateControls();
   }
   async function boot() {
     const epoch = ++bootEpoch;
+    if (desktop) pauseOnMinimize = readPauseOnMinimize();
     controls();
     try {
       const response = await fetch('/api/usage/state', { cache: 'no-store' });
@@ -199,21 +259,41 @@
     setTarget(value) { capture(Date.now()); explicit = value; active = []; cursor = 0; sync(); },
     async flush() { capture(Date.now()); await flush(false); return true; },
     waitForIdle() { return this.flush().then(() => true, () => false); },
-    resetSettings(){const now=Date.now();capture(now);for(const category of categories){if(enabledFeature(category)){settings[category]=true;queue.push({type:'setting',category,enabled:true,at:now});}}persist();updateControls();sync();flush(false).catch(()=>{});},
+    resetSettings() {
+      if (desktop) {
+        savePauseOnMinimize(true);
+        if (minimizeControl) minimizeControl.status.hidden = true;
+        updateMinimizeControl();
+      }
+      const now = Date.now();
+      capture(now);
+      for (const category of categories) {
+        if (!enabledFeature(category)) continue;
+        settings[category] = true;
+        queue.push({ type: 'setting', category, enabled: true, at: now });
+      }
+      persist(); updateControls(); sync(); flush(false).catch(() => {});
+    },
     get pending() { return queue.length; },
     get settings() { return { ...settings }; }
   });
   window.RelatumStartPageActivity = window.RelatumUsage;
   ['start:viewchange', 'relatum:start-workspacechange', 'relatum:usage-target'].forEach(name => document.addEventListener(name, sync));
-  document.addEventListener('relatum:languagechange', updateControls);
-  document.addEventListener('visibilitychange', () => document.hidden ? pause() : sync());
-  window.addEventListener('focus', sync);
-  window.addEventListener('canvasdesktop:visibility',event=>event.detail?.minimized?pause():sync());
-  window.addEventListener('blur', () => setTimeout(() => document.hasFocus() ? sync() : pause(), 0));
+  document.addEventListener('relatum:languagechange', () => { updateControls(); updateMinimizeControl(); });
+  document.addEventListener('visibilitychange', syncVisibility);
+  window.addEventListener('focus', syncVisibility);
+  window.addEventListener('canvasdesktop:visibility', syncVisibility);
+  window.addEventListener('blur', () => setTimeout(syncVisibility, 0));
   window.addEventListener('pagehide', () => pause(true));
   window.addEventListener('pageshow', () => { if (disposed) { disposed = false; boot(); } });
   window.addEventListener('online', () => flush(false).catch(() => {}));
   window.addEventListener('storage', event => {
+    if (desktop && (event.key === pauseOnMinimizeKey || event.key === null)) {
+      pauseOnMinimize = readPauseOnMinimize();
+      if (minimizeControl) minimizeControl.status.hidden = true;
+      updateMinimizeControl();
+      syncVisibility();
+    }
     if (event.key === settingsKey && event.newValue) {
       capture(Date.now());
       try { settings = JSON.parse(event.newValue); } catch (_) {}

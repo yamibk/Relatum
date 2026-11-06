@@ -28,7 +28,7 @@
     ['learning', ['学习与树状', 'Learning & trees'], '<path d="M12 3v7M5 10h14M5 10v6m14-6v6"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/>', 'study tree unlock title color 学习 树状 解锁 标题 彩色'],
     ['starmap', ['星图', 'Star map'], '<circle cx="5" cy="5" r="2"/><circle cx="19" cy="7" r="2"/><circle cx="12" cy="19" r="2"/><path d="m7 5 10 2M6 7l5 10m7-8-5 8"/>', 'graph animation physics fit 动画 生长 阻尼 取景'],
     ['career', ['生涯', 'Career'], '<path d="M4 3v17h17M8 15l4-5 4 2 5-7"/>', 'career scroll inertia reveal 生涯 滚动 惯性 揭示'],
-    ['usage', ['使用统计', 'Usage statistics'], '<path d="M5 21V11m7 10V3m7 18V7"/>', 'usage statistics tracking time archive backup data 统计 记录 时间 归档 备份 数据管理'],
+    ['usage', ['使用统计', 'Usage statistics'], '<path d="M5 21V11m7 10V3m7 18V7"/>', 'usage statistics tracking time minimized archive backup data 统计 记录 时间 计时 最小化 归档 备份 数据管理'],
     ['system', ['系统', 'System'], '<path d="M4 4h16v12H4zM8 20h8m-4-4v4"/>', 'system desktop window size width height resize launcher startup preload daily retention memory 系统 窗口 尺寸 宽度 高度 缩放 启动器 启动 弹窗 预加载 日常 保留 内存'],
   ];
   definitions.forEach(([id, label, iconMarkup, keywords]) => {
@@ -193,7 +193,6 @@
     ++sizeRevision; latestSize = event.detail; renderWindowSize();
   });
   const systemPolicy = window.RelatumGlobalSystem;
-  const systemIntro = document.createElement('p'); systemIntro.dataset.i18nManaged = 'true';
   const preloadSetting = document.createElement('label'); preloadSetting.className = 'start-setting-toggle'; preloadSetting.dataset.i18nManaged = 'true';
   preloadSetting.dataset.settingsKeywords = '后台 预加载 启动 preload background startup';
   preloadSetting.innerHTML = '<span><strong></strong><small></small><small data-global-preload-status></small></span><input type="checkbox" data-role="global-system-preload">';
@@ -213,7 +212,7 @@
     radio.addEventListener('change', () => { if (radio.checked) saveSystem({ dailyRetention: value }); });
     label.append(radio, caption); retentionSetting.querySelector('div').append(label);
   }
-  panels.get('system').append(systemIntro, preloadSetting);
+  panels.get('system').append(preloadSetting);
   if (features.workspaceEnabled('daily')) panels.get('system').append(retentionSetting);
   function saveSystem(patch) {
     if (!systemPolicy.update(patch)) dialog?.setStatus(text('未能保存系统设置，选择已恢复。', 'Could not save system settings. Your selection was restored.'));
@@ -221,7 +220,6 @@
   }
   function refreshSystem() {
     const value = systemPolicy.read();
-    systemIntro.textContent = text('按需调整首次打开速度与返回速度。更快的切换可能占用更多内存。', 'Adjust first-open and return speed. Faster switching may use more memory.');
     preloadSetting.querySelector('strong').textContent = text('后台预加载', 'Background preloading');
     preloadSetting.querySelector('small').textContent = text('下次启动生效。空闲时提前准备已有功能，提高首次打开速度；会增加后台读取与资源占用。', 'Applies at next launch. Prepare existing features while idle for faster first opening, using additional background reads and resources.');
     preloadInput.checked = value.preload; preloadInput.disabled = !features.enabled('runtime.preload');

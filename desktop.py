@@ -286,16 +286,17 @@ def _notify_window_state(window, maximized: bool) -> None:
         pass
 
 
-def _notify_usage_visibility(window, minimized: bool) -> None:
-    """WebView2 can keep document.hasFocus() true while its WinForms host is iconic."""
+def _notify_usage_visibility(window, minimized: bool, *, hidden_to_tray: bool = False) -> None:
+    """Notify WebView2 even when its document visibility and focus stay unchanged."""
     if window is None:
         return
     try:
-        value = 'true' if minimized else 'false'
+        inactive = minimized or hidden_to_tray
         window.evaluate_js(
-            f"document.documentElement.dataset.desktopMinimized={json.dumps('1' if minimized else '0')};"
+            f"document.documentElement.dataset.desktopMinimized={json.dumps('1' if inactive else '0')};"
+            f"document.documentElement.dataset.desktopHiddenToTray={json.dumps('1' if hidden_to_tray else '0')};"
             "window.dispatchEvent(new CustomEvent('canvasdesktop:visibility',"
-            f"{{detail:{{minimized:{value}}}}}));"
+            f"{{detail:{{minimized:{json.dumps(inactive)}}}}}));"
         )
     except Exception:
         pass
@@ -464,6 +465,7 @@ class DesktopBridge:
         self.restored_height = restored_height
         self.maximized = False
         self.minimized = False
+        self.hidden_to_tray = False
         self.dirty = False
         self.note_workspace_active = False
         self.wallpaper: WallpaperController | None = None
@@ -550,10 +552,13 @@ class DesktopBridge:
         with self._lock:
             self.note_workspace_active = bool(value)
 
+    def _notify_visibility(self) -> None:
+        _notify_usage_visibility(self._window, self.minimized, hidden_to_tray=self.hidden_to_tray)
+
     def minimize(self) -> None:
         # 走原生 ShowWindow，保留最小化到任务栏的过渡动画。
         self.minimized = True
-        _notify_usage_visibility(self._window, True)
+        self._notify_visibility()
         _show_window(self._window, SW_MINIMIZE)
 
     def get_window_state(self) -> dict:
@@ -592,7 +597,7 @@ class DesktopBridge:
             return {"maximized": False}
         try:
             self.minimized = False
-            _notify_usage_visibility(self._window, False)
+            self._notify_visibility()
             target = not self.maximized
             # 原生 ShowWindow 触发系统最大化/还原的过渡动画。
             _show_window(self._window, SW_MAXIMIZE if target else SW_RESTORE)
@@ -1031,7 +1036,8 @@ def main() -> int:
         try:
             window.show()
             bridge.minimized = False
-            _notify_usage_visibility(window, False)
+            bridge.hidden_to_tray = False
+            bridge._notify_visibility()
             if sys.platform == "win32":
                 hwnd = _hwnd(window)
                 if ctypes.windll.user32.IsIconic(hwnd):
@@ -1127,26 +1133,26 @@ def main() -> int:
         startup_mark("document-loaded")
         # 页面加载完成、WebView2 完成首次绘制后再补一次圆角，确保立即显形。
         _apply_corners(window, maximized=bridge.maximized)
-        _notify_usage_visibility(window, bridge.minimized)
+        bridge._notify_visibility()
         activation_router.mark_ready()
 
     def on_maximized() -> None:
         bridge.minimized = False
-        _notify_usage_visibility(window, False)
+        bridge._notify_visibility()
         bridge.maximized = True
         _apply_corners(window, maximized=True)
         _notify_window_state(window, True)
 
     def on_restored() -> None:
         bridge.minimized = False
-        _notify_usage_visibility(window, False)
+        bridge._notify_visibility()
         bridge.maximized = False
         _apply_corners(window, maximized=False)
         _notify_window_state(window, False)
 
     def on_minimized() -> None:
         bridge.minimized = True
-        _notify_usage_visibility(window, True)
+        bridge._notify_visibility()
 
     def confirm_close() -> bool | None:
         # 先记住窗口状态，再处理后台隐藏或未保存提示。
@@ -1158,10 +1164,12 @@ def main() -> int:
             # 动态背景仍运行时，关闭主窗只是收进托盘。DOM 和 dirty 状态
             # 都留在内存中，因此不需要也不应该询问是否放弃修改。
             try:
-                _notify_usage_visibility(window, True)
+                bridge.hidden_to_tray = True
+                bridge._notify_visibility()
                 window.hide()
             except Exception:
-                pass
+                bridge.hidden_to_tray = False
+                bridge._notify_visibility()
             return False
         if quitting:
             return None
