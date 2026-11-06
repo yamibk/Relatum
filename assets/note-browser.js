@@ -971,7 +971,17 @@
       if (failed) fragment.appendChild(button(copy(failureCode === 'statistics_incomplete' ? 'incomplete' : 'failed'), () => { if (!loading) loadPage(failedReset); }, 'note-browser-message'));
       else if (loading && (!resetting || !hasResult)) { const message = document.createElement('p'); message.className = 'note-browser-message'; message.textContent = copy('loading'); fragment.appendChild(message); }
       else if (!rows.length) { const message = document.createElement('p'); message.className = 'note-browser-message'; message.textContent = copy(resultProviderId === 'search' && !searchState.q.trim() && !searchState.tags.length ? 'typeToSearch' : resultProviderId === 'canvas' ? 'canvasEmpty' : 'empty'); fragment.appendChild(message); }
-      else if (hasMore) fragment.appendChild(button(copy('more'), () => loadPage(false), 'note-browser-more'));
+      else if (hasMore) {
+        const more = button(copy('more'), () => loadPage(false), 'note-browser-more');
+        if (resultProviderId === 'recent') {
+          const pagination = document.createElement('div');
+          pagination.className = 'note-browser-recent-pagination';
+          pagination.appendChild(more);
+          fragment.appendChild(pagination);
+        } else {
+          fragment.appendChild(more);
+        }
+      }
       if (indexState && indexState.phase !== 'ready') { const message = document.createElement('p'); message.className = 'note-search-progress'; message.setAttribute('role', 'status'); message.textContent = indexState.phase === 'partial' ? copy('partialIndex') : copy('preparing') + ' · ' + indexState.indexed + ' / ' + indexState.total; fragment.appendChild(message); }
       results.replaceChildren(fragment);
       resultList?.setItems(rows); results.scrollTop = scroll;

@@ -2135,7 +2135,8 @@ body.start-page[data-start-theme="dark"] .note-search-popover { background: #242
   .note-search-popover, .note-context-menu, .note-search-filter-disclosure { transition: none; }
   .note-search-controls button, .note-search-controls input, .note-search-folder-option, .note-search-calendar button, .note-search-result-shell .note-browser-result, .note-context-menu button { transition: none; }
 }
-.note-browser-result { display: block; width: 100%; max-width: 880px; box-sizing: border-box; padding: 17px 12px; margin: 0; border: 0; border-bottom: 1px solid rgba(128, 128, 128, .16); border-radius: 5px; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.note-browser-result, .note-browser-recent-pagination { max-width: 880px; }
+.note-browser-result { display: block; width: 100%; box-sizing: border-box; padding: 17px 12px; margin: 0; border: 0; border-bottom: 1px solid rgba(128, 128, 128, .16); border-radius: 5px; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
 .note-browser-result:hover, .note-browser-result.is-selected { background: rgba(0, 0, 0, .045); }
 .note-browser-result strong { display: block; font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
 .note-browser-result p { margin: 7px 0; opacity: .7; font-size: 14px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
