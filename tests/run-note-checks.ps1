@@ -10,6 +10,8 @@ foreach ($check in @('note-live-editor-regression.js','note-typora-regression.js
     if ($LASTEXITCODE -ne 0) { throw ('Failed: ' + $check) }
 }
 if ($Browser) {
+    & $Node (Join-Path $PSScriptRoot 'note-inline-math-preview-browser.js')
+    if ($LASTEXITCODE -ne 0) { throw 'Inline formula preview checks failed.' }
     & $Node (Join-Path $PSScriptRoot 'note-link-completion-browser.js')
     if ($LASTEXITCODE -ne 0) { throw 'Link completion browser checks failed.' }
     & $Node (Join-Path $PSScriptRoot 'note-cards-browser.js')

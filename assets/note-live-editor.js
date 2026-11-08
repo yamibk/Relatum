@@ -1610,6 +1610,13 @@
     return source.slice(2, -2).trim() ? source : '';
   }
 
+  function incompleteMathPreview(stage, source) {
+    // noundefined renders a partially typed command as red text, not merror.
+    return !stage.querySelector('mjx-container') || !!stage.querySelector('mjx-merror, [data-mjx-error], merror')
+      || Array.from(stage.querySelectorAll('mjx-assistive-mml mtext[mathcolor="red"]')).some(node =>
+        /^\\[a-z]+$/i.test(node.textContent) && node.getAttribute('mathvariant') !== 'monospace' && source.includes(node.textContent));
+  }
+
   function mathScrollbarHit(event, dom) {
     if (!event || dom.scrollWidth <= dom.clientWidth + 1) return false;
     const height = dom.offsetHeight - dom.clientHeight;
@@ -1860,12 +1867,7 @@
           await math.typesetPromise([stage]);
           if (!this.current(entry, version)) return;
           processed = true;
-          // The bundled noundefined extension emits a red literal command
-          // instead of merror while, for example, \frac is only half typed.
-          const undefinedControl = Array.from(stage.querySelectorAll('mjx-assistive-mml mtext[mathcolor="red"]')).some(node =>
-            /^\\[a-z]+$/i.test(node.textContent) && node.getAttribute('mathvariant') !== 'monospace'
-            && editableMathSource(entry.spec).includes(node.textContent));
-          if (!stage.querySelector('mjx-container') || stage.querySelector('mjx-merror, [data-mjx-error], merror') || undefinedControl) {
+          if (incompleteMathPreview(stage, editableMathSource(entry.spec))) {
             this.incomplete(entry, false);
           } else {
             this.clear(entry.content);
@@ -1889,6 +1891,181 @@
     });
     coordinator.mathPreviewPlugin = plugin;
     return plugin;
+  }
+
+  // Only the main live-preview surface installs this extension. Its target is
+  // an existing source decoration, so parsing/guards stay owned by the inline
+  // renderer (including virtualized lines, links and nested callouts).
+  function createInlineMathPreview(coordinator, inlinePlugin, options) {
+    const tooltipEffect = StateEffect.define();
+    const tooltipField = StateField.define({
+      create: () => null,
+      update(value, transaction) {
+        for (const effect of transaction.effects) if (effect.is(tooltipEffect)) value = effect.value;
+        return value;
+      },
+      provide: field => CM.showTooltip.from(field),
+    });
+    const plugin = ViewPlugin.fromClass(class {
+      constructor(view) {
+        this.view = view; this.version = 0; this.timer = 0; this.dead = false; this.running = false;
+        this.pageActive = true; this.windowActive = true;
+        this.createTooltip = () => this.mount();
+        this.unwatch = watchNoteRenderLifecycle(event => {
+          if (event.type === 'pagehide') this.pageActive = false;
+          if (event.type === 'pageshow') this.pageActive = true;
+          this.sync();
+        });
+        this.blur = () => { this.windowActive = false; this.close(); };
+        this.focus = () => { this.windowActive = true; this.sync(); };
+        this.dismiss = () => this.close();
+        this.events = [[window, 'blur', this.blur], [window, 'focus', this.focus],
+          [document, 'relatum:note-theme-beforechange', this.dismiss], [document, 'relatum:languagechange', this.dismiss]];
+        this.events.forEach(([host, name, listener]) => host.addEventListener(name, listener));
+        queueMicrotask(() => { if (!this.dead) this.sync(); });
+      }
+      ready() {
+        return !this.dead && this.pageActive && this.windowActive && options.active() && this.view.hasFocus
+          && !this.view.state.readOnly && !compositionActive(this.view) && !options.pending() && noteRenderForeground(this.view);
+      }
+      findTarget() {
+        const { state } = this.view, selection = state.selection;
+        if (!this.ready() || selection.ranges.length !== 1 || !selection.main.empty) return null;
+        const head = selection.main.head;
+        let target = null;
+        this.view.plugin(inlinePlugin)?.decorations.between(head, head, (from, to, decoration) => {
+          if (decoration.spec.class !== 'note-live-math-source') return;
+          const source = state.doc.sliceString(from, to), size = source.startsWith('\\(') ? 2 : 1;
+          if (head < from + size || head > to - size || !source.slice(size, -size).trim()) return;
+          target = { from, to, source, head, doc: state.doc, epoch: coordinator.epoch };
+        });
+        return target;
+      }
+      clear(node) {
+        if (!node) return;
+        try { window.MathJax?.typesetClear?.([node]); } catch (_) {}
+        node.remove();
+      }
+      clearContent() {
+        this.clear(this.content); this.clear(this.stage);
+        this.content = this.stage = null; this.renderedSource = null;
+        if (this.status) this.status.hidden = true;
+      }
+      publish() {
+        if (this.queued || this.dead) return;
+        this.queued = true;
+        queueMicrotask(() => {
+          this.queued = false;
+          if (this.dead) return;
+          const previous = this.view.state.field(tooltipField, false), target = this.target;
+          if (target ? previous?.pos === target.head : !previous) return;
+          this.view.dispatch({ effects: tooltipEffect.of(target
+            ? { pos: target.head, above: false, strictSide: false, create: this.createTooltip } : null),
+            annotations: Transaction.addToHistory.of(false) });
+        });
+      }
+      close() {
+        this.version++; clearTimeout(this.timer); this.timer = 0;
+        this.target = null; this.pending = false; this.clearContent();
+        if (this.dom) this.dom.hidden = true;
+        this.publish();
+      }
+      sync(update) {
+        if (this.dead) return;
+        if (update?.docChanged || update?.selectionSet) this.dismissed = false;
+        const target = this.dismissed ? null : this.findTarget();
+        if (!target) {
+          this.close();
+          if (options.pending() && !this.waiting) {
+            this.waiting = true;
+            options.settled().then(() => { this.waiting = false; if (!this.dead) this.sync(); }, () => { this.waiting = false; });
+          }
+          return;
+        }
+        const previous = this.target;
+        const same = previous && previous.epoch === target.epoch
+          && (update?.docChanged ? update.changes.mapPos(previous.from, -1) : previous.from) === target.from
+          && (update?.docChanged ? update.changes.mapPos(previous.to, 1) : previous.to) === target.to;
+        if (!same) { this.version++; this.clearContent(); this.pending = true; this.due = performance.now(); }
+        else if (previous.doc !== target.doc || previous.source !== target.source) {
+          this.version++; this.pending = this.renderedSource !== target.source;
+          this.due = performance.now() + 120;
+        }
+        this.target = target;
+        if (this.dom) this.dom.hidden = false;
+        this.publish(); this.schedule();
+      }
+      mount() {
+        const dom = document.createElement('div'), status = document.createElement('div');
+        dom.className = 'note-inline-math-preview'; dom.contentEditable = 'false';
+        dom.setAttribute('aria-label', document.documentElement.lang === 'en' ? 'Formula preview' : '公式预览');
+        status.className = 'note-inline-math-status'; status.hidden = true; status.setAttribute('role', 'status');
+        dom.appendChild(status); this.dom = dom; this.status = status;
+        // Native scrollbar gestures remain available; the formula itself never
+        // takes the caret from the source editor.
+        dom.addEventListener('mousedown', event => {
+          const rect = dom.getBoundingClientRect();
+          if (event.clientX < rect.left + dom.clientWidth && event.clientY < rect.top + dom.clientHeight) event.preventDefault();
+        });
+        this.schedule();
+        return { dom,
+          destroy: () => {
+            if (this.dom !== dom) return;
+            this.version++; clearTimeout(this.timer); this.timer = 0; this.clearContent();
+            this.dom = this.status = null;
+            if (this.target) this.pending = true;
+          } };
+      }
+      schedule() {
+        clearTimeout(this.timer); this.timer = 0;
+        if (!this.pending || this.running || !this.dom || !this.target || !this.ready()) return;
+        this.timer = setTimeout(() => { this.timer = 0; this.render(); }, Math.max(0, this.due - performance.now()));
+      }
+      async render() {
+        const target = this.target, version = this.version, dom = this.dom;
+        const current = () => version === this.version && this.dom === dom && dom?.isConnected && this.ready()
+          && this.target?.doc === target.doc && this.view.state.doc === target.doc && coordinator.epoch === target.epoch;
+        if (!target || !current()) return;
+        this.running = true; this.pending = false;
+        const stage = document.createElement('div'); stage.className = 'note-inline-math-stage';
+        stage.setAttribute('aria-hidden', 'true'); stage.textContent = target.source;
+        this.stage = stage; dom.appendChild(stage);
+        try {
+          if (!await typesetMath(stage, current) || !current()) return;
+          if (incompleteMathPreview(stage, target.source)) this.message(false);
+          else {
+            this.clear(this.content);
+            stage.className = 'note-inline-math-content'; stage.removeAttribute('aria-hidden');
+            this.content = stage; this.stage = null; this.renderedSource = target.source; this.status.hidden = true;
+            this.view.requestMeasure();
+          }
+        } catch (_) { if (current()) this.message(true); }
+        finally {
+          if (this.content !== stage) this.clear(stage);
+          if (this.stage === stage) this.stage = null;
+          this.running = false; this.schedule();
+        }
+      }
+      message(unavailable) {
+        this.status.textContent = document.documentElement.lang === 'en'
+          ? (unavailable ? 'Formula preview unavailable' : 'Formula is incomplete')
+          : (unavailable ? '公式预览暂不可用' : '公式尚未完成');
+        this.status.hidden = false; this.view.requestMeasure();
+      }
+      update(update) { this.sync(update); }
+      destroy() {
+        this.dead = true; this.close(); this.unwatch();
+        this.events.forEach(([host, name, listener]) => host.removeEventListener(name, listener));
+      }
+    }, { eventHandlers: {
+      compositionstart() { this.close(); return false; },
+      blur() { this.close(); return false; },
+      keydown(event) {
+        if (event.key === 'Escape' && this.target) { this.dismissed = true; this.close(); }
+        return false;
+      },
+    } });
+    return { plugin, extensions: [tooltipField, CM.tooltips({ parent: document.body, position: 'fixed' }), plugin] };
   }
 
   class TaskWidget extends WidgetType {
@@ -6552,6 +6729,10 @@
     const mathPreviewPlugin = createMathEditPreviewPlugin(coordinator);
     const mermaidPreviewPlugin = createMermaidEditPreviewPlugin(coordinator);
     const inlinePlugin = createInlinePlugin(blockField, notePath, safeOptions);
+    const inlineMathPreview = createInlineMathPreview(coordinator, inlinePlugin, {
+      active: () => highlightActive && !destroyed && !imageTextController.active,
+      pending: inputPending, settled: whenInputSettled,
+    });
     const sourceFoldPlugin = ViewPlugin.fromClass(class {
       constructor(view) {
         this.mathColors = createMathHighlightCache();
@@ -6733,7 +6914,7 @@
     });
 
     function livePreviewExtensions() {
-      return sourceMode ? [sourceFoldPlugin] : [blockField, viewportParsePlugin, blockLayoutPlugin, inlinePlugin, mathPreviewPlugin, mermaidPreviewPlugin];
+      return sourceMode ? [sourceFoldPlugin] : [blockField, viewportParsePlugin, blockLayoutPlugin, inlinePlugin, inlineMathPreview.extensions, mathPreviewPlugin, mermaidPreviewPlugin];
     }
 
     function editorLabelExtension() {
@@ -7884,6 +8065,7 @@
       captureViewport, restoreViewport, cancelViewportRestore() { cancelViewportRestore(view.scrollDOM); scrollRestoreSeq++; },
       setExtensionsActive(active) {
         highlightActive = active !== false;
+        view.plugin(inlineMathPreview.plugin)?.sync();
         if (!highlightActive) { cancelMathPointerScroll(); highlightInputs.forEach(input => input.dismiss()); view.plugin(viewportParsePlugin)?.pause(); }
         else { view.plugin(viewportParsePlugin)?.schedule(); coordinator.layout.schedule(); }
         extensionHost?.setActive(active);
