@@ -2013,40 +2013,47 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
 .note-document-switch-pending .note-document-body { opacity: .68; cursor: progress; }
 
 /* Note discovery uses the existing sidebar and document stage. */
-.note-workspace, .note-link-completion {
+.note-workspace, .note-link-completion, .note-search-popover {
   --note-scroll-thumb: rgba(45, 45, 42, .22);
   --note-scroll-thumb-hover: rgba(45, 45, 42, .36);
   --note-scroll-thumb-active: rgba(45, 45, 42, .48);
 }
-body.start-page[data-start-theme="dark"] :is(.note-workspace, .note-link-completion) {
+body.start-page[data-start-theme="dark"] :is(.note-workspace, .note-link-completion, .note-search-popover) {
   --note-scroll-thumb: rgba(235, 240, 235, .24);
   --note-scroll-thumb-hover: rgba(235, 240, 235, .38);
   --note-scroll-thumb-active: rgba(235, 240, 235, .5);
 }
 .note-workspace :is(.note-sidebar-scroll, .note-notebook-tree, .note-source-editor, .cm-scroller, .note-reading-view, .note-backlink-section, .note-browser-results),
-.note-link-completion > ul {
+.note-link-completion > ul, .note-search-popover {
   scrollbar-width: thin;
   scrollbar-color: var(--note-scroll-thumb) transparent;
 }
 /* Chromium's standard scrollbar properties override its detailed styling. */
 @supports selector(::-webkit-scrollbar) {
   .note-workspace :is(.note-sidebar-scroll, .note-notebook-tree, .note-source-editor, .cm-scroller, .note-reading-view, .note-backlink-section, .note-browser-results),
-  .note-link-completion > ul {
+  .note-link-completion > ul, .note-search-popover {
     scrollbar-width: auto;
     scrollbar-color: auto;
   }
 }
-:is(.note-workspace, .note-link-completion) ::-webkit-scrollbar { width: 10px; height: 10px; }
+:is(.note-workspace, .note-link-completion) ::-webkit-scrollbar,
+.note-search-popover::-webkit-scrollbar { width: 10px; height: 10px; }
 :is(.note-workspace, .note-link-completion) ::-webkit-scrollbar-track,
-:is(.note-workspace, .note-link-completion) ::-webkit-scrollbar-corner { background: transparent; }
-:is(.note-workspace, .note-link-completion) ::-webkit-scrollbar-thumb {
+:is(.note-workspace, .note-link-completion) ::-webkit-scrollbar-corner,
+.note-search-popover::-webkit-scrollbar-track,
+.note-search-popover::-webkit-scrollbar-corner { background: transparent; }
+:is(.note-workspace, .note-link-completion) ::-webkit-scrollbar-thumb,
+.note-search-popover::-webkit-scrollbar-thumb {
   min-height: 32px; min-width: 32px;
   border: 2px solid transparent; border-radius: 999px;
   background: var(--note-scroll-thumb); background-clip: content-box;
 }
-:is(.note-workspace, .note-link-completion) ::-webkit-scrollbar-thumb:hover { background-color: var(--note-scroll-thumb-hover); }
-:is(.note-workspace, .note-link-completion) ::-webkit-scrollbar-thumb:active { background-color: var(--note-scroll-thumb-active); }
-:is(.note-workspace, .note-link-completion) ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+:is(.note-workspace, .note-link-completion) ::-webkit-scrollbar-thumb:hover,
+.note-search-popover::-webkit-scrollbar-thumb:hover { background-color: var(--note-scroll-thumb-hover); }
+:is(.note-workspace, .note-link-completion) ::-webkit-scrollbar-thumb:active,
+.note-search-popover::-webkit-scrollbar-thumb:active { background-color: var(--note-scroll-thumb-active); }
+:is(.note-workspace, .note-link-completion) ::-webkit-scrollbar-button,
+.note-search-popover::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 .note-browser-showing-results .note-current-path { visibility: hidden; }
 .note-browser-toggle[aria-pressed="true"] { background: rgba(0, 0, 0, .075); color: var(--text); }
 .note-browser-disclosure {
@@ -2116,7 +2123,7 @@ body.start-page[data-start-theme="dark"] :is(.note-workspace, .note-link-complet
 .note-search-folder-toggle { position: absolute; right: 1px; bottom: 1px; width: 28px; height: 32px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); cursor: pointer; transition: background-color 100ms ease; }
 .note-search-folder-toggle::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); }
 .note-search-folder-toggle:hover { background: rgba(128,128,128,.08); }
-.note-search-popover { position: fixed; z-index: 1400; box-sizing: border-box; padding: 6px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; border: 1px solid rgba(128,128,128,.16); border-radius: 12px; background: #fff; color: var(--text); box-shadow: 0 8px 26px rgba(30,29,26,.1); font-family: var(--font-ui); opacity: 0; transform: translateY(-3px); transition: opacity 160ms ease, transform 160ms cubic-bezier(.22,1,.36,1); }
+.note-search-popover { position: fixed; z-index: 1400; box-sizing: border-box; padding: 6px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid rgba(128,128,128,.16); border-radius: 12px; background: #fff; color: var(--text); box-shadow: 0 8px 26px rgba(30,29,26,.1); font-family: var(--font-ui); opacity: 0; transform: translateY(-3px); transition: opacity 160ms ease, transform 160ms cubic-bezier(.22,1,.36,1); }
 .note-search-popover.opens-up { transform: translateY(3px); }
 .note-search-popover.is-open { opacity: 1; transform: none; }
 .note-search-popover.is-closing { pointer-events: none; transition-duration: 120ms; }
