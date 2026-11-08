@@ -1069,16 +1069,19 @@ body.start-page[data-start-theme="dark"] .note-table-drop { background: #adcba5;
 .cm-tooltip.note-inline-math-preview {
   position: relative; box-sizing: border-box; width: max-content; min-width: 32px; min-height: 28px;
   max-width: min(480px, calc(100vw - 24px)); max-height: min(240px, 40vh); padding: 9px 12px;
-  overflow: auto; color: var(--note-theme-text, var(--text)); background: var(--note-theme-surface, var(--surface));
+  overflow: auto; scrollbar-width: none;
+  color: var(--note-theme-text, var(--text)); background: var(--note-theme-surface, var(--surface));
   border: 1px solid var(--note-theme-line-strong, var(--border-strong)); border-radius: 10px;
   box-shadow: var(--note-theme-shadow, 0 6px 22px rgba(0,0,0,.13));
   font-size: calc(16px * var(--note-font-scale, 1)); line-height: 1.5;
 }
 .note-inline-math-preview[hidden] { display: none; }
+.note-inline-math-preview::-webkit-scrollbar { display: none; }
 .note-inline-math-stage { position: absolute; inset: 0 auto auto 0; visibility: hidden; pointer-events: none; }
 .note-inline-math-content { width: max-content; }
 .note-inline-math-preview mjx-container { margin: 0; }
-.note-inline-math-preview mjx-assistive-mml { height: 1px; }
+/* Keep the clipped accessibility copy from expanding the scrollable area. */
+.note-inline-math-preview mjx-assistive-mml { height: 1px; max-width: 1px; }
 .note-inline-math-status { color: var(--text-secondary); font: .8em/1.5 var(--font-ui); }
 .note-inline-math-status[hidden] { display: none; }
 .note-live-rich-block.is-rule {

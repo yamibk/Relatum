@@ -7,6 +7,8 @@ const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..');
 const output = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-inline-math-'));
 const popup = '.note-inline-math-preview';
+const dpr = Number(process.env.RELATUM_TEST_DPR || 1);
+const trailingOperator = '$a^2+b^2=c^2+$';
 const html = markdown => `<!doctype html><html lang="zh-CN" ${markdown ? 'data-markdown-dark="0"' : ''}><head>
 <meta charset="utf-8"><base href="/assets/"><link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="note-theme.css">${markdown ? '<link rel="stylesheet" href="markdown-file.css">' : ''}
@@ -19,6 +21,29 @@ const html = markdown => `<!doctype html><html lang="zh-CN" ${markdown ? 'data-m
 <script src="note-media-frame.js"></script><script src="note-live-editor.js"></script>
 <script>window.changes=0;window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{
 value:'ordinary text',notePath:'synthetic.md',onChange(){changes++}});</script></body></html>`;
+
+async function checkPreviewFrame(page, short = false) {
+  const metrics = await page.locator(popup).evaluate(node => {
+    const rect = node.getBoundingClientRect(), style = getComputedStyle(node);
+    const math = node.querySelector('.note-inline-math-content mjx-math').getBoundingClientRect();
+    const assistive = node.querySelector('mjx-assistive-mml');
+    return { left: rect.left, right: rect.right, width: rect.width, height: rect.height,
+      scrollWidth: node.scrollWidth, clientWidth: node.clientWidth,
+      scrollbar: style.scrollbarWidth, webkitScrollbar: getComputedStyle(node, '::-webkit-scrollbar').display,
+      gutter: node.offsetHeight - node.clientHeight - parseFloat(style.borderTopWidth) - parseFloat(style.borderBottomWidth),
+      fits: math.left >= rect.left && math.right <= rect.right && math.top >= rect.top && math.bottom <= rect.bottom,
+      assistiveWidth: assistive.getBoundingClientRect().width,
+      accessible: !!assistive.querySelector('math') && !!assistive.textContent && getComputedStyle(assistive).display !== 'none' };
+  });
+  assert.equal(metrics.scrollbar, 'none'); assert.equal(metrics.webkitScrollbar, 'none');
+  assert(Math.abs(metrics.gutter) < 1, 'hidden scrollbars reserve no height: ' + JSON.stringify(metrics));
+  assert(metrics.assistiveWidth <= 1 && metrics.accessible, 'the bounded accessibility copy keeps its MathML/text');
+  if (short) {
+    assert(metrics.scrollWidth <= metrics.clientWidth, 'short formula has no horizontal overflow: ' + JSON.stringify(metrics));
+    assert(metrics.fits, 'short formula is fully inside the preview: ' + JSON.stringify(metrics));
+  }
+  return metrics;
+}
 
 (async () => {
   const server = http.createServer((req, res) => {
@@ -36,7 +61,7 @@ value:'ordinary text',notePath:'synthetic.md',onChange(){changes++}});</script><
   try {
     browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'],
       ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
-    page = await browser.newPage({ viewport: { width: 1050, height: 780 }, reducedMotion: 'reduce' });
+    page = await browser.newPage({ viewport: { width: 1050, height: 780 }, deviceScaleFactor: dpr, reducedMotion: 'reduce' });
     page.on('pageerror', error => errors.push(error.stack)); page.on('request', request => requests.push(request.url()));
     page.setDefaultTimeout(10000);
     await page.goto(url); await page.waitForFunction(() => window.editor?.view);
@@ -230,7 +255,7 @@ value:'ordinary text',notePath:'synthetic.md',onChange(){changes++}});</script><
     }
     report.lifecycle = 9;
 
-    // Theme portals, viewport edges, body scaling and real horizontal scrolling.
+    // Theme portals, viewport edges, body scaling and hidden scrollbars.
     const themes = [];
     for (const theme of ['default', 'claude', 'sky', 'apple']) for (const dark of [false, true]) {
       await page.evaluate(({ theme, dark }) => { document.documentElement.dataset.noteTheme = theme;
@@ -241,29 +266,34 @@ value:'ordinary text',notePath:'synthetic.md',onChange(){changes++}});</script><
       assert.notEqual(metrics.bg, 'rgba(0, 0, 0, 0)'); assert.notEqual(metrics.bg, metrics.color);
       assert(metrics.width <= 480 && metrics.height <= 240);
       themes.push({ theme, dark, ...metrics });
-      await page.screenshot({ path: path.join(output, theme + (dark ? '-dark' : '-light') + '.png') });
+      await checkPreviewFrame(page, true);
+      for (const scale of [.8, 1, 1.4]) {
+        await page.evaluate(scale => document.documentElement.style.setProperty('--note-font-scale', scale), scale);
+        await set(trailingOperator, trailingOperator.length - 1); await ready();
+        await checkPreviewFrame(page, true);
+        if (scale === 1) await page.screenshot({ path: path.join(output, theme + (dark ? '-dark' : '-light') + '.png') });
+      }
+      await page.evaluate(() => document.documentElement.style.removeProperty('--note-font-scale'));
     }
     await page.setViewportSize({ width: 390, height: 650 });
+    await set(trailingOperator, trailingOperator.length - 1); await ready();
+    await page.waitForFunction(() => {
+      const rect = document.querySelector('.note-inline-math-preview').getBoundingClientRect();
+      return rect.left >= 0 && rect.right <= innerWidth;
+    });
+    await checkPreviewFrame(page, true);
     await set('Text $' + Array.from({ length: 60 }, (_, i) => 'x_{' + i + '}').join('+') + '$ tail'); await ready();
     await page.waitForFunction(() => {
       const rect = document.querySelector('.note-inline-math-preview').getBoundingClientRect();
       return rect.left >= 0 && rect.right <= innerWidth;
     });
-    const wide = await page.locator(popup).evaluate(node => {
-      const r = node.getBoundingClientRect(); node.scrollLeft = 80;
-      return { left: r.left, right: r.right, width: r.width, scroll: node.scrollLeft, height: r.height,
-        style: node.style.cssText, transform: getComputedStyle(node).transform, transition: getComputedStyle(node).transition,
-        body: getComputedStyle(document.body).transform, position: getComputedStyle(node).position };
-    });
-    assert(wide.width <= 366 && wide.left >= 0 && wide.right <= 390 && wide.scroll > 0, JSON.stringify(wide));
-    const thumb = await page.locator(popup).evaluate(node => {
-      node.scrollLeft = 0; const rect = node.getBoundingClientRect();
-      return { x: rect.left + Math.max(25, node.clientWidth * node.clientWidth / node.scrollWidth / 2),
-        y: rect.bottom - (node.offsetHeight - node.clientHeight) / 2 };
-    });
-    await page.mouse.move(thumb.x, thumb.y); await page.mouse.down();
-    await page.mouse.move(thumb.x + 120, thumb.y, { steps: 6 }); await page.mouse.up();
-    assert(await page.locator(popup).evaluate(node => node.scrollLeft > 80), 'native thumb drag scrolls the preview');
+    const wide = await checkPreviewFrame(page);
+    assert(wide.width <= 366 && wide.left >= 0 && wide.right <= 390 && wide.scrollWidth > wide.clientWidth, JSON.stringify(wide));
+    await page.locator(popup).hover(); await page.mouse.wheel(180, 0);
+    await page.waitForFunction(() => document.querySelector('.note-inline-math-preview').scrollLeft > 80);
+    await page.locator(popup).evaluate(node => { node.scrollLeft = 0; });
+    await page.keyboard.down('Shift'); await page.mouse.wheel(0, 180); await page.keyboard.up('Shift');
+    await page.waitForFunction(() => document.querySelector('.note-inline-math-preview').scrollLeft > 80);
     assert.equal(await page.evaluate(() => document.activeElement === editor.view.contentDOM), true);
     await page.locator(popup).click({ position: { x: 20, y: 12 } });
     assert.equal(await page.evaluate(() => document.activeElement === editor.view.contentDOM), true);
@@ -273,8 +303,9 @@ value:'ordinary text',notePath:'synthetic.md',onChange(){changes++}});</script><
     // The standalone Markdown shell gets the same editor with its own pure colors.
     await page.goto(url + '/?markdown'); await page.waitForFunction(() => window.editor?.view);
     for (const dark of [false, true]) {
-      await page.evaluate(dark => { document.documentElement.dataset.markdownDark = dark ? '1' : '0'; }, dark);
-      await set('Markdown $x^2+y^2$ tail'); await ready();
+      await page.evaluate(dark => { document.documentElement.dataset.markdownDark = dark ? '1' : '0';
+        document.body.dataset.startTheme = dark ? 'dark' : 'light'; }, dark);
+      await set(trailingOperator, trailingOperator.length - 1); await ready(); await checkPreviewFrame(page, true);
       assert.equal(await page.locator(popup).evaluate(node => getComputedStyle(node).backgroundColor), dark ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)');
     }
     await page.evaluate(() => editor.destroy()); await absent();
@@ -282,7 +313,7 @@ value:'ordinary text',notePath:'synthetic.md',onChange(){changes++}});</script><
     assert.deepEqual(errors, []);
     assert(requests.every(value => new URL(value).origin === url), 'all formula/font resources stay offline');
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
-    console.log(JSON.stringify({ output, recognition: report.recognition, lifecycle: report.lifecycle, themes: themes.length, standalone: 2 }));
+    console.log(JSON.stringify({ output, dpr, recognition: report.recognition, lifecycle: report.lifecycle, themes: themes.length, shortFormulaScales: 24, standalone: 2 }));
   } catch (error) {
     if (page) { await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});
       console.error(await page.evaluate(() => ({ value: editor?.snapshot().value, popup: document.querySelector('.note-inline-math-preview')?.outerHTML.slice(0, 1400) })).catch(() => null)); }
