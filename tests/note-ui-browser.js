@@ -4,6 +4,124 @@ const assert = require('node:assert/strict'), fs = require('node:fs'), os = requ
 const { spawn } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..'), sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const polishPath = 'CustomNotebook/Study/很长的文件夹名称用于检查位置截断/一篇很长的笔记标题用于检查中英文混排与窄窗边界 Long title.md';
+async function verifyBrowserPolish(page, mode, root) {
+  const screenshot = async name => {
+    if (!process.env.RELATUM_ARTIFACT_DIR) return;
+    await page.evaluate(() => document.activeElement?.blur()); await page.mouse.move(5, 5);
+    await page.keyboard.press('Escape'); await sleep(160);
+    await page.screenshot({ path: path.join(process.env.RELATUM_ARTIFACT_DIR, 'note-ui-polish-' + name + '.png') });
+  };
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.evaluate(() => { RelatumNoteSystem.update({ animations: true }); RelatumI18n.setLanguage('zh-CN'); });
+  await page.waitForFunction(() => !RelatumNoteSystem.motion.matches);
+  const busy = () => page.waitForFunction(() => document.querySelector('.note-browser-results')?.getAttribute('aria-busy') === 'false');
+  await page.evaluate(() => { window.polishEditor = T.editor.view; window.polishDocument = T.editor.view.state.doc; });
+  await page.evaluate(() => T.browser.search());
+  const query = page.locator('[data-note-search="query"]');
+  await query.fill('polishtoken'); await query.press('Enter'); await busy();
+  const card = page.locator('.note-browser-result'); await card.waitFor();
+  assert.equal(await card.count(), 1);
+  assert((await card.locator('small').textContent()).startsWith('Study / '));
+  assert.equal(await card.locator('.note-browser-result-tags > span').count(), 4);
+  assert.equal(await card.locator('.note-browser-tags-more').textContent(), '+2');
+  assert((await card.getAttribute('aria-description')).includes('#第五'));
+  await card.focus();
+  await page.waitForFunction(path => document.querySelector('#relatum-ui-tooltip')?.textContent.includes(path), polishPath);
+  await query.fill('很长的文件夹名称'); await query.press('Enter'); await busy();
+  assert.equal(await card.locator('small.is-match').textContent(), polishPath, 'path matches retain the original UTF-16 projection');
+  assert.equal(await card.locator('small mark').textContent(), '很长的文件夹名称');
+  await query.fill('polishtoken'); await query.press('Enter'); await busy();
+  if (mode === 'full') {
+    const capture = () => page.evaluate(() => {
+      const content = getComputedStyle(document.querySelector('.cm-content')), pane = document.querySelector('.note-links-pane');
+      const style = getComputedStyle(pane), box = pane.getBoundingClientRect();
+      return { editor: [content.fontFamily, content.fontSize, content.lineHeight, content.padding],
+        right: [style.backgroundColor, style.fontFamily, box.x, box.y, box.width, box.height] };
+    });
+    for (const theme of ['default', 'claude', 'sky', 'apple']) for (const dark of ['light', 'dark']) {
+      await page.evaluate(({ theme, dark }) => { RelatumNoteTheme.apply(theme, { persist: false }); document.body.dataset.startTheme = document.documentElement.dataset.startTheme = dark; }, { theme, dark });
+      await page.evaluate(() => document.fonts.ready);
+      await page.evaluate(() => T.browser.showDocument()); const before = await capture();
+      await page.evaluate(() => T.browser.search()); await busy(); await sleep(200);
+      assert.deepEqual(await capture(), before, 'browser layout leaves the editor styles and right sidebar unchanged');
+      const layout = await card.evaluate(node => {
+        const style = getComputedStyle(node), title = getComputedStyle(node.querySelector('strong')), shell = node.closest('.note-browser-result-shell');
+        return { radius: style.borderRadius, title: title.fontSize, width: shell.getBoundingClientRect().width,
+          overflow: node.closest('.note-browser-results').scrollWidth > node.closest('.note-browser-results').clientWidth,
+          sidebarGap: document.querySelector('.note-links-pane').getBoundingClientRect().left - node.getBoundingClientRect().right,
+          shadow: style.backdropFilter, path: node.querySelector('small').textContent };
+      });
+      assert.equal(layout.radius, '14px'); assert.equal(layout.title, '15px'); assert(layout.width <= 880);
+      assert.equal(layout.overflow, false); assert.equal(layout.shadow, 'none'); assert(layout.path.startsWith('Study / '));
+      assert(layout.sidebarGap >= 8, 'cards remain clear of the right sidebar');
+      if (theme === 'apple') {
+        for (const choice of ['gray', 'blue']) {
+          await page.evaluate(choice => RelatumNoteTheme.applyAppleSelection(choice, { persist: false }), choice);
+          await sleep(150);
+          assert(await page.locator('[data-note-browser-provider="search"]').evaluate(node => {
+            const probe = document.createElement('span'); probe.style.background = 'var(--note-theme-nav-selected)'; node.appendChild(probe);
+            const same = getComputedStyle(node).backgroundColor === getComputedStyle(probe).backgroundColor; probe.remove(); return same;
+          }), 'Apple navigation follows its independent selection preference');
+        }
+      }
+      await screenshot(theme + '-' + dark);
+    }
+    await page.evaluate(() => { window.polishAnimationCount = 0; const animate = Element.prototype.animate;
+      window.polishOriginalAnimate = animate; Element.prototype.animate = function (...args) {
+        const animation = animate.apply(this, args); if (this.classList.contains('note-browser-result-shell')) { polishAnimationCount++; window.polishAnimation = animation; } return animation;
+      };
+    });
+    await query.fill('polishtoken '); await query.press('Enter'); await busy();
+    await page.evaluate(() => T.browser.invalidate()); await busy();
+    assert.equal(await page.evaluate(() => polishAnimationCount), 0, 'typing and background refresh never replay page entry');
+    await page.evaluate(() => T.browser.showDocument()); await page.locator('[data-role="note-browser-back"]').click();
+    assert.equal(await page.evaluate(() => polishAnimationCount), 0, 'return restores the page without entry animation');
+    await page.evaluate(() => T.browser.showDocument()); await page.evaluate(() => T.browser.search());
+    assert.equal(await page.evaluate(() => polishAnimationCount), 1, JSON.stringify(await page.evaluate(() => ({
+      reduced: RelatumNoteSystem.motion.matches, active: T.state.active, hidden: document.querySelector('.note-browser-results').hidden,
+      busy: document.querySelector('.note-browser-results').getAttribute('aria-busy') }))));
+    await page.evaluate(() => RelatumNoteSystem.update({ animations: false }));
+    assert.equal(await page.evaluate(() => polishAnimation.playState), 'idle', 'Notes reduced motion cancels current entry');
+    assert.equal(await card.evaluate(node => getComputedStyle(node).transitionDuration), '0s');
+    await page.evaluate(() => RelatumNoteSystem.update({ animations: true }));
+    await page.emulateMedia({ reducedMotion: 'reduce' }); await page.waitForFunction(() => RelatumNoteSystem.motion.matches);
+    await page.evaluate(() => T.browser.showDocument()); await page.evaluate(() => T.browser.search());
+    assert.equal(await page.evaluate(() => polishAnimationCount), 1, 'system reduced motion skips entry');
+    await page.emulateMedia({ reducedMotion: 'no-preference' }); await page.waitForFunction(() => !RelatumNoteSystem.motion.matches);
+    await page.evaluate(() => T.browser.showDocument()); await page.evaluate(() => T.browser.search());
+    await page.evaluate(() => { document.documentElement.dataset.desktopMinimized = '1'; window.dispatchEvent(new CustomEvent('canvasdesktop:visibility')); });
+    await page.waitForFunction(() => polishAnimation.playState === 'idle');
+    await page.evaluate(() => { document.documentElement.dataset.desktopMinimized = '0'; window.dispatchEvent(new CustomEvent('canvasdesktop:visibility')); });
+    await page.waitForFunction(() => !document.querySelector('.note-browser-results').hidden); await busy();
+    await page.evaluate(() => { Element.prototype.animate = polishOriginalAnimate; RelatumI18n.setLanguage('en'); });
+    await page.setViewportSize({ width: 700, height: 760 }); await sleep(200);
+    await page.locator('[data-note-action="close-links"]').click();
+    await page.locator('.note-links-pane').waitFor({ state: 'hidden' });
+    assert(await page.locator('.note-browser-results').evaluate(node => node.scrollWidth <= node.clientWidth));
+    await screenshot('narrow-en');
+    const noMatch = page.waitForResponse(response => response.url().endsWith('/api/note-query') && response.request().postDataJSON()?.q === 'polish-no-match');
+    await query.fill('polish-no-match'); await query.press('Enter'); await noMatch; await busy();
+    await page.locator('.note-search-empty').waitFor({ state: 'visible' });
+    assert.equal(await card.count(), 0);
+    assert.equal(await page.locator('.note-search-empty strong').textContent(), 'No matching notes');
+    await screenshot('empty');
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await page.evaluate(() => { RelatumNoteTheme.apply('apple', { persist: false }); document.body.dataset.startTheme = document.documentElement.dataset.startTheme = 'light'; RelatumI18n.setLanguage('zh-CN'); });
+    await page.locator('[data-note-browser-provider="recent"]').click(); await busy(); await sleep(200);
+    await page.waitForFunction(() => document.querySelectorAll('.note-browser-result').length === 50);
+    await screenshot('recent-apple-light');
+    await page.locator('[data-note-browser-provider="tags"]').click();
+    await page.locator('[data-note-browser-tag="设计"]').click(); await busy(); await sleep(200);
+    await screenshot('tags-apple-light');
+    await page.locator('[data-note-browser-provider="canvas"]').click(); await busy(); await sleep(200);
+    await screenshot('canvas-apple-light');
+    await page.evaluate(() => { RelatumNoteTheme.apply('default', { persist: false }); RelatumI18n.setLanguage('zh-CN'); });
+  }
+  assert(await page.evaluate(() => T.editor.view === polishEditor && T.editor.view.state.doc === polishDocument), 'browsing and themes preserve the live editor and document');
+  await page.evaluate(() => T.browser.showDocument());
+  assert.equal(fs.readFileSync(path.join(root, 'notes/Main.md'), 'utf8'), '# Main\nsharedtoken selected body\n文字 文字\n');
+}
 async function run(browser, mode) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-ui-')), notes = path.join(root, 'notes');
   for (const dir of ['notes/Folder', 'notes/CustomNotebook/Study', 'data']) fs.mkdirSync(path.join(root, dir), { recursive: true });
@@ -11,6 +129,8 @@ async function run(browser, mode) {
   fs.writeFileSync(path.join(notes, 'Main.md'), '# Main\nsharedtoken selected body\n文字 文字\n');
   fs.writeFileSync(path.join(notes, 'Folder/A.md'), 'sharedtoken folder');
   fs.writeFileSync(path.join(notes, 'CustomNotebook/Study/B.md'), 'sharedtoken book');
+  fs.mkdirSync(path.dirname(path.join(notes, polishPath)), { recursive: true });
+  fs.writeFileSync(path.join(notes, polishPath), '---\ntags: [设计, 界面, 交互, 第四, 第五]\n---\npolishtoken 简洁的信息卡，保留摘要与必要的位置提示。\n');
   fs.writeFileSync(path.join(root, 'data/note-notebooks.json'), JSON.stringify({ version: 1, colors: {}, ui: { open: true, mode: 'notebooks', selectedRoot: '', expanded: [] } }));
   const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
@@ -166,7 +286,9 @@ async function run(browser, mode) {
       fs.mkdirSync(process.env.RELATUM_ARTIFACT_DIR, { recursive: true });
       await page.screenshot({ path: path.join(process.env.RELATUM_ARTIFACT_DIR, 'note-ui-' + mode + '-calendar-dark.png') });
     }
-    await page.emulateMedia({ reducedMotion: 'reduce' }); await calendarButton.click(); assert.equal(await calendar.isHidden(), true);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await calendar.waitFor({ state: 'hidden' });
+    await calendarButton.click(); await calendarButton.click(); assert.equal(await calendar.isHidden(), true);
     await calendarButton.click();
     await page.evaluate(() => { document.documentElement.dataset.desktopMinimized = '1'; window.dispatchEvent(new CustomEvent('canvasdesktop:visibility')); });
     assert.equal(await calendar.isHidden(), true);
@@ -266,6 +388,7 @@ async function run(browser, mode) {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.T?.state.current?.path === 'Main.md' && T.state.active && !T.state.openingPath);
     assert.equal(await highlightToggle.isChecked(), false, 'a reset stays disabled after reload');
+    await verifyBrowserPolish(page, mode, root);
     await page.evaluate(() => { T.stopExternalSync(); T.stopDocumentPrefetch(); });
     // Reload schedules a one-off word count before controls become idle.
     await page.waitForFunction(() => T.state.current.countedGeneration === T.state.current.editGeneration);
@@ -279,7 +402,7 @@ async function run(browser, mode) {
     if (context) await context.close(); service.kill();
     await new Promise(resolve => { if (service.exitCode !== null) resolve(); else service.once('exit', resolve); });
     assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir())); assert(path.basename(root).startsWith('relatum-note-ui-'));
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 }
 (async () => {

@@ -66,6 +66,8 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await input.fill(''); if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
     await menu.waitFor({ state: 'visible' });
     await page.emulateMedia({ reducedMotion: 'reduce' });
+    await menu.waitFor({ state: 'hidden' });
+    await toggle.click(); await menu.waitFor({ state: 'visible' });
     const reduced = await menu.evaluate(node => { node.scrollTop = 0; node.dispatchEvent(new WheelEvent('wheel', { deltaY: 160, cancelable: true })); return node.scrollTop; });
     assert.equal(reduced, 160, 'reduced motion is immediate');
     await page.emulateMedia({ reducedMotion: 'no-preference' });

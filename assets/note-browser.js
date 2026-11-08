@@ -469,15 +469,29 @@
     let folderPicker = null, scopePicker = null, sortPicker = null, datePickers = [];
     let filterShell = null, filterOpen = false, filterFrame = 0, filterTimer = 0, filterSequence = 0, dateError = null;
     let searchPendingKey = '', lastSearchKey = '';
-    let searchView = null;
+    // One committed page owns the heading, status and keyed rows for every provider.
+    let resultView = null, pageAnimation = null, locationBooks = [];
     const displayKeys = new WeakMap();
-    const searchPopovers = createSearchPopovers(() => active && !disposed && !results.hidden && providerId === 'search', ctx.onPopoverOpen);
+    const searchPopovers = createSearchPopovers(() => active && !disposed && !results.hidden && providerId === 'search', () => {
+      stopPageAnimation(); ctx.onPopoverOpen?.();
+    });
     const canvasReferences = new Map();
     const copy = (key) => (words[ctx.language()] || words['zh-CN'])[key] || key;
     function button(label, handler, className) {
       const node = document.createElement('button'); node.type = 'button'; node.className = className || 'note-browser-nav-row';
       node.textContent = label; node.addEventListener('click', handler); return node;
     }
+    function stopPageAnimation() { pageAnimation?.cancel(); pageAnimation = null; }
+    function animatePage() {
+      stopPageAnimation();
+      if (reducedMotion() || !active || results.hidden || !resultView || !resultView.shell.animate) return;
+      const animation = resultView.shell.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }],
+        { duration: 180, easing: 'cubic-bezier(.22,1,.36,1)' });
+      pageAnimation = animation;
+      animation.onfinish = animation.oncancel = () => { if (pageAnimation === animation) pageAnimation = null; };
+    }
+    const motionChanged = () => { if (reducedMotion()) stopPageAnimation(); };
+    motion.addEventListener('change', motionChanged);
     function showResults() {
       const wasHidden = results.hidden;
       root.classList.remove('tree-overlay-open');
@@ -486,6 +500,7 @@
       if (wasHidden) { resultList?.resume(); results.scrollTop = resultScroll; }
     }
     function showDocument(options) {
+      stopPageAnimation();
       closePopovers({ instant: true });
       if (!options?.keepAction) actionSequence++;
       cancelReferenceRequests();
@@ -529,7 +544,8 @@
         }
         const { heading, shell, children } = group;
         group.label.textContent = copy(provider.label);
-        heading.classList.toggle('is-selected', (hasResult || !results.hidden) && providerId === provider.id && !hierarchical);
+        const current = (hasResult || !results.hidden) && providerId === provider.id && !hierarchical;
+        heading.classList.toggle('is-selected', current); heading.setAttribute('aria-current', current ? 'page' : 'false');
         if (!hierarchical) return;
         const items = navigation.get(provider.id) || [];
         const changedItems = group.items !== items, open = expanded.has(provider.id), changedOpen = group.open !== open;
@@ -552,6 +568,7 @@
           item.row.style.setProperty('--tag-depth', provider.id === 'tags' ? tag.key.split('/').length - 1 : tag.depth || 0);
           item.wrapper.style.setProperty('--note-child-index', Math.min(index, 7));
           item.row.classList.toggle('is-selected', providerId === provider.id && selection.key === tag.key);
+          item.row.setAttribute('aria-current', providerId === provider.id && selection.key === tag.key ? 'page' : 'false');
           item.label.textContent = provider.id === 'tags' ? tag.label.split('/').pop() : tag.label;
           item.count.textContent = tag.count ?? '';
           if (next === item.wrapper) next = next.nextElementSibling; else children.insertBefore(item.wrapper, next);
@@ -810,7 +827,7 @@
       const filterLabel = copy('filters') + (filterCount ? ' · ' + filterCount : '');
       if (filtersButton.textContent !== filterLabel) filtersButton.textContent = filterLabel;
       filterPanel.querySelector('[data-note-search="clear"]').disabled = !filterCount;
-      if (!dateError.hidden) { if (searchView) searchView.more.disabled = true; return false; }
+      if (!dateError.hidden) { if (resultView) resultView.more.disabled = true; return false; }
       let folder = folderInput.value.trim().replace(/\\/g, '/');
       const notebook = scopeInput.value.startsWith('b:') ? scopeInput.value.slice(2) : '';
       if (folder && notebook && !/^CustomNotebook(?:\/|$)/i.test(folder)) folder = notebook + '/' + folder;
@@ -845,63 +862,107 @@
     }
     function noteRow(note) {
       const row = button('', () => openResultNote(row.__note), 'note-browser-result');
+      const title = document.createElement('strong'), excerpt = document.createElement('p'), path = document.createElement('small');
+      const tags = document.createElement('span'); tags.className = 'note-browser-result-tags';
+      row.__parts = { title, excerpt, tags, path }; row.append(title, excerpt, tags, path);
       row.dataset.noteBrowserPath = note.path; updateNoteRow(row, note); return row;
+    }
+    function updateHighlighted(target, value, ranges) {
+      value = value || '';
+      const key = JSON.stringify([value, ranges]); if (target.__displayKey === key) return;
+      target.__displayKey = key; target.replaceChildren();
+      let position = 0;
+      for (const [from, to] of (ranges || []).slice().sort((a, b) => a[0] - b[0])) {
+        if (from < position) continue;
+        target.append(document.createTextNode(value.slice(position, from)));
+        const mark = document.createElement('mark'); mark.textContent = value.slice(from, to); target.append(mark); position = to;
+      }
+      target.append(document.createTextNode(value.slice(position)));
+    }
+    function noteLocation(path) {
+      const book = locationBooks.find(item => item.path && path.startsWith(item.path + '/'));
+      const custom = !book && /^CustomNotebook\/([^/]+)\/(.*)$/.exec(path);
+      const relative = book ? path.slice(book.path.length + 1) : custom ? custom[2] : path;
+      const folder = relative.slice(0, Math.max(0, relative.lastIndexOf('/')));
+      return [book?.name || custom?.[1] || locationBooks.find(item => !item.path)?.name || 'notes', folder].filter(Boolean).join(' / ');
     }
     function updateNoteRow(row, note) {
       row.classList.toggle('is-selected', note.path === selectedPath);
-      if (row.__note === note) return;
       row.__note = note;
       if (!displayKeys.has(note)) displayKeys.set(note, JSON.stringify([note.title, note.excerpt, note.path, note.titleHighlights, note.pathHighlights, note.highlights, (note.tags || []).map(tag => tag.label)]));
-      const key = displayKeys.get(note); if (row.__displayKey === key) return; row.__displayKey = key;
-      const highlight = (target, value, ranges) => {
-        let position = 0;
-        for (const [from, to] of (ranges || []).slice().sort((a, b) => a[0] - b[0])) {
-          if (from < position) continue;
-          target.append(document.createTextNode(value.slice(position, from)));
-          const mark = document.createElement('mark'); mark.textContent = value.slice(from, to); target.append(mark); position = to;
+      const location = note.pathHighlights?.length ? note.path : noteLocation(note.path);
+      const key = displayKeys.get(note) + location; if (row.__displayKey === key) return; row.__displayKey = key;
+      const { title, excerpt, tags, path } = row.__parts;
+      updateHighlighted(title, note.title, note.titleHighlights);
+      updateHighlighted(excerpt, note.excerpt, note.highlights); excerpt.hidden = !note.excerpt?.trim();
+      updateHighlighted(path, location, note.pathHighlights); path.classList.toggle('is-match', !!note.pathHighlights?.length);
+      const tagLabels = (note.tags || []).map(tag => '#' + tag.label), tagKey = JSON.stringify(tagLabels);
+      if (tags.__displayKey !== tagKey) {
+        tags.__displayKey = tagKey; tags.replaceChildren();
+        tagLabels.slice(0, 3).forEach(label => { const item = document.createElement('span'); item.textContent = label; tags.appendChild(item); });
+        if (tagLabels.length > 3) {
+          const overflow = document.createElement('span'); overflow.className = 'note-browser-tags-more'; overflow.textContent = '+' + (tagLabels.length - 3);
+          overflow.title = tagLabels.slice(3).join(' · '); tags.appendChild(overflow);
         }
-        target.append(document.createTextNode(value.slice(position)));
-      };
-      const title = document.createElement('strong'); highlight(title, note.title, note.titleHighlights);
-      const excerpt = document.createElement('p');
-      const ranges = (note.highlights || []).slice().sort((a, b) => a[0] - b[0]); let position = 0;
-      for (const [from, to] of ranges) {
-        if (from < position) continue;
-        excerpt.appendChild(document.createTextNode(note.excerpt.slice(position, from)));
-        const mark = document.createElement('mark'); mark.textContent = note.excerpt.slice(from, to); excerpt.appendChild(mark); position = to;
       }
-      excerpt.appendChild(document.createTextNode((note.excerpt || '').slice(position)));
-      const path = document.createElement('small'); highlight(path, note.path, note.pathHighlights);
-      const tags = document.createElement('span'); tags.className = 'note-browser-result-tags';
-      (note.tags || []).forEach(tag => { const item = document.createElement('span'); item.textContent = '#' + tag.label; tags.appendChild(item); });
-      row.replaceChildren(title, excerpt, tags, path);
+      tags.hidden = !tagLabels.length;
+      const detail = note.path + (tagLabels.length > 3 ? '\n' + tagLabels.join(' · ') : '');
+      row.dataset.uiTooltip = detail; row.dataset.uiTooltipSource = detail;
+      row.setAttribute('aria-description', detail);
     }
-    function renderSearchResults() {
-      const control = searchControls(), scroll = results.scrollTop;
-      if (!searchView) {
-        const shell = document.createElement('div'); shell.className = 'note-search-result-shell';
+    function renderResults() {
+      cancelReferenceRequests();
+      locationBooks = (ctx.getNotebooks?.() || []).slice().sort((a, b) => b.path.length - a.path.length);
+      const searching = resultProviderId === 'search', canvases = resultProviderId === 'canvas', scroll = results.scrollTop;
+      if (!resultView) {
+        const shell = document.createElement('div'); shell.className = 'note-browser-result-shell note-search-result-shell';
         const heading = document.createElement('header'); heading.className = 'note-browser-results-head';
         const title = document.createElement('h2'), count = document.createElement('span'); heading.append(title, count);
+        const control = document.createElement('div'); control.className = 'note-browser-controls';
         const host = document.createElement('div'); host.className = 'note-browser-list';
         const message = document.createElement('div'); message.className = 'note-search-empty';
-        if (ctx.icon) message.appendChild(ctx.icon('search'));
+        const messageIcon = document.createElement('span'); messageIcon.className = 'note-browser-empty-icon'; messageIcon.setAttribute('aria-hidden', 'true');
         const messageTitle = document.createElement('strong'), hint = document.createElement('p'); message.append(messageTitle, hint);
+        message.prepend(messageIcon);
         const retry = button('', () => { if (!loading) loadPage(failedReset); }, 'note-browser-message');
         const more = button('', () => loadPage(false), 'note-browser-more');
+        const pagination = document.createElement('div'); pagination.className = 'note-browser-pagination'; pagination.appendChild(more);
         const status = document.createElement('p'); status.className = 'note-search-progress'; status.setAttribute('role', 'status');
-        shell.append(heading, status, host, message, retry, more);
-        searchView = { shell, title, count, host, message, messageTitle, hint, retry, more, status, nodes: new Map(), list: null, items: null };
+        shell.append(heading, control, status, host, message, retry, pagination);
+        resultView = { shell, title, count, control, host, message, messageIcon, messageTitle, hint, retry, more, pagination, status, nodes: new Map(), list: null, items: null, kind: 'notes' };
       }
-      const view = searchView, text = (node, value) => { if (node.textContent !== value) node.textContent = value; };
-      if (view.shell.parentElement !== results) results.replaceChildren(control, view.shell);
-      text(view.title, copy('search')); text(view.count, copy(total === 1 && ctx.language() === 'en' ? 'countOne' : 'count').replace('{count}', total));
-      const windowed = rows.length > 200 && !!window.RelatumWindowedList;
+      const view = resultView, text = (node, value) => { if (node.textContent !== value) node.textContent = value; };
+      if (view.shell.parentElement !== results) results.replaceChildren(view.shell);
+      text(view.title, resultProviderId === 'tags' ? '#' + (resultSelection.label || resultSelection.key) : resultSelection.label || copy(providers.get(resultProviderId).label));
+      text(view.count, copy(canvases ? total === 1 && ctx.language() === 'en' ? 'canvasCountOne' : 'canvasCount' : total === 1 && ctx.language() === 'en' ? 'countOne' : 'count').replace('{count}', total));
+      view.control.hidden = !searching && !canvases;
+      if (searching) {
+        const control = searchControls(); if (control.parentElement !== view.control) view.control.replaceChildren(control);
+      } else if (canvases) {
+        if (!view.toolbar) {
+          const toolbar = document.createElement('div'); toolbar.className = 'note-browser-canvas-toolbar';
+          const filters = document.createElement('div'); filters.className = 'note-browser-canvas-filters'; filters.setAttribute('role', 'group');
+          const buttons = ['all', 'unused', 'missing'].map(key => {
+            const filter = button('', () => select('canvas', { key }), 'note-browser-canvas-filter'); filter.dataset.canvasFilter = key; filters.appendChild(filter); return filter;
+          });
+          const refresh = button('', () => { if (!loading) refreshResults(); }, 'note-browser-canvas-filter note-browser-refresh');
+          toolbar.append(filters, refresh); Object.assign(view, { toolbar, filters, filterButtons: buttons, refresh });
+        }
+        if (view.toolbar.parentElement !== view.control) view.control.replaceChildren(view.toolbar);
+        view.filters.setAttribute('aria-label', copy('canvas'));
+        view.filterButtons.forEach(filter => { text(filter, copy(filter.dataset.canvasFilter)); filter.setAttribute('aria-pressed', String((selection.key || 'all') === filter.dataset.canvasFilter)); });
+        text(view.refresh, copy('refresh')); view.refresh.disabled = loading;
+      }
       const focusedPath = view.host.contains(document.activeElement) ? document.activeElement.dataset.noteBrowserPath : '';
+      if (view.kind !== (canvases ? 'canvas' : 'notes')) {
+        view.list?.dispose(); resultList = view.list = null; view.items = null; view.nodes.clear(); view.host.replaceChildren(); view.kind = canvases ? 'canvas' : 'notes';
+      }
+      const windowed = !canvases && rows.length > 200 && !!window.RelatumWindowedList;
       if (view.list && resultList !== view.list) { view.list = null; view.items = null; }
       if (windowed) {
         if (!view.list) {
           resultList?.dispose();
-          view.list = window.RelatumWindowedList.create({ host: view.host, scroller: results, estimate: 118, reuseRows: true,
+          view.list = window.RelatumWindowedList.create({ host: view.host, scroller: results, gap: 10, estimate: 142, reuseRows: true,
             key: note => note.path, render: note => view.nodes.get(note.path) || noteRow(note), update: updateNoteRow });
           resultList = view.list; view.items = null;
         }
@@ -915,7 +976,9 @@
         const keys = new Set(rows.map(note => note.path));
         let next = view.host.firstElementChild;
         rows.forEach(note => {
-          let row = view.nodes.get(note.path); if (!row) { row = noteRow(note); view.nodes.set(note.path, row); }
+          let row = view.nodes.get(note.path);
+          if (canvases) { const previous = row; row = renderCanvas(note); previous?.replaceWith(row); view.nodes.set(note.path, row); if (next === previous) next = row; }
+          else if (!row) { row = noteRow(note); view.nodes.set(note.path, row); }
           else updateNoteRow(row, note);
           if (row !== next) {
             if (view.host.moveBefore && row.isConnected === view.host.isConnected) view.host.moveBefore(row, next);
@@ -927,64 +990,21 @@
         if (focusedPath && view.nodes.has(focusedPath) && document.activeElement?.dataset.noteBrowserPath !== focusedPath) view.nodes.get(focusedPath).focus({ preventScroll: true });
       }
       const meaningful = searchState.q.trim() || searchState.tags.length || searchState.scope.kind === 'folder' || Object.keys(searchState.modified).length;
+      if (view.messageProvider !== resultProviderId && ctx.icon) {
+        view.messageIcon.replaceChildren(ctx.icon(searching ? 'search' : canvases ? 'square-pen' : resultProviderId === 'tags' ? 'hash' : 'clock-3'));
+        view.messageProvider = resultProviderId;
+      }
       view.message.hidden = failed || !!rows.length;
-      text(view.messageTitle, loading && !hasResult ? copy('loading') : meaningful ? copy('empty') : copy('typeToSearch'));
-      text(view.hint, meaningful ? copy('emptyHint') : copy('phraseHint'));
-      view.hint.hidden = loading && !hasResult;
-      view.retry.hidden = !failed; text(view.retry, copy(failureCode === 'statistics_incomplete' ? 'incomplete' : 'failed'));
-      view.more.hidden = !hasMore || failed || !rows.length; view.more.disabled = loading;
+      text(view.messageTitle, loading && !rows.length ? copy('loading') : canvases ? copy('canvasEmpty') : searching && !meaningful ? copy('typeToSearch') : copy('empty'));
+      text(view.hint, searching ? meaningful ? copy('emptyHint') : copy('phraseHint') : '');
+      view.hint.hidden = !searching || loading && !rows.length;
+      view.retry.hidden = !failed; text(view.retry, failed ? copy(failureCode === 'statistics_incomplete' ? 'incomplete' : 'failed') : '');
+      view.pagination.classList.toggle('note-browser-recent-pagination', resultProviderId === 'recent');
+      view.pagination.hidden = !hasMore || failed || !rows.length; view.more.disabled = loading;
       text(view.more, copy(loading ? 'loading' : 'more'));
       view.status.hidden = !indexState || indexState.phase === 'ready';
       text(view.status, indexState?.phase === 'partial' ? copy('partialIndex') : copy('preparing') + ' · ' + (indexState?.indexed || 0) + ' / ' + (indexState?.total || 0));
       results.scrollTop = scroll;
-    }
-    function renderResults() {
-      cancelReferenceRequests();
-      if (resultProviderId === 'search') { renderSearchResults(); return; }
-      if (searchView?.list) {
-        searchView.list.dispose(); if (resultList === searchView.list) resultList = null;
-        searchView.list = null; searchView.items = null; searchView.nodes.clear(); searchView.host.replaceChildren();
-      }
-      const scroll = results.scrollTop;
-      const fragment = document.createDocumentFragment();
-      const heading = document.createElement('header'); heading.className = 'note-browser-results-head';
-      const title = document.createElement('h2'); title.textContent = resultProviderId === 'tags' ? '#' + (resultSelection.label || resultSelection.key) : resultSelection.label || copy(providers.get(resultProviderId).label);
-      const count = document.createElement('span'); count.textContent = copy(resultProviderId === 'canvas' ? total === 1 && ctx.language() === 'en' ? 'canvasCountOne' : 'canvasCount' : total === 1 && ctx.language() === 'en' ? 'countOne' : 'count').replace('{count}', total);
-      heading.append(title, count); fragment.appendChild(heading);
-      if (resultProviderId === 'canvas') {
-        const filters = document.createElement('div'); filters.className = 'note-browser-canvas-filters'; filters.setAttribute('role', 'group'); filters.setAttribute('aria-label', copy('canvas'));
-        ['all', 'unused', 'missing'].forEach(key => {
-          const filter = button(copy(key), () => select('canvas', { key }), 'note-browser-canvas-filter');
-          filter.dataset.canvasFilter = key; filter.setAttribute('aria-pressed', String((selection.key || 'all') === key)); filters.appendChild(filter);
-        });
-        const refresh = button(copy('refresh'), () => { if (!loading) refreshResults(); }, 'note-browser-canvas-filter'); filters.appendChild(refresh);
-        fragment.appendChild(filters);
-      }
-      const listHost = document.createElement('div'); listHost.className = 'note-browser-list'; fragment.appendChild(listHost);
-      resultList?.dispose(); resultList = null;
-      if (rows.length > 200 && resultProviderId !== 'canvas' && window.RelatumWindowedList) {
-        resultList = window.RelatumWindowedList.create({ host: listHost, scroller: results, estimate: 118, key: note => note.path, render: noteRow });
-      } else rows.forEach((note) => {
-        if (resultProviderId === 'canvas') { fragment.appendChild(renderCanvas(note)); return; }
-        listHost.appendChild(noteRow(note));
-      });
-      if (failed) fragment.appendChild(button(copy(failureCode === 'statistics_incomplete' ? 'incomplete' : 'failed'), () => { if (!loading) loadPage(failedReset); }, 'note-browser-message'));
-      else if (loading && (!resetting || !hasResult)) { const message = document.createElement('p'); message.className = 'note-browser-message'; message.textContent = copy('loading'); fragment.appendChild(message); }
-      else if (!rows.length) { const message = document.createElement('p'); message.className = 'note-browser-message'; message.textContent = copy(resultProviderId === 'search' && !searchState.q.trim() && !searchState.tags.length ? 'typeToSearch' : resultProviderId === 'canvas' ? 'canvasEmpty' : 'empty'); fragment.appendChild(message); }
-      else if (hasMore) {
-        const more = button(copy('more'), () => loadPage(false), 'note-browser-more');
-        if (resultProviderId === 'recent') {
-          const pagination = document.createElement('div');
-          pagination.className = 'note-browser-recent-pagination';
-          pagination.appendChild(more);
-          fragment.appendChild(pagination);
-        } else {
-          fragment.appendChild(more);
-        }
-      }
-      if (indexState && indexState.phase !== 'ready') { const message = document.createElement('p'); message.className = 'note-search-progress'; message.setAttribute('role', 'status'); message.textContent = indexState.phase === 'partial' ? copy('partialIndex') : copy('preparing') + ' · ' + indexState.indexed + ' / ' + indexState.total; fragment.appendChild(message); }
-      results.replaceChildren(fragment);
-      resultList?.setItems(rows); results.scrollTop = scroll;
     }
     async function loadPage(reset, preserveScroll, pageCount = 1) {
       if (!active || disposed || (!reset && (loading || searchTimer))) return false;
@@ -1001,7 +1021,7 @@
       results.setAttribute('aria-busy', 'true');
       // Keep the committed view intact until the replacement page is ready.
       if (!hasResult) { resultProviderId = requestProviderId; resultSelection = requestSelection; }
-      if (requestProviderId === 'search' && searchView) searchView.more.disabled = true;
+      if (resultView) resultView.more.disabled = true;
       if (!reset || !hasResult) renderResults();
       try {
         let result, nextOffset = requestOffset, nextCursor = reset ? null : resultCursor;
@@ -1034,7 +1054,8 @@
           return loadPage(true, true, Math.max(1, Math.ceil((requestOffset + 50) / 50)));
         }
         failureCode = error.code || '';
-        if (reset && !preserveScroll) {
+        // Incomplete canvas statistics cannot describe the retained catalog.
+        if ((reset && !preserveScroll) || (requestProviderId === 'canvas' && error.code === 'statistics_incomplete')) {
           rows = []; offset = 0; total = 0; hasMore = false;
           resultProviderId = requestProviderId; resultSelection = requestSelection;
         }
@@ -1061,20 +1082,22 @@
       // after all saved pages return, without stealing a newly moved focus.
       if (focusedPath && !results.hidden && (document.activeElement === focused || document.activeElement === document.body)) {
         const row = resultList?.row(focusedPath) || resultList?.scrollToKey(focusedPath)
-          || searchView?.nodes.get(focusedPath) || Array.from(results.querySelectorAll('.note-browser-result')).find(node => node.dataset.noteBrowserPath === focusedPath);
+          || resultView?.nodes.get(focusedPath) || Array.from(results.querySelectorAll('.note-browser-result')).find(node => node.dataset.noteBrowserPath === focusedPath);
         row?.focus({ preventScroll: true }); results.scrollTop = scroll;
       }
     }
     async function select(id, next) {
+      stopPageAnimation();
       closePopovers({ instant: true });
       if (!active || disposed) return;
       if (providers.get(id)?.enabled && !providers.get(id).enabled(ctx)) return;
       const sequence = ++actionSequence;
       if (!(await ctx.beforeBrowse()) || !active || sequence !== actionSequence) return;
+      const changingPage = results.hidden || providerId !== id || selection.key !== next.key;
       cancelSearch();
       cancelReferenceRequests();
       providerId = id; selection = id === 'search' ? Object.assign({}, searchState, next) : next; selectedPath = ''; showResults(); renderNavigation();
-      await loadPage(true);
+      if (await loadPage(true) && sequence === actionSequence && changingPage) animatePage();
     }
     const onBack = async () => {
       const sequence = ++actionSequence;
@@ -1110,9 +1133,9 @@
       async search() { await select('search', Object.assign({}, searchState)); searchInput?.focus(); },
       setNavigationOpen,
       closePopovers,
-      suspend(options) { closePopovers({ instant: true }); active = false; clearTimeout(searchTimer); searchTimer = 0; searchAbort?.abort(); searchPendingKey = ''; refreshQueued = false; resultList?.suspend(); cancelReferenceRequests(); pageSequence++; cancelNavigation(); actionSequence++; if (loading) dirty = true; loading = false; resetting = false; results.setAttribute('aria-busy', 'false'); if (!(options && options.keepView)) { showDocument(); back.hidden = true; } },
+      suspend(options) { stopPageAnimation(); closePopovers({ instant: true }); active = false; clearTimeout(searchTimer); searchTimer = 0; searchAbort?.abort(); searchPendingKey = ''; refreshQueued = false; resultList?.suspend(); cancelReferenceRequests(); pageSequence++; cancelNavigation(); actionSequence++; if (loading) dirty = true; loading = false; resetting = false; results.setAttribute('aria-busy', 'false'); if (!(options && options.keepView)) { showDocument(); back.hidden = true; } },
       resume() { active = true; resultList?.resume(); if (navigationOpen) renderNavigation(); if (!results.hidden && dirty) refreshResults(); loadNavigation(); },
-      dispose() { this.suspend(); resultList?.dispose(); searchPopovers.dispose(); disposed = true; back.removeEventListener('click', onBack); nav.replaceChildren(); results.replaceChildren(); searchView = null; },
+      dispose() { this.suspend(); resultList?.dispose(); searchPopovers.dispose(); motion.removeEventListener('change', motionChanged); disposed = true; back.removeEventListener('click', onBack); nav.replaceChildren(); results.replaceChildren(); resultView = null; },
       setLanguage() { closePopovers({ instant: true }); renderNavigation(); if (hasResult) renderResults(); updateBackLabel(); },
       showDocument,
       checkExternalCanvases,

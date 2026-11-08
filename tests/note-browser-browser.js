@@ -16,7 +16,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   fs.mkdirSync(notes);
   for (let index = 0; index < 105; index++) {
     const file = path.join(notes, `N${String(index).padStart(3, '0')}.md`);
-    fs.writeFileSync(file, `---\ntags: [学习/概率, AI]\n---\n第 ${index} 篇摘要 #学习/统计\n\n正文。`);
+    fs.writeFileSync(file, `---\ntags: [学习/概率, AI${index === 0 ? ', 额外一, 额外二' : ''}]\n---\n${index === 1 ? '' : `第 ${index} 篇摘要 #学习/统计\n\n正文。`}`);
     fs.utimesSync(file, 10000 + index, 10000 + index);
   }
   fs.mkdirSync(path.join(notes, 'images'));
@@ -66,8 +66,20 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(await page.locator('.note-browser-nav-row').first().locator('svg use').getAttribute('href'), '#note-icon-clock-3');
     assert.equal(await page.locator('.note-browser-nav-row[aria-expanded] svg use').getAttribute('href'), '#note-icon-hash');
     assert.equal(await page.locator('.note-browser-result').first().getAttribute('data-note-browser-path'), 'N000.md');
+    await page.locator('.note-browser-result').first().evaluate(node => {
+      window.recentCard = node; window.recentTitle = node.firstElementChild.firstChild;
+      window.recentTags = node.querySelector('.note-browser-result-tags').firstChild;
+      window.recentHeading = document.querySelector('.note-browser-results-head');
+    });
+    assert.equal(await page.locator('.note-browser-result').first().locator('.note-browser-result-tags > span').count(), 4);
+    assert((await page.locator('.note-browser-result').first().getAttribute('aria-description')).includes('#额外二'));
+    assert.equal(await page.locator('.note-browser-result').first().locator('small').textContent(), 'notes');
     await page.locator('.note-browser-more').click();
     await page.waitForFunction(() => document.querySelectorAll('.note-browser-result').length === 100);
+    assert(await page.evaluate(() => recentCard === document.querySelector('.note-browser-result')
+      && recentTitle === recentCard.firstElementChild.firstChild && recentTags === recentCard.querySelector('.note-browser-result-tags').firstChild
+      && recentHeading === document.querySelector('.note-browser-results-head')), 'recent pagination retains the page, card and unchanged content nodes');
+    assert.equal(await page.locator('.note-browser-result[data-note-browser-path="N001.md"] p').isHidden(), true, 'empty excerpts do not reserve space');
     await page.locator('.note-browser-results').evaluate(node => node.scrollTop = 600);
     await page.locator('.note-browser-result[data-note-browser-path="N095.md"]').click();
     await page.waitForFunction(() => CanvasNoteWorkspace.currentPath === 'N095.md');
