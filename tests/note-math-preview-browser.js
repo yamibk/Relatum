@@ -161,6 +161,90 @@ async function checkMathAutoload(browser, url) {
   return { cases: report.length, nativeScrollbars: 2, queueRecovery: true };
 }
 
+async function checkMathSourceBackground(browser, url) {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 850 } }), report = [], errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.editor?.view);
+    await page.addStyleTag({ url: new URL('/assets/note-theme.css', url).href });
+    // Capture the previous transparent appearance without replacing any DOM or
+    // editor state. A background-only change must preserve every source box.
+    await page.addStyleTag({ content: '.test-no-math-fill .note-live-editor-host:not(.is-source-mode) .cm-line.note-live-math-source:not(.note-live-quote-line):not(.note-live-callout-line){background-color:transparent!important}' });
+    const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const set = async value => {
+      await page.evaluate(value => {
+        editor.view.contentDOM.blur(); editor.setSourceMode(false);
+        const at = value.indexOf('x^2') + 1;
+        editor.setDocument({ value, notePath: 'background.md', anchor: at, head: at, scrollTop: 0 }); editor.focus();
+      }, value);
+      await settle();
+      if (/\$\$|\\\[/.test(value)) await page.waitForFunction(() => document.querySelector('.note-live-math-preview-content mjx-container'));
+    };
+    const boxes = () => page.locator('.cm-line.note-live-math-source, .note-live-math-preview').evaluateAll(nodes => nodes.map(node => {
+      const rect = node.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+    }));
+    const sourceColors = () => page.locator('.cm-line.note-live-math-source').evaluateAll(nodes => nodes.map(node => getComputedStyle(node).backgroundColor));
+    const variants = [['single', '$$x^2$$'], ['multiline', '$$\nx^2\n\n+y^2\n$$'], ['brackets', '\\[\nx^2\n\n+y^2\n\\]']];
+    for (const theme of ['default', 'claude', 'sky', 'apple', 'markdown']) {
+      if (theme === 'markdown') {
+        await page.addStyleTag({ url: new URL('/assets/markdown-file.css', url).href });
+        await page.evaluate(() => {
+          document.body.classList.add('markdown-window'); document.querySelector('.note-workspace').classList.add('markdown-root');
+          const host = document.getElementById('editor'), pane = document.createElement('div');
+          pane.className = 'note-document-pane'; host.before(pane); pane.appendChild(host);
+        });
+      }
+      for (const dark of [false, true]) {
+        await page.evaluate(({ theme, dark }) => {
+          document.documentElement.dataset.noteTheme = theme === 'markdown' ? 'default' : theme;
+          document.body.dataset.startTheme = dark ? 'dark' : 'light';
+          if (theme === 'markdown') document.documentElement.dataset.markdownDark = dark ? '1' : '0';
+        }, { theme, dark });
+        const expected = dark ? 'rgba(128, 128, 128, 0.12)' : 'rgba(128, 128, 128, 0.08)';
+        for (const [name, source] of variants) {
+          const value = 'before\n\n' + source + '\n\nafter';
+          await set(value);
+          await page.evaluate(() => document.body.classList.add('test-no-math-fill')); await settle();
+          const previous = await boxes();
+          const previewBackground = await page.locator('.note-live-math-preview').evaluate(node => getComputedStyle(node).backgroundColor);
+          await page.evaluate(() => document.body.classList.remove('test-no-math-fill')); await settle();
+          assert.deepEqual(await boxes(), previous, theme + '/' + dark + '/' + name + ': source and preview geometry stay unchanged');
+          const colors = await sourceColors();
+          assert.equal(colors.length, source.split('\n').length, 'all delimiters and the blank line are covered');
+          assert(colors.every(color => color === expected), JSON.stringify({ theme, dark, name, colors }));
+          for (let index = 1; index < previous.length - 1; index++) {
+            assert.equal(previous[index].left, previous[0].left); assert.equal(previous[index].right, previous[0].right);
+            assert(Math.abs(previous[index].top - previous[index - 1].bottom) < .5, 'source rows form one continuous rectangle');
+          }
+          assert.equal(await page.locator('.note-live-math-preview').evaluate(node => getComputedStyle(node).backgroundColor), previewBackground);
+          assert.equal(await page.evaluate(() => editor.snapshot().value), value);
+          if (name === 'multiline') await page.screenshot({ path: path.join(output, 'source-background-' + theme + (dark ? '-dark' : '-light') + '.png') });
+          await page.evaluate(() => editor.setSourceMode(true)); await settle();
+          assert.equal(await page.locator('.cm-line').evaluateAll(nodes => nodes.some(node => /^rgba\(128, 128, 128, 0\.(?:08|12)\)$/.test(getComputedStyle(node).backgroundColor))), false);
+          report.push({ theme, dark, name });
+        }
+        // Existing quote/Callout surfaces win, including explicit colors.
+        for (const value of ['> $$\n> x^2\n> $$', '> [!note]\n> $$x^2$$', '> [!blue]\n> $$x^2$$']) {
+          await set(value); const original = await sourceColors();
+          await page.evaluate(() => document.body.classList.add('test-no-math-fill'));
+          assert.deepEqual(await sourceColors(), original);
+          await page.evaluate(() => document.body.classList.remove('test-no-math-fill'));
+          assert(!original.includes(expected), 'quote and Callout source keeps its original background');
+        }
+        await set('inline $x^2$ after');
+        assert.equal(await page.locator('span.note-live-math-source').evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(0, 0, 0, 0)');
+      }
+    }
+    assert.deepEqual(errors, []);
+    fs.writeFileSync(path.join(output, 'source-background-report.json'), JSON.stringify(report, null, 2));
+    return report.length;
+  } catch (error) {
+    await page.screenshot({ path: path.join(output, 'source-background-failure.png') }).catch(() => {});
+    throw error;
+  } finally { await page.close(); }
+}
+
 async function checkMathHeadings(page, set, settle) {
   let checks = 0;
   for (const dollars of [false, true]) for (const prefix of ['', '> ', '> > ']) for (const gap of ['', '1\n', '\n']) {
@@ -514,6 +598,9 @@ async function checkWorkspace(browser, pointerOnly = false) {
     if (process.argv.includes('--pointer-only')) {
       console.log(JSON.stringify({ output, workspace: await checkWorkspace(browser, true) })); return;
     }
+    if (process.argv.includes('--background-only')) {
+      console.log(JSON.stringify({ output, backgroundChecks: await checkMathSourceBackground(browser, page.url()) })); return;
+    }
     const autoload = await checkMathAutoload(browser, page.url());
     if (process.argv.includes('--autoload-only')) { console.log(JSON.stringify({ output, autoload })); return; }
     const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -610,7 +697,7 @@ async function checkWorkspace(browser, pointerOnly = false) {
         after: preview.getBoundingClientRect().top >= lines.at(-1).getBoundingClientRect().bottom - 1,
         readonly: preview.contentEditable, value: editor.snapshot().value };
     });
-    assert(appearance.backgrounds.every(value => value === 'rgba(0, 0, 0, 0)'), JSON.stringify(appearance));
+    assert(appearance.backgrounds.every(value => value === 'rgba(128, 128, 128, 0.08)'), JSON.stringify(appearance));
     assert.notEqual(appearance.marker, appearance.text);
     assert(appearance.after); assert.equal(appearance.readonly, 'false'); assert.equal(appearance.value, equation);
     await page.screenshot({ path: path.join(output, 'maxwell-light.png') });
@@ -847,8 +934,9 @@ async function checkWorkspace(browser, pointerOnly = false) {
     await page.evaluate(() => editor.destroy()); await settle();
     assert.equal(await page.evaluate(() => Array.from(MathJax.startup.document.math).length), 0);
     assert.deepEqual(errors, []);
+    const backgroundChecks = await checkMathSourceBackground(browser, page.url());
     const workspace = await checkWorkspace(browser);
-    console.log(JSON.stringify({ output, autoload, variants, headingChecks, typing: true, history: true, errors: true, ime: true, lifecycle: true, workspace }));
+    console.log(JSON.stringify({ output, autoload, backgroundChecks, variants, headingChecks, typing: true, history: true, errors: true, ime: true, lifecycle: true, workspace }));
   } catch (error) {
     console.error('math preview output:', output);
     if (page) {

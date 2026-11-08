@@ -464,7 +464,7 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-live-editor-host.cm-focused .cm-selectionBackground,
 .note-live-editor-host .cm-focused .cm-selectionBackground { background: rgba(65, 131, 196, .22) !important; }
 /* Opaque code and Callout backgrounds cover the drawn selection layer.
-   Transparent formula source and ordinary text use CodeMirror's selection;
+   Translucent formula source and ordinary text use CodeMirror's selection;
    painting native selection there as well would darken the same text twice. */
 .note-live-editor-host .cm-line.note-live-code-line::selection,
 .note-live-editor-host .cm-line.note-live-code-line ::selection,
@@ -611,6 +611,12 @@ body.start-page .cm-tooltip.note-link-completion-status { padding: 12px; display
   font-family: var(--note-font-mono, "Cascadia Mono", "SFMono-Regular", Consolas, "Microsoft YaHei UI", monospace);
 }
 .note-live-inline-code { padding: .05em .25em; border: 1px solid rgba(0,0,0,.06); border-radius: 3px; color: #333; background: #f3f4f4; font-size: .9em; }
+.note-live-editor-host:not(.is-source-mode) .cm-line.note-live-math-source:not(.note-live-quote-line):not(.note-live-callout-line) {
+  background-color: rgba(128,128,128,.08);
+}
+body.start-page[data-start-theme="dark"] .note-live-editor-host:not(.is-source-mode) .cm-line.note-live-math-source:not(.note-live-quote-line):not(.note-live-callout-line) {
+  background-color: rgba(128,128,128,.12);
+}
 .note-live-math-delimiter,
 .note-live-math-delimiter * { color: var(--note-live-math) !important; }
 .note-live-math-command { color: var(--note-math-command); }
