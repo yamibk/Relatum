@@ -1194,6 +1194,8 @@ AI 设置使用独立星芒 SVG，按当前对话预设、连接、生成参数�
 
 ## 11. 验证清单
 
+提交或推送前运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-public.ps1`，检查 Git 候选文件中的用户数据、缓存、凭据和个人绝对路径。测试应使用通用虚构目录，不写用户配置文件目录样式的固定地址；不要为测试样例放宽公开仓库检查。测试临时目录位于系统 Temp，不进入仓库或打包资产。
+
 笔记本机链接运行 `node tests/note-file-links-regression.js`、`python -B -m unittest tests.test_note_file_links` 和 `node tests/note-file-links-browser.js`；浏览器沿用 `RELATUM_PYTHON / RELATUM_PLAYWRIGHT / RELATUM_EDGE_PATH`，覆盖两个窗口、源码/实时/阅读、标题/纯文本粘贴、一次撤销、保存重开及字面区域。后端使用隔离文件和系统打开替身，覆盖路径编码、危险扩展、别名/重定向、来源及功能权限。原生 `node tests/note-file-links-desktop.js [--workspace]` 使用 `RELATUM_NATIVE_PYTHON` 和隔离数据，默认替换 OS 调起；显式 `--launch-defaults` 将临时 HTML/PDF/PNG 交给真实默认程序。保留共享剪贴板、Markdown 和图片兼容回归；具体结果及界面验收限制见本机链接说明，不把系统接受打开请求等同于目标程序显示验收。
 
 笔记 Cards 使用 `node tests/note-cards-regression.js`、`node tests/note-cards-browser.js` 和 `node tests/note-cards-markdown-browser.js`；后者以真实独立 Markdown 页面和原生桥接替身覆盖中英文/深浅/宽窄八组、纯色工具、保存/撤销及右键插入。两项浏览器专项已接入 `tests/run-note-checks.ps1 -Browser`。真实笔记保存与一次撤销另由 `tests/feature-profile-browser.js notes library` 检查，同时验证新工具的按需加载及 notes 静态资源权限；正文、服务和浏览器配置均隔离，不重新打包。Cards 的已知空选项表示清空/默认/继承，保留声明以防后方重复选项被误启用；移除颜色或图标时，必要的标题转义保护重复标记的字面语义。

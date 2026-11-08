@@ -6,9 +6,9 @@ const { spawn } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..'), root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-file-links-browser-'));
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-const address = 'file:///C:/Users/fixture/Desktop/%E7%94%B5%E8%B7%AF/guide%20%28v1%29.html';
-const chinese = 'file:///D:/电路实验/三表法实验指南.html', spaced = 'file:///D:/实验 目录/guide (v1).pdf';
-const initial = '# Links\n\n' + address + '\n\n[三表法实验](' + chinese + ')\n\n<' + spaced + '>\n\n[参考][ref]\n\n[ref]: ' + address + '\n';
+const address = 'file:///C:/link-fixture/%E4%B8%AD%E6%96%87/guide%20%28v1%29.html';
+const chinese = 'file:///D:/中文目录/示例文档.html', spaced = 'file:///D:/示例 目录/guide (v1).pdf';
+const initial = '# Links\n\n' + address + '\n\n[示例文档](' + chinese + ')\n\n<' + spaced + '>\n\n[参考][ref]\n\n[ref]: ' + address + '\n';
 fs.mkdirSync(path.join(root, 'notes'));
 fs.writeFileSync(path.join(root, 'notes', 'Main.md'), initial);
 
@@ -92,7 +92,7 @@ fs.writeFileSync(path.join(root, 'notes', 'Main.md'), initial);
       async function clipboard(html = true, plain = address) {
         await page.evaluate(async ({ html, plain, address }) => {
           const data = { 'text/plain': new Blob([plain], { type: 'text/plain' }) };
-          if (html) data['text/html'] = new Blob(['<a href="' + address + '">三表法实验 | 照着做</a>'], { type: 'text/html' });
+          if (html) data['text/html'] = new Blob(['<a href="' + address + '">示例网页 | 本地文件</a>'], { type: 'text/html' });
           await navigator.clipboard.write([new ClipboardItem(data)]);
         }, { html, plain, address });
       }
@@ -106,14 +106,14 @@ fs.writeFileSync(path.join(root, 'notes', 'Main.md'), initial);
         await set(initial, mode);
         const before = (await opened()).length;
         await clickText(address, false); assert.equal((await opened()).length, before, 'ordinary editor click edits');
-        for (const [text, target] of [[address, address], ['三表法实验', chinese], ['<' + spaced, spaced], ['参考', address]]) {
+        for (const [text, target] of [[address, address], ['示例文档', chinese], ['<' + spaced, spaced], ['参考', address]]) {
           await clickText(text); assert.equal((await opened()).at(-1), target, mode + ' / ' + text);
         }
         assert.equal(await value(), initial, 'opening never changes Markdown');
         for (const menu of [false, true]) for (const plain of [false, true]) {
           await set('', mode); await clipboard();
           if (menu) await menuPaste(plain); else await page.keyboard.press(plain ? 'Control+Shift+v' : 'Control+v');
-          const expected = plain ? address : '[三表法实验 | 照着做](' + address + ')';
+          const expected = plain ? address : '[示例网页 | 本地文件](' + address + ')';
           await page.waitForFunction(({ editor, expected }) => (0, eval)(editor).snapshot().value === expected, { editor, expected });
           assert.equal(await value(), expected, 'title/explicit plain paste: ' + JSON.stringify({ standalone, mode, menu, plain }));
           await page.keyboard.press('Control+z'); assert.equal(await value(), '', 'paste has one undo');

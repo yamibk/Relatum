@@ -35,7 +35,7 @@ class NoteFileUrlTests(unittest.TestCase):
         self.root = Path(self.temp.name)
 
     def test_documents_once_decoded_and_default_application(self):
-        for name in ('三表法实验指南.html', '中文 空格(v1)#100%.pdf', 'literal%20percent.png', 'doc.docx'):
+        for name in ('示例文档.html', '中文 空格(v1)#100%.pdf', 'literal%20percent.png', 'doc.docx'):
             file = self.root / name
             file.write_bytes(b'document')
             for target in (file.as_uri(), file.as_uri().replace('file:///', 'file://localhost/')):

@@ -4,7 +4,7 @@ const fs = require('node:fs'), path = require('node:path'), vm = require('node:v
 const sandbox = { window: {} };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../assets/markdown.js'), 'utf8'), sandbox);
 const md = sandbox.window.MarkdownMini;
-const urls = ['file:///C:/实验/三表法实验指南.html', 'file:///C:/中文%20空格/guide%23%25%28v1%29.pdf',
+const urls = ['file:///C:/中文目录/示例文档.html', 'file:///C:/中文%20空格/guide%23%25%28v1%29.pdf',
   'file://localhost/D:/docs/guide.docx', 'FILE:///D:/docs/picture.png', 'file:///D:/docs/guide(v1).html'];
 const tokens = source => md.noteSyntax.inline(source, md.noteSyntax.scan(source)).filter(t => /^(?:auto)?link$/.test(t.kind));
 const render = source => md.renderResult(source, { noteSyntax: true, noteBlocks: true, noteTags: true, localImages: true }).html;

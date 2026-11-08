@@ -20,6 +20,8 @@
 
 ## 验证与结果
 
+测试样例使用通用虚构目录及文档标题，不使用用户配置文件目录。提交或打包前运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-public.ps1`；曾有虚构用户目录样例触发个人绝对路径规则，现已改为中性样例，保留原安全检查规则。测试生成的隔离笔记、截图和 WebView2 缓存位于系统 Temp，未纳入 Git 或打包资产。
+
 - `node tests/note-file-links-regression.js`：多种链接写法、中文/编码/括号/空格、标题转义、图片与字面区域、原有网络及相对链接。
 - `python -B -m unittest tests.test_note_file_links`：隔离文件与 OS 调起替身，验证一次解码、目标身份、缺失/目录/危险文件、重定向、来源授权、功能关闭及打开失败。
 - `node tests/note-file-links-browser.js`：真实 Edge 剪贴板和修饰键，隔离工作区与独立页面桥接，验证实时/源码/阅读、键盘/右键粘贴、纯文本、撤销和保存重开。
