@@ -5,7 +5,9 @@ const definitions = [];
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../assets/note-extensions/catalog.js'), 'utf8'),
   { window: { RelatumNoteExtensions: { register: item => definitions.push(item) } } });
 const d = definitions.find(item => item.id === 'latex-input'), plain = value => JSON.parse(JSON.stringify(value));
-assert.equal(d.version, '1.2.0');
+assert.equal(d.version, '1.3.0');
+assert.equal(d.displayVersion, '1.3');
+assert.equal(d.snippets.length, 122);
 assert.equal(d.snippets.filter(item => !item.added).length, 61);
 assert.equal(new Set(d.snippets.map(item => item.id)).size, d.snippets.length);
 for (const snippet of d.snippets) assert.equal(d.snippetProblem(snippet), '', snippet.id);
@@ -38,4 +40,31 @@ assert.equal(d.settingsSearch({}, 'zh').some(item => item.key === 'option:visual
 assert.equal(d.snippetInfo(d.snippets.find(item => item.id === 'pmat'), 'zh').group, 'environments');
 assert.equal(d.snippetInfo(d.snippets.find(item => item.id === 'RR'), 'en').group, 'symbols');
 assert.deepEqual(plain(d.normalizeOptions(normalized)), plain(normalized), 'normalization is idempotent');
-console.log('PASS LaTeX 1.2 templates, metadata, upgrade collisions and preferences (' + d.snippets.length + ' snippets)');
+const modes = d.effectiveSnippets({});
+assert.equal(modes.find(item => item.id === 'par').triggerMode, 'tab');
+assert.equal(modes.find(item => item.id === 'beg').triggerMode, 'tab');
+assert.equal(modes.find(item => item.id === 'sq').triggerMode, 'auto');
+for (const triggerMode of ['auto', 'tab']) {
+  const value = { ...old, triggerMode }, config = { overrides: [value], custom: [{ ...custom, trigger: 'zz', triggerMode }] };
+  const result = d.normalizeOptions(config);
+  assert.deepEqual(plain(result.overrides), [value]);
+  assert.equal(d.effectiveSnippets(result).find(item => item.id === 'sq').triggerMode, triggerMode);
+  assert.equal(result.custom[0].triggerMode, triggerMode);
+  assert.deepEqual(plain(d.normalizeOptions(result)), plain(result));
+}
+assert.equal(d.snippetProblem({ ...old, triggerMode: 'invalid' }), 'triggerMode');
+assert.equal(d.normalizeOptions({ custom: [{ ...custom, triggerMode: 'invalid' }] }).custom.length, 0);
+const additions = ['det', 'trace', 'nabl', 'ddt', 'oint', 'iint', 'iiint', 'avg', 'norm', 'Norm', 'ceil', 'floor', 'arcsin', 'arccos', 'arctan', 'csc', 'sec', 'cot'];
+for (const trigger of additions) {
+  const item = modes.find(item => item.id === trigger);
+  assert.equal(item.boundary, 'start', trigger);
+  assert.equal(item.triggerMode, 'auto', trigger);
+  for (const language of ['zh', 'en']) assert.notEqual(d.snippetInfo(item, language).group, 'greek', trigger);
+  const collision = d.effectiveSnippets({ custom: [{ ...custom, trigger }] });
+  assert.equal(collision.find(item => item.id === trigger).conflict, true, trigger);
+  assert.equal(collision.find(item => item.id === custom.id).enabled, false, 'disabled old snippets still reserve their trigger');
+}
+assert.equal(d.snippetInfo(modes.find(item => item.id === 'det'), 'zh').group, 'functions');
+assert.equal(d.effectiveSnippets({ overrides: [{ ...old, trigger: 'trace' }] }).find(item => item.id === 'trace').conflict, true, 'old built-in override wins over a 1.3 trigger');
+assert.equal(d.settingsSearch({}, 'zh').some(item => item.key === 'snippet:trace'), true);
+console.log('PASS LaTeX 1.3 templates, metadata, trigger modes, upgrade collisions and preferences (' + d.snippets.length + ' snippets)');

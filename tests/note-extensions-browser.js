@@ -4,25 +4,44 @@ const assert = require('node:assert/strict'), fs = require('node:fs'), os = requ
 const { spawn } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..'), output = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-extensions-'));
+const native = process.argv.includes('--webview2'), manualIme = process.argv.includes('--ime-manual');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function freePort() {
+  const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
+  const port = socket.address().port; await new Promise(resolve => socket.close(resolve)); return port;
+}
 async function main() {
+  assert(!manualIme || native, '--ime-manual requires --webview2');
+  assert(!native || process.env.RELATUM_WEBVIEW_PYTHON, 'Configure RELATUM_WEBVIEW_PYTHON for the existing desktop host');
   const data = path.join(output, 'isolated'); fs.mkdirSync(path.join(data, 'notes'), { recursive: true });
   const filename = path.join(data, 'notes/Main.md'); fs.writeFileSync(filename, '# Extensions\n\nPlain text.\n');
-  const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
-  const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
+  const port = await freePort(), debug = native ? await freePort() : 0;
   const catalog = JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json')));
   const profile = { version: 1, features: Object.fromEntries(catalog.features.map(item => [item.id, item.id === 'notes'])) };
-  const server = spawn(process.env.RELATUM_PYTHON || 'python', ['-B', 'app.py', '--no-browser', '--port', String(port), '--launch-profile', JSON.stringify(profile)],
-    { cwd: repo, env: { ...process.env, RELATUM_DATA_ROOT: data }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const server = spawn(native ? process.env.RELATUM_WEBVIEW_PYTHON : process.env.RELATUM_PYTHON || 'python',
+    ['-B', native ? 'desktop.py' : 'app.py', ...(!native ? ['--no-browser', '--port', String(port)] : []), '--launch-profile', JSON.stringify(profile)],
+    { cwd: repo, env: { ...process.env, RELATUM_DATA_ROOT: data,
+      ...(native ? { LOCALAPPDATA: data, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=' + debug } : {}) }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let logs = '', browser, context, page;
   server.stdout.on('data', chunk => { logs = (logs + chunk).slice(-5000); }); server.stderr.on('data', chunk => { logs = (logs + chunk).slice(-5000); });
   try {
-    const url = 'http://127.0.0.1:' + port; let ready = false;
-    for (let i = 0; i < 120; i++) { try { ready = (await fetch(url + '/api/runtime')).ok; } catch (_) {} if (ready) break; await pause(100); }
+    let url = 'http://127.0.0.1:' + port, ready = false;
+    for (let i = 0; i < 200; i++) {
+      assert.equal(server.exitCode, null, logs);
+      try { ready = (await fetch(native ? 'http://127.0.0.1:' + debug + '/json/version' : url + '/api/runtime')).ok; } catch (_) {}
+      if (ready) break; await pause(100);
+    }
     assert(ready, logs);
-    browser = await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
-    context = await browser.newContext({ viewport: { width: 1440, height: 980 }, reducedMotion: 'reduce' });
-    page = await context.newPage(); page.setDefaultTimeout(12000);
+    if (native) {
+      browser = await chromium.connectOverCDP('http://127.0.0.1:' + debug); context = browser.contexts()[0];
+      for (let i = 0; i < 100; i++) { page = context.pages().find(item => item.url().startsWith('http://127.0.0.1:')); if (page) break; await pause(100); }
+      assert(page, logs); url = new URL(page.url()).origin;
+      await page.setViewportSize({ width: 1440, height: 980 }); await page.emulateMedia({ reducedMotion: 'reduce' });
+    } else {
+      browser = await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
+      context = await browser.newContext({ viewport: { width: 1440, height: 980 }, reducedMotion: 'reduce' }); page = await context.newPage();
+    }
+    page.setDefaultTimeout(12000);
     const errors = [], requests = []; page.on('pageerror', error => errors.push(error.message)); page.on('request', request => requests.push(request.url()));
     const source = fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8').replace('  window.CanvasNoteWorkspace = {',
       '  window.T = {state, setViewMode, setNoteSettingsOpen, flushSave, get editor(){return liveEditor;}};\n  window.CanvasNoteWorkspace = {');
@@ -107,6 +126,38 @@ async function main() {
     assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('latex-input').options.overrides[0].replacement), '\\sqrt[3]{$1}$0');
     await action('restore').click();
     assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('latex-input').options.overrides.length), 0);
+    assert.equal(await field('triggerMode').inputValue(), 'auto');
+    const chooseMode = async mode => {
+      const control = field('triggerMode').locator('..').locator('.review-choice-trigger');
+      await control.click();
+      await dialog.getByRole('option', { name: mode === 'auto' ? '自动展开' : 'Tab 确认', exact: true }).click();
+    };
+    await chooseMode('tab');
+    await chooseSnippet('//'); await chooseSnippet('sq');
+    assert.equal(await field('triggerMode').inputValue(), 'tab', 'mode draft survives switching snippets');
+    await action('cancel').click(); assert.equal(await field('triggerMode').inputValue(), 'auto');
+    await chooseMode('tab');
+    await page.evaluate(() => {
+      window.extensionSetItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) { if (key === 'canvas:noteExtensions:v1') throw new Error('isolated storage failure'); return extensionSetItem.call(this, key, value); };
+    });
+    await action('save').click();
+    assert((await dialog.locator('.note-latex-form [role="alert"]').textContent()).includes('保存失败'));
+    assert.equal(await field('triggerMode').inputValue(), 'tab', 'failed save keeps the mode draft');
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('latex-input').options.overrides.length), 0, 'failed save does not publish a new mode');
+    await page.evaluate(() => { Storage.prototype.setItem = extensionSetItem; delete window.extensionSetItem; });
+    await action('save').click();
+    assert.equal(await page.evaluate(() => RelatumNoteExtensions.read('latex-input').options.overrides[0].triggerMode), 'tab');
+    await page.reload(); await page.waitForFunction(() => window.T?.editor && T.state.current?.path === 'Main.md');
+    await page.evaluate(() => T.setNoteSettingsOpen(true, { category: 'extensions' })); await dialog.waitFor();
+    await configure(); await chooseSnippet('sq'); assert.equal(await field('triggerMode').inputValue(), 'tab', 'mode survives reload');
+    await action('restore').click(); assert.equal(await field('triggerMode').inputValue(), 'auto', 'restore resets mode');
+    await chooseSnippet('par'); assert.equal(await field('triggerMode').inputValue(), 'tab', 'legacy manual default');
+    await chooseMode('auto'); await action('save').click();
+    assert.equal(await field('triggerMode').inputValue(), 'auto'); await action('restore').click();
+    assert.equal(await field('triggerMode').inputValue(), 'tab'); await chooseSnippet('sq');
+    // Reload above starts a new editor, so capture the identity for subsequent panel checks.
+    await page.evaluate(() => { window.beforePanel = { view: T.editor.view, doc: T.editor.view.state.doc, top: T.editor.view.scrollDOM.scrollTop }; });
     assert(await page.evaluate(() => beforePanel.view === T.editor.view && beforePanel.doc === T.editor.view.state.doc && beforePanel.top === T.editor.view.scrollDOM.scrollTop), 'panel operations preserve editor identity, document and scroll');
     await field('replacement').fill('\\sqrt[5]{$1}$0');
     await page.evaluate(() => T.setNoteSettingsOpen(false)); await dialog.waitFor({ state: 'hidden' });
@@ -135,6 +186,15 @@ async function main() {
     await set({ options: { overrides: [{ id: 'sq', trigger: 'sq', replacement: '\\sqrt{$1}$0', boundary: 'start', enabled: false }] } });
     await reset('$  $', 2); await type('sq'); assert.equal(await doc(), '$ sq $', 'disabled built-in remains literal');
     await set({ options: { overrides: [] } });
+    for (const automatic of [true, false]) for (const triggerMode of ['auto', 'tab']) {
+      await set({ options: { automatic, overrides: [{ id: 'sq', trigger: 'sq', replacement: '\\sqrt{$1}$0', boundary: 'start', enabled: true, triggerMode }] } });
+      await reset('$  $', 2); await type('sq');
+      assert.equal(await doc(), automatic && triggerMode === 'auto' ? '$ \\sqrt{} $' : '$ sq $', 'global switch governs ' + triggerMode);
+      if (!automatic || triggerMode === 'tab') { await page.keyboard.press('Tab'); assert.equal(await doc(), '$ \\sqrt{} $'); }
+    }
+    await set({ options: { automatic: true, overrides: [{ id: 'par', trigger: 'par', replacement: '\\frac{\\partial ${1:y}}{\\partial ${2:x}}$0', boundary: 'start', enabled: true, triggerMode: 'auto' }] } });
+    await reset('$  $', 2); await type('par'); assert.equal(await doc(), '$ \\frac{\\partial y}{\\partial x} $', 'manual built-in can opt into automatic expansion');
+    await set({ options: { overrides: [] } });
     for (const [trigger, result] of [['sq', '\\sqrt{}'], ['//', '\\frac{}{}'], ['sum', '\\sum_{}^{}'], ['int', '\\int_{}^{}'],
       ['xsr', 'x^{2}'], ['xcb', 'x^{3}'], ['xinvs', 'x^{-1}'], ['@a', '\\alpha'], ['@b', '\\beta'], ['@g', '\\gamma'],
       ['@d', '\\delta'], ['@t', '\\theta'], ['@l', '\\lambda'], ['@p', '\\pi'], ['@s', '\\sigma'], ['@o', '\\omega']]) {
@@ -142,12 +202,24 @@ async function main() {
     }
     await page.keyboard.press('Control+z'); await settle(); assert.equal(await doc(), '$ @o $', 'Undo restores the literal trigger');
     await page.keyboard.press('Control+y'); await settle(); assert.equal(await doc(), '$ \\omega $', 'Redo does not expand twice');
+    await type('x'); assert.equal(await doc(), '$ \\omega x $', 'command boundary survives redo');
     await reset('$  $', 2); await type('//'); await type('sq'); await type('x');
     await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await type('y');
     await page.keyboard.press('Shift+Tab');
     assert.equal(await page.evaluate(() => T.editor.view.state.sliceDoc(T.editor.view.state.selection.main.from, T.editor.view.state.selection.main.to)), '\\sqrt{x}');
     await page.keyboard.press('Tab'); await page.keyboard.press('Tab');
     assert.equal(await doc(), '$ \\frac{\\sqrt{x}}{y} $', 'nested sessions return to their outer placeholder');
+    await reset('$  $', 2); await type('//'); await type('sq');
+    await page.keyboard.press('Control+z'); assert.equal(await doc(), '$ \\frac{sq}{} $', 'undo only the inner expansion');
+    await page.keyboard.press('Backspace'); await page.keyboard.press('Backspace'); await type('a');
+    await page.keyboard.press('Tab'); await type('b');
+    assert.equal(await doc(), '$ \\frac{a}{b} $', 'outer placeholder survives undoing the inner expansion');
+    await reset('$  $', 2); await type('//'); await type('sq'); await type('//');
+    await page.keyboard.press('Control+z'); assert.equal(await doc(), '$ \\frac{\\sqrt{//}}{} $', 'three-level undo');
+    await page.keyboard.press('Control+y'); assert.equal(await doc(), '$ \\frac{\\sqrt{\\frac{}{}}}{} $', 'three-level redo');
+    await type('a'); await page.keyboard.press('Tab'); await type('b');
+    await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await type('z');
+    assert.equal(await doc(), '$ \\frac{\\sqrt{\\frac{a}{b}}}{z} $', 'redo restores inner and outer navigation');
     await set({ options: { tabout: false } });
     await reset('$  $', 2); await type('sq'); await page.keyboard.press('Escape'); await page.keyboard.press('Tab');
     assert((await doc()).includes('\t'), 'Escape releases snippet Tab handling');
@@ -164,6 +236,16 @@ async function main() {
     await type('x'); await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await type('y');
     assert.equal(await doc(), '$ \\frac{\\sqrt{x}}{y} $');
     await set({ options: { automatic: true } });
+    const added13 = { det: '\\det', trace: '\\mathrm{Tr}', nabl: '\\nabla', ddt: '\\frac{d}{dt}',
+      oint: '\\oint', iint: '\\iint', iiint: '\\iiint', avg: '\\langle  \\rangle', norm: '\\lvert  \\rvert', Norm: '\\lVert  \\rVert',
+      ceil: '\\lceil  \\rceil', floor: '\\lfloor  \\rfloor', arcsin: '\\arcsin', arccos: '\\arccos', arctan: '\\arctan', csc: '\\csc', sec: '\\sec', cot: '\\cot' };
+    for (const [trigger, expected] of Object.entries(added13)) {
+      await reset('$  $', 2); await type(trigger); assert.equal(await doc(), '$ ' + expected + ' $', '1.3 snippet ' + trigger);
+      await reset('$ x $', 3); await type(trigger); assert.equal(await doc(), '$ x' + trigger + ' $', '1.3 start boundary ' + trigger);
+    }
+    await reset('$$\n' + Object.values(added13).join(' + ') + '\n$$', 4);
+    await page.waitForFunction(() => !!document.querySelector('.note-live-math-preview mjx-container'));
+    assert.equal(await page.locator('.note-live-math-preview mjx-merror, .note-live-math-preview [data-mjx-error]').count(), 0, 'all 1.3 snippets render offline');
     for (const [input, result] of [['x/', '\\frac{x}{}'], ['(a+b)/', '\\frac{a+b}{}'], ['(a+b(c+d))/', '\\frac{a+b(c+d)}{}'],
       ['a+x/', 'a+\\frac{x}{}'], ['x^{2}/', '\\frac{x^{2}}{}'], ['x^2/', '\\frac{x^2}{}'], ['\\alpha/', '\\frac{\\alpha}{}'],
       ['\\sin(x)/', '\\frac{\\sin(x)}{}'], ['\\frac{a}{b}/', '\\frac{\\frac{a}{b}}{}'], ['x_{1}^{2}/', '\\frac{x_{1}^{2}}{}'],
@@ -262,6 +344,11 @@ async function main() {
     assert.equal(await doc(), '$ \\frac{ab}{ab} $', 'paste mirrors without expanding snippets');
     await page.keyboard.press('Control+z'); assert.equal(await doc(), '$ \\frac{x}{x} $', 'mirror undo is atomic');
     await page.keyboard.press('Control+y'); assert.equal(await doc(), '$ \\frac{ab}{ab} $', 'mirror redo is atomic');
+    await type('c'); assert.equal(await doc(), '$ \\frac{abc}{abc} $', 'mirrors continue after redo');
+    await page.keyboard.press('Backspace'); assert.equal(await doc(), '$ \\frac{ab}{ab} $', 'delete remains mirrored after redo');
+    await set({ enabled: false }); await set({ enabled: true });
+    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+y');
+    await type('q'); assert(!(await doc()).endsWith('{abq} $'), 'old history cannot restore mirrors in a new runtime');
     for (const replacement of ['$1$1-$2$0', '${1:x}$1-$2$0']) {
       await set({ options: { custom: [{ id: 'custom-adjacent', trigger: 'zzj', replacement, boundary: 'start', enabled: true }] } });
       await reset('$  $', 2); await type('zzj'); await type('ab');
@@ -315,6 +402,14 @@ async function main() {
     await set({ options: { automatic: false } }); await reset('$  $', 2); await type('sq'); assert.equal(await doc(), '$ sq $');
     await page.keyboard.press('Tab'); assert.equal(await doc(), '$ \\sqrt{} $', 'manual expansion');
     await reset('- one\n- two', 11); await page.keyboard.press('Tab'); assert((await doc()).startsWith('- one\n  - two'), 'list indentation still owns ordinary Tab');
+    await set({ options: { automatic: true } }); await reset('$  $\n$  $', 2); await type('sq');
+    await page.evaluate(() => {
+      const view = T.editor.view, CM = RelatumCodeMirror;
+      view.dispatch({ selection: CM.EditorSelection.create([CM.EditorSelection.cursor(view.state.selection.main.head), CM.EditorSelection.cursor(view.state.doc.toString().indexOf('\n') + 3)]) });
+    });
+    await type('q');
+    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+y');
+    assert.equal(await page.evaluate(() => T.editor.view.state.selection.ranges.length), 2, 'history preserves multiple cursors without reactivating placeholders');
     await reset('$  $\n$  $', 2);
     await page.evaluate(() => T.editor.view.dispatch({ selection: RelatumCodeMirror.EditorSelection.create([RelatumCodeMirror.EditorSelection.cursor(2), RelatumCodeMirror.EditorSelection.cursor(7)]) }));
     await type('sq'); assert.equal(await doc(), '$ sq $\n$ sq $', 'multi-cursor input remains literal');
@@ -437,13 +532,35 @@ async function main() {
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteExtensions:v1')), null);
     assert.equal(await toggle.isChecked(), false);
     assert.deepEqual(errors, [], 'no browser exceptions');
-    fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ passed: true, scenarios: ['overview and detail navigation', 'metadata search and control focus', 'snippet search and split layout', 'session drafts and close cleanup', 'editor identity, document and scroll preserved', 'narrow layout and actions', 'lazy loading and failure', 'stale load', 'original and added snippets', 'continuous commands', 'manual and automatic nesting', 'fractions and history', 'tabout', 'matrix and Callout', 'custom snippet forms, limits and reload', 'boundaries', 'source mode', 'IME handoff', 'multi-cursor', 'lifecycle', 'save/reload', 'bilingual settings and reset'] }, null, 2));
-    console.log('PASS note extensions; artifacts: ' + output);
+    fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ passed: true, version: '1.3.0', native, browserVersion: browser.version(),
+      scenarios: ['overview and detail navigation', 'metadata search and control focus', 'snippet search and split layout', 'session drafts and close cleanup', 'editor identity, document and scroll preserved', 'narrow layout and actions', 'lazy loading and failure', 'stale load', '122 built-in snippets and offline math rendering', 'per-snippet modes, drafts, restore and reload', 'global automatic switch precedence', 'continuous commands', 'manual and automatic nesting', 'three-level undo/redo and continued navigation', 'mirrored input/paste/delete after undo and redo', 'old history cannot revive detached sessions', 'fractions and history', 'tabout', 'matrix and Callout', 'custom snippet forms, limits and reload', 'boundaries', 'source mode', 'IME handoff', 'multi-cursor history', 'lifecycle', 'save/reload', 'bilingual settings and reset'] }, null, 2));
+    console.log('PASS note extensions' + (native ? ' WebView2' : '') + '; artifacts: ' + output);
+    if (manualIme) {
+      await page.evaluate(() => { T.setNoteSettingsOpen(false); RelatumI18n.setLanguage('zh'); document.body.dataset.startTheme = 'light'; });
+      await page.setViewportSize({ width: 1200, height: 850 });
+      await set({ enabled: true, options: { automatic: true, custom: [{ id: 'custom-native-ime', trigger: 'zzm',
+        replacement: '\\frac{${1:x}}{$1}$0', boundary: 'start', enabled: true }] } });
+      await reset('$  $', 2); await type('zzm');
+      await page.evaluate(() => { window.nativeImeEvents = []; T.editor.view.contentDOM.addEventListener('compositionstart', event => nativeImeEvents.push({ type: event.type, data: event.data }));
+        T.editor.view.contentDOM.addEventListener('compositionend', event => nativeImeEvents.push({ type: event.type, data: event.data })); });
+      console.log('IME_MANUAL_READY ' + JSON.stringify({ debug, output, pid: server.pid }));
+      await page.waitForFunction(() => window.nativeImeDone === true, null, { timeout: 0 });
+      const result = await page.evaluate(() => ({ events: nativeImeEvents, text: T.editor.view.state.doc.toString(), results: window.nativeImeResults }));
+      fs.writeFileSync(path.join(output, 'native-ime-result.json'), JSON.stringify(result, null, 2));
+      assert(result.events.some(event => event.type === 'compositionend' && /[\u3400-\u9fff]/.test(event.data)), 'actual Chinese IME commit observed');
+      assert(result.results?.passed, 'native IME observations confirmed');
+      console.log('PASS real Microsoft Pinyin; artifacts: ' + output);
+    }
   } catch (error) {
     if (page) { await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {}); console.error(await page.evaluate(() => ({ editor: !!window.T?.editor, text: window.T?.editor?.view.state.doc.toString(), error: document.body.innerText.slice(-500) })).catch(() => ({}))); }
     console.error('Artifacts: ' + output); throw error;
   } finally {
-    await context?.close(); await browser?.close(); server.kill();
+    if (native) {
+      await page?.evaluate(() => pywebview.api.close_window()).catch(() => {});
+      if (server.exitCode === null) await Promise.race([new Promise(resolve => server.once('exit', resolve)), pause(4000)]);
+      await browser?.close().catch(() => {});
+    } else { await context?.close(); await browser?.close(); }
+    if (server.exitCode === null) server.kill();
     await new Promise(resolve => server.exitCode !== null ? resolve() : server.once('exit', resolve));
   }
 }

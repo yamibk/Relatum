@@ -181,14 +181,16 @@
     const enabledLabel = make('label', 'note-latex-enabled', editorHead), enabled = make('input', '', enabledLabel), enabledText = make('span', '', enabledLabel);
     enabled.type = 'checkbox'; enabled.dataset.latexEnabled = '';
     const fieldArea = make('div', 'note-latex-editor-fields', form), fields = {};
-    for (const key of ['trigger', 'replacement', 'boundary']) {
+    for (const key of ['trigger', 'replacement', 'boundary', 'triggerMode']) {
       const label = make('label', 'note-latex-field', fieldArea), name = make('span', '', label);
-      const input = make(key === 'replacement' ? 'textarea' : key === 'boundary' ? 'select' : 'input', '', label); input.dataset.latexField = key;
-      if (key === 'boundary') ['start', 'suffix', 'any'].forEach(value => { const option = make('option', '', input); option.value = value; });
+      const select = ['boundary', 'triggerMode'].includes(key);
+      const input = make(key === 'replacement' ? 'textarea' : select ? 'select' : 'input', '', label); input.dataset.latexField = key;
+      if (select) (key === 'boundary' ? ['start', 'suffix', 'any'] : ['auto', 'tab']).forEach(value => { const option = make('option', '', input); option.value = value; });
       else { input.maxLength = key === 'trigger' ? 64 : 4096; input.spellcheck = false; }
       fields[key] = { input, name };
       if (key === 'replacement') make('small', 'note-latex-placeholder-help', label);
-      input.addEventListener(key === 'boundary' ? 'change' : 'input', () => {
+      if (key === 'triggerMode') make('small', 'note-latex-trigger-help', label);
+      input.addEventListener(select ? 'change' : 'input', () => {
         const item = current(); if (!item) return;
         const draft = getDraft(item); Object.keys(fields).forEach(key => { draft[key] = fields[key].input.value; });
         clearMessage(); updateDirty(item, draft);
@@ -225,6 +227,7 @@
       choicePortal = make('div', 'note-latex-popovers', dialog); choicePortal.dataset.i18nManaged = 'true';
       choices = window.RelatumReviewControls.createManager(panel, choicePortal);
       choices.enhance(fields.boundary.input);
+      choices.enhance(fields.triggerMode.input);
     }
     function prepareChoice(event) {
       if (event.type === 'keydown' && (event.isComposing || event.keyCode === 229 || !['ArrowDown', 'ArrowUp'].includes(event.key))) return;
@@ -245,7 +248,8 @@
       return ({ trigger: tr('触发词须为 1–64 个非空白字符，不能包含反斜杠或 $。', 'Use 1–64 non-whitespace characters without backslashes or $.'),
         replacement: tr('替换内容须为 1–4096 个字符。', 'Use 1–4096 characters for the replacement.'),
         placeholder: tr('使用 $1–$9、${1:默认值} 和唯一的 $0；同编号默认值须一致，默认值内不支持嵌套占位。', 'Use $1–$9, ${1:default} and one $0. Repeated defaults must agree; nested placeholders are not supported.'),
-        boundary: tr('请选择匹配方式。', 'Choose a match boundary.'), duplicate: tr('该触发词已被其他片段使用。', 'Another snippet already uses this trigger.'),
+        boundary: tr('请选择匹配方式。', 'Choose a match boundary.'), triggerMode: tr('请选择触发方式。', 'Choose a trigger mode.'),
+        duplicate: tr('该触发词已被其他片段使用。', 'Another snippet already uses this trigger.'),
         limit: tr('最多添加 128 条自定义片段。', 'Up to 128 custom snippets are supported.'), storage: tr('保存失败，请重试。', 'Could not save. Please retry.') })[key] || '';
     }
     function clearMessage() { errorKey = ''; error.textContent = ''; status.textContent = ''; }
@@ -318,6 +322,7 @@
       enabled.checked = item === fresh ? draft.enabled : item.enabled;
       Object.keys(fields).forEach(key => { if (fields[key].input.value !== draft[key]) fields[key].input.value = draft[key]; });
       ensureChoices(); choices?.sync(fields.boundary.input);
+      choices?.sync(fields.triggerMode.input);
       restore.dataset.latexAction = builtIn ? 'restore' : 'delete'; restore.hidden = item === fresh;
       restore.textContent = builtIn ? tr('恢复此片段默认值', 'Restore this snippet') : tr('删除片段', 'Delete snippet');
       updateDirty(item, draft);
@@ -327,7 +332,7 @@
     search.addEventListener('compositionend', () => { composing = false; applySearch(); });
     search.addEventListener('input', () => { if (!composing) applySearch(); });
     add.addEventListener('click', () => {
-      if (!fresh) fresh = { id: 'custom-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10), trigger: '', replacement: '', boundary: 'start', enabled: true };
+      if (!fresh) fresh = { id: 'custom-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10), trigger: '', replacement: '', boundary: 'start', triggerMode: 'auto', enabled: true };
       selected = fresh.id; group = 'custom'; query = ''; search.value = ''; panel.dataset.snippetView = 'editor'; clearMessage(); setTab('snippets');
       if (read().custom.length >= 128) fail('limit'); fields.trigger.input.focus({ preventScroll: true });
     });
@@ -342,7 +347,7 @@
     form.addEventListener('submit', event => {
       event.preventDefault(); const item = current(); if (!item) return;
       const draft = getDraft(item), value = { id: item.id, trigger: draft.trigger, replacement: draft.replacement, boundary: draft.boundary,
-        enabled: item === fresh ? draft.enabled !== false : item.enabled !== false };
+        triggerMode: draft.triggerMode, enabled: item === fresh ? draft.enabled !== false : item.enabled !== false };
       const issue = definition.snippetProblem(value) || (entries().some(other => other.id !== item.id && !other.conflict && other.trigger === value.trigger) ? 'duplicate' : '')
         || (item === fresh && read().custom.length >= 128 ? 'limit' : '');
       if (issue) { fail(issue); return; }
@@ -372,13 +377,17 @@
       list.setAttribute('aria-label', tr('公式片段', 'Math snippets')); editorEmpty.textContent = tr('选择一个片段查看与编辑。', 'Choose a snippet to view and edit.');
       listBack.textContent = tr('← 片段列表', '← Snippet list'); enabledText.textContent = tr('启用', 'Enable'); dirty.textContent = tr('未保存', 'Unsaved');
       fields.trigger.name.textContent = tr('触发词', 'Trigger'); fields.replacement.name.textContent = tr('替换模板', 'Replacement'); fields.boundary.name.textContent = tr('匹配方式', 'Match boundary');
+      fields.triggerMode.name.textContent = tr('触发方式', 'Trigger mode');
+      fieldArea.querySelector('.note-latex-trigger-help').textContent = tr('关闭自动展开总开关后，此片段仍需 Tab 确认。', 'When automatic expansion is turned off, this snippet still requires Tab.');
       fieldArea.querySelector('.note-latex-placeholder-help').textContent = tr('$1–$9：占位 · ${1:默认值} · 同编号联动 · $0：退出', '$1–$9: placeholders · ${1:default} · repeated numbers mirror · $0: exit');
       Array.from(fields.boundary.input.options).forEach((entry, index) => { entry.textContent = tr(['词首', '后缀', '任意位置'][index], ['Start', 'Suffix', 'Anywhere'][index]); });
       choices?.refresh(fields.boundary.input);
+      Array.from(fields.triggerMode.input.options).forEach((entry, index) => { entry.textContent = tr(['自动展开', 'Tab 确认'][index], ['Automatic', 'Confirm with Tab'][index]); });
+      choices?.refresh(fields.triggerMode.input);
       save.textContent = tr('保存更改', 'Save changes'); cancel.textContent = tr('取消', 'Cancel'); error.textContent = message(errorKey);
       guideElements.forEach(({ row, name, code }) => { name.textContent = row[index]; code.textContent = row[2]; });
-      guideNote.textContent = tr('仅在已闭合公式内生效。粘贴、输入法候选与多光标不自动展开；嵌套片段完成后继续返回外层占位。',
-        'Works inside closed equations. Paste, IME composition and multiple cursors do not expand automatically. Nested snippets return to outer placeholders.');
+      guideNote.textContent = tr('仅在已闭合公式内生效。每条片段可选择自动展开或 Tab 确认；关闭自动展开总开关后，所有片段均需 Tab。粘贴、输入法候选与多光标不自动展开。嵌套展开可撤销和重做，并继续外层占位。',
+        'Works inside closed equations. Each snippet can expand automatically or require Tab; turning off automatic expansion makes all snippets require Tab. Paste, IME composition and multiple cursors do not expand automatically. Undo and redo preserve nested placeholders.');
       const next = JSON.stringify([options.overrides, options.custom]);
       if (!saving && (next !== signature || language() !== renderedLanguage)) {
         if (language() !== renderedLanguage) status.textContent = '';
@@ -392,7 +401,7 @@
       setActive(value) {
         active = value === true;
         if (!active) { composing = false; choices?.close(); }
-        else { ensureChoices(); choices?.sync(fields.boundary.input); }
+        else { ensureChoices(); choices?.sync(fields.boundary.input); choices?.sync(fields.triggerMode.input); }
       },
       reveal(key) {
         if (key?.startsWith('option:')) { setTab('basic'); return controls.find(row => row.item.id === key.slice(7))?.label || tabButtons.get('basic'); }

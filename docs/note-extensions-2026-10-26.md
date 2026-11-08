@@ -1,8 +1,8 @@
-# 笔记扩展、latex辅助输入 1.2 与文件染色
+# 笔记扩展、latex辅助输入 1.3 与文件染色
 
 ## 使用与边界
 
-“笔记设置 → 扩展”（`extensions`，位于笔记本之后）管理随软件附带的离线扩展。第一项中文卡片标题为“latex辅助输入 1.2”，英文为“LaTeX Input Assistant 1.2”，内部 ID 仍为 `latex-input`，版本元数据 `1.2.0`。总开关默认关闭；自动展开、自动分式、Tab 跳出、矩阵快捷输入、数字下标、选区快捷包裹和括号自动放大各自默认开启，可分别关闭。旧启停及自动展开偏好保留，新增默认值不在启动时回写。列表卡片只提供名称、说明、总开关、“配置”入口及错误重试；点击配置或搜索结果才创建详情，不加载公式运行时。
+“笔记设置 → 扩展”（`extensions`，位于笔记本之后）管理随软件附带的离线扩展。第一项中文卡片标题为“latex辅助输入 1.3”，英文为“LaTeX Input Assistant 1.3”，内部 ID 仍为 `latex-input`，版本元数据 `1.3.0`。总开关默认关闭；自动展开、自动分式、Tab 跳出、矩阵快捷输入、数字下标、选区快捷包裹和括号自动放大各自默认开启，可分别关闭。旧启停及自动展开偏好保留，新增默认值不在启动时回写。列表卡片只提供名称、说明、总开关、“配置”入口及错误重试；点击配置或搜索结果才创建详情，不加载公式运行时。
 
 扩展分别增强笔记编辑器或文件树。第二项“文件染色 / File Colors 1.1”（`file-colors`，版本 `1.1.0`）默认关闭，按需加载独立文件树运行时；详情提供四项外观滑条、效果预览、参数恢复、清空颜色记录及使用说明。具体存储、文件生命周期和验证见 [文件染色](note-file-colors-2026-10-27.md)。不提供安装包、在线市场、自动更新、Obsidian 兼容层，也不迁移 Mermaid、Quiz 等现有功能。所有资源继续归 `notes` 功能；禁用笔记时沿用现有静态资源权限。源码修改无需增加依赖或构建应用；已发布的旧桌面程序仍需下次打包才包含新功能。
 
@@ -72,9 +72,18 @@ ID 为稳定的小写字母/数字/短横线名称，必须以字母开头，不
 
 ## 公式输入
 
-独立的 `latex-input.js` 保留原 61 个片段，1.2 共提供 104 个内置片段。新增文字与格式、偏导与定积分、连乘、常用集合与关系符号，以及矩阵和对齐环境；触发表及中英文名称由设置详情列出。保留原希腊字母触发和边界；`und` 支持下划线后缀。数字下标覆盖字母、希腊字母及一至两层 `hat/bar/dot/ddot/tilde/vec/underline`，例如 `xvec12 → \vec{x}_{12}`，不处理任意命令参数。`par` 和 `beg` 固定由 Tab 确认，其余服从全局自动开关。
+独立的 `latex-input.js` 保留原 104 个片段及稳定 ID，1.3 共提供 122 个内置片段。文字与格式、偏导与定积分、连乘、集合与关系符号、矩阵和对齐环境继续保留，触发表及中英文名称由设置详情列出。新增 18 条均默认自动展开、采用词首边界：
 
-模板解析由 catalog 的纯函数 `parseTemplate(template,start)` 统一提供校验、摘要与运行时数据；`$1`–`$9` 按编号分组，支持 `${1:默认值}` 及重复编号联动，`$0` 是唯一退出点。默认文本可含配平或转义的 TeX 大括号，但不支持嵌套占位或冲突默认值。编号、默认值语法及会话不会写进正文。事务过滤器保持单光标，同步输入、删除、粘贴及嵌套展开；同位置的空占位和相邻联动占位按源顺序跟踪，不互相吞并。候选期间不传播，确认后沿用原交接并合并到该次输入历史，取消不传播；外部替换、撤销、切文档及卸载清理会话。
+| 类别 | 触发词与输出 |
+| --- | --- |
+| 线性代数 | `det → \det`、`trace → \mathrm{Tr}` |
+| 微积分 | `nabl → \nabla`、`ddt → \frac{d}{dt}`、`oint/iint/iiint → \oint/\iint/\iiint` |
+| 括号 | `avg → \langle … \rangle`、`norm → \lvert … \rvert`、`Norm → \lVert … \rVert`、`ceil → \lceil … \rceil`、`floor → \lfloor … \rfloor`，均含内容占位 |
+| 三角函数 | `arcsin/arccos/arctan/csc/sec/cot` 添加对应命令反斜杠 |
+
+保留原希腊字母触发和边界；`und` 支持下划线后缀。数字下标覆盖字母、希腊字母及一至两层 `hat/bar/dot/ddot/tilde/vec/underline`，例如 `xvec12 → \vec{x}_{12}`，不处理任意命令参数。`par/beg` 默认由 Tab 确认，其他片段默认自动；逐片段触发方式可修改，全局自动开关始终优先。
+
+模板解析由 catalog 的纯函数 `parseTemplate(template,start)` 统一提供校验、摘要与运行时数据；`$1`–`$9` 按编号分组，支持 `${1:默认值}` 及重复编号联动，`$0` 是唯一退出点。默认文本可含配平或转义的 TeX 大括号，但不支持嵌套占位或冲突默认值。编号、默认值语法及会话不会写进正文。事务过滤器保持单光标，同步输入、删除、粘贴及嵌套展开；同位置的空占位和相邻联动占位按源顺序跟踪，不互相吞并。候选期间不传播，确认后沿用原交接并合并到该次输入历史，取消不传播；外部替换、切文档及卸载清理会话。
 
 `pmat/bmat/Bmat/vmat/Vmat/matrix/cases/align/array` 快速建立成对环境，`align` 使用 `aligned`；块公式换行并保留容器前缀，行内使用紧凑形式。普通矩阵直接进入内容，Tab 可立即分列；`array` 先选择默认列格式 `cc`，`beg` 先选择联动的默认环境名 `matrix`，Tab 后进入内容。环境名称和列格式参数内不触发普通展开。
 
@@ -86,7 +95,9 @@ ID 为稳定的小写字母/数字/短横线名称，必须以字母开头，不
 
 `sq/sum/int` 要求命令起始边界，幂次支持 `xsr` 等后缀；代码、元数据、Markdown 注释、公式 `%` 注释、转义命令和 `\text*`、`\mbox`、`\operatorname`、`\url/\href`、`\begin/\end` 名称参数不展开。仅普通 `input.type` 才安排一次微任务展开，核对文档状态和身份；粘贴、外部替换、候选输入、撤销和重做不会自动触发。多光标始终保留普通输入。助手生成的完整命令保留本次会话边界，后续字母按需分隔；`@asr/@ax/@a@b` 分别得到 `\alpha^{2}`、`\alpha x`、`\alpha\beta`，不据此拆分手写自定义命令。
 
-Tab 优先展开有效片段或待确认分式，再跳转当前片段占位、处理矩阵单元和公式跳出，最后回落原输入。手动模式支持占位内继续展开嵌套片段；Shift+Tab 返回前一占位，Escape 结束占位会话，普通公式导航仍按分项开关生效。占位随 ChangeSet 映射，嵌套片段退出后继续外层，移出范围、切正文或卸载扩展即清理。展开使用独立历史边界，Undo 恢复触发词，Redo 恢复展开但不重新运行；占位跳转不写正文或保存。
+Tab 优先展开有效片段或待确认分式，再跳转当前片段占位、处理矩阵单元和公式跳出，最后回落原输入。手动模式支持占位内继续展开嵌套片段；Shift+Tab 返回前一占位，Escape 结束占位会话，普通公式导航仍按分项开关生效。占位随 ChangeSet 映射，嵌套片段退出后继续外层，移出范围、切正文或卸载扩展即清理。展开使用独立历史边界，Undo 恢复触发词并保留外层占位，Redo 恢复展开、占位及选区而不重新执行展开规则；联动输入、删除、粘贴及候选确认仍与对应文字共同撤销。占位跳转不写正文或保存。
+
+1.3 通过现有 CodeMirror `invertedEffects` 保存可映射的占位栈、当前索引、联动范围、退出点、短命令边界及单光标选区，不另建历史栈或文档缓存。标准历史事务跳过过滤器，因此选区交接在历史更新后的单次微任务完成，标记 `addToHistory:false`，核对同一状态、配置及可见会话；新输入或销毁取消它。多光标沿用 CodeMirror 原生历史选区，不恢复助手占位。每次运行时实例独占效果类型，关闭、隐藏、最小化、配置更换或切文档后，旧历史不能复活旧占位。离线 bundle 只新增 `invertedEffects` 导出，固定依赖版本、原选区修补和生成方式不变，SHA-256 同步于 vendor notices。
 
 自动分式把 `x/`、`(a+b)/` 转为分式并进入分母，支持命令参数、嵌套括号和上下标；只提取相邻操作数，不跨顶层运算符、空白、换行或矩阵单元。无有效分子保留 `/`，空模板 `//` 保留；关闭自动展开后由 Tab 确认。公式 Tab 跳出支持普通配对括号、命名括号及 `\left…\right`，在内容末尾跳过闭合公式定界符；未配对时回落，Shift+Tab 不新增反向跳出。
 
@@ -94,24 +105,29 @@ Tab 优先展开有效片段或待确认分式，再跳转当前片段占位、�
 
 ### 片段表单
 
-内置片段可编辑、启停及单项恢复；自定义片段可新增、编辑、启停及删除。右侧表单包含触发词、替换模板、词首/后缀/任意位置匹配；保存成功后即时生效，取消及未保存内容不写偏好，启停仍即时提交。恢复内置触发词若与另一片段冲突，会提示先解决冲突，不删除另一片段。最多 128 条自定义片段，触发词 1–64 字符且不得包含空白、反斜杠或 `$`，模板 1–4096 字符；重复触发词、非法占位或冲突默认值在表单提示。运行时按实际最长触发词有界查找，配置只含文字模板，不支持用户正则或 JavaScript。
+内置片段可编辑、启停及单项恢复；自定义片段可新增、编辑、启停及删除。右侧表单包含触发词、替换模板、词首/后缀/任意位置匹配，以及“自动展开 / Tab 确认”触发方式；两种下拉复用同一 `review-controls` 管理器和浮层生命周期。保存成功后即时生效，取消及未保存内容不写偏好，启停仍即时提交。恢复内置触发词若与另一片段冲突，会提示先解决冲突，不删除另一片段。最多 128 条自定义片段，触发词 1–64 字符且不得包含空白、反斜杠或 `$`，模板 1–4096 字符；重复触发词、非法占位、冲突默认值或无效触发方式在表单提示。运行时按实际最长触发词有界查找，配置只含文字模板，不支持用户正则或 JavaScript。
 
 1.2 新增选项 `visualSnippets/autoEnlargeBrackets`，其余偏好仍用原 v1 格式。新增默认触发词若与旧自定义或旧内置覆盖重名，旧配置优先，新默认片段仅在有效列表标记 `conflict` 并暂停运行，详情显示原因；派生标记不保存。修改触发词可解除冲突，启动不删除或改写旧配置。保存及恢复仍检查实际占用的触发词。
 
-不包含自定义可执行规则、源码隐藏、彩色括号、逐片段触发模式设置、反向公式跳出或行内浮动预览。
+1.3 的片段记录增加可选 `triggerMode:'auto'|'tab'`，仍保存在原 `canvas:noteExtensions:v1` 的 `overrides/custom`。缺失字段保持旧语义，内置 `par/beg` 为 Tab，其余及自定义为自动；有效列表只在内存解析默认模式，启动、查询和搜索不写入。显式保存包含新字段，取消、单项恢复、草稿及失败回滚沿用原规则。全局 `automatic:false` 强制全部使用 Tab；开启后仅 `auto` 自动展开，Tab 可确认两种模式。原 104 条默认触发、覆盖、自定义及未知扩展记录保留；新增片段继续让位于旧用户配置。
+
+不包含自定义可执行规则、源码隐藏、彩色括号、反向公式跳出、行内浮动预览或公式外 `mk/dm`。
 
 ## 上游来源
 
-工作方式与常用触发映射参考 LaTeX Suite README 和默认片段，固定参考提交 `5fdcca013a8daa41cdb7debe12e41a53035298a5`（1.1 于 2026-10-27 再核验）：
+工作方式与常用触发映射参考 LaTeX Suite README 和默认片段。1.3 于 2026-11-08 核对正式版 1.14.3，固定参考提交 `c58b9bfd30f089b42493cfd22488473ddfd29488`；原参考提交 `5fdcca013a8daa41cdb7debe12e41a53035298a5` 属于 1.14.1。嵌套历史行为另参考上游 #703，但实现继续适配 Relatum 自有占位模型：
 
-- https://github.com/artisticat1/obsidian-latex-suite/blob/5fdcca013a8daa41cdb7debe12e41a53035298a5/README.md
-- https://github.com/artisticat1/obsidian-latex-suite/blob/5fdcca013a8daa41cdb7debe12e41a53035298a5/src/default_snippets.js
-- https://github.com/artisticat1/obsidian-latex-suite/blob/5fdcca013a8daa41cdb7debe12e41a53035298a5/LICENSE.md
+- https://github.com/artisticat1/obsidian-latex-suite/blob/c58b9bfd30f089b42493cfd22488473ddfd29488/README.md
+- https://github.com/artisticat1/obsidian-latex-suite/blob/c58b9bfd30f089b42493cfd22488473ddfd29488/src/default_snippets.js
+- https://github.com/artisticat1/obsidian-latex-suite/blob/c58b9bfd30f089b42493cfd22488473ddfd29488/LICENSE.md
+- https://github.com/artisticat1/obsidian-latex-suite/pull/703
 
 保留上游 MIT 声明于 `assets/note-extensions/LICENSE-latex-suite.txt`。输入引擎、生命周期和设置为 Relatum 独立实现，没有引入 Obsidian API、上游解析器或其他运行时依赖。
 
 ## 定向验证
 
-2026-10-29 的 1.2 使用隔离数据通过 `node tests/note-latex-input-regression.js`、`node tests/note-extensions-browser.js`、`node tests/note-settings-browser.js --smoke` 与 `node tests/note-math-preview-browser.js`。纯逻辑覆盖模板校验、默认与镜像占位、相邻占位顺序、升级冲突及旧偏好；真实浏览器覆盖六项输入能力、嵌套及一次撤销、Chromium 原生候选确认/取消、生命周期、已有离线 MathJax 的六种包裹与划消排版、旧用户触发词优先、设置解除冲突、中英文深浅窄窗。未重新打包，未执行微软拼音实际候选窗人工验收。
+2026-11-08 的 1.3 使用隔离数据通过 `node tests/note-latex-input-regression.js`、`node tests/note-extensions-browser.js`、`node tests/note-settings-browser.js --smoke` 与 `node tests/note-math-preview-browser.js`。纯逻辑覆盖 122 条片段、模板、触发方式、旧偏好、冲突及规范化幂等；真实浏览器覆盖三层嵌套撤销/重做后的输入和导航、联动粘贴与删除、命令边界、旧历史失效、多光标历史、全局开关优先、设置草稿/恢复/重载，以及新增片段的边界与离线 MathJax 排版。原六种包裹、候选交接及深浅双语窄窗回归继续通过。未重新打包。
 
-沿用 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`，运行 `node tests/note-extensions-browser.js`。真实生产页面和隔离服务覆盖列表/详情、纯元数据搜索及实际控件定位、本地筛选、会话草稿、编辑器身份/正文/滚动保持、宽窄布局，以及原有的输入、片段表单/限额/重载、偏好兼容、加载失败/迟到、候选及生命周期等场景。截图包括简洁列表、真实双栏编辑、基础设置、使用说明及中英文深浅窄窗。共享外壳另用 `node tests/note-settings-browser.js --smoke` 和 `node tests/global-settings-browser.js system library` 定向回归。数据、浏览器配置和报告只写临时目录，结束关闭浏览器和服务；不跑全量或独立性能基准，不重打桌面包。真实微软拼音候选窗仍属桌面人工验收边界。
+扩展浏览器脚本新增 `--webview2`，使用 `RELATUM_WEBVIEW_PYTHON` 的已有 pywebview 环境，按生产入口启动隔离桌面、通过临时调试端口执行同套回归，结束关闭本次窗口和服务。`--webview2 --ime-manual` 在回归后保留联动分式测试页并输出 `IME_MANUAL_READY`；真实按键验收完成后通过测试页 `nativeImeResults/nativeImeDone` 回传观察结果，输出单独 `native-ime-result.json`。本轮用 computer-use 操作真实微软拼音：`zhong` 候选期间另一占位不变，确认“中”后两处一致，一次撤销回到 `x/x`、重做回到 `中/中`，重做后可继续预编辑且 Escape 取消不传播。报告同时记录真实 `compositionstart/compositionend`，包括中文提交与空内容取消；这次记录只覆盖上述实际操作，程序模拟候选仍独立保留。
+
+沿用 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`，运行 `node tests/note-extensions-browser.js`。真实生产页面和隔离服务覆盖列表/详情、纯元数据搜索及实际控件定位、本地筛选、会话草稿、编辑器身份/正文/滚动保持、宽窄布局，以及原有的输入、片段表单/限额/重载、偏好兼容、加载失败/迟到、候选及生命周期等场景。截图包括简洁列表、真实双栏编辑、基础设置、使用说明及中英文深浅窄窗。共享外壳另用 `node tests/note-settings-browser.js --smoke` 和 `node tests/global-settings-browser.js system library` 定向回归。数据、浏览器配置和报告只写临时目录，结束关闭浏览器和服务；不跑全量或独立性能基准，不重打桌面包。

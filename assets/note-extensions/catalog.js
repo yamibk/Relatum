@@ -36,7 +36,14 @@
   ].map(([trigger, replacement, boundary = 'start', kind, manual]) => Object.freeze({
     id: trigger, trigger, replacement, boundary, added: true, ...(kind ? { kind } : {}), ...(manual ? { manual } : {}),
   }));
-  const allSnippets = Object.freeze(snippets.concat(additions));
+  const additions13 = [
+    ...['det', 'arcsin', 'arccos', 'arctan', 'csc', 'sec', 'cot'].map(command => [command, '\\' + command + '$0', 'function']),
+    ['trace', '\\mathrm{Tr}$0', 'function'], ['nabl', '\\nabla$0', 'symbol'], ['ddt', '\\frac{d}{dt}$0'],
+    ...['oint', 'iint', 'iiint'].map(command => [command, '\\' + command + '$0']),
+    ...Object.entries({ avg: ['langle', 'rangle'], norm: ['lvert', 'rvert'], Norm: ['lVert', 'rVert'],
+      ceil: ['lceil', 'rceil'], floor: ['lfloor', 'rfloor'] }).map(([trigger, [open, close]]) => [trigger, '\\' + open + ' $1 \\' + close + '$0']),
+  ].map(([trigger, replacement, kind]) => Object.freeze({ id: trigger, trigger, replacement, boundary: 'start', added: true, ...(kind ? { kind } : {}) }));
+  const allSnippets = Object.freeze(snippets.concat(additions, additions13));
   const defaults = Object.freeze({ automatic: true, autoFraction: true, tabout: true, matrix: true, subscripts: true,
     visualSnippets: true, autoEnlargeBrackets: true });
   const boundaries = ['start', 'suffix', 'any'];
@@ -90,6 +97,7 @@
     if (!item || typeof item.trigger !== 'string' || !item.trigger.length || item.trigger.length > 64 || /[\s\\$]/.test(item.trigger)) return 'trigger';
     if (typeof item.replacement !== 'string' || !item.replacement.length || item.replacement.length > 4096) return 'replacement';
     if (!boundaries.includes(item.boundary)) return 'boundary';
+    if (item.triggerMode !== undefined && !['auto', 'tab'].includes(item.triggerMode)) return 'triggerMode';
     if (!parseTemplate(item.replacement)) return 'placeholder';
     return '';
   }
@@ -112,13 +120,15 @@
     allSnippets.forEach(base => {
       const candidate = overrides.get(base.id), item = candidate || base;
       if (!base.added) used.add(item.trigger);
-      if (candidate) result.overrides.push({ id: base.id, trigger: item.trigger, replacement: item.replacement, boundary: item.boundary, enabled: item.enabled !== false });
+      if (candidate) result.overrides.push({ id: base.id, trigger: item.trigger, replacement: item.replacement, boundary: item.boundary, enabled: item.enabled !== false,
+        ...(item.triggerMode !== undefined ? { triggerMode: item.triggerMode } : {}) });
     });
     const ids = new Set();
     if (Array.isArray(value?.custom)) value.custom.slice(0, 128).forEach(item => {
       if (problem(item) || typeof item.id !== 'string' || !/^custom-[a-z0-9-]{1,80}$/.test(item.id) || ids.has(item.id) || used.has(item.trigger)) return;
       ids.add(item.id); used.add(item.trigger);
-      result.custom.push({ id: item.id, trigger: item.trigger, replacement: item.replacement, boundary: item.boundary, enabled: item.enabled !== false });
+      result.custom.push({ id: item.id, trigger: item.trigger, replacement: item.replacement, boundary: item.boundary, enabled: item.enabled !== false,
+        ...(item.triggerMode !== undefined ? { triggerMode: item.triggerMode } : {}) });
     });
     return result;
   }
@@ -129,7 +139,7 @@
     // Existing user content wins over newly introduced defaults, even when disabled.
     const added = entries.filter(item => item.added).sort((a, b) => Number(overrides.has(b.id)) - Number(overrides.has(a.id)));
     added.forEach(item => { item.conflict = occupied.has(item.trigger); if (!item.conflict) occupied.add(item.trigger); });
-    return entries.concat(options.custom);
+    return entries.concat(options.custom).map(item => ({ ...item, triggerMode: item.triggerMode || (item.manual ? 'tab' : 'auto') }));
   }
   const controls = [
     { id: 'automatic', name: ['输入时自动展开', 'Expand automatically while typing'], description: ['关闭后，用 Tab 确认片段与分式。', 'When off, confirm snippets and fractions with Tab.'] },
@@ -149,8 +159,13 @@
     exp: ['指数函数', 'Exponential'], lim: ['极限', 'Limit'], hat: ['帽符号', 'Hat accent'], bar: ['横线', 'Bar accent'], dot: ['点', 'Dot accent'],
     ddot: ['双点', 'Double dot'], tilde: ['波浪符号', 'Tilde accent'], vec: ['向量', 'Vector'],
     text: ['公式内文字', 'Text in math'], bf: ['数学粗体', 'Bold math'], rm: ['直立文字', 'Roman text'],
-    und: ['下划线', 'Underline'], ee: ['自然指数幂', 'Exponential power'], par: ['偏导数（Tab 确认）', 'Partial derivative (Tab)'],
-    dint: ['定积分', 'Definite integral'], prod: ['连乘', 'Product'], beg: ['自定义环境（Tab 确认）', 'Custom environment (Tab)'],
+    und: ['下划线', 'Underline'], ee: ['自然指数幂', 'Exponential power'], par: ['偏导数', 'Partial derivative'],
+    dint: ['定积分', 'Definite integral'], prod: ['连乘', 'Product'], beg: ['自定义环境', 'Custom environment'],
+    det: ['行列式算子', 'Determinant operator'], trace: ['矩阵的迹', 'Matrix trace'], nabl: ['梯度算子', 'Nabla'], ddt: ['对时间求导', 'Time derivative'],
+    oint: ['闭路积分', 'Contour integral'], iint: ['二重积分', 'Double integral'], iiint: ['三重积分', 'Triple integral'],
+    avg: ['尖括号', 'Angle brackets'], norm: ['单竖线', 'Single vertical bars'], Norm: ['范数', 'Norm'], ceil: ['向上取整', 'Ceiling'], floor: ['向下取整', 'Floor'],
+    arcsin: ['反正弦', 'Arcsine'], arccos: ['反余弦', 'Arccosine'], arctan: ['反正切', 'Arctangent'],
+    csc: ['余割', 'Cosecant'], sec: ['正割', 'Secant'], cot: ['余切', 'Cotangent'],
     pmat: ['圆括号矩阵', 'Parenthesized matrix'], bmat: ['方括号矩阵', 'Bracketed matrix'], Bmat: ['花括号矩阵', 'Braced matrix'],
     vmat: ['行列式', 'Determinant'], Vmat: ['双竖线矩阵', 'Double-bar matrix'], matrix: ['无括号矩阵', 'Matrix'],
     cases: ['分段函数', 'Cases'], align: ['多行对齐', 'Aligned equations'], array: ['指定列格式的数组', 'Array'],
@@ -166,10 +181,10 @@
     const base = allSnippets.find(other => other.id === item.id), index = language === 'en' ? 1 : 0;
     if (!base) return { name: index ? 'Custom snippet' : '自定义片段', group: 'custom' };
     const group = base.kind === 'environment' ? 'environments' : base.kind === 'symbol' ? 'symbols' :
-      !names[base.id] ? 'greek' : base.kind === 'accent' || ['sin', 'cos', 'tan', 'ln', 'log', 'exp', 'lim'].includes(base.id) ? 'functions' : 'common';
+      !names[base.id] ? 'greek' : ['accent', 'function'].includes(base.kind) || ['sin', 'cos', 'tan', 'ln', 'log', 'exp', 'lim'].includes(base.id) ? 'functions' : 'common';
     return { name: names[base.id]?.[index] || base.replacement.replace(/^\\|\$0$/g, ''), group };
   }
-  registry.register({ id: 'latex-input', version: '1.2.0', displayVersion: '1.2', name: ['latex辅助输入', 'LaTeX Input Assistant'],
+  registry.register({ id: 'latex-input', version: '1.3.0', displayVersion: '1.3', name: ['latex辅助输入', 'LaTeX Input Assistant'],
     description: ['用片段、分式与矩阵快捷输入加快公式书写。仅在公式内生效。', 'Write equations faster with snippets, fractions and matrix shortcuts. Active only inside equations.'],
     keywords: '数学 公式 自动展开 分式 矩阵 自定义 占位 latex math snippets fraction matrix custom tab placeholder',
     defaultEnabled: false, defaultOptions: defaults, normalizeOptions, snippets: allSnippets, effectiveSnippets: effective, snippetProblem: problem, parseTemplate,
@@ -177,7 +192,7 @@
     settingsSearch(value, language) {
       const index = language === 'en' ? 1 : 0;
       return controls.map(item => ({ key: 'option:' + item.id, name: item.name[index], keywords: item.name.join(' ') + ' ' + item.description.join(' ') })).concat([
-        { key: 'snippets', name: index ? 'Snippet management' : '片段管理', keywords: '自定义 添加 编辑 触发词 替换 模板 custom add edit trigger replacement template snippets' },
+        { key: 'snippets', name: index ? 'Snippet management' : '片段管理', keywords: '自定义 添加 编辑 触发词 触发方式 自动展开 Tab确认 替换 模板 custom add edit trigger mode automatic tab replacement template snippets' },
         { key: 'guide', name: index ? 'Usage guide' : '使用说明', keywords: '用法 帮助 快捷键 占位 usage help shortcuts placeholders' },
       ], effective(value).map(item => ({ key: 'snippet:' + item.id, name: snippetInfo(item, language).name + ' · ' + item.trigger,
         keywords: [item.trigger, item.replacement, snippetInfo(item, 'zh').name, snippetInfo(item, 'en').name].join(' ') })));

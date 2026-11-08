@@ -128,7 +128,7 @@
 .note-latex-field .review-choice { width: 100%; }
 .note-latex-field .review-choice-trigger:active { transform: none; }
 .note-latex-field textarea { min-height: 108px; max-height: 220px; resize: vertical; font-family: var(--font-code, monospace); }
-.note-latex-placeholder-help { font-size: 11px; color: var(--settings-muted); line-height: 1.6; }
+.note-latex-placeholder-help, .note-latex-trigger-help { font-size: 11px; color: var(--settings-muted); line-height: 1.6; }
 .note-latex-editor-footer { flex: none; padding: 16px 0 0; position: relative; top: 6px; }
 .note-latex-editor-footer > div { display: flex; gap: 8px; }
 .note-latex-editor-footer button { min-height: 34px; padding: 7px 12px; border-radius: 8px; border: 0; background: transparent; }

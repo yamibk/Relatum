@@ -124,6 +124,14 @@
     const action = CM.StateEffect.define({ map: (value, changes) => value.type === 'push'
       ? { ...value, session: mapSession(value.session, changes) }
       : value.type === 'command' && value.command ? { ...value, command: mapRange(value.command, changes) } : value });
+    // Each runtime owns its effect type. Old history cannot reactivate a session
+    // after a document/configuration/lifecycle handoff. Only numeric ranges and
+    // short command text enter history; no document, editor or DOM is retained.
+    const restoreHistory = CM.StateEffect.define({ map: (value, changes) => ({
+      stack: value.stack.map(session => mapSession(session, changes)),
+      command: value.command ? mapRange(value.command, changes) : null,
+      selection: value.selection ? { anchor: changes.mapPos(value.selection.anchor, 1), head: changes.mapPos(value.selection.head, 1) } : null,
+    }) });
     let paused = false, disposed = false, pending = 0, cached = null, compositionCancelled = false;
     const ready = () => !paused && !disposed && context.isActive() && !context.inputPending()
       && context.acceptsInput() !== false && !view.composing && !view.compositionStarted
@@ -132,9 +140,11 @@
     const field = CM.StateField.define({
       create: () => ({ stack: [], command: null }),
       update(value, transaction) {
-        if (transaction.isUserEvent('undo') || transaction.isUserEvent('redo') || transaction.newSelection.ranges.length !== 1) return { stack: [], command: null };
-        let { stack, command } = value;
-        if (transaction.docChanged) {
+        if (transaction.newSelection.ranges.length !== 1) return { stack: [], command: null };
+        const historical = transaction.isUserEvent('undo') || transaction.isUserEvent('redo');
+        let { stack, command } = value, selection = transaction.newSelection.main;
+        if (historical) { stack = []; command = null; }
+        else if (transaction.docChanged) {
           let edits = transaction.effects.find(effect => effect.is(action) && effect.value.type === 'mapping')?.value.edits;
           if (!edits) {
             edits = [];
@@ -145,19 +155,31 @@
           if (command) command = { ...command, from: transaction.changes.mapPos(command.from, 1), to: transaction.changes.mapPos(command.to, -1) };
           if (!transaction.isUserEvent('input.type') && !transaction.isUserEvent('input.note-extension') && !transaction.isUserEvent('delete')) command = null;
         } else if (transaction.selection) command = null;
-        for (const effect of transaction.effects) if (effect.is(action)) {
+        // Grouped history effects run newest-to-oldest, so the final snapshot
+        // restores the start of the complete atomic undo event.
+        for (const effect of transaction.effects) if (effect.is(restoreHistory)) {
+          stack = effect.value.stack; command = effect.value.command;
+          if (effect.value.selection) selection = CM.EditorSelection.range(effect.value.selection.anchor, effect.value.selection.head);
+        } else if (effect.is(action)) {
           if (effect.value.type === 'clear') { stack = []; command = null; }
           else if (effect.value.type === 'push') stack = stack.concat(effect.value.session);
           else if (effect.value.type === 'pop') stack = stack.slice(0, -1);
           else if (effect.value.type === 'move' && stack.length) stack = stack.slice(0, -1).concat({ ...stack[stack.length - 1], index: effect.value.index });
           else if (effect.value.type === 'command') command = effect.value.command;
         }
-        while (stack.length && !contains(stack[stack.length - 1], transaction.newSelection.main)) stack = stack.slice(0, -1);
-        const selection = transaction.newSelection.main;
+        while (stack.length && !contains(stack[stack.length - 1], selection)) stack = stack.slice(0, -1);
         if (command && (!selection.empty || selection.head < command.to || selection.head > command.to + maxTrigger + 1
           || transaction.newDoc.sliceString(command.from, command.to) !== command.text)) command = null;
         return { stack, command };
       },
+    });
+    const history = CM.invertedEffects.of(transaction => {
+      if (!transaction.docChanged) return [];
+      const previous = transaction.startState.field(field, false);
+      if (!previous || !previous.stack.length && !previous.command
+        && !transaction.effects.some(effect => effect.is(action) || effect.is(restoreHistory))) return [];
+      const { anchor, head } = transaction.startState.selection.main;
+      return [restoreHistory.of({ ...previous, selection: transaction.startState.selection.ranges.length === 1 ? { anchor, head } : null })];
     });
     function mathAt(from = view.state.selection.main.head, to = from) {
       if (!ready()) return null;
@@ -255,7 +277,7 @@
       if (!ready() || !view.state.selection.main.empty) return false;
       const at = view.state.selection.main.head, tail = view.state.doc.sliceString(Math.max(0, at - maxTrigger), at);
       for (const snippet of snippets) {
-        if (automatic && snippet.manual) continue;
+        if (automatic && snippet.triggerMode === 'tab') continue;
         if (!tail.endsWith(snippet.trigger)) continue;
         let from = at - snippet.trigger.length, math = mathAt(from, at);
         if (!math) continue;
@@ -398,6 +420,21 @@
     }
     const plugin = CM.ViewPlugin.fromClass(class {
       update(update) {
+        if (update.transactions.some(transaction => transaction.isUserEvent('undo') || transaction.isUserEvent('redo'))) {
+          const snapshots = update.transactions.flatMap(transaction => transaction.effects.filter(effect => effect.is(restoreHistory)));
+          const target = snapshots[snapshots.length - 1]?.value.selection, state = update.state, token = ++pending;
+          // CodeMirror history deliberately bypasses transaction filters. Restore
+          // its saved selection just after that update, without another history
+          // event; a newer input, document or lifecycle handoff cancels the work.
+          if (target && target.anchor <= state.doc.length && target.head <= state.doc.length) queueMicrotask(() => {
+            if (token !== pending || state !== view.state || !ready()) return;
+            const selection = CM.EditorSelection.range(target.anchor, target.head);
+            if (!selection.eq(view.state.selection.main)) view.dispatch({ selection,
+              effects: action.of({ type: 'command', command: state.field(field).command }),
+              annotations: CM.Transaction.addToHistory.of(false), scrollIntoView: true });
+          });
+          return;
+        }
         if (update.docChanged && (view.composing || view.compositionStarted || context.inputPending())) {
           const token = ++pending;
           Promise.resolve(context.whenSettled()).then(() => {
@@ -421,7 +458,7 @@
       }
       destroy() { pending++; cached = null; }
     });
-    return { extension: [field, mirrorFilter, plugin,
+    return { extension: [field, history, mirrorFilter, plugin,
       CM.EditorView.domEventHandlers({
         compositionstart() { compositionCancelled = false; },
         compositionend(event) { compositionCancelled = event.data === ''; },
