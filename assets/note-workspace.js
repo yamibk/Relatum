@@ -1570,23 +1570,7 @@
 
   function clipboardLinkMarkdown(text, html, getContext, inlineOnly) {
     text = window.MarkdownMini?.normalizePastedMath(text, getContext, inlineOnly) ?? text;
-    const address = String(text || '').trim();
-    if (!/^https?:\/\/[^\s<>]+$/i.test(address) || !html || html.length > 128 * 1024) return text;
-    try {
-      // Template contents stay inert, including scripts and external resources.
-      const template = document.createElement('template');
-      template.innerHTML = html;
-      const links = template.content.querySelectorAll('a[href]');
-      if (links.length !== 1) return text;
-      const link = links[0];
-      const target = new URL(link.getAttribute('href'));
-      if (target.href !== new URL(address).href) return text;
-      const title = (link.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!title || title === address || title.length > 4096) return text;
-      const label = title.replace(/[\\\[\]`*_~<>]/g, '\\$&');
-      const destination = address.replace(/[\\()]/g, (character) => ({ '\\': '%5C', '(': '%28', ')': '%29' })[character]);
-      return '[' + label + '](' + destination + ')';
-    } catch (error) { return text; }
+    return window.MarkdownMini?.pastedLinkMarkdown(text, html, getContext, inlineOnly) ?? text;
   }
 
   let wikiOpenTask = null;
@@ -1782,6 +1766,10 @@
   async function openMarkdownTarget(rawTarget) {
     const target = normalizedLinkTarget(rawTarget);
     if (!target || !state.current) return false;
+    if (/^file:/i.test(target)) {
+      try { await post('/api/open-external', { kind: 'note-file-url', note: state.current.path, target }); return true; }
+      catch (error) { showToast(error.message || tr('externalOpenFailed'), 'error'); return false; }
+    }
     if (/^(?:https?:|mailto:)/i.test(target)) {
       try { await post('/api/open-external', { kind: 'url', target }); return true; }
       catch (error) { showToast(error.message || tr('externalOpenFailed'), 'error'); return false; }

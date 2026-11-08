@@ -4986,7 +4986,8 @@
         if (lineIsCode) continue;
         const noteTokens = window.MarkdownMini.noteSyntax.inline(text, noteContext, line.from);
         const semanticHtml = noteTokens.some(token => token.kind === 'html' || token.kind === 'html-break');
-        if ((lineIsHtml || /^\s*<\/?[A-Za-z][^>]*>/.test(text)) && !semanticHtml) {
+        const fileAutolink = noteTokens.some(token => token.kind === 'autolink' && /^file:/i.test(token.target));
+        if ((lineIsHtml || /^\s*<\/?[A-Za-z][^>]*>/.test(text)) && !semanticHtml && !fileAutolink) {
           lineClass(line.from, 'note-live-raw-html-line');
           continue;
         }
@@ -5020,6 +5021,7 @@
             }));
             else mark(from, to, 'note-live-link');
           } else if (token.kind === 'link' || token.kind === 'autolink') {
+            if (/^file:/i.test(token.target) && insideMathComment(from, to)) continue;
             mark(from, to, 'note-live-link');
             if (!constructActive(view, from, to)) {
               replace(from, line.from + token.contentFrom); replace(line.from + token.contentTo, to);
@@ -5954,12 +5956,21 @@
     }
     const tokens = window.MarkdownMini.noteSyntax.inline(line.text, noteSyntaxContext(state), line.from);
     const token = tokens.find(item => (item.kind === 'link' || item.kind === 'autolink') && line.from + item.from <= position && line.from + item.to >= position);
-    if (token) return { kind: 'url', target: token.target, from: line.from + token.from, to: line.from + token.to };
+    const allowed = link => {
+      if (!/^file:/i.test(link.target)) return link;
+      const guards = lineProtectedRanges(state, line.from, line.to).filter(range => range.kind !== 'URL'
+        && !(range.kind === 'HTMLTag' && /^<file:/i.test(state.doc.sliceString(range.from, range.to))));
+      if (insideRange(guards, link.from, link.to) || documentFrontmatter(state.doc)?.to > link.from
+          || insideRange(scanSourceComments(state.doc, line.from, line.to, guards), link.from, link.to)
+          || scanBlockSpecs(state, line.from, line.to).some(spec => spec.kind === 'math' && spec.from < link.to && spec.to > link.from)) return null;
+      return link;
+    };
+    if (token) return allowed({ kind: 'url', target: token.target, from: line.from + token.from, to: line.from + token.to });
     let node = syntaxTree(state).resolveInner(position, 1);
     while (node && !/^(?:Link|Autolink)$/.test(node.name)) node = node.parent;
     if (node) {
       const url = node.getChild('URL');
-      if (url) return { kind: 'url', target: state.doc.sliceString(url.from, url.to), from: node.from, to: node.to };
+      if (url) return allowed({ kind: 'url', target: normalizedImageTarget(state.doc.sliceString(url.from, url.to)), from: node.from, to: node.to });
     }
     return null;
   }

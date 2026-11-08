@@ -30,7 +30,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 删除画布应走回收站逻辑：画布文件和同名 `.assets` 目录一起移动。
 - 保存 JSON / 文本时沿用后端已有的原子写入：在目标同目录写短名、进程/线程唯一的临时文件，再 `os.replace`；不要改回固定 `.tmp`，也不要给频繁自动保存额外加同步 `fsync`。
 - 原子文本写入必须用 `newline=""` 保留传入换行；`app.py` 与 `notes_library.py` 的默认写入器保持一致。笔记修订号按 UTF-8 字节计算，不能让 Windows 自动将 LF 扩成 CRLF，否则后台同步会把自身保存误判为外部修改，重建编辑器并关闭图片文字工具栏。
-- 打开外部文件、恢复、重命名、导入、导出都必须尊重路径授权。`app.py` 只允许 `canvases/`、回收站、最近列表里的路径、以及命令行 `--allow-dir` 传入的目录。
+- 打开外部文件、恢复、重命名、导入、导出都必须尊重路径授权。画布文件接口只允许 `canvases/`、回收站、最近列表里的路径、以及命令行 `--allow-dir` 传入的目录。笔记主动激活的本机 `file:///` 链接使用单个普通文件授权，行为与验证见源码地图；不扩大画布或笔记相对路径接口的目录权限。
 - `open-external` 有危险扩展黑名单，不能为了“方便打开”绕开它。
 
 ### 零依赖和离线优先
@@ -300,7 +300,9 @@ Claude 与 Apple 的关系图谱在 `assets/note-theme.css` 中沿用单层主�
 
 笔记本地静态 SVG 图片复用原图片 `<img>`、Markdown/wiki 路径、缩放和 `.assets/images/` 生命周期，支持文件拖入/图片文件粘贴及目录导入，保存原始矢量字节，不加载额外引擎。`note_svg.py` 用标准库做有界 XML/静态内容校验，上传、导入和已有 SVG 读取共用；限制 4MiB、10,000 元素和 64 层，拒绝脚本/事件、动画、foreignObject、DTD/实体、外部及 data 资源、CSS at-rule/转义。支持文件内渐变/裁剪/引用、viewBox 与常见 Inkscape 元数据；SVG HTTP 响应在普通/Range/缓存命中时均带 sandbox CSP 和 nosniff。前端共用图片加载入口将 SVG 解码尺寸和比例写入当前图片容器的临时 CSS 变量，自动宽度受原高度上限约束，避免 `width="100%"`、仅 viewBox 的 SVG 在 fit-content 容器中塌缩到 0×0；Markdown 显式尺寸优先，实时预览、阅读和表格复用同一处理，释放时解绑加载监听，无额外请求或观察器。原图不偷偷清洗或转位图，不扩展 SVG 剪贴板复制、矢量编辑或 AI 图片输入；栅格检测保持独立。`tests.test_note_svg`、原图片流测试及图片兼容/上传浏览器回归验证，规范、预算、已复现的原有回归失败与验证边界见 `docs/note-svg-2026-10-25.md`。
 
-笔记普通粘贴由 `assets/note-workspace.js` 的 `clipboardLinkMarkdown` 读取浏览器剪贴板中的单个 HTML 链接标题：仅当纯文本为单个 HTTP(S) 网址且与 HTML 链接目标一致时，生成经过 Markdown 转义的 `[网页标题](网址)`；缺少标题或不匹配时保留纯文本，不联网抓取网页。实时预览、源码、备用编辑器的键盘粘贴与正文右键粘贴共用该转换，右键纯文本粘贴和 `Ctrl/Cmd+Shift+V` 保留原文字，图片上传链不变。标题写入笔记 Markdown，不增加配置或 API；手动验证可复制浏览器带标题的网址，分别用键盘/右键粘贴并对比纯文本粘贴、无标题网址和图片。
+笔记普通粘贴由 `assets/markdown.js` 的 `MarkdownMini.pastedLinkMarkdown(text,html,getContext?,inlineOnly?)` 共用于工作区及独立 Markdown 窗口：纯文本为单个 HTTP(S) 或本机 `file:///` 地址且与剪贴板单个 HTML 链接目标一致时，生成经过 Markdown 转义的 `[网页标题](地址)`；缺少标题或不匹配时保留原地址，不联网或读取目标文件获取标题。标题中的括号、星号和反引号按字面展示。工作区 `clipboardLinkMarkdown` 先沿用公式规范化再调用共用转换；独立窗口仅接入链接转换。实时预览、源码、备用编辑器的键盘粘贴与正文右键粘贴共用转换，右键纯文本粘贴和 `Ctrl/Cmd+Shift+V` 保留原文字，代码、注释、公式和既有链接目标内不转换标题；图片上传链不变。标题写入 Markdown，没有新增偏好或数据迁移。
+
+笔记专用语法支持裸 `file:///C:/…`、尖括号、普通 Markdown 及引用式本机文件链接；无标题地址保持原文，沿用现有链接样式，实时预览/源码 Ctrl（或 Cmd）＋单击、工作区阅读模式单击后用系统默认程序直接打开，不弹确认或持久化文件夹授权。工作区 `openMarkdownTarget` 调用 `/api/open-external` 的 `note-file-url`，先检查 notes 权限及来源笔记；独立窗口 `markdown_open_link` 共用 `app.py` 的 `resolve_note_file_url/open_note_file_url`，未保存文档也可打开绝对文件链接且不创建笔记库。仅支持 Windows 本机盘符 URL，空主机名及 localhost 有效，中文、空格、括号及百分号编码只解码一次；拒绝远程主机、网络共享、设备名称、备用数据流和尾部点/空格别名。原始路径及规范化后的目标均检查危险扩展名，解析后的目标须为本机普通文件；存在性及后缀检查不包含 URL 查询/片段，调起支持它们的查看器时保留。代码、注释、前言和公式中的地址不作为可激活链接，图片沿用原素材授权。实现与验收边界见 `docs/note-file-links-2026-11-08.md`。
 
 该入口同时调用 `MarkdownMini.normalizePastedMath(text,getContext?,inlineOnly?)`，仅将新粘贴内容中闭合、非空、恰好双反斜杠的 `\\(...\\)` / `\\[...\\]` 恢复为单反斜杠公式；行内 4KiB、块 32KiB，嵌套、混合及未闭合边界不猜测。字面量扫描将完整候选公式视为整体，公式内的比较符、文字及 TeX 内容不触发 HTML/链接等保护；真实 HTML 必须具有完整标签与属性边界，带引号属性内的 `>` 不结束标签，避免 `<a` 吞掉后续公式。仅在这些公式内部恢复双反斜杠薄空格、复制转义的 `\<` 比较符，以及数学项后带完整花括号分组的 `\_` 下标（含原 `\underbrace{…}\_{…}` 标注和 `u\_{\text{new}}`）；普通 TeX 换行、文字与 verb 内容、注释、其他合法转义和标准公式保持原样。惰性 `getContext()` 提供插入前后正文，代码、注释、前言、链接目标及位于这些区域内的粘贴不转换，旧正文只作上下文、不重写，不对已保存笔记新增显示兼容。表格单格与 TSV 粘贴复用该入口并使用行内语法；各入口的纯文本粘贴保留原字符。CodeMirror 多选区分别判断上下文，键盘与右键均使用规范化文档长度定位光标，兼容 Windows CRLF；备用 textarea 优先原生插入以保留一次撤销。无新配置、后端接口、依赖或迁移，不主动加载 MathJax。`node tests/note-clipboard-regression.js`、`node tests/note-clipboard-browser.js` 使用真实系统剪贴板、离线 MathJax 及一次性笔记库验证样本、隔离规则、源码/实时/阅读、表格、备用编辑器、单次撤销/重做和保存重开；浏览器沿用三个宿主环境变量，截图与临时数据不进入真实笔记库，发布版 WebView2 仍需独立人工验收。比较符与分组下标修正仅补充回归源码，按用户要求未运行验证或打包。
 
@@ -662,7 +664,7 @@ Cards 快捷键 `cards` 使用 `Mod-f`，通过 `insert:cards-template` 插入�
 - 画布文件：`/api/new`、`/api/open`、`/api/pick`、`/api/save`、`/api/remove`、`/api/rename`、`/api/clean-assets`
 - 分组/收藏/排序与画布库维护：`/api/group-create`、`/api/group-rename`、`/api/group-delete`、`/api/file-set-group`、`/api/favorite-toggle`、`/api/groups-reorder`、`/api/reorder-files`、`/api/file-stats`、`/api/recent-sync`
 - 回收站：`/api/trash`、`/api/trash-list`、`/api/trash-empty`、`/api/restore`
-- 文件系统交互：`/api/reveal`、`/api/open-external`、`/api/open-attachment`
+- 文件系统交互：`/api/reveal`、`/api/open-external`、`/api/open-attachment`。`open-external` 新增 `{kind:'note-file-url',note:来源库内笔记路径,target:本机file地址}`，成功返回 `{ok:true}`；错误沿用 HTTP 状态及 `{error,code}`，仅显式激活单个文件，不增加任意磁盘文件读取接口。
 - 导入导出：`/api/export-markdown`、`/api/export-png`、`/api/import-markdown`、`/api/import-canvas`（起步页拖入内容导入）、`/api/import-canvas-file`（原生单画布复制导入）、`/api/import-canvas-folder`（原生严格文件夹导入）、`/api/canvas-import-assets`（编辑器内部内容导入的受管素材复制）
 - 背景/图片/附件：`/api/pick-background-image`、`/api/upload-background-image`、`/api/import-canvas-image`、`/api/upload-canvas-image`、`/api/upload-canvas-attachment`
 - 批注与视口：`/api/save-canvas-annotation`、`/api/save-node-annotations`、`/api/background-preference`、`/api/viewport`
@@ -1191,6 +1193,8 @@ AI 设置使用独立星芒 SVG，按当前对话预设、连接、生成参数�
 - 构建先核对 Python/依赖版本、真实模块导入和 `pip check`，再执行 `scripts/check-note-sqlite.py`，在内存数据库验证 SQLite ≥3.43、FTS5 trigram、contentless-delete 和短字符查询，不读写用户索引。检查脚本按自身路径导入 `note_search.py`，不要改回 PowerShell 内嵌 `python -c`。维护 BAT 只调用 Windows PowerShell 5.1，不判断环境或解析源码；新手使用准备、离线修复、检查、打包及打开日志五个双击入口，步骤见 `Relatum-维护工具/打包新手说明.md`。成功输出包含 `Note SQLite/FTS5 preflight` 和 `Build complete`。
 
 ## 11. 验证清单
+
+笔记本机链接运行 `node tests/note-file-links-regression.js`、`python -B -m unittest tests.test_note_file_links` 和 `node tests/note-file-links-browser.js`；浏览器沿用 `RELATUM_PYTHON / RELATUM_PLAYWRIGHT / RELATUM_EDGE_PATH`，覆盖两个窗口、源码/实时/阅读、标题/纯文本粘贴、一次撤销、保存重开及字面区域。后端使用隔离文件和系统打开替身，覆盖路径编码、危险扩展、别名/重定向、来源及功能权限。原生 `node tests/note-file-links-desktop.js [--workspace]` 使用 `RELATUM_NATIVE_PYTHON` 和隔离数据，默认替换 OS 调起；显式 `--launch-defaults` 将临时 HTML/PDF/PNG 交给真实默认程序。保留共享剪贴板、Markdown 和图片兼容回归；具体结果及界面验收限制见本机链接说明，不把系统接受打开请求等同于目标程序显示验收。
 
 笔记 Cards 使用 `node tests/note-cards-regression.js`、`node tests/note-cards-browser.js` 和 `node tests/note-cards-markdown-browser.js`；后者以真实独立 Markdown 页面和原生桥接替身覆盖中英文/深浅/宽窄八组、纯色工具、保存/撤销及右键插入。两项浏览器专项已接入 `tests/run-note-checks.ps1 -Browser`。真实笔记保存与一次撤销另由 `tests/feature-profile-browser.js notes library` 检查，同时验证新工具的按需加载及 notes 静态资源权限；正文、服务和浏览器配置均隔离，不重新打包。Cards 的已知空选项表示清空/默认/继承，保留声明以防后方重复选项被误启用；移除颜色或图标时，必要的标题转义保护重复标记的字面语义。
 

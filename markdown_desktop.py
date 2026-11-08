@@ -206,6 +206,8 @@ def run(shell, path=None):
                 parsed = urllib.parse.urlsplit(str(target))
                 if parsed.scheme.lower() in ('http', 'https', 'mailto'):
                     os.startfile(str(target))
+                elif parsed.scheme.lower() == 'file':
+                    app.open_note_file_url(target)
                 elif not parsed.scheme and document.path:
                     raw = urllib.parse.unquote(parsed.path)
                     if raw.startswith('#') or not raw:

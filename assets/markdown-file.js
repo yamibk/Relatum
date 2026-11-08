@@ -178,7 +178,7 @@
   document.querySelector('.markdown-root').append(contextMenu);
   function openContextMenu(request) {
     menu.hidden = true; contextMenu.replaceChildren();
-    for (const [command, zh, en] of [['copy', '复制', 'Copy'], ['cut', '剪切', 'Cut'], ['paste', '粘贴', 'Paste'], ['select-all', '全选', 'Select all'],
+    for (const [command, zh, en] of [['copy', '复制', 'Copy'], ['cut', '剪切', 'Cut'], ['paste', '粘贴', 'Paste'], ['paste-plain', '纯文本粘贴', 'Paste as plain text'], ['select-all', '全选', 'Select all'],
       ['bold', '加粗', 'Bold'], ['italic', '斜体', 'Italic'], ['highlight', '高亮', 'Highlight'], ['insert:table', '插入表格', 'Insert table'], ['insert:cards', '插入 Cards', 'Insert Cards']]) {
       const button = document.createElement('button'); button.type = 'button'; button.textContent = text(zh, en);
       button.disabled = !editor.queryCommand(command, request.context).enabled;
@@ -190,9 +190,20 @@
             const value = editor.view.state.selection.ranges.map(range => editor.view.state.sliceDoc(range.from, range.to)).join('\n');
             await navigator.clipboard.writeText(value);
             if (command === 'cut') editor.executeCommand(command, request.context, '');
-          } else if (command === 'paste') {
-            const value = await navigator.clipboard.readText();
-            editor.executeCommand(command, request.context, value);
+          } else if (command === 'paste' || command === 'paste-plain') {
+            let value = null, html = '';
+            if (command === 'paste' && navigator.clipboard.read) {
+              try {
+                const items = await navigator.clipboard.read();
+                const item = items.find(item => item.types.includes('text/plain'));
+                if (item) {
+                  value = await (await item.getType('text/plain')).text();
+                  if (item.types.includes('text/html')) html = await (await item.getType('text/html')).text();
+                }
+              } catch (_) { /* Text-only clipboard hosts retain the original fallback. */ }
+            }
+            if (value == null) value = await navigator.clipboard.readText();
+            editor.executeCommand(command, request.context, value, html);
           } else editor.executeCommand(command, request.context);
           editor.focus();
         } catch (error) { showError(error.message); }
@@ -251,6 +262,7 @@
       const result = check(await api().markdown_document('read')); current = result.document; settings = result.settings;
       editor = RelatumNoteLiveEditor.create($('editor'), { value: current.content, notePath: current.path || 'Untitled.md',
         shortcutBindings: window.RelatumNoteShortcuts?.load(),
+        clipboardText: (...args) => window.MarkdownMini.pastedLinkMarkdown(...args),
         imageUrl: (_path, source) => '/api/markdown-file-asset?token=' + encodeURIComponent(current.token) + '&src=' + encodeURIComponent(source),
         onDocChanged() { generation++; syncDocumentState(); updateStats(); outline?.documentChanged(); scheduleSave(); },
         onSaveRequest: () => save().catch(error => showError(error.message)),

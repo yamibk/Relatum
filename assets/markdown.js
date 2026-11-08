@@ -148,7 +148,7 @@
     const literals = [];
     for (let at = 0; at < visible.length;) {
       if (mathEnds.has(at)) { at = mathEnds.get(at); continue; }
-      if (!'<%`]hHwW'.includes(visible[at])) { at++; continue; }
+      if (!'<%`]hHwWfF'.includes(visible[at])) { at++; continue; }
       let end = -1;
       if (visible.startsWith('<!--', at) || visible.startsWith('%%', at)) {
         const close = visible.startsWith('<!--', at) ? '-->' : '%%';
@@ -167,7 +167,7 @@
         // An unfinished destination is literal through its paragraph.
         const next = visible.indexOf('\n\n', at);
         end = found < 0 ? (next < 0 ? visible.length : next) : found + 1;
-      } else if (/^(?:https?:\/\/|www\.)/i.test(visible.slice(at, at + 8)) && !/[\w]/.test(visible[at - 1] || '')) {
+      } else if (/^(?:(?:https?|file):\/\/|www\.)/i.test(visible.slice(at, at + 8)) && !/[\w]/.test(visible[at - 1] || '')) {
         const tail = /^[^\s<>]+/.exec(visible.slice(at));
         if (tail) end = at + tail[0].length;
       } else if (visible[at] === '<') {
@@ -175,7 +175,7 @@
         // particular, "<a\\)" is a comparison, not the start of a distant tag.
         const tail = visible.slice(at);
         const tag = /^<\/?[A-Za-z][A-Za-z0-9:-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>/.exec(tail)
-          || /^<(?:https?:\/\/|mailto:)[^<>\r\n]*>/i.exec(tail);
+          || /^<(?:(?:https?|file):\/\/|mailto:)[^<>\r\n]*>/i.exec(tail);
         if (tag) end = at + tag[0].length;
       }
       if (end > at) { literals.push({ from: at, to: end }); at = end; }
@@ -849,11 +849,39 @@
     return result;
   }
 
+  function isLocalFileUrl(value) {
+    return /^file:\/\/(?:localhost)?\/[a-z]:\/[^<>\x00-\x1f]*$/i.test(String(value || ''));
+  }
+
+  // Clipboard HTML is inspected in an inert template; never read a linked
+  // document or fetch a page to discover its title. Hosts share this conversion.
+  function pastedLinkMarkdown(text, html, getContext, inlineOnly) {
+    const address = String(text || '').trim();
+    if ((!/^https?:\/\/[^\s<>]+$/i.test(address) && !isLocalFileUrl(address))
+        || !html || html.length > 128 * 1024) return text;
+    try {
+      const context = typeof getContext === 'function' ? getContext() : getContext;
+      const before = context?.before || '', after = context?.after || '';
+      if ((before || after) && pastedMathMask(before + '\u0001' + after, inlineOnly)[before.length] !== '\u0001') return text;
+      const template = global.document.createElement('template');
+      template.innerHTML = html;
+      const links = template.content.querySelectorAll('a[href]');
+      if (links.length !== 1 || new URL(links[0].getAttribute('href')).href !== new URL(address).href) return text;
+      const title = (links[0].textContent || '').replace(/\s+/g, ' ').trim();
+      if (!title || title === address || title.length > 4096) return text;
+      const label = title.replace(/[\\\[\]`*_~<>]/g, '\\$&');
+      const destination = address.replace(/[\\()\s<>]/g, character =>
+        ({ '\\': '%5C', '(': '%28', ')': '%29' })[character] || encodeURIComponent(character));
+      return '[' + label + '](' + destination + ')';
+    } catch (_) { return text; }
+  }
+
   function noteDestination(raw) {
     const match = /^(?:<([^<>\n]+)>|(\S+?))(?:\s+["']([^\n]*?)["'])?\s*$/.exec(raw.trim());
     if (!match) return null;
     const target = (match[1] || match[2]).replace(/\\([()<>\\])/g, '$1');
-    if (/^(?:javascript|vbscript|data|file):/i.test(target) || /[\x00-\x1f]/.test(target)) return null;
+    if (/^(?:javascript|vbscript|data):/i.test(target) || /^file:/i.test(target) && !isLocalFileUrl(target)
+        || /[\x00-\x1f]/.test(target)) return null;
     return { target, title: match[3] || '' };
   }
 
@@ -927,7 +955,7 @@
 
   function noteInlineTokens(value, context, offset, preparedMask) {
     const source = String(value || ''), tokens = [], base = offset || 0;
-    if (!/[\[<@]|https?:\/\/|www\./i.test(source)) return tokens;
+    if (!/[\[<@]|(?:https?|file):\/\/|www\./i.test(source)) return tokens;
     const masked = preparedMask == null ? noteMask(source, true) : preparedMask;
     const occupied = [];
     const add = token => { tokens.push(token); occupied.push(token); };
@@ -956,11 +984,15 @@
       if (source[index] === '(') opens.push(index);
       else if (source[index] === ')' && opens.length) parentheses.set(opens.pop(), index);
     }
-    const links = /!?\[(?![\[^])([^\]\n]+)\]/g;
+    const links = /!?\[(?![\[^])((?:\\[^\n]|[^\]\\\n])+)\]/g;
     while ((match = links.exec(masked))) {
       const from = match.index;
       if (match[0][0] === '!' || escapedAtSource(source, from) || source[from - 1] === '[') {
         const end = from + match[0].length;
+        if (match[0][0] === '!' && source[end] === '(' && parentheses.has(end)) {
+          occupied.push({ from, to: parentheses.get(end) + 1 });
+          links.lastIndex = parentheses.get(end) + 1;
+        }
         if (source[end] === '[') { const close = source.indexOf(']', end + 1); if (close >= 0) links.lastIndex = close + 1; }
         continue;
       }
@@ -979,24 +1011,27 @@
       }
       if (destination && free(from, end)) {
         add({ kind: 'link', from, to: end, contentFrom: from + 1, contentTo: from + match[0].length - 1,
-          text: match[1], target: destination.target, title: destination.title || '' });
+          text: source.slice(from + 1, from + match[0].length - 1), target: destination.target, title: destination.title || '' });
         links.lastIndex = end;
       }
     }
-    const urls = /<?(?:https?:\/\/[^\s<>\u3000-\u303f\uff00-\uffef]+|www\.[^\s<>\u3000-\u303f\uff00-\uffef]+|[a-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,})>?/gi;
+    const urls = /<file:\/\/(?:localhost)?\/[a-z]:\/[^<>\r\n]+>|<?(?:file:\/\/(?:localhost)?\/[a-z]:\/[^\s<>]+|https?:\/\/[^\s<>\u3000-\u303f\uff00-\uffef]+|www\.[^\s<>\u3000-\u303f\uff00-\uffef]+|[a-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,})>?/gi;
     while ((match = urls.exec(masked))) {
       let text = match[0], from = match.index, to = from + text.length;
       const angle = text.startsWith('<') && text.endsWith('>');
       if (text.startsWith('<')) { from++; text = text.slice(1); }
       if (text.endsWith('>')) { to--; text = text.slice(0, -1); }
-      text = text.replace(/[.,!?;:'"]+$/, '');
-      for (const [left, right] of [['(', ')'], ['[', ']'], ['{', '}']]) {
-        while (text.endsWith(right) && text.split(right).length > text.split(left).length) text = text.slice(0, -1);
+      const file = /^file:/i.test(text);
+      if (!file || !angle) {
+        text = text.replace(file ? /[.,!?;:'"，。！？；：]+$/ : /[.,!?;:'"]+$/, '');
+        for (const [left, right] of [['(', ')'], ['[', ']'], ['{', '}']]) {
+          while (text.endsWith(right) && text.split(right).length > text.split(left).length) text = text.slice(0, -1);
+        }
       }
       to = from + text.length;
-      if (!text || escapedAtSource(source, match.index) || !free(match.index, match.index + match[0].length)
+      if (!text || file && !isLocalFileUrl(text) || escapedAtSource(source, match.index) || !free(match.index, match.index + match[0].length)
           || /[\w@]/.test(source[match.index - 1] || '')) continue;
-      const target = /^www\./i.test(text) ? 'https://' + text : /^https?:/i.test(text) ? text : 'mailto:' + text;
+      const target = /^www\./i.test(text) ? 'https://' + text : /^(?:https?|file):/i.test(text) ? text : 'mailto:' + text;
       tokens.push({ kind: 'autolink', from: angle ? from - 1 : from, to: angle ? to + 1 : to, contentFrom: from, contentTo: to, text, target, title: '' });
     }
     occupied.push(...tokens.filter(token => token.kind === 'autolink'));
@@ -1033,7 +1068,9 @@
     }
     let guarded = source;
     for (const edit of edits.sort((a, b) => b.from - a.from)) guarded = guarded.slice(0, edit.from) + edit.value + guarded.slice(edit.to);
-    return renderInlineSafe(guarded, true).replace(/\x00NHTML(\d+)\x00/g, (_, index) => values[+index]);
+    const escapes = protectEscapes(guarded);
+    return restoreEscapes(renderInlineSafe(escapes.protected, true), escapes.chars)
+      .replace(/\x00NHTML(\d+)\x00/g, (_, index) => values[+index]);
   }
 
   function noteTocHtml(headings) {
@@ -1203,7 +1240,8 @@
 
   function protectInlineCode(src) {
     const codes = [];
-    const protectedSource = String(src || '').replace(/`([^`\n]+)`/g, function (_, code) {
+    const protectedSource = String(src || '').replace(/`([^`\n]+)`/g, function (whole, code, offset) {
+      if (escapedAtSource(src, offset) || escapedAtSource(src, offset + whole.length - 1)) return whole;
       codes.push(code);
       return '\x00ICODE' + (codes.length - 1) + '\x00';
     });
@@ -2207,6 +2245,8 @@
   }
 
   global.MarkdownMini = {
+    pastedLinkMarkdown,
+    isLocalFileUrl,
     render: render,
     renderResult: renderResult,
     renderLabelResult: renderLabelResult,

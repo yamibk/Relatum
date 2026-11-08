@@ -135,7 +135,7 @@ ALLOWED_EXTRA_DIRS: list[Path] = []
 
 # C2：外部链接——拒绝"用系统默认程序打开"的危险后缀（可执行 / 脚本类）。
 # 这是 V1 唯一有真实安全风险的功能：os.startfile 对这些后缀会直接运行程序。
-# 用黑名单挡掉它们，其余文档/媒体放行（前端打开本地文件前还会再弹确认框）。
+# 用黑名单挡掉它们，其余文档/媒体放行；笔记 file URL 由用户主动激活后直接打开。
 DANGEROUS_EXTS = {
     ".exe", ".com", ".scr", ".pif", ".bat", ".cmd", ".vbs", ".vbe",
     ".js", ".jse", ".ws", ".wsf", ".wsh", ".ps1", ".ps1xml", ".ps2",
@@ -143,6 +143,65 @@ DANGEROUS_EXTS = {
     ".hta", ".cpl", ".msc", ".lnk", ".inf", ".scf", ".application",
     ".gadget", ".jnlp", ".py", ".pyw", ".sh",
 }
+
+
+def resolve_note_file_url(target: object) -> Path:
+    """An exact local-file link grant, independent of vault/canvas directories."""
+    if not isinstance(target, str) or len(target) > 32768 or re.search(r'[\x00-\x1f\x7f]', target):
+        raise NotesError("本机文件链接格式无效", code="invalid_url")
+    value = target.strip()
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        if (not value.lower().startswith('file://') or parsed.scheme.lower() != 'file'
+                or parsed.netloc.lower() not in ('', 'localhost')):
+            raise NotesError("只允许本机 file:/// 文件链接", status=403, code="unsafe_path")
+        if re.search(r'%(?![0-9a-fA-F]{2})', parsed.path):
+            raise ValueError('invalid percent escape')
+        raw = urllib.parse.unquote(parsed.path, encoding='utf-8', errors='strict')
+    except (ValueError, UnicodeError) as error:
+        if isinstance(error, NotesError):
+            raise
+        raise NotesError("本机文件链接编码无效", code="invalid_url") from error
+    if not re.match(r'^/[a-zA-Z]:/', raw) or re.search(r'[\\<>"|?*\x00-\x1f\x7f]', raw):
+        raise NotesError("只允许本机绝对文件路径", status=403, code="unsafe_path")
+    for part in raw[4:].split('/'):
+        if part in ('', '.', '..'):
+            continue
+        if (':' in part or part.endswith(('.', ' '))
+                or re.match(r'^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)', part, re.I)):
+            raise NotesError("文件路径包含设备名称或不安全别名", status=403, code="unsafe_path")
+    if os.name != 'nt':
+        raise NotesError("当前系统不支持打开 Windows 本机文件链接", status=500, code="open_failed")
+    candidate = Path(raw[1:])
+    if candidate.suffix.lower() in DANGEROUS_EXTS:
+        raise NotesError("出于安全，不允许打开可执行 / 脚本文件", status=403, code="unsafe_path")
+    try:
+        path = candidate.resolve(strict=True)
+    except FileNotFoundError as error:
+        raise NotesError("链接文件不存在", status=404, code="not_found") from error
+    except (OSError, RuntimeError) as error:
+        raise NotesError("文件路径无法解析", status=403, code="unsafe_path") from error
+    # Junctions/symlinks cannot redirect a local document to a share or executable.
+    if not re.fullmatch(r'[a-zA-Z]:', path.drive) or path.suffix.lower() in DANGEROUS_EXTS:
+        raise NotesError("链接目标不是安全的本机文件", status=403, code="unsafe_path")
+    if not path.is_file():
+        raise NotesError("链接目标不是普通文件", status=404, code="not_found")
+    return path
+
+
+def open_note_file_url(target: object) -> None:
+    path = resolve_note_file_url(target)
+    opener = getattr(os, 'startfile', None)
+    if opener is None:
+        raise NotesError("当前系统不支持打开外部文件", status=500, code="open_failed")
+    parsed = urllib.parse.urlsplit(target.strip())
+    # Keep anchors/query parameters for viewers which support them, after all
+    # filesystem checks have used only the once-decoded path.
+    address = urllib.parse.urlunsplit(('file', '', urllib.parse.urlsplit(path.as_uri()).path,
+                                      parsed.query, parsed.fragment))
+    opener(address if parsed.query or parsed.fragment else str(path))
+
+
 BACKGROUND_IMAGE_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -12868,15 +12927,33 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """C2：用系统默认程序打开一个网址或本地文件。
 
         kind='url'  → 只允许 http/https/mailto，调 webbrowser.open（系统处理程序自带防护）。
+        kind='note-file-url' → 用户主动激活的本机 file URL，单个文件授权，不扩展目录权限；
         kind='note-file' → 相对当前 Markdown 笔记解析，只允许笔记库内普通文件；
         kind='file' → 相对路径相对 baseDir（当前 .canvas 目录）解析；
                       规范化后做后缀黑名单 + 存在性检查，再 os.startfile。
         """
-        target = (body.get("target") or "").strip()
+        raw_target = body.get("target")
+        if not isinstance(raw_target, str):
+            return self._send_json(400, {"error": "链接目标格式无效"})
+        target = raw_target.strip()
         kind = (body.get("kind") or "").strip()
         base_dir = (body.get("baseDir") or "").strip()
         if not target:
             return self._send_json(400, {"error": "缺少 target"})
+
+        if kind == 'note-file-url':
+            if not self.launch_profile.enabled('notes'):
+                return self._send_json(403, {"error": "本次启动未启用笔记", "code": "feature-disabled"})
+            try:
+                with NOTES_MUTATION_LOCK:
+                    note = NOTES_STORE.normalize_path(body.get('note'))
+                    NOTES_STORE._read_note_bytes(NOTES_STORE._absolute(note))
+                open_note_file_url(raw_target)
+            except NotesError as error:
+                return self._send_json(error.status, {"error": str(error), "code": error.code})
+            except OSError as error:
+                return self._send_json(500, {"error": f"打开失败：{error}", "code": "open_failed"})
+            return self._send_json(200, {"ok": True})
 
         if kind == "url":
             low = target.lower()
