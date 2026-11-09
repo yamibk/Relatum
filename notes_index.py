@@ -10,13 +10,14 @@ import hashlib
 import json
 import math
 import os
+import re
 import sqlite3
 import threading
 import time
 import uuid
 import urllib.parse
 import zlib
-from functools import lru_cache
+from functools import lru_cache, partial
 from contextlib import contextmanager, nullcontext
 from pathlib import Path, PurePosixPath
 
@@ -25,6 +26,10 @@ from note_search import normalize, short_grams, terms, match_expression, hit, li
 VERSION = 7
 APPLICATION_ID = 0x524E4931
 CHANGE_LIMIT = 8192
+NAME_SEGMENTS = re.compile(r'[0-9０-９]+|.', re.DOTALL)
+NAME_WIDTH = {code: code - 0xFEE0 for start, end in (('０', '９'), ('Ａ', 'Ｚ'), ('ａ', 'ｚ'))
+              for code in range(ord(start), ord(end) + 1)}
+NAME_PRIORITY_GROUPS = ('han', 'digit', 'latin')
 
 
 def book_root(path):
@@ -34,7 +39,6 @@ def book_root(path):
 
 @lru_cache(maxsize=8192)
 def natural(value):
-    import re
     return tuple((1, int(piece)) if piece.isdigit() else (0, normalize(piece))
                  for piece in re.split(r"(\d+)", value))
 
@@ -54,6 +58,34 @@ def name_prefix_group(name):
             or 0x2F800 <= code <= 0x2FA1F or 0x30000 <= code <= 0x3347F):
         return 'han'
     return ''
+
+
+@lru_cache(maxsize=2048)
+def name_segments(name):
+    segments = []
+    for segment in NAME_SEGMENTS.findall(name):
+        group = name_prefix_group(segment)
+        if group == 'digit':
+            key = (0, int(segment.translate(NAME_WIDTH)))
+        else:
+            value = segment.translate(NAME_WIDTH).lower() if group == 'latin' else segment
+            key = (1, normalize(value), value)
+        segments.append((key, group))
+    return tuple(segments)
+
+
+def compare_shared_prefix(left, right, *, priority, direction):
+    left_segments, right_segments = name_segments(left), name_segments(right)
+    for index, ((left_key, left_group), (right_key, right_group)) in enumerate(zip(left_segments, right_segments)):
+        if left_key == right_key:
+            continue
+        # Priority begins after a shared segment and is independent of direction.
+        if index:
+            preferred = (right_group == priority) - (left_group == priority)
+            if preferred:
+                return preferred
+        return direction if left_key > right_key else -direction
+    return direction * ((len(left_segments) > len(right_segments)) - (len(left_segments) < len(right_segments)))
 
 
 def dump(value):
@@ -908,7 +940,7 @@ class NoteIndex:
             return result
 
     def children(self, parent='', *, offset=0, limit=50, sort='name-asc', generation=None, folders_only=False,
-                 name_priority='auto', connection=None):
+                 name_priority='auto', shared_prefix_priority='auto', connection=None):
         with self.read() if connection is None else nullcontext(connection) as conn:
             ordering = {'name-asc': 'e.name COLLATE NOTE_NATURAL ASC', 'name-desc': 'e.name COLLATE NOTE_NATURAL DESC',
                 'modified-desc': 'e.modified DESC', 'modified-asc': 'e.modified ASC',
@@ -928,9 +960,15 @@ class NoteIndex:
             remaining = limit - len(rows)
             if remaining and not folders_only:
                 params = [normalize(parent)]
-                if sort.startswith('name-') and name_priority in ('han', 'digit', 'latin'):
-                    ordering = '(note_name_prefix(e.name) = ?) DESC,' + ordering
-                    params.append(name_priority)
+                if sort.startswith('name-'):
+                    if shared_prefix_priority in NAME_PRIORITY_GROUPS:
+                        direction = -1 if sort == 'name-desc' else 1
+                        conn.create_collation('NOTE_SHARED_PREFIX', partial(compare_shared_prefix,
+                                              priority=shared_prefix_priority, direction=direction))
+                        ordering = 'e.name COLLATE NOTE_SHARED_PREFIX'
+                    if name_priority in NAME_PRIORITY_GROUPS:
+                        ordering = '(note_name_prefix(e.name) = ?) DESC,' + ordering
+                        params.append(name_priority)
                 params.extend((remaining, max(0, offset - folders)))
                 rows.extend(conn.execute(columns + "AND e.kind='note' ORDER BY " + ordering + ',e.key LIMIT ? OFFSET ?', params))
             return {'items': [self.entry(row) for row in rows], 'total': count, 'hasMore': offset + len(rows) < count, 'generation': current_generation}

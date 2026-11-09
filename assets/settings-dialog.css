@@ -68,6 +68,22 @@
 .relatum-settings-page .note-library-sort-options, .relatum-settings-page .note-library-name-options { display: grid; gap: 5px; margin-bottom: 24px; padding: 8px; border-radius: 14px; background: var(--settings-card); }
 .relatum-settings-page .note-sort-option, .relatum-settings-page .note-name-option { background: transparent; border: 0; border-radius: 8px; padding: 10px 12px; color: var(--settings-muted); text-align: left; }
 .relatum-settings-page .note-sort-option.is-selected, .relatum-settings-page .note-name-option.is-selected { background: var(--settings-selected); color: var(--settings-text); }
+.relatum-settings-scroll:has(> .relatum-settings-pages:not([hidden]) > .note-library-settings:not([hidden])) { scrollbar-gutter: stable; }
+.note-library-sort-disclosure { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: none; }
+.note-library-sort-disclosure.is-open { grid-template-rows: 1fr; opacity: 1; visibility: visible; }
+.note-library-sort-disclosure.is-animated { transition: grid-template-rows 180ms cubic-bezier(.22,1,.36,1), opacity 180ms ease, visibility 0s linear 180ms; }
+.note-library-sort-disclosure.is-open.is-animated { transition-delay: 0s; }
+.note-library-sort-clip { display: flow-root; min-block-size: 0; min-inline-size: 0; overflow: clip; }
+.note-library-sort-advanced {
+  display: flex; align-items: center; gap: 6px; margin: 0 0 8px; padding: 6px 9px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--settings-muted); font-size: 12px;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+.note-library-sort-advanced:hover { color: var(--settings-text); background: var(--settings-selected); }
+.note-library-sort-advanced:focus-visible { outline-offset: -2px; }
+.note-library-sort-advanced .note-icon { width: 13px; height: 13px; transition: none; }
+.note-library-sort-advanced:has(+ .note-library-sort-disclosure.is-animated) .note-icon { transition: transform 180ms cubic-bezier(.22,1,.36,1); }
+.note-library-sort-advanced[aria-expanded="true"] .note-icon { transform: rotate(90deg); }
 .relatum-settings-page .note-library-name-field input { background: var(--settings-card); color: var(--settings-text); border: 0; padding: 11px 13px; border-radius: 9px; }
 .relatum-settings-guide-option { display: flex; align-items: center; gap: 14px; padding: 19px 20px; margin-bottom: 10px; border-radius: 14px; background: var(--settings-card); cursor: pointer; }
 .relatum-settings-guide-option:has(input:checked) { background: var(--settings-selected); }

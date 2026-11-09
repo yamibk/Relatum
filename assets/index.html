@@ -1357,10 +1357,27 @@
         data-role="note-library-settings" aria-label="笔记库设置" hidden>
         <h3 data-role="note-library-sort-title"></h3>
         <div class="note-library-sort-options" data-role="note-library-sort-options"></div>
-        <div class="note-settings-theme" data-role="note-library-name-priority-setting" data-i18n-managed="true" hidden>
-          <label for="note-tree-name-priority"><strong data-role="note-library-name-priority-label"></strong></label>
-          <select id="note-tree-name-priority" data-role="note-library-name-priority" aria-describedby="note-tree-name-priority-hint" disabled></select>
-          <small id="note-tree-name-priority-hint"></small>
+        <div class="note-library-sort-disclosure" data-role="note-library-name-sort-options" data-i18n-managed="true" inert>
+          <div class="note-library-sort-clip">
+            <div class="note-settings-theme" data-role="note-library-name-priority-setting">
+              <label for="note-tree-name-priority"><strong></strong></label>
+              <select id="note-tree-name-priority" data-role="note-library-name-priority" aria-describedby="note-tree-name-priority-hint" disabled></select>
+              <small id="note-tree-name-priority-hint"></small>
+            </div>
+            <button type="button" class="note-library-sort-advanced" data-role="note-library-sort-advanced" aria-expanded="false" aria-controls="note-library-advanced-sort">
+              <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-chevron-right"/></svg>
+              <span></span>
+            </button>
+            <div class="note-library-sort-disclosure" id="note-library-advanced-sort" inert>
+              <div class="note-library-sort-clip">
+                <div class="note-settings-theme" data-role="note-library-shared-prefix-setting">
+                  <label for="note-tree-shared-prefix-priority"><strong></strong></label>
+                  <select id="note-tree-shared-prefix-priority" aria-describedby="note-tree-shared-prefix-priority-hint" disabled></select>
+                  <small id="note-tree-shared-prefix-priority-hint"></small>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <h3 data-role="note-library-name-title"></h3>
         <div class="note-library-name-options" data-role="note-library-name-options"></div>

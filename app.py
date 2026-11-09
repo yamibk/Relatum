@@ -10402,7 +10402,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     result = NOTES_STORE.children(query.get('parent', [''])[0], int(query.get('offset', ['0'])[0]),
                         int(query.get('limit', ['50'])[0]), query.get('sort', ['name-asc'])[0],
                         int(query['generation'][0]) if 'generation' in query else None, query.get('folders', ['0'])[0] == '1',
-                        name_priority=query.get('namePriority', ['auto'])[0])
+                        name_priority=query.get('namePriority', ['auto'])[0],
+                        shared_prefix_priority=query.get('sharedPrefixPriority', ['auto'])[0])
                 return self._send_json(200, result)
             except NotesError as err:
                 return self._send_notes_error(err)

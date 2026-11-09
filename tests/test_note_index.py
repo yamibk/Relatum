@@ -219,6 +219,42 @@ class NoteIndexTests(unittest.TestCase):
         self.assertIn('Mixed/第2章.md', {row['path'] for row in pinned['entries'][0]['children']})
         self.assertEqual(pinned['pagination']['Mixed']['offset'], 50)
 
+    def test_shared_prefix_priority_keeps_numeric_segments_and_applies_before_paging(self):
+        names = ['课程-', '课程-A', '课程-2', '课程-１０', '课程-中', '课程_标点', '9全局',
+                 'Course-02-A', 'course-２-中', 'Ａ-2', 'a-中']
+        for name in names:
+            self.write(f'Shared/{name}.md', 'body')
+        for name in [*(f'课程-A{i}' for i in range(60)), '课程-中', '课程-2']:
+            self.write(f'Long/{name}.md', 'body')
+        (self.root / 'Shared' / 'ZFolder').mkdir()
+        self.store.sync.scan()
+
+        for sort, expected in [('name-asc', ['课程-', '课程-A', '课程-2', '课程-１０', '课程-中']),
+                               ('name-desc', ['课程-A', '课程-中', '课程-１０', '课程-2', '课程-'])]:
+            with self.subTest(sort=sort):
+                items = self.store.children('Shared', sort=sort, name_priority='han', shared_prefix_priority='latin')['items']
+                self.assertEqual(items[0]['path'], 'Shared/ZFolder')
+                ordered = [item['name'] for item in items[1:]]
+                self.assertEqual([name for name in ordered if name.startswith('课程-')], expected)
+                self.assertLess(ordered.index('课程-中'), ordered.index('9全局'))
+
+        ordered = [item['name'] for item in self.store.children('Shared', shared_prefix_priority='han')['items']]
+        self.assertLess(ordered.index('course-２-中'), ordered.index('Course-02-A'))
+        self.assertLess(ordered.index('a-中'), ordered.index('Ａ-2'))
+        self.assertEqual(self.store.children('Shared', shared_prefix_priority='invalid'), self.store.children('Shared'))
+        self.assertEqual(self.store.children('Shared', sort='modified-desc', shared_prefix_priority='han'),
+                         self.store.children('Shared', sort='modified-desc'))
+
+        first = self.store.children('Long', shared_prefix_priority='han')
+        second = self.store.children('Long', offset=50, generation=first['generation'], shared_prefix_priority='han')
+        self.assertEqual([item['name'] for item in first['items'][:3]], ['课程-中', '课程-2', '课程-A0'])
+        self.assertEqual(len({item['path'] for item in first['items'] + second['items']}), 62)
+        self.assertTrue(first['hasMore'])
+        self.assertFalse(second['hasMore'])
+        tree = self.store.tree({'expanded': ['Long', 'Shared'], 'sort': 'name-asc', 'sharedPrefixPriority': 'han'})
+        long = next(entry for entry in tree['entries'] if entry['path'] == 'Long')
+        self.assertEqual({item['path'] for item in long['children']}, {item['path'] for item in first['items']})
+
     def test_restart_reuses_content_and_hot_queries_do_not_touch_files(self):
         self.write('A.md', 'needle [[B]] #tag')
         self.write('B.md', 'needle')

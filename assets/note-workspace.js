@@ -81,8 +81,13 @@
   const libraryTrigger = $('[data-note-action="toggle-library-settings"]');
   const librarySettings = $('[data-role="note-library-settings"]');
   const librarySortOptions = $('[data-role="note-library-sort-options"]');
+  const libraryNameSortOptions = $('[data-role="note-library-name-sort-options"]');
   const libraryNamePrioritySetting = $('[data-role="note-library-name-priority-setting"]');
   const libraryNamePriority = $('[data-role="note-library-name-priority"]');
+  const libraryAdvancedSortButton = $('[data-role="note-library-sort-advanced"]');
+  const libraryAdvancedSort = $('#note-library-advanced-sort');
+  const librarySharedPrefixSetting = $('[data-role="note-library-shared-prefix-setting"]');
+  const librarySharedPrefixPriority = $('#note-tree-shared-prefix-priority');
   const libraryNameOptions = $('[data-role="note-library-name-options"]');
   const libraryNameField = $('[data-role="note-library-name-field"]');
   const libraryNameInput = $('[data-role="note-library-name-input"]');
@@ -425,6 +430,7 @@
   const NOTE_FOCUS_KEY = 'canvas:noteFocusMode:v1';
   const TREE_SORT_KEY = 'canvas:noteTreeSort:v1';
   const TREE_NAME_PRIORITY_KEY = 'canvas:noteTreeNamePriority:v1';
+  const TREE_SHARED_PREFIX_PRIORITY_KEY = 'canvas:noteTreeSharedPrefixPriority:v1';
   const NEW_NAME_KEY = 'canvas:noteNewName:v1';
   const SORT_MODES = ['name-asc', 'name-desc', 'modified-desc', 'modified-asc', 'created-desc', 'created-asc'];
   const NAME_PRIORITIES = ['auto', 'han', 'digit', 'latin'];
@@ -482,6 +488,10 @@
       namePriority: '文件名开头优先', namePriorityHint: '在同一目录的笔记中，所选开头始终排在前面。',
       namePriority_auto: '按界面语言（默认）', namePriority_han: '汉字开头优先', namePriority_digit: '数字开头优先', namePriority_latin: '英文字母开头优先',
       namePrioritySaveFailed: '无法保存文件名开头优先设置，请重试。',
+      advancedSort: '高级排序', sharedPrefixPriority: '相同前缀后优先',
+      sharedPrefixPriorityHint: '例如「课程-A」与「课程-中」会比较「课程-」之后的字符。',
+      sharedPrefixPriority_han: '汉字优先', sharedPrefixPriority_digit: '数字优先', sharedPrefixPriority_latin: '英文字母优先',
+      sharedPrefixPrioritySaveFailed: '无法保存相同前缀后优先设置，请重试。',
       timestampName: '日期 + 时间', customName: '自定义名称', customNameLabel: '名称（不含 .md）', defaultCustomName: '未命名笔记',
       namePreview: '新建示例：{name}', invalidNewName: '请输入有效文件名；不能包含路径或 Windows 禁用字符',
       libraryReset: '恢复默认', libraryResetTitle: '恢复笔记库设置默认值？',
@@ -515,6 +525,10 @@
       namePriority: 'File name prefix priority', namePriorityHint: 'Notes with the selected prefix type come first in each folder.',
       namePriority_auto: 'Follow interface language (default)', namePriority_han: 'Han characters first', namePriority_digit: 'Digits first', namePriority_latin: 'English letters first',
       namePrioritySaveFailed: 'Could not save file name prefix priority. Please retry.',
+      advancedSort: 'Advanced sorting', sharedPrefixPriority: 'After a shared prefix',
+      sharedPrefixPriorityHint: 'For example, compare the characters after “Course-” in “Course-A” and “Course-中”.',
+      sharedPrefixPriority_han: 'Han characters first', sharedPrefixPriority_digit: 'Digits first', sharedPrefixPriority_latin: 'English letters first',
+      sharedPrefixPrioritySaveFailed: 'Could not save shared prefix priority. Please retry.',
       timestampName: 'Date + time', customName: 'Custom name', customNameLabel: 'Name (without .md)', defaultCustomName: 'Untitled',
       namePreview: 'Example: {name}', invalidNewName: 'Enter a valid file name without paths or Windows-reserved characters',
       libraryReset: 'Reset', libraryResetTitle: 'Restore default Library settings?',
@@ -532,7 +546,8 @@
     externalSyncTimer: 0, externalSyncFailures: 0, externalSyncUnchanged: 0, treeMetadataSignature: '', externalSyncChain: Promise.resolve(true), recycleRunning: false,
     focusMode: document.body.classList.contains('note-focus-mode'), focusMotionTimer: 0, focusMotionSeq: 0, titleScrollFrame: 0, titleResizeObserver: null,
     viewMode: 'live', selectionMatchHighlight: false, settingsOpen: false, recordingShortcutCommand: '',
-    treeSort: 'modified-desc', treeNamePriority: 'auto', newName: { mode: 'timestamp', baseName: '' }, libraryPanel: '', libraryPanelTimers: {}, pendingTreeReorder: false, renderedOrder: '',
+    treeSort: 'modified-desc', treeNamePriority: 'auto', treeSharedPrefixPriority: 'auto',
+    newName: { mode: 'timestamp', baseName: '' }, libraryPanel: '', libraryPanelTimers: {}, pendingTreeReorder: false, renderedOrder: '',
     imageText: {
       available: false, active: false, armed: false, selectedId: '', size: 'md', color: 'white', canDelete: false,
       toggleSeq: 0, toggleIntent: null,
@@ -547,6 +562,7 @@
   try { state.selectionMatchHighlight = localStorage.getItem(SELECTION_MATCH_HIGHLIGHT_KEY) === '1'; } catch (error) {}
   try { const savedSort = localStorage.getItem(TREE_SORT_KEY); if (SORT_MODES.includes(savedSort)) state.treeSort = savedSort; } catch (error) {}
   try { const savedPriority = localStorage.getItem(TREE_NAME_PRIORITY_KEY); if (NAME_PRIORITIES.includes(savedPriority)) state.treeNamePriority = savedPriority; } catch (error) {}
+  try { const savedPriority = localStorage.getItem(TREE_SHARED_PREFIX_PRIORITY_KEY); if (NAME_PRIORITIES.includes(savedPriority)) state.treeSharedPrefixPriority = savedPriority; } catch (error) {}
   try {
     const savedName = JSON.parse(localStorage.getItem(NEW_NAME_KEY) || '{}');
     const baseName = savedName && normalizeCustomBase(savedName.baseName);
@@ -1186,8 +1202,12 @@
         reset: () => { resetNoteTheme(); pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
       { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮 双向链接 补全 候选 搜索 正文 排序 wiki link completion suggestions scope search content sort', reset: resetEditingSettings },
       { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings,
-        keywords: '排序 命名 文件名开头优先 sort name timestamp file name prefix priority',
-        searchTargets: () => libraryNamePrioritySetting.hidden ? [libraryNameField] : [libraryNamePrioritySetting, libraryNameField],
+        keywords: '排序 命名 文件名开头优先 相同前缀后优先 高级排序 sort name timestamp file name prefix priority after a shared prefix advanced sorting',
+        searchTargets: () => libraryNameSortOptions.inert ? [libraryNameField] : [libraryNamePrioritySetting, librarySharedPrefixSetting, libraryNameField],
+        onReveal(target) {
+          if (target === librarySharedPrefixSetting) setLibraryAdvancedSort(true);
+          return target;
+        },
         reset: resetLibraryPreferences },
       { id: 'markdown-files', label: ['Markdown 文件', 'Markdown files'], icon: 'note-icon-file-text', panel: markdownFileSettings.panel,
         keywords: '外部 文件 简洁 独立 磁盘 双击 默认 打开 注册 关联 自动保存 最近 typora markdown portable default association register autosave recent', reset: () => markdownFileSettings.reset() },
@@ -1210,12 +1230,14 @@
       onSearch(query) { if (aiEnabled() && !aiSettingsHost.querySelector('[data-ai-field]') && /deepseek|api|模型|预设|提示词|思考|强度|温度|连接|接口|地址|流式|输出|超时|token|top.?p|model|preset|prompt|temperature|stream|timeout|effort|base.?url|\bkey\b|\bai\b/.test(query)) return ensureAI().then(ai => ai.prepareSettings()); },
       async resetAll() { resetNoteSettings(); await resetNotebookVisibility(); noteSystem.reset(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); if (window.RelatumNoteExtensions.reset()) extensionSettings.reset(); if (canvasEnabled()) resetCanvas(); await markdownFileSettings.reset(); await resetAI(); },
       onOpen() {
+        if (!state.settingsOpen) setLibraryAdvancedSort(false);
         state.settingsOpen = true; aiDialogReturning = false;
         settingsTrigger.setAttribute('aria-expanded', 'true'); libraryTrigger.setAttribute('aria-expanded', 'true'); renderAI();
       },
       onClose({ reason }) {
         linkCompletionSettings?.close();
         settingsChoices?.close();
+        finishLibrarySortMotion();
         aiSequence++;
         systemSettings.setActive(false);
         markdownFileSettings.setActive(false);
@@ -1236,6 +1258,7 @@
       onCategoryChange(category) {
         linkCompletionSettings?.close();
         settingsChoices?.close();
+        finishLibrarySortMotion();
         aiSettingsCategory = category; aiDialogReturning = false;
         if (category === 'notebooks') renderNotebookSettings();
         systemSettings.setActive(category === 'system' && !!settingsDialog?.isOpen && noteWorkspaceVisible());
@@ -1260,9 +1283,12 @@
     settingsChoices = window.RelatumReviewControls.createManager(settingsPop, themePortal);
     settingsChoices.enhance(themeSelect);
     if (appleSelectionSelect) settingsChoices.enhance(appleSelectionSelect);
-    const priorityChoice = settingsChoices.enhance(libraryNamePriority);
-    priorityChoice.element.querySelector('button').setAttribute('aria-describedby', 'note-tree-name-priority-hint');
-    libraryNamePriority.addEventListener('change', setTreeNamePriority);
+    for (const select of [libraryNamePriority, librarySharedPrefixPriority]) {
+      const choice = settingsChoices.enhance(select);
+      choice.element.querySelector('button').setAttribute('aria-describedby', select.getAttribute('aria-describedby'));
+      select.addEventListener('change', setTreeNamePriority);
+    }
+    libraryAdvancedSortButton.addEventListener('click', () => setLibraryAdvancedSort(libraryAdvancedSort.inert, true));
     syncTreeNamePriority();
     linkCompletionSettings = window.RelatumNoteLinkCompletion?.createSettings(editing, { portal: themePortal,
       onOpen() { settingsDialog.finishContentMotion(); prepareWorkspacePopover('settings'); },
@@ -1271,6 +1297,7 @@
     const prepareSettingsChoice = event => {
       if (event.type === 'keydown' && (event.isComposing || !['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key))) return;
       if (event.target.closest('.note-settings-theme .review-choice-trigger')) {
+        if (libraryNameSortOptions.contains(event.target)) finishLibrarySortMotion();
         settingsDialog.finishContentMotion(); prepareWorkspacePopover('settings');
       }
     };
@@ -1287,7 +1314,7 @@
       }
     });
     settingsDialog.dialog.querySelector('[data-settings-search]').addEventListener('input', () => { settingsChoices.close(); linkCompletionSettings?.close(); });
-    document.addEventListener('relatum:languagechange', () => { settingsChoices.close(); syncNoteThemeSettings(); linkCompletionSettings?.refresh(); });
+    document.addEventListener('relatum:languagechange', () => { settingsChoices.close(); finishLibrarySortMotion(); syncNoteThemeSettings(); linkCompletionSettings?.refresh(); });
     settingsDialog.dialog.addEventListener('click', handleWorkspaceClick);
     settingsTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     libraryTrigger.setAttribute('aria-controls', 'note-settings-dialog');
@@ -2200,20 +2227,65 @@
   function nameCompare(left, right) {
     return compareTreeNames(left.name, right.name) || left.path.localeCompare(right.path);
   }
-  function effectiveTreeNamePriority() {
-    return state.treeSort.startsWith('name-') ? state.treeNamePriority : 'auto';
+  function treeNameSegments(name) {
+    // Match the segment identities used by name_segments in notes_index.py.
+    return (name.match(/[0-9０-９]+|./gsu) || []).map(value => {
+      if (NAME_PRIORITY_MATCHERS.digit.test(value)) {
+        const digits = value.replace(/[０-９]/g, character => String.fromCharCode(character.charCodeAt(0) - 0xfee0));
+        return { value: digits.replace(/^0+(?=[0-9])/, ''), group: 'digit' };
+      }
+      if (NAME_PRIORITY_MATCHERS.latin.test(value)) {
+        const letter = value.replace(/[Ａ-Ｚａ-ｚ]/g, character => String.fromCharCode(character.charCodeAt(0) - 0xfee0));
+        return { value: letter.toLowerCase(), group: 'latin' };
+      }
+      return { value, group: NAME_PRIORITY_MATCHERS.han.test(value) ? 'han' : '' };
+    });
+  }
+  function compareSharedTreePrefix(left, right, priority, direction) {
+    const count = Math.min(left.length, right.length);
+    for (let index = 0; index < count; index++) {
+      const a = left[index], b = right[index];
+      if (a.value === b.value) continue;
+      if (index) {
+        const preferred = Number(b.group === priority) - Number(a.group === priority);
+        if (preferred) return preferred;
+      }
+      if (a.group === 'digit' && b.group === 'digit') {
+        return direction * (a.value.length - b.value.length || (a.value < b.value ? -1 : 1));
+      }
+      // Resolve collator ties at this segment so exact prefix branches stay contiguous.
+      return direction * (compareTreeNames(a.value, b.value) || a.value.codePointAt(0) - b.value.codePointAt(0));
+    }
+    return direction * (left.length - right.length);
+  }
+  function treeNameSortOptions() {
+    if (!state.treeSort.startsWith('name-')) return {};
+    const options = {};
+    if (state.treeNamePriority !== 'auto') options.namePriority = state.treeNamePriority;
+    if (state.treeSharedPrefixPriority !== 'auto') options.sharedPrefixPriority = state.treeSharedPrefixPriority;
+    return options;
   }
   function sortedTreeEntries(entries) {
     const mode = state.treeSort;
+    const nameSort = mode.startsWith('name-');
+    const direction = mode.endsWith('-desc') ? -1 : 1;
+    const sharedPriority = state.treeSharedPrefixPriority;
+    const segments = nameSort && sharedPriority !== 'auto' ? new Map() : null;
+    const segmentsOf = name => {
+      if (!segments.has(name)) segments.set(name, treeNameSegments(name));
+      return segments.get(name);
+    };
     const sorted = (entries || []).slice().sort((left, right) => {
       if (left.kind !== right.kind) return left.kind === 'folder' ? -1 : 1;
       if (left.kind === 'folder') return nameCompare(left, right);
-      if (mode === 'name-asc' || mode === 'name-desc') return nameCompare(left, right) * (mode === 'name-desc' ? -1 : 1);
+      if (segments) return compareSharedTreePrefix(segmentsOf(left.name), segmentsOf(right.name), sharedPriority, direction)
+        || direction * left.path.localeCompare(right.path);
+      if (nameSort) return direction * nameCompare(left, right);
       const key = mode.startsWith('created-') ? 'createdNs' : 'modifiedNs';
       const delta = (Number(left[key]) || 0) - (Number(right[key]) || 0);
-      return (mode.endsWith('-desc') ? -delta : delta) || nameCompare(left, right);
+      return direction * delta || nameCompare(left, right);
     });
-    const matcher = NAME_PRIORITY_MATCHERS[effectiveTreeNamePriority()];
+    const matcher = nameSort && NAME_PRIORITY_MATCHERS[state.treeNamePriority];
     if (!matcher) return sorted;
     // Keep the natural order within each group, testing the prefix once per note.
     const preferred = [], others = [];
@@ -2254,23 +2326,48 @@
     libraryNamePreview.textContent = tr('namePreview', { name: custom && base ? base + '.md' : timestampNamePreview() });
     libraryNameError.textContent = custom && !base ? tr('invalidNewName') : '';
   }
-  function syncTreeNamePriority() {
-    const locale = language();
-    const hidden = !state.treeSort.startsWith('name-');
-    if (hidden && !libraryNamePrioritySetting.hidden) settingsChoices?.close();
-    libraryNamePrioritySetting.hidden = libraryNamePriority.disabled = hidden;
-    if (libraryNamePriority.dataset.choiceLanguage !== locale) {
-      libraryNamePriority.dataset.choiceLanguage = locale;
-      $('[data-role="note-library-name-priority-label"]').textContent = tr('namePriority');
-      $('#note-tree-name-priority-hint').textContent = tr('namePriorityHint');
-      libraryNamePriority.setAttribute('aria-label', tr('namePriority'));
-      libraryNamePriority.replaceChildren(...NAME_PRIORITIES.map(value => new Option(tr('namePriority_' + value), value)));
-      settingsChoices?.refresh(libraryNamePriority);
-    }
-    libraryNamePriority.value = state.treeNamePriority;
-    settingsChoices?.sync(libraryNamePriority);
+  function setLibrarySortDisclosure(disclosure, open, animate) {
+    if (disclosure.inert === !open) return;
+    disclosure.classList.toggle('is-animated', animate && !tabMotionPreference.matches);
+    disclosure.classList.toggle('is-open', open);
+    disclosure.inert = !open;
   }
-  function renderLibraryPreferences() {
+  function finishLibrarySortMotion() {
+    libraryNameSortOptions.classList.remove('is-animated');
+    libraryAdvancedSort.classList.remove('is-animated');
+  }
+  function setLibraryAdvancedSort(open, animate = false) {
+    if (!open && !libraryAdvancedSort.inert) settingsChoices?.close();
+    setLibrarySortDisclosure(libraryAdvancedSort, open, animate);
+    libraryAdvancedSortButton.setAttribute('aria-expanded', String(open));
+    librarySharedPrefixPriority.disabled = !open || libraryNameSortOptions.inert;
+    settingsChoices?.sync(librarySharedPrefixPriority);
+  }
+  function syncTreePriorityChoice(select, setting, label, priority, disabled) {
+    const locale = language();
+    const translate = select.dataset.choiceLanguage !== locale;
+    select.disabled = disabled;
+    if (translate) {
+      select.dataset.choiceLanguage = locale;
+      setting.querySelector('strong').textContent = tr(label);
+      setting.querySelector('small').textContent = tr(label + 'Hint');
+      select.setAttribute('aria-label', tr(label));
+      select.replaceChildren(...NAME_PRIORITIES.map(value => new Option(tr(value === 'auto' ? 'namePriority_auto' : label + '_' + value), value)));
+    }
+    select.value = priority;
+    if (translate) settingsChoices?.refresh(select);
+    else settingsChoices?.sync(select);
+  }
+  function syncTreeNamePriority(animate = false) {
+    const nameSort = state.treeSort.startsWith('name-');
+    if (!nameSort && !libraryNameSortOptions.inert) settingsChoices?.close();
+    setLibrarySortDisclosure(libraryNameSortOptions, nameSort, animate);
+    libraryAdvancedSortButton.querySelector('span').textContent = tr('advancedSort');
+    syncTreePriorityChoice(libraryNamePriority, libraryNamePrioritySetting, 'namePriority', state.treeNamePriority, !nameSort);
+    syncTreePriorityChoice(librarySharedPrefixPriority, librarySharedPrefixSetting, 'sharedPrefixPriority',
+      state.treeSharedPrefixPriority, !nameSort || libraryAdvancedSort.inert);
+  }
+  function renderLibraryPreferences(animateNameOptions = false) {
     if (!sortMenu || !librarySettings) return;
     const focusedChoice = document.activeElement && (document.activeElement.dataset.noteSortMode || document.activeElement.dataset.noteNameMode);
     const focusedHost = focusedChoice && (sortMenu.contains(document.activeElement) ? sortMenu : librarySettings.contains(document.activeElement) ? librarySettings : null);
@@ -2292,7 +2389,7 @@
     };
     sortMenu.replaceChildren(...SORT_MODES.map((mode) => makeSortButton(mode, true)));
     librarySortOptions.replaceChildren(...SORT_MODES.map((mode) => makeSortButton(mode, false)));
-    syncTreeNamePriority();
+    syncTreeNamePriority(animateNameOptions);
     libraryNameOptions.replaceChildren(...['timestamp', 'custom'].map((mode) => {
       const button = document.createElement('button'); button.type = 'button'; button.dataset.noteNameMode = mode;
       button.className = 'note-name-option' + (state.newName.mode === mode ? ' is-selected' : '');
@@ -2305,42 +2402,47 @@
     if (focusedHost) {
       const replacement = Array.from(focusedHost.querySelectorAll('[data-note-sort-mode], [data-note-name-mode]'))
         .find((button) => button.dataset.noteSortMode === focusedChoice || button.dataset.noteNameMode === focusedChoice);
-      if (replacement) replacement.focus();
+      if (replacement) replacement.focus({ preventScroll: true });
     }
   }
-  function setTreeNamePriority() {
-    const priority = libraryNamePriority.value;
-    if (libraryNamePriority.disabled || !NAME_PRIORITIES.includes(priority) || priority === state.treeNamePriority) {
+  function setTreeNamePriority(event) {
+    const select = event.currentTarget;
+    const shared = select === librarySharedPrefixPriority;
+    const field = shared ? 'treeSharedPrefixPriority' : 'treeNamePriority';
+    const priority = select.value;
+    if (select.disabled || !NAME_PRIORITIES.includes(priority) || priority === state[field]) {
       syncTreeNamePriority();
       return;
     }
-    try { localStorage.setItem(TREE_NAME_PRIORITY_KEY, priority); }
+    try { localStorage.setItem(shared ? TREE_SHARED_PREFIX_PRIORITY_KEY : TREE_NAME_PRIORITY_KEY, priority); }
     catch (error) {
       syncTreeNamePriority();
-      settingsDialog?.setStatus(tr('namePrioritySaveFailed'));
+      settingsDialog?.setStatus(tr(shared ? 'sharedPrefixPrioritySaveFailed' : 'namePrioritySaveFailed'));
       return;
     }
-    state.treeNamePriority = priority;
+    state[field] = priority;
     settingsDialog?.setStatus('');
     updateTreeOrder();
   }
-  function setTreeSort(mode) {
+  function setTreeSort(mode, animateNameOptions) {
     if (!SORT_MODES.includes(mode)) return;
     if (state.treeSort !== mode) {
       state.treeSort = mode;
       try { localStorage.setItem(TREE_SORT_KEY, mode); } catch (error) {}
       updateTreeOrder();
     }
-    renderLibraryPreferences();
+    renderLibraryPreferences(animateNameOptions);
   }
   function resetLibraryPreferences() {
     const orderChanged = state.treeSort !== 'modified-desc';
     localStorage.removeItem(TREE_NAME_PRIORITY_KEY);
+    localStorage.removeItem(TREE_SHARED_PREFIX_PRIORITY_KEY);
     [TREE_SORT_KEY, NEW_NAME_KEY].forEach((key) => {
       try { localStorage.removeItem(key); } catch (error) {}
     });
     state.treeSort = 'modified-desc';
     state.treeNamePriority = 'auto';
+    state.treeSharedPrefixPriority = 'auto';
     state.newName = { mode: 'timestamp', baseName: '' };
     if (orderChanged) updateTreeOrder();
     renderLibraryPreferences();
@@ -2509,10 +2611,9 @@
   function isMissingError(error) { return !!error && (error.status === 404 || error.code === 'not_found'); }
   function treeView(pin) {
     let saved = ''; try { saved = localStorage.getItem(ACTIVE_PATH_KEY) || ''; } catch (error) {}
-    const namePriority = effectiveTreeNamePriority();
     return { expanded: Array.from(new Set([state.notebookRoot || '', ...state.expanded, ...state.notebookExpanded])).slice(0, 4096),
       pins: Array.from(new Set([pin, state.selectedPath, state.selectedFolder, ...state.tabs, saved, state.current?.path || ''].filter(path => path && !isSpecialTab(path)))).slice(0, 256),
-      sort: state.treeSort, ...(namePriority !== 'auto' ? { namePriority } : {}) };
+      sort: state.treeSort, ...treeNameSortOptions() };
   }
   function requestTreeView(view, reconcile = false) {
     return request('/api/notes-tree?view=' + encodeURIComponent(JSON.stringify(view)) + (state.notebookSettingsLoaded ? '' : '&notebookSettings=1')
@@ -2603,10 +2704,9 @@
     if (directoryPageVersion !== directoryOrderVersion) return refreshDirectoryOrder();
     const epoch = noteVisibilityEpoch, paging = state.treePagination?.[parent];
     const offset = reset ? 0 : paging?.offset || 0;
-    const namePriority = effectiveTreeNamePriority();
-    const task = request('/api/note-children?parent=' + encodeURIComponent(parent) + '&offset=' + offset + '&sort=' + state.treeSort
-      + (namePriority !== 'auto' ? '&namePriority=' + namePriority : '')
-      + (offset && paging?.generation !== undefined ? '&generation=' + paging.generation : ''));
+    const query = new URLSearchParams({ parent, offset, sort: state.treeSort, ...treeNameSortOptions() });
+    if (offset && paging?.generation !== undefined) query.set('generation', paging.generation);
+    const task = request('/api/note-children?' + query);
     directoryLoads.set(parent, task);
     const current = () => directoryLoads.get(parent) === task && noteWorkspaceVisible() && epoch === noteVisibilityEpoch;
     try {
@@ -5776,7 +5876,7 @@
     if (sortChoice && (root.contains(sortChoice) || settingsPop.contains(sortChoice))) {
       const fromMenu = sortMenu.contains(sortChoice);
       if (state.renamePath && !(await finishInlineRename())) return;
-      setTreeSort(sortChoice.dataset.noteSortMode);
+      setTreeSort(sortChoice.dataset.noteSortMode, !fromMenu && settingsDialog?.isOpen);
       if (fromMenu) setLibraryPanel('');
       return;
     }
@@ -6051,6 +6151,7 @@
   tabMotionPreference.addEventListener?.('change', () => {
     if (!tabMotionPreference.matches) return;
     settingsChoices?.close();
+    finishLibrarySortMotion();
     cancelTabCloseMotion();
     treeEl.__noteFinishMotion?.(); notebookTreeEl?.__noteFinishMotion?.();
     cancelSideClose(); clearClosedNotebookTree();

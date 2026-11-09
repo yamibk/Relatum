@@ -30,6 +30,8 @@ async function chooseSort(page, mode) {
 
 const mixedParent = 'zFolder/Mixed';
 const pagedParent = 'zFolder/Paged';
+const sharedParent = 'zFolder/Shared';
+const sharedNames = ['课程-A', '课程-2', '课程-10', '课程-中', '课程-02-A', '课程-２-中', '课程_标点', '9全局'];
 const prefixGroups = {
   digit: ['2.实验', '10.实验', '３.实验'],
   latin: ['Alpha2', 'aLPHA10', 'ＡI学习'],
@@ -99,7 +101,7 @@ async function checkNamePriority(page) {
   await sort('name-desc');
   await expectMixed('digit', 'zh-CN', -1);
   await sort('modified-desc');
-  assert.equal(await selector.isVisible(), false);
+  await selector.waitFor({ state: 'hidden' });
   assert.equal(await select.inputValue(), 'digit');
   await sort('name-asc');
   await choosePriority('英文字母开头优先');
@@ -225,11 +227,141 @@ async function checkNamePriority(page) {
   }
 }
 
+async function checkSharedPrefixPriority(page) {
+  const settings = page.locator('#note-settings-dialog');
+  const openSettings = () => page.locator('[data-note-action="toggle-library-settings"]').click();
+  const closeSettings = () => settings.locator('[data-settings-action="close"]').click();
+  const sort = mode => settings.locator(`[data-note-sort-mode="${mode}"]`);
+  const outer = settings.locator('[data-role="note-library-name-sort-options"]');
+  const advanced = settings.locator('#note-library-advanced-sort');
+  const toggle = settings.locator('[data-role="note-library-sort-advanced"]');
+  const prefix = settings.getByRole('combobox', { name: '文件名开头优先', exact: true });
+  const shared = settings.locator('[data-role="note-library-shared-prefix-setting"] .review-choice-trigger');
+  const select = settings.locator('#note-tree-shared-prefix-priority');
+  const key = 'canvas:noteTreeSharedPrefixPriority:v1';
+  const left = '[data-role="note-tree"]', right = '[data-role="note-notebook-tree"]';
+  const list = host => page.locator(`${host} .note-tree-entry[data-path="${sharedParent}"] > .note-tree-children-shell > .note-tree-children > .note-tree-entry > .note-tree-row`);
+  const names = host => list(host).evaluateAll(rows => rows.map(row => row.dataset.notePath.split('/').at(-1).slice(0, -3)));
+  const choose = async (trigger, label) => {
+    await trigger.click();
+    await settings.getByRole('option', { name: label, exact: true }).click();
+  };
+
+  await closeSettings();
+  await page.evaluate(() => { RelatumI18n.setLanguage('zh-CN'); RelatumNoteTheme.apply('apple'); });
+  const side = page.locator('[data-note-action="toggle-notebooks"]');
+  if (await side.getAttribute('aria-expanded') !== 'true') await side.click();
+  for (const [host, folders] of [[left, ['zFolder', sharedParent]], [right, ['', 'zFolder', sharedParent]]]) {
+    for (const folder of folders) {
+      const row = page.locator(`${host} .note-tree-row[data-note-path="${folder}"]`);
+      if (await row.getAttribute('aria-expanded') !== 'true') await row.locator('.note-tree-toggle').click();
+    }
+    await list(host).first().waitFor();
+  }
+
+  await openSettings();
+  const motion = await outer.evaluate(node => {
+    const page = node.closest('#note-library-settings');
+    const naming = page.querySelector('[data-role="note-library-name-title"]');
+    const y = naming.offsetTop;
+    const width = page.getBoundingClientRect().width;
+    page.querySelector('[data-note-sort-mode="name-asc"]').click();
+    const animation = node.getAnimations().find(item => item.transitionProperty === 'grid-template-rows');
+    animation.pause(); animation.currentTime = 30;
+    const middle = node.getBoundingClientRect().height;
+    const shifted = naming.offsetTop - y;
+    page.querySelector('[data-note-sort-mode="modified-desc"]').click();
+    const reversed = node.getBoundingClientRect().height;
+    return { middle, shifted, reversed, widthStable: width === page.getBoundingClientRect().width, inert: node.inert };
+  });
+  assert(motion.middle > 0 && motion.shifted > 0 && Math.abs(motion.middle - motion.reversed) < 4 && motion.widthStable && motion.inert);
+  await outer.waitFor({ state: 'hidden' });
+  await sort('name-asc').press('Enter');
+  assert(await sort('name-asc').evaluate(node => node === document.activeElement));
+  await choose(prefix, '汉字开头优先');
+
+  const nestedMotion = await advanced.evaluate(node => {
+    const button = node.previousElementSibling;
+    node.getBoundingClientRect();
+    button.click();
+    const animation = node.getAnimations().find(item => item.transitionProperty === 'grid-template-rows');
+    animation.pause(); animation.currentTime = 30;
+    return node.getBoundingClientRect().height;
+  });
+  assert(nestedMotion > 0);
+  const focus = await shared.evaluate(node => {
+    node.focus({ preventScroll: true });
+    return { active: node === document.activeElement, visibility: getComputedStyle(node).visibility, disabled: node.disabled };
+  });
+  assert.deepEqual(focus, { active: true, visibility: 'visible', disabled: false });
+  await page.keyboard.press('ArrowDown');
+  const anchorState = await shared.evaluate(node => ({
+    motion: node.closest('#note-library-advanced-sort').getAnimations().length, expanded: node.getAttribute('aria-expanded'),
+  }));
+  assert.deepEqual(anchorState, { motion: 0, expanded: 'true' }, 'opening the dropdown settles its anchor');
+  await settings.getByRole('option', { name: '英文字母优先', exact: true }).click();
+  const example = ['课程-A', '课程-2', '课程-10', '课程-中'];
+  for (const host of [left, right]) {
+    const ordered = await names(host);
+    assert.deepEqual(ordered.filter(name => example.includes(name)), example);
+    assert.equal(ordered.at(-1), '9全局');
+  }
+  await sort('name-desc').click();
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(await outer.evaluate(node => node.getAnimations().length), 0);
+  assert.deepEqual((await names(left)).filter(name => example.includes(name)), ['课程-A', '课程-中', '课程-10', '课程-2']);
+  await sort('name-asc').click();
+  await choose(shared, '汉字优先');
+  const ordered = await names(left);
+  assert(ordered.indexOf('课程-２-中') < ordered.indexOf('课程-02-A'), 'equal numeric segments should continue to the preferred type');
+  const first = await page.evaluate(async parent => {
+    const query = new URLSearchParams({ parent, sort: 'name-asc', namePriority: 'han', sharedPrefixPriority: 'han', limit: 1 });
+    const response = await fetch('/api/note-children?' + query);
+    return (await response.json()).items[0].name;
+  }, sharedParent);
+  assert.equal(first, '课程-中');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await sort('modified-desc').click();
+  assert.equal(await outer.evaluate(node => node.inert && node.getBoundingClientRect().height === 0 && !node.getAnimations().length), true);
+  await sort('name-asc').click();
+  assert.equal(await select.inputValue(), 'han');
+  await closeSettings();
+  await page.reload();
+  await page.locator('button[data-start-workspace="notes"]').click();
+  await openSettings();
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(await select.inputValue(), 'han');
+  await settings.locator('[data-settings-search]').fill('相同前缀后优先');
+  await settings.locator('.relatum-settings-result').filter({ hasText: '相同前缀后优先' }).click();
+  assert(await shared.evaluate(node => node === document.activeElement));
+  for (const width of [1440, 575]) {
+    for (const mode of ['light', 'dark']) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, mode);
+      await shared.click();
+      const popup = settings.getByRole('listbox', { name: '相同前缀后优先' });
+      const bounds = await popup.boundingBox();
+      assert(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width + 1);
+      assert.equal(await popup.getByRole('option').count(), 4);
+      await page.screenshot({ path: path.join(root, `shared-prefix-apple-${width}-${mode}.png`) });
+      await page.keyboard.press('Escape');
+      assert(await settings.isVisible());
+    }
+  }
+  await settings.locator('[data-settings-action="reset-category"]').click();
+  await settings.locator('[data-settings-action="accept-reset"]').click();
+  assert.equal(await page.evaluate(key => localStorage.getItem(key), key), null);
+  assert.equal(await select.inputValue(), 'auto');
+}
+
 (async () => {
   fs.mkdirSync(path.join(notes, 'aFolder'), { recursive: true });
   fs.mkdirSync(path.join(notes, 'zFolder'));
     fs.mkdirSync(path.join(notes, mixedParent, 'ZChild'), { recursive: true });
     fs.mkdirSync(path.join(notes, pagedParent));
+    fs.mkdirSync(path.join(notes, sharedParent));
+    for (const name of sharedNames) fs.writeFileSync(path.join(notes, sharedParent, `${name}.md`), 'Shared note');
     for (const name of Object.values(prefixGroups).flat()) fs.writeFileSync(path.join(notes, mixedParent, `${name}.md`), 'Mixed note');
     for (const name of [...Array.from({ length: 56 }, (_, i) => `A${i}`), '汉字优先', '9.实验']) {
       fs.writeFileSync(path.join(notes, pagedParent, `${name}.md`), 'Paged note');
@@ -445,6 +577,7 @@ async function checkNamePriority(page) {
     assert.equal(await page.locator('.note-tree-entry[data-path="aFolder"] .note-tree-entry[data-path="aFolder/新建文件夹"]').count(), 0,
       'blank tree click must target the notes root even while a nested note is open');
     await checkNamePriority(page);
+    await checkSharedPrefixPriority(page);
     assert.deepEqual(errors, []);
     await context.close();
     console.log('note tree sorting and naming browser: ok');

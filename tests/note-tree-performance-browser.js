@@ -20,8 +20,9 @@ async function compareSorting(page, browser) {
     const match = oldSource.match(new RegExp('  function ' + name + '\\([^\\n]*\\) \\{(?:[^\\n]*\\}|[\\s\\S]*?\\n  \\})'));
     assert(match, 'missing baseline function: ' + name); return match[0];
   }).join('\n');
-  const samples = await page.evaluate(declarations => {
+  const { samples, sharedMs } = await page.evaluate(declarations => {
     const test = __treePerf, savedSort = test.state.treeSort, savedEntries = test.state.entries, savedLanguage = RelatumI18n.language;
+    const savedPriority = test.state.treeSharedPrefixPriority;
     const old = new Function('state', 'language', 'const NOTEBOOK_CONTAINER = "CustomNotebook";\n' + declarations + '\nreturn {sortedTreeEntries,naturalSort,notebookRoots};')
       (test.state, () => RelatumI18n.language === 'en' ? 'en' : 'zh-CN');
     const samples = [], labels = ['笔记', 'Note', 'École', 'école', 'e\u0301cole', '文件', '目录', '😀', 'A', 'a', '甲'];
@@ -56,12 +57,32 @@ async function compareSorting(page, browser) {
         }
         test.state.treeSort = savedSort;
       }
-      return samples;
-    } finally { test.state.entries = savedEntries; test.state.treeSort = savedSort; RelatumI18n.setLanguage(savedLanguage); }
+      test.state.treeSort = 'name-asc';
+      test.state.treeSharedPrefixPriority = 'han';
+      const entries = Array.from({ length: 10000 }, (_, i) => {
+        const name = '实验记录-第12周-' + (i % 2 ? 'A' : '中') + (10000 - i);
+        return { kind: 'note', name, path: name + '.md' };
+      });
+      const constructors = window.__treeSortCollators;
+      const sharedMs = Array.from({ length: 3 }, () => {
+        const start = performance.now();
+        const ordered = test.sortedTreeEntries(entries);
+        const elapsed = performance.now() - start;
+        if (ordered[0].name !== '实验记录-第12周-中2' || ordered[4999].name !== '实验记录-第12周-中10000'
+            || ordered[5000].name !== '实验记录-第12周-A1') throw new Error('Shared prefix priority or numeric order changed');
+        return elapsed;
+      });
+      if (window.__treeSortCollators !== constructors) throw new Error('Shared prefix sorting recreated the collator');
+      return { samples, sharedMs };
+    } finally {
+      test.state.entries = savedEntries; test.state.treeSort = savedSort;
+      test.state.treeSharedPrefixPriority = savedPriority; RelatumI18n.setLanguage(savedLanguage);
+    }
   }, declarations);
   const median = (rounds, key) => rounds.map(round => round[key]).sort((a, b) => a - b)[1];
   const report = { baseline, browser: browser.version(), status: 'note sorting compatibility and performance: ok', samples,
-    summary: samples.map(sample => ({ locale: sample.locale, count: sample.count, baselineMs: median(sample.rounds, 'baselineMs'), currentMs: median(sample.rounds, 'currentMs'), repeatedCollatorBuilds: sample.repeatedCollatorBuilds })) };
+    summary: samples.map(sample => ({ locale: sample.locale, count: sample.count, baselineMs: median(sample.rounds, 'baselineMs'), currentMs: median(sample.rounds, 'currentMs'), repeatedCollatorBuilds: sample.repeatedCollatorBuilds })),
+    sharedPrefix: { count: 10000, medianMs: sharedMs.sort((a, b) => a - b)[1] } };
   if (process.env.RELATUM_NOTE_TREE_REPORT) fs.writeFileSync(process.env.RELATUM_NOTE_TREE_REPORT, JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify({ ...report, samples: undefined }));
 }

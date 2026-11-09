@@ -984,7 +984,8 @@ class NotesStore:
                     items[row['path']] = self.index.entry(row)
             for parent in parents:
                 page = self.index.children(parent, sort=view.get('sort', 'name-asc'),
-                                           name_priority=view.get('namePriority', 'auto'), connection=conn)
+                                           name_priority=view.get('namePriority', 'auto'),
+                                           shared_prefix_priority=view.get('sharedPrefixPriority', 'auto'), connection=conn)
                 pagination[parent] = {'offset': len(page['items']), 'total': page['total'], 'hasMore': page['hasMore'], 'generation': page['generation']}
                 for item in page['items']:
                     if item['path'] not in items:
@@ -1187,12 +1188,14 @@ class NotesStore:
                 result['fileColorWarning'] = self.file_color_warning
         return result
 
-    def children(self, parent='', offset=0, limit=50, sort='name-asc', generation=None, folders_only=False, *, name_priority='auto'):
+    def children(self, parent='', offset=0, limit=50, sort='name-asc', generation=None, folders_only=False, *,
+                 name_priority='auto', shared_prefix_priority='auto'):
         parent = self.normalize_path(parent, allow_root=True)
         self._prepare_index()
         try:
             result = self.index.children(parent, offset=offset, limit=limit, sort=sort, generation=generation,
-                                         folders_only=folders_only, name_priority=name_priority)
+                                         folders_only=folders_only, name_priority=name_priority,
+                                         shared_prefix_priority=shared_prefix_priority)
             return result
         except ValueError as error:
             raise NotesError(str(error), status=409 if '已更新' in str(error) else 400, code='query_changed' if '已更新' in str(error) else 'invalid') from error
