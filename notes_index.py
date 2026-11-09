@@ -39,6 +39,23 @@ def natural(value):
                  for piece in re.split(r"(\d+)", value))
 
 
+def name_prefix_group(name):
+    if not name:
+        return ''
+    first = name[0]
+    if '0' <= first <= '9' or '０' <= first <= '９':
+        return 'digit'
+    if 'A' <= first <= 'Z' or 'a' <= first <= 'z' or 'Ａ' <= first <= 'Ｚ' or 'ａ' <= first <= 'ｚ':
+        return 'latin'
+    # Keep the CJK ideograph blocks in sync with NAME_PRIORITY_MATCHERS in note-workspace.js.
+    code = ord(first)
+    if (code == 0x3007 or 0x3400 <= code <= 0x4DBF or 0x4E00 <= code <= 0x9FFF
+            or 0xF900 <= code <= 0xFAFF or 0x20000 <= code <= 0x2EE5F
+            or 0x2F800 <= code <= 0x2FA1F or 0x30000 <= code <= 0x3347F):
+        return 'han'
+    return ''
+
+
 def dump(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
@@ -221,6 +238,7 @@ class NoteIndex:
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA temp_store=MEMORY")
             conn.create_collation("NOTE_NATURAL", lambda a, b: (natural(a) > natural(b)) - (natural(a) < natural(b)))
+            conn.create_function('note_name_prefix', 1, name_prefix_group, deterministic=True)
         except BaseException:
             conn.close()
             raise
@@ -889,7 +907,8 @@ class NoteIndex:
                     'SELECT 1 FROM entries e JOIN books b ON b.id=e.book WHERE b.deleted=0 AND e.key=v.path)')]
             return result
 
-    def children(self, parent='', *, offset=0, limit=50, sort='name-asc', generation=None, folders_only=False, connection=None):
+    def children(self, parent='', *, offset=0, limit=50, sort='name-asc', generation=None, folders_only=False,
+                 name_priority='auto', connection=None):
         with self.read() if connection is None else nullcontext(connection) as conn:
             ordering = {'name-asc': 'e.name COLLATE NOTE_NATURAL ASC', 'name-desc': 'e.name COLLATE NOTE_NATURAL DESC',
                 'modified-desc': 'e.modified DESC', 'modified-asc': 'e.modified ASC',
@@ -908,7 +927,12 @@ class NoteIndex:
                 rows.extend(conn.execute(columns + "AND e.kind='folder' ORDER BY e.name COLLATE NOTE_NATURAL ASC,e.key LIMIT ? OFFSET ?", (normalize(parent), limit, offset)))
             remaining = limit - len(rows)
             if remaining and not folders_only:
-                rows.extend(conn.execute(columns + "AND e.kind='note' ORDER BY " + ordering + ',e.key LIMIT ? OFFSET ?', (normalize(parent), remaining, max(0, offset - folders))))
+                params = [normalize(parent)]
+                if sort.startswith('name-') and name_priority in ('han', 'digit', 'latin'):
+                    ordering = '(note_name_prefix(e.name) = ?) DESC,' + ordering
+                    params.append(name_priority)
+                params.extend((remaining, max(0, offset - folders)))
+                rows.extend(conn.execute(columns + "AND e.kind='note' ORDER BY " + ordering + ',e.key LIMIT ? OFFSET ?', params))
             return {'items': [self.entry(row) for row in rows], 'total': count, 'hasMore': offset + len(rows) < count, 'generation': current_generation}
 
     def close(self):

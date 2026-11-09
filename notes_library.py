@@ -922,7 +922,7 @@ class NotesStore:
     def _note_paths(self, *, strict: bool = False) -> list[Path]:
         return [target for target, _, _ in self._note_files(strict=strict)]
 
-    def tree(self, view=None) -> dict:
+    def tree(self, view=None, *, pin=None) -> dict:
         if self.sync.background:
             self._prepare_index()
         else:
@@ -933,7 +933,7 @@ class NotesStore:
             except NotesError as error:
                 raise NotesError(str(error), status=500, code='read_failed') from error
         if self.sync.background or view is not None:
-            return self._tree_page(view or {})
+            return self._tree_page(view or {}, pin=pin)
         rows = self.index.rows(folders=True)
         items = {row['path']: self.index.entry(row) for row in rows}
         entries = []
@@ -949,13 +949,15 @@ class NotesStore:
         return {"version": 2, "entries": entries, "generation": self.index.status()['generation'],
                 "index": self.sync.status()}
 
-    def _tree_page(self, view):
+    def _tree_page(self, view, *, pin=None):
         """Notebook roots, requested directory pages and pinned ancestors."""
         if not isinstance(view, dict):
             raise NotesError('目录视图无效')
         expanded, pins = view.get('expanded', []), view.get('pins', [])
         if not isinstance(expanded, list) or len(expanded) > 4096 or not isinstance(pins, list) or len(pins) > 256:
             raise NotesError('目录视图超出范围')
+        if pin and pin not in pins:
+            pins = [pin, *pins[:255]]
         parents = set(self.normalize_path(p, allow_root=True) for p in expanded)
         parents.add('')
         pins = [self.normalize_path(p) for p in pins if isinstance(p, str) and not p.startswith('relatum:')]
@@ -981,7 +983,8 @@ class NotesStore:
                         + ','.join('?' for _ in wanted) + ')', [unicodedata.normalize('NFC', p).casefold() for p in wanted]):
                     items[row['path']] = self.index.entry(row)
             for parent in parents:
-                page = self.index.children(parent, sort=view.get('sort', 'name-asc'), connection=conn)
+                page = self.index.children(parent, sort=view.get('sort', 'name-asc'),
+                                           name_priority=view.get('namePriority', 'auto'), connection=conn)
                 pagination[parent] = {'offset': len(page['items']), 'total': page['total'], 'hasMore': page['hasMore'], 'generation': page['generation']}
                 for item in page['items']:
                     if item['path'] not in items:
@@ -1184,11 +1187,12 @@ class NotesStore:
                 result['fileColorWarning'] = self.file_color_warning
         return result
 
-    def children(self, parent='', offset=0, limit=50, sort='name-asc', generation=None, folders_only=False):
+    def children(self, parent='', offset=0, limit=50, sort='name-asc', generation=None, folders_only=False, *, name_priority='auto'):
         parent = self.normalize_path(parent, allow_root=True)
         self._prepare_index()
         try:
-            result = self.index.children(parent, offset=offset, limit=limit, sort=sort, generation=generation, folders_only=folders_only)
+            result = self.index.children(parent, offset=offset, limit=limit, sort=sort, generation=generation,
+                                         folders_only=folders_only, name_priority=name_priority)
             return result
         except ValueError as error:
             raise NotesError(str(error), status=409 if '已更新' in str(error) else 400, code='query_changed' if '已更新' in str(error) else 'invalid') from error

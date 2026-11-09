@@ -179,6 +179,46 @@ class NoteIndexTests(unittest.TestCase):
             self.assertEqual(rows['total'], 66)
             self.assertEqual(len({r['path'] for r in rows['items'] + more['items']}), 66)
 
+    def test_directory_name_priority_precedes_pagination(self):
+        groups = {
+            'latin': [f'A{i}.md' for i in range(55)] + ['ＡI学习.md', 'a57.md'],
+            'han': ['第2章.md', '第10章.md', '𠀀练习.md', '﨑练习.md', '〇索引.md'],
+            'digit': ['2.实验.md', '10.实验.md', '３.实验.md'],
+            'other': ['📌索引.md', '_索引.md', 'Ω索引.md'],
+        }
+        for names in groups.values():
+            for name in names:
+                self.write(f'Mixed/{name}', 'body')
+        (self.root / 'Mixed' / 'ZFolder').mkdir()
+        self.store.sync.scan()
+
+        def read_pages(sort, priority='auto'):
+            first = self.store.children('Mixed', sort=sort, name_priority=priority)
+            second = self.store.children('Mixed', offset=50, sort=sort, name_priority=priority,
+                                         generation=first['generation'])
+            self.assertTrue(first['hasMore'])
+            self.assertFalse(second['hasMore'])
+            names = [row['path'].split('/')[-1] for row in first['items'] + second['items']]
+            self.assertEqual(len(set(names)), first['total'])
+            self.assertEqual(names[0], 'ZFolder')
+            return names[1:]
+
+        for sort in ('name-asc', 'name-desc'):
+            auto = read_pages(sort)
+            for priority in ('han', 'digit', 'latin'):
+                with self.subTest(sort=sort, priority=priority):
+                    preferred = set(groups[priority])
+                    expected = sorted(auto, key=lambda name: name not in preferred)
+                    self.assertEqual(read_pages(sort, priority), expected)
+                    tree = self.store.tree({'expanded': ['Mixed'], 'sort': sort, 'namePriority': priority})
+                    children = tree['entries'][0]['children']
+                    self.assertEqual({row['name'] + '.md' for row in children if row['kind'] == 'note'}, set(expected[:49]))
+        self.assertEqual(read_pages('modified-desc', 'digit'), read_pages('modified-desc'))
+        self.assertEqual(read_pages('name-asc', 'unknown'), read_pages('name-asc'))
+        pinned = self.store.tree({'expanded': ['Mixed'], 'sort': 'name-asc', 'namePriority': 'latin'}, pin='Mixed/第2章.md')
+        self.assertIn('Mixed/第2章.md', {row['path'] for row in pinned['entries'][0]['children']})
+        self.assertEqual(pinned['pagination']['Mixed']['offset'], 50)
+
     def test_restart_reuses_content_and_hot_queries_do_not_touch_files(self):
         self.write('A.md', 'needle [[B]] #tag')
         self.write('B.md', 'needle')

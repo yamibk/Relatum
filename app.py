@@ -10401,7 +10401,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 else:
                     result = NOTES_STORE.children(query.get('parent', [''])[0], int(query.get('offset', ['0'])[0]),
                         int(query.get('limit', ['50'])[0]), query.get('sort', ['name-asc'])[0],
-                        int(query['generation'][0]) if 'generation' in query else None, query.get('folders', ['0'])[0] == '1')
+                        int(query['generation'][0]) if 'generation' in query else None, query.get('folders', ['0'])[0] == '1',
+                        name_priority=query.get('namePriority', ['auto'])[0])
                 return self._send_json(200, result)
             except NotesError as err:
                 return self._send_notes_error(err)
@@ -11120,7 +11121,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 # GET；这也让“创建并开始输入”不受后台保存队列影响。
                 result.update(NOTES_STORE.load(result["path"]))
                 _usage_event("notes", result["path"], Path(result["path"]).name, "created", fingerprint=result.get("revision"))
-            result["tree"] = NOTES_STORE.tree(body.get('_tree', {}))
+            result["tree"] = NOTES_STORE.tree(body.get('_tree', {}), pin=result["path"])
         except NotesError as err:
             return self._send_notes_error(err)
         except OSError as err:
@@ -11202,12 +11203,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _api_note_import_commit(self, body: dict):
         try:
             result = NOTES_STORE.commit_import(body.get("token", ""))
-            result["tree"] = NOTES_STORE.tree(body.get('_tree', {}))
+            notes = result.get("notes", [])
+            result["tree"] = NOTES_STORE.tree(body.get('_tree', {}), pin=notes[0] if notes else None)
         except NotesError as err:
             return self._send_notes_error(err)
         except OSError as err:
             return self._send_json(500, {"error": f"提交导入失败：{err}"})
-        for relative in result.get("notes", []):
+        for relative in notes:
             try:
                 revision = NOTES_STORE.load(relative).get("revision")
                 _usage_event("notes", relative, Path(relative).name, "created", fingerprint=revision)

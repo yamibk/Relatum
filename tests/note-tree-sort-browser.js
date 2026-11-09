@@ -28,9 +28,212 @@ async function chooseSort(page, mode) {
   await page.locator(`#note-sort-menu [data-note-sort-mode="${mode}"]`).click();
 }
 
+const mixedParent = 'zFolder/Mixed';
+const pagedParent = 'zFolder/Paged';
+const prefixGroups = {
+  digit: ['2.实验', '10.实验', '３.实验'],
+  latin: ['Alpha2', 'aLPHA10', 'ＡI学习'],
+  han: ['第2章', '第10章', '𠀀练习', '﨑练习'],
+  other: ['📌索引', '_索引', 'Ω索引'],
+};
+const priorityKey = 'canvas:noteTreeNamePriority:v1';
+
+async function checkNamePriority(page) {
+  const left = '[data-role="note-tree"]', right = '[data-role="note-notebook-tree"]';
+  const row = (host, file) => page.locator(`${host} .note-tree-row[data-note-path="${file}"]`);
+  const children = (host, parent) => page.locator(`${host} .note-tree-entry[data-path="${parent}"] > .note-tree-children-shell > .note-tree-children > .note-tree-entry > .note-tree-row`);
+  const expand = async (host, folder) => {
+    const target = row(host, folder);
+    if (await target.getAttribute('aria-expanded') !== 'true') await target.locator('.note-tree-toggle').click();
+  };
+  const settings = page.locator('#note-settings-dialog');
+  const selector = settings.locator('[data-role="note-library-name-priority-setting"] .review-choice-trigger');
+  const select = settings.locator('#note-tree-name-priority');
+  const sort = mode => settings.locator(`[data-note-sort-mode="${mode}"]`).click();
+  const openSettings = () => page.locator('[data-note-action="toggle-library-settings"]').click();
+  const choosePriority = async label => {
+    await selector.click();
+    await settings.getByRole('option', { name: label, exact: true }).click();
+  };
+  const expectMixed = async (priority, locale = 'zh-CN', direction = 1) => {
+    const expected = await page.evaluate(({ groups, priority, locale, direction, parent }) => {
+      const compare = new Intl.Collator(locale, { numeric: true, sensitivity: 'base' }).compare;
+      const preferred = groups[priority] || [];
+      const names = Object.values(groups).flat().sort((a, b) => Number(preferred.includes(b)) - Number(preferred.includes(a)) || direction * compare(a, b));
+      return [parent + '/ZChild', ...names.map(name => `${parent}/${name}.md`)];
+    }, { groups: prefixGroups, priority, locale, direction, parent: mixedParent });
+    for (const host of [left, right]) {
+      assert.deepEqual(await children(host, mixedParent).evaluateAll(rows => rows.map(row => row.dataset.notePath)), expected);
+    }
+  };
+
+  await page.keyboard.press('Escape');
+  const notebookToggle = page.locator('[data-note-action="toggle-notebooks"]');
+  if (await notebookToggle.getAttribute('aria-expanded') !== 'true') await notebookToggle.click();
+  await expand(left, 'zFolder');
+  await expand(left, mixedParent);
+  await expand(right, '');
+  await expand(right, 'zFolder');
+  await expand(right, mixedParent);
+  const openedPath = mixedParent + '/第2章.md';
+  await row(left, openedPath).click();
+  await page.waitForFunction(path => CanvasNoteWorkspace.currentPath === path, openedPath);
+  const originalRow = await row(left, openedPath).elementHandle();
+  const originalEditor = await page.locator('.cm-editor').elementHandle();
+
+  await page.evaluate(() => RelatumNoteTheme.apply('apple'));
+  await openSettings();
+  assert.equal(await selector.isVisible(), false);
+  await sort('name-asc');
+  assert.equal(await select.inputValue(), 'auto');
+  await expectMixed('auto');
+  await choosePriority('汉字开头优先');
+  await expectMixed('han');
+  await selector.press('ArrowDown');
+  await page.keyboard.press('Home');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  assert.equal(await select.inputValue(), 'digit');
+  await expectMixed('digit');
+  await sort('name-desc');
+  await expectMixed('digit', 'zh-CN', -1);
+  await sort('modified-desc');
+  assert.equal(await selector.isVisible(), false);
+  assert.equal(await select.inputValue(), 'digit');
+  await sort('name-asc');
+  await choosePriority('英文字母开头优先');
+  await expectMixed('latin');
+  await page.evaluate(() => RelatumI18n.setLanguage('en'));
+  assert.equal(await selector.getAttribute('aria-label'), 'File name prefix priority');
+  await expectMixed('latin', 'en');
+  await choosePriority('Follow interface language (default)');
+  await expectMixed('auto', 'en');
+  await choosePriority('English letters first');
+  await page.evaluate(key => {
+    const original = Storage.prototype.setItem;
+    window.__restoreSortStorage = () => { Storage.prototype.setItem = original; };
+    Storage.prototype.setItem = function (name, value) {
+      if (name === key) throw new DOMException('Test write failure', 'QuotaExceededError');
+      return original.call(this, name, value);
+    };
+  }, priorityKey);
+  await choosePriority('Han characters first');
+  await page.evaluate(() => window.__restoreSortStorage());
+  assert.equal(await select.inputValue(), 'latin');
+  assert.match(await settings.locator('[data-settings-status]').textContent(), /Could not save/);
+  await expectMixed('latin', 'en');
+  await choosePriority('Digits first');
+  await choosePriority('English letters first');
+
+  await settings.locator('[data-settings-search]').fill('file name prefix priority');
+  await settings.getByRole('button', { name: /File name prefix priority/ }).click();
+  assert(await selector.evaluate(button => button === document.activeElement));
+  for (const [width, mode] of [[1440, 'light'], [1440, 'dark'], [575, 'light'], [575, 'dark']]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, mode);
+    await selector.click();
+    const list = settings.getByRole('listbox', { name: 'File name prefix priority' });
+    const bounds = await list.boundingBox();
+    assert(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width + 1);
+    assert.equal(await list.getByRole('option').count(), 4);
+    await list.evaluate(node => Promise.all(node.closest('.review-choice-popup').getAnimations().map(animation => animation.finished)));
+    await page.screenshot({ path: path.join(root, `priority-apple-${width}-${mode}.png`) });
+    await page.keyboard.press('Escape');
+    assert.equal(await settings.isVisible(), true);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await settings.locator('[data-settings-action="close"]').click();
+  assert(await originalRow.evaluate(node => node.isConnected), 'reordering should reuse the selected row');
+  assert(await originalEditor.evaluate(node => node.isConnected), 'reordering should preserve the editor');
+  assert.equal(await page.evaluate(() => CanvasNoteWorkspace.currentPath), openedPath);
+
+  await page.reload();
+  await page.locator('button[data-start-workspace="notes"]').click();
+  await row(left, openedPath).waitFor();
+  await openSettings();
+  assert.equal(await select.inputValue(), 'latin');
+  await settings.locator('[data-settings-action="close"]').click();
+  await expand(left, pagedParent);
+  const firstHan = await page.evaluate(async parent => {
+    const response = await fetch(`/api/note-children?parent=${encodeURIComponent(parent)}&sort=name-asc&namePriority=han&limit=1`);
+    return (await response.json()).items[0].path;
+  }, pagedParent);
+  assert.equal(firstHan, pagedParent + '/汉字优先.md');
+  const more = page.locator(`${left} [data-note-more="${pagedParent}"]`);
+  await more.waitFor({ state: 'attached' });
+  const pattern = '**/api/note-children?*';
+  let release, started, delivered, intercepted = false;
+  const gate = new Promise(resolve => { release = resolve; });
+  const requestStarted = new Promise(resolve => { started = resolve; });
+  const responseDelivered = new Promise(resolve => { delivered = resolve; });
+  await page.route(pattern, async route => {
+    const params = new URL(route.request().url()).searchParams;
+    if (intercepted || params.get('parent') !== pagedParent || params.get('namePriority') !== 'latin' || !Number(params.get('offset'))) return route.continue();
+    intercepted = true;
+    started();
+    await gate;
+    const result = { items: [{ kind: 'note', path: pagedParent + '/LateResult.md', name: 'LateResult' }], hasMore: false };
+    await route.fulfill({ json: result });
+    delivered();
+  });
+  try {
+    await more.evaluate(button => button.click());
+    await Promise.race([requestStarted, sleep(5000).then(() => { throw Error('directory request did not start'); })]);
+    await openSettings();
+    await choosePriority('Han characters first');
+    await choosePriority('Digits first');
+    await choosePriority('English letters first');
+    release();
+    await responseDelivered;
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await row(left, pagedParent + '/LateResult.md').count(), 0, 'late response from the original Latin order must be discarded');
+    const treePattern = '**/api/notes-tree?*';
+    const isHanView = url => {
+      const request = new URL(url);
+      return request.pathname === '/api/notes-tree' && JSON.parse(request.searchParams.get('view') || '{}').namePriority === 'han';
+    };
+    const failFirstPage = route => isHanView(route.request().url())
+      ? route.fulfill({ status: 503, json: { error: 'Test unavailable directory', code: 'index_unavailable' } }) : route.continue();
+    await page.route(treePattern, failFirstPage);
+    try {
+      const failure = page.waitForResponse(response => isHanView(response.url()) && response.status() === 503);
+      await choosePriority('Han characters first');
+      await failure;
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert(await children(left, pagedParent).count(), 'keep the loaded rows after a first-page failure');
+    } finally { await page.unroute(treePattern, failFirstPage); }
+    const retry = page.waitForResponse(response => isHanView(response.url()) && response.ok());
+    await more.evaluate(button => button.click());
+    await retry;
+    await page.waitForFunction(parent => document.querySelector(`[data-role="note-tree"] .note-tree-entry[data-path="${parent}"] .note-tree-children .note-tree-row`)?.dataset.notePath === parent + '/汉字优先.md', pagedParent);
+    await settings.locator('[data-settings-action="reset-category"]').click();
+    await settings.locator('[data-settings-action="accept-reset"]').click();
+    assert.equal(await select.inputValue(), 'auto');
+    assert.equal(await selector.isVisible(), false);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), priorityKey), null);
+    await sort('name-asc');
+    await choosePriority('Digits first');
+    await settings.locator('[data-settings-action="reset-all"]').click();
+    await settings.locator('[data-settings-action="accept-reset"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-settings-status]').textContent === 'Defaults restored');
+    assert.equal(await select.inputValue(), 'auto');
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), priorityKey), null);
+  } finally {
+    release();
+    await page.unroute(pattern);
+  }
+}
+
 (async () => {
   fs.mkdirSync(path.join(notes, 'aFolder'), { recursive: true });
   fs.mkdirSync(path.join(notes, 'zFolder'));
+    fs.mkdirSync(path.join(notes, mixedParent, 'ZChild'), { recursive: true });
+    fs.mkdirSync(path.join(notes, pagedParent));
+    for (const name of Object.values(prefixGroups).flat()) fs.writeFileSync(path.join(notes, mixedParent, `${name}.md`), 'Mixed note');
+    for (const name of [...Array.from({ length: 56 }, (_, i) => `A${i}`), '汉字优先', '9.实验']) {
+      fs.writeFileSync(path.join(notes, pagedParent, `${name}.md`), 'Paged note');
+    }
   fs.writeFileSync(path.join(notes, 'aFolder', 'B.md'), 'B');
   fs.writeFileSync(path.join(notes, 'aFolder', 'C.md'), 'C');
   for (const name of ['A', 'Z', 'M']) {
@@ -241,6 +444,7 @@ async function chooseSort(page, mode) {
     await page.locator('.note-tree-scroll > .note-tree-entry[data-path="新建文件夹"] > .note-tree-row').waitFor();
     assert.equal(await page.locator('.note-tree-entry[data-path="aFolder"] .note-tree-entry[data-path="aFolder/新建文件夹"]').count(), 0,
       'blank tree click must target the notes root even while a nested note is open');
+    await checkNamePriority(page);
     assert.deepEqual(errors, []);
     await context.close();
     console.log('note tree sorting and naming browser: ok');
