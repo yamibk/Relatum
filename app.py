@@ -3002,15 +3002,25 @@ def save_notes(data: dict, *, note_page: int | None = None) -> dict:
     if note_page is not None:
         note_page = _note_page(note_page, strict=True)
         previous = load_notes()
-        data = {key: [item for item in previous[key] if item["notePage"] != note_page]
-                + [{**item, "notePage": note_page} for item in (data.get(key, []) if isinstance(data.get(key, []), list) else [])
-                   if isinstance(item, dict)]
-                for key in ("notes", "edges", "arrows")}
-    payload = _build_notes_payload(
-        data.get("notes", []) if isinstance(data, dict) else [],
-        data.get("edges", []) if isinstance(data, dict) else [],
-        data.get("arrows", []) if isinstance(data, dict) else [],
-    )
+        keys = ("notes", "edges", "arrows")
+        items = {}
+        for key in keys:
+            raw = data.get(key)
+            items[key] = [
+                {**item, "notePage": note_page} for item in raw if isinstance(item, dict)
+            ] if isinstance(raw, list) else []
+        replacement = _build_notes_payload(items["notes"], items["edges"], items["arrows"])
+        # load_notes already validated the retained pages. Keep their original order.
+        payload = {"version": 2, **{
+            key: [item for item in previous[key] if item["notePage"] != note_page] + replacement[key]
+            for key in keys
+        }}
+    else:
+        payload = _build_notes_payload(
+            data.get("notes", []) if isinstance(data, dict) else [],
+            data.get("edges", []) if isinstance(data, dict) else [],
+            data.get("arrows", []) if isinstance(data, dict) else [],
+        )
     _atomic_write_json(NOTES_FILE, payload)
     return payload
 

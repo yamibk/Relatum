@@ -64,6 +64,37 @@ class QuickNotesPagesTests(unittest.TestCase):
         self.assertEqual(after["highestPage"], 2)
         self.assertTrue(all(item["notePage"] == 2 for key in ("notes", "edges", "arrows") for item in after[key]))
 
+    def test_page_save_reuses_validated_other_pages_in_original_order(self):
+        keys = ("notes", "edges", "arrows")
+        raw = {
+            "notes": [self.note("late", 8), self.note("old", 2), self.note("early", 1),
+                      self.note("second", 8), self.note("late", 8, text="重复 ID")],
+            "edges": [{"id": "stored", "from": "late", "to": "second", "notePage": 8},
+                      {"id": "dangling", "from": "early", "to": "old", "notePage": 1}],
+            "arrows": [{"id": "free", "x1": 0, "y1": 1, "x2": 2, "y2": 3, "notePage": 99}],
+        }
+        app.NOTES_FILE.write_text(json.dumps(raw), encoding="utf-8")
+        submitted = {
+            "notes": [self.note("new", 1), self.note("pair", 8), self.note("new", 8)],
+            "edges": [{"id": "kept", "from": "new", "to": "pair", "notePage": 8},
+                      {"id": "cross-page", "from": "new", "to": "late"}],
+            "arrows": [{"id": "new-arrow", "fromNote": "pair", "x2": 8, "y2": 9}],
+        }
+        previous = app.load_notes()
+        merged = [[item for item in previous[key] if item["notePage"] != 2]
+                  + [{**item, "notePage": 2} for item in submitted[key]] for key in keys]
+        expected = app._build_notes_payload(*merged)
+        with patch.object(app, "_build_notes_payload", wraps=app._build_notes_payload) as normalize:
+            saved = app.save_notes(submitted, note_page=2)
+        self.assertEqual(normalize.call_count, 2)
+        self.assertTrue(all(item["notePage"] == 2 for items in normalize.call_args.args for item in items))
+        self.assertEqual(saved, expected)
+        self.assertEqual(app.load_notes(), expected)
+        page = app.notes_page_payload(saved, 2)
+        self.assertEqual(page["highestPage"], 99)
+        self.assertEqual([item["id"] for item in page["notes"]], ["new", "pair"])
+        self.assertEqual([item["id"] for item in page["edges"]], ["kept"])
+
     def test_legacy_save_only_replaces_first_page(self):
         self.save(99, [self.note("keep")])
         handler = Capture()

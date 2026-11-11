@@ -287,7 +287,7 @@ async function main() {
       if (!response.ok) throw Error('Large fixture failed');
       localStorage.setItem('canvas:notesPage:v1', '98');
     });
-    await page.reload();
+    await page.goto(url + '/?view=notes');
     await page.waitForFunction(() => window.CanvasNotes && CanvasNotes.getPage() === 98 && CanvasNotes.count() === 96);
     await page.waitForTimeout(450);
     await edit('large-0', '大数据正文保存');

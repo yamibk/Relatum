@@ -10,6 +10,7 @@
   const GoalTree = window.RelatumStudyGoalTree || null;
   let studyRefreshSeq = 0;
   let studyLoaded = false;
+  let renderedStudyTasks = null;
   let studyRevealTimer = 0;
   let studyRevealKey = '';
   let studyEntranceExitFrozen = false;
@@ -802,7 +803,9 @@
       return;
     }
     ensureStudyLoaded().then(function (loaded) {
-      if (loaded) { render(); replayStudyEntrance('activate'); }
+      if (!loaded) return;
+      if (renderedStudyTasks !== state.tasks) render();
+      replayStudyEntrance('activate');
     });
   }
   window.StudyView = {
@@ -3363,6 +3366,7 @@
         && (viewMode !== 'progress' || !progressSettingsTrigger || !progressSettingsTrigger.isConnected)) {
       closeProgressSettings(false, true);
     }
+    renderedStudyTasks = state.tasks;
   }
 
   let studyPreloadHandle = 0;

@@ -1288,9 +1288,10 @@
         localItemsByTree.set(tree.id, (tree.freeItems || []).map(cloneFreeItem));
       }
     });
-    state.trees = trees;
-    state.trees.forEach(function (tree) {
-      if (localItemsByTree.has(tree.id)) tree.freeItems = localItemsByTree.get(tree.id);
+    // 渲染会替换活动树；保留服务端快照供再次打开时复核。
+    state.trees = trees.map(function (tree) {
+      return localItemsByTree.has(tree.id)
+        ? Object.assign({}, tree, { freeItems: localItemsByTree.get(tree.id) }) : tree;
     });
   }
   function applyTreePayloadInitial(json) {
@@ -4070,15 +4071,23 @@
     if (shared && shared.tasks && shared !== studyCache) studyCache = shared;
     if (studyCache && studyCache.tasks) {
       var epoch = treeEpoch;
-      applyStudyPayloadAfterFont(studyCache, requestId, taskId, requestedTreeId);
-      api('/api/tree-page').then(function (json) {
+      var cachedSnapshot = JSON.stringify(studyCache);
+      var cachedRender = applyStudyPayloadAfterFont(studyCache, requestId, taskId, requestedTreeId)
+        .then(function () { return true; }, function () { return false; });
+      api('/api/tree-page').then(async function (json) {
         if (!json || !json.tasks) return;
+        var cachedRendered = await cachedRender;
         // 快照取自切树前（纪元已推进）或面板已关/重开：丢弃，避免旧快照回退切换；
         // 也不更新 studyCache，防止下次打开先把回退态闪出来。
         if (epoch !== treeEpoch || !open || requestId !== routeRequestId) return;
+        if (cachedRendered && JSON.stringify(json) === cachedSnapshot) return;
         studyCache = json; window[STUDY_DATA_CACHE_KEY] = json;
-        applyStudyPayloadAfterFont(json, requestId, taskId, requestedTreeId);
-      }).catch(function () {});
+        return applyStudyPayloadAfterFont(json, requestId, taskId, requestedTreeId);
+      }).catch(async function (error) {
+        if (await cachedRender || epoch !== treeEpoch || !open || requestId !== routeRequestId) return;
+        scene.classList.remove('is-loading');
+        showError(error);
+      });
       return;
     }
     if (shared && shared.tasks) {

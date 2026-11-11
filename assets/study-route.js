@@ -1603,15 +1603,27 @@
     if (shared && shared.tasks && shared !== studyCache) studyCache = shared;
     if (studyCache && studyCache.tasks) {
       var epoch = treeEpoch;
-      applyStudyPayload(studyCache, requestId, taskId, requestedTreeId);
+      var cachedSnapshot = JSON.stringify(studyCache);
+      var cachedRendered = false;
+      try {
+        applyStudyPayload(studyCache, requestId, taskId, requestedTreeId);
+        cachedRendered = true;
+      } catch (error) {
+        // 缓存无法呈现时，仍尝试服务端快照。
+      }
       api('/api/study').then(function (json) {
         if (!json || !json.tasks) return;
         // 快照取自切树前（纪元已推进）或面板已关/重开：丢弃，避免旧快照回退切换；
         // 也不更新 studyCache，防止下次打开先把回退态闪出来。
         if (epoch !== treeEpoch || !open || requestId !== routeRequestId) return;
+        if (cachedRendered && JSON.stringify(json) === cachedSnapshot) return;
         studyCache = json; window[STUDY_DATA_CACHE_KEY] = json;
         applyStudyPayload(json, requestId, taskId, requestedTreeId);
-      }).catch(function () {});
+      }).catch(function (error) {
+        if (cachedRendered || epoch !== treeEpoch || !open || requestId !== routeRequestId) return;
+        scene.classList.remove('is-loading');
+        showError(error);
+      });
       return;
     }
     if (shared && shared.tasks) {
