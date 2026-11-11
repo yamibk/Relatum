@@ -1683,7 +1683,7 @@
 
   function headingPosition(source, rawFragment) {
     const wanted = decodedLinkPart(rawFragment).replace(/^#/, '').trim().toLocaleLowerCase();
-    if (!wanted) return { offset: 0, line: 0 };
+    if (!wanted) return { offset: 0, markerOffset: 0, line: 0 };
     const slug = (value) => String(value || '').trim().toLocaleLowerCase()
       .replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s+/g, '-');
     const lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
@@ -1692,7 +1692,7 @@
       const parsed = window.MarkdownMini && window.MarkdownMini.structure
         ? window.MarkdownMini.structure.parseHeading(lines[index]) : null;
       if (parsed && (parsed.text.trim().toLocaleLowerCase() === wanted || slug(parsed.text) === wanted)) {
-        return { offset, line: index };
+        return { offset, markerOffset: offset + lines[index].indexOf('#'), line: index };
       }
       offset += lines[index].length + 1;
     }
@@ -1704,9 +1704,13 @@
     const position = headingPosition(state.current.content, fragment);
     if (!position) return false;
     if (state.viewMode === 'reading' && readingHost) {
-      const heading = readingHost.querySelector('[data-ln="' + position.line + '"]');
-      if (heading) heading.scrollIntoView({ block: 'start' });
-      return !!heading;
+      const heading = readingHost.querySelector(typeof window.RelatumNoteLiveEditor?.renderMarkdown === 'function'
+        ? '[data-note-heading-from="' + position.markerOffset + '"]'
+        : '[data-ln="' + position.line + '"]');
+      if (!heading) return false;
+      cancelDocumentViewportRestore();
+      heading.scrollIntoView({ block: 'start' });
+      return true;
     }
     if (liveEditor && typeof liveEditor.revealPosition === 'function') {
       liveEditor.revealPosition(position.offset);

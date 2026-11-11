@@ -106,6 +106,7 @@
         ['列表与任务', 'Lists and tasks', text('- 第一项\n- 第二项\n\n1. 有序项目\n2. 下一项\n\n- [ ] 待完成\n- [x] 已完成', '- First item\n- Second item\n\n1. Ordered item\n2. Next item\n\n- [ ] To do\n- [x] Completed')],
         ['引用', 'Quotes', '> ' + text('引用一段文字。', 'A quoted paragraph.')],
         ['链接与双链', 'Links and wiki links', text('[链接文字](https://example.com)\n\n[[笔记名称]]\n\n[[笔记名称#标题|显示名称]]', '[Link text](https://example.com)\n\n[[Note name]]\n\n[[Note name#Heading|Display name]]'), text('双链指向库内笔记；这里的预览只用于展示。', 'Wiki links point to notes in your library. This preview is only an example.')],
+        ['标题跳转', 'Jump to a heading', text('[跳到研究方法](#研究方法)\n\n## 研究方法', '[Jump to Methods](#Methods)\n\n## Methods'), text('粘贴到笔记后，在实时预览或源码模式下按住 Ctrl 单击链接，在阅读模式下直接单击。', 'Paste this into a note. Ctrl-click the link in Live Preview or Source mode, or click it in Reading mode.')],
         ['图片', 'Images', text('![图片说明](图片.png)', '![Image description](image.png)'), text('相对路径从当前笔记所在目录查找。', 'Relative paths start in the current note’s folder.')],
         ['行内代码与代码块', 'Inline code and code blocks', '`const value = 1`\n\n```javascript\nconst value = 1;\n```'],
         ['表格', 'Tables', text('| 名称 | 说明 |\n| --- | --- |\n| Markdown | 笔记语法 |', '| Name | Description |\n| --- | --- |\n| Markdown | Note syntax |')],

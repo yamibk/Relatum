@@ -14,7 +14,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   fs.mkdirSync(path.join(notes, 'one'), { recursive: true });
   fs.mkdirSync(path.join(notes, 'two'));
   for (const [name, content] of Object.entries({ 'A.md': original, 'B.md': '第二篇\n', 'C.md': '第三篇\n',
-    'Long.md': '# 开头\n\n' + '一段很长的正文。\n\n'.repeat(80) + '## 目标标题\n\n结束\n',
+    'Long.md': '# 开头\n\n[跳到目标](#缩进标题)\n\n' + '一段很长的正文。\n\n'.repeat(80) + '## 目标标题\n\n  ## 缩进标题\n\n结束\n',
     'Other.md': '# 其他开头\n\n' + '另一篇笔记的正文。\n\n'.repeat(60) + '## 目标标题\n\n其他结尾\n',
     'one/Dup.md': '一\n', 'two/Dup.md': '二\n' })) fs.writeFileSync(path.join(notes, name), content);
   const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
@@ -164,6 +164,17 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await reset('reading');
     await page.locator('[data-role="note-reading-view"] [data-href="B.md"]').click({ modifiers: ['Control'] });
     await expectTabs(['B.md'], 'B.md');
+    await reset('reading');
+    await page.evaluate(() => T.openNote('Long.md'));
+    const reader = page.locator('[data-role="note-reading-view"]');
+    await reader.getByText('跳到目标', { exact: true }).click();
+    await page.waitForFunction(() => {
+      const host = document.querySelector('[data-role="note-reading-view"]');
+      const target = [...host.querySelectorAll('h2[data-note-heading-from]')].find(node => node.textContent === '缩进标题');
+      const bounds = target?.getBoundingClientRect(), viewport = host.getBoundingClientRect();
+      return host.scrollTop > 300 && bounds && bounds.top >= viewport.top - 2 && bounds.bottom <= viewport.bottom;
+    });
+    await expectTabs(['Long.md'], 'Long.md');
 
     // Hold the real navigation's two frames across state changes. Both target
     // documents contain the same heading, so a stale jump would be observable.
