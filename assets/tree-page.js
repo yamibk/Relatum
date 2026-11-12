@@ -39,6 +39,7 @@
   var guidePage = 0;
   var routeRequestId = 0, routeCloseTimer = 0, routeCloseAnimationHandler = null;
   var routeReturnFocus = null;
+  var workspaceReturn = null, pageReturn = null;
   // 数据命令纪元：任何本地变更开始时递增。后台 /api/tree-page 快照若取自
   // 变更之前，落地时必须丢弃，避免覆盖乐观创建、进度或切树结果。
   var treeEpoch = 0;
@@ -53,6 +54,7 @@
   var nodeElements = new Map(), edgeElements = new Map(), visualPlacements = new Map();
   var freeItemElements = new Map();
   var selectedFreeItemId = '', editingFreeItemId = '', editingFreeItemOriginal = '';
+  var editingFreeItemCompositionText = null;
   var editingFreeItemIsNew = false, armedFreeItemKind = '';
   var freeItemGesture = null, freeItemDrag = null, freeItemResize = null;
   var freeItemBlankPointer = null, freeItemTextSaveTimer = 0;
@@ -147,6 +149,7 @@
   var studyCache = null, studyPrefetchId = 0, studyPrefetchPromise = null;
   var treePagePreloadHandle = 0, treePagePreloadUsesIdle = false;
   var treeGoalBreathTimer = 0;
+  var TREE_GOAL_READY_SELECTOR = '.study-route-node:is(.is-task, .is-root).is-goal-ready';
   var replayCleanupTimers = new WeakMap();
   var prefersReduced = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (error) { return false; }
@@ -469,17 +472,21 @@
     return Array.from(String(value == null ? '' : value).replace(/\r\n?/g, '\n'))
       .slice(0, FREE_ITEM_TEXT_MAX).join('');
   }
+  function readFreeItemText(text) {
+    return normalizeFreeItemText(text.innerText != null ? text.innerText : text.textContent || '');
+  }
   function saveEditingFreeItemText() {
     var item = findFreeItem(editingFreeItemId);
     var text = freeItemTextElement(editingFreeItemId);
     if (!item || !text) return;
-    var value = normalizeFreeItemText(text.innerText != null ? text.innerText : text.textContent || '');
+    var value = editingFreeItemCompositionText === null ? readFreeItemText(text) : editingFreeItemCompositionText;
     if (item.text === value) return;
     var before = cloneFreeItem(item);
     item.text = value; syncActiveTreeReference();
     queueFreeItemUpdate(item, before);
   }
   function scheduleEditingFreeItemSave() {
+    if (editingFreeItemCompositionText !== null) return;
     if (freeItemTextSaveTimer) clearTimeout(freeItemTextSaveTimer);
     freeItemTextSaveTimer = window.setTimeout(function () {
       freeItemTextSaveTimer = 0; saveEditingFreeItemText();
@@ -503,7 +510,7 @@
     scheduleEditingFreeItemSave();
   }
   function enterFreeItemEdit(item, isNew) {
-    if (!item) return;
+    if (!item || (editingFreeItemId === item.id && editingFreeItemCompositionText !== null)) return;
     if (editingFreeItemId && editingFreeItemId !== item.id) commitFreeItemEdit();
     selectedFreeItemId = item.id;
     editingFreeItemId = item.id;
@@ -522,11 +529,15 @@
   }
   function commitFreeItemEdit() {
     if (!editingFreeItemId) return;
-    if (freeItemTextSaveTimer) { clearTimeout(freeItemTextSaveTimer); freeItemTextSaveTimer = 0; }
     var itemId = editingFreeItemId;
-    saveEditingFreeItemText();
     var item = findFreeItem(itemId);
     var text = freeItemTextElement(itemId);
+    // Give the IME a chance to finish when focus leaves. If it has not settled,
+    // save the committed text from before composition started.
+    if (text && editingFreeItemCompositionText !== null) text.blur();
+    if (freeItemTextSaveTimer) { clearTimeout(freeItemTextSaveTimer); freeItemTextSaveTimer = 0; }
+    saveEditingFreeItemText();
+    editingFreeItemCompositionText = null;
     editingFreeItemId = ''; editingFreeItemOriginal = ''; editingFreeItemIsNew = false;
     if (!item) return;
     if (text) { text.contentEditable = 'false'; text.textContent = item.text; }
@@ -540,6 +551,7 @@
     if (freeItemTextSaveTimer) { clearTimeout(freeItemTextSaveTimer); freeItemTextSaveTimer = 0; }
     var itemId = editingFreeItemId, wasNew = editingFreeItemIsNew;
     var item = findFreeItem(itemId), previousText = editingFreeItemOriginal;
+    editingFreeItemCompositionText = null;
     editingFreeItemId = ''; editingFreeItemOriginal = ''; editingFreeItemIsNew = false;
     if (!item) return;
     if (wasNew) {
@@ -801,9 +813,7 @@
     if (focusViewport && viewport) viewport.focus({ preventScroll: true });
   }
   function progressPanelShortcutBlocked(event) {
-    // The canvas workspace keeps this page mounted while another workspace is in front.
-    if (document.body.dataset.startWorkspace !== 'canvas' || document.hidden
-      || overlay.closest('[hidden], [inert]')) return true;
+    if (!treePageIsForeground() || overlay.closest('[hidden], [inert]')) return true;
     if (!open || event.key !== 'Tab' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey
       || event.isComposing || event.keyCode === 229) return true;
     if (editingFreeItemId || armedFreeItemKind || visualLinkDrag
@@ -923,26 +933,27 @@
     if (progressPanelRenderFrame) return;
     progressPanelRenderFrame = requestAnimationFrame(function () {
       progressPanelRenderFrame = 0;
-      renderProgressPanelRows(false);
+      renderProgressPanelRows(false, true);
     });
   }
-  function renderProgressPanelRows(initial) {
-    if (!progressPanelList || !progressPanelIsVisible()) return;
+  function renderProgressPanelRows(initial, scrollOnly) {
+    if (!progressPanelList || !progressPanelIsVisible() || deferWorkspaceRender()) return;
     var task = activeProgressTask(selectedProgressTaskId);
     var progress = taskProgress(task);
     if (!task || !progress.target) return;
     var virtualized = progress.target > PROGRESS_PANEL_VIRTUAL_THRESHOLD;
     var first = 1, last = progress.target, host = progressPanelList;
     if (virtualized) {
-      progressPanelList.dataset.virtual = '1';
       var spacer = progressPanelList.querySelector('.tree-page-progress-virtual-spacer');
       if (!spacer) {
         spacer = document.createElement('div');
         spacer.className = 'tree-page-progress-virtual-spacer';
+        progressPanelList.dataset.virtual = '1';
         progressPanelList.replaceChildren(spacer);
         progressPanelRowElements.clear();
       }
-      spacer.style.height = (progress.target * PROGRESS_PANEL_ROW_HEIGHT) + 'px';
+      var height = (progress.target * PROGRESS_PANEL_ROW_HEIGHT) + 'px';
+      if (spacer.style.height !== height) spacer.style.height = height;
       host = spacer;
       var scrollTop = progressPanelList.scrollTop;
       var viewportHeight = progressPanelList.clientHeight || 520;
@@ -954,23 +965,25 @@
       progressPanelList.replaceChildren();
       progressPanelRowElements.clear();
     }
-    var wanted = new Set();
-    var fragment = document.createDocumentFragment();
+    progressPanelRowElements.forEach(function (row, at) {
+      if (at < first || at > last) { row.remove(); progressPanelRowElements.delete(at); }
+    });
+    // Moving an existing row through a fragment blurs its focused editor.
+    var fragment = null;
     for (var at = first; at <= last; at += 1) {
-      wanted.add(at);
       var row = progressPanelRowElements.get(at);
-      var rowIsNew = !row;
-      if (!row) {
+      if (row) {
+        if (fragment) { host.insertBefore(fragment, row); fragment = null; }
+        if (!scrollOnly) syncProgressPanelRow(row, task, progress, at, initial, virtualized);
+      } else {
         row = createProgressPanelRow(at);
         progressPanelRowElements.set(at, row);
+        syncProgressPanelRow(row, task, progress, at, true, virtualized);
+        if (!fragment) fragment = document.createDocumentFragment();
+        fragment.appendChild(row);
       }
-      syncProgressPanelRow(row, task, progress, at, initial || rowIsNew, virtualized);
-      fragment.appendChild(row);
     }
-    progressPanelRowElements.forEach(function (row, at) {
-      if (!wanted.has(at)) { row.remove(); progressPanelRowElements.delete(at); }
-    });
-    host.appendChild(fragment);
+    if (fragment) host.appendChild(fragment);
   }
   function positionProgressPanelAtFirstIncomplete(task) {
     if (!task || progressPanelUserScrolled) return;
@@ -978,7 +991,7 @@
     if (!progress.target) return;
     var at = Math.min(progress.target, progress.current + 1);
     requestAnimationFrame(function () {
-      if (!progressPanelIsVisible() || selectedProgressTaskId !== task.id || progressPanelUserScrolled) return;
+      if (!progressPanelIsVisible() || selectedProgressTaskId !== task.id || progressPanelUserScrolled || workspaceReturn) return;
       progressPanelPositioning = true;
       progressPanelList.scrollTop = Math.max(0,
         (at - 1) * PROGRESS_PANEL_ROW_HEIGHT - Math.max(0, progressPanelList.clientHeight * .32));
@@ -987,7 +1000,7 @@
     });
   }
   function syncProgressPanelContent(options) {
-    if (!progressPanel || !progressPanelList) return;
+    if (!progressPanel || !progressPanelList || deferWorkspaceRender()) return;
     options = options || {};
     var task = activeProgressTask(selectedProgressTaskId);
     if (!task && selectedProgressTaskId) {
@@ -1223,7 +1236,7 @@
     drainProgressPointNames();
   }
   function replayClass(element, className, cleanupMs) {
-    if (!element || prefersReduced) return;
+    if (!element || prefersReduced || workspaceReturn) return;
     var cleanupByClass = replayCleanupTimers.get(element) || new Map();
     window.clearTimeout(cleanupByClass.get(className));
     cleanupByClass.delete(className);
@@ -1256,9 +1269,16 @@
       cancelReplayClass(node, 'is-goal-breathing');
     });
   }
+  function documentIsForeground() {
+    return !document.hidden && document.documentElement.dataset.desktopMinimized !== '1';
+  }
+  function treePageIsForeground() {
+    return open && !workspaceReturn && documentIsForeground()
+      && document.body.dataset.startWorkspace === 'canvas';
+  }
   function visibleTreeGoalNodes() {
     return Array.prototype.filter.call(nodesHost.querySelectorAll(
-      '.study-route-node:is(.is-task, .is-root).is-goal-ready:not(.is-goal-pending):not(.is-goal-celebrating)'
+      TREE_GOAL_READY_SELECTOR + ':not(.is-goal-pending):not(.is-goal-celebrating)'
     ), function (node) {
       var rect = node.getBoundingClientRect();
       return rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth;
@@ -1267,10 +1287,10 @@
   function scheduleTreeGoalBreath(delay) {
     window.clearTimeout(treeGoalBreathTimer);
     treeGoalBreathTimer = 0;
-    if (prefersReduced || !open || document.hidden) return;
+    if (prefersReduced || !treePageIsForeground() || !nodesHost.querySelector(TREE_GOAL_READY_SELECTOR)) return;
     treeGoalBreathTimer = window.setTimeout(function () {
       treeGoalBreathTimer = 0;
-      if (prefersReduced || !open || document.hidden) return;
+      if (prefersReduced || !treePageIsForeground()) return;
       visibleTreeGoalNodes().forEach(function (node) {
         replayClass(node, 'is-goal-breathing', 2540);
       });
@@ -1350,7 +1370,7 @@
   }
   // activeId：切树点击瞬间的滑块/高亮抢跑目标；平时缺省用权威活动树。
   function renderRail(activeId) {
-    if (!railList) return;
+    if (!open || !railList || deferWorkspaceRender()) return;
     // 先让上轮在途 FLIP 落定再取快照，避免量到飞行中的几何。
     clearRailTransients();
     var snap = railSnapshot();
@@ -1502,6 +1522,7 @@
     flushProgressPointNames();
     state.activeTreeId = treeId;
     state.tree = target;
+    if (deferWorkspaceRender()) { syncStudyCacheFromState(); return true; }
     var restored = restoreView(treeId);
     render({ animateLayout: false, suppressEntrance: true });
     var visualTreeId = railWheelTargetId || treeId;
@@ -1897,11 +1918,10 @@
     next.edges = (next.edges || []).concat(visualEdges);
     return next;
   }
-  function branchMarkup(placement) {
+  function branchMarkup(placement, model) {
     var metrics = placement.metrics || { count: 0, progress: 0 };
     var percent = Math.round(metrics.progress * 100);
-    var children = GoalTree.primaryChildren(state.tree).get(placement.id) || [];
-    var hasChildren = children.length > 0;
+    var hasChildren = model.children.has(placement.id);
     var showCollapse = placement.kind === 'branch' || hasChildren;
     var collapse = showCollapse ? '<button type="button" class="study-route-collapse" data-route-action="collapse" aria-expanded="'
       + (hasChildren ? !placement.collapsed : true) + '" aria-label="' + (hasChildren && placement.collapsed ? T('展开阶段') : T('收起阶段')) + '"'
@@ -1980,8 +2000,8 @@
     }
     return { color: node.color || '', shape: node.shape || 'rounded' };
   }
-  function taskMarkup(placement) {
-    var task = findTask(placement.node.taskId) || { title: T('已移除任务'), status: 'done', progress: {} };
+  function taskMarkup(placement, task) {
+    task = task || { title: T('已移除任务'), status: 'done', progress: {} };
     var progress = taskProgress(task), done = task.status === 'done';
     var lockedByConditions = unlockEnforcementEnabled()
       && placement.availability && !placement.availability.available;
@@ -2024,9 +2044,9 @@
       + progressBar + '</div>'
       + controls + '<button type="button" class="study-route-node-menu" data-route-action="menu" aria-label="' + T('更多') + '">⋯</button>';
   }
-  function syncExistingTaskMarkup(element, placement) {
+  function syncExistingTaskMarkup(element, placement, task) {
     var template = document.createElement('div');
-    template.innerHTML = taskMarkup(placement);
+    template.innerHTML = taskMarkup(placement, task);
     var currentMain = element.querySelector('.study-route-task-main');
     var nextMain = template.querySelector('.study-route-task-main');
     if (!currentMain || !nextMain) return false;
@@ -2135,9 +2155,9 @@
     }
     rootProgressFrame = requestAnimationFrame(frame);
   }
-  function syncExistingRootMarkup(element, placement) {
+  function syncExistingRootMarkup(element, placement, model) {
     var template = document.createElement('div');
-    template.innerHTML = branchMarkup(placement);
+    template.innerHTML = branchMarkup(placement, model);
     var currentMain = element.querySelector('.study-route-branch-main');
     var nextMain = template.querySelector('.study-route-branch-main');
     if (!currentMain || !nextMain) return false;
@@ -2179,9 +2199,9 @@
     if (currentActions && nextActions) currentActions.replaceWith(nextActions);
     return true;
   }
-  function syncExistingBranchMarkup(element, placement) {
+  function syncExistingBranchMarkup(element, placement, model) {
     var template = document.createElement('div');
-    template.innerHTML = branchMarkup(placement);
+    template.innerHTML = branchMarkup(placement, model);
     var currentMain = element.querySelector('.study-route-branch-main');
     var nextMain = template.querySelector('.study-route-branch-main');
     if (!currentMain || !nextMain) return false;
@@ -2220,23 +2240,18 @@
       + escapeHtml(milestone.name || T('任务点')) + '</strong><span>' + escapeHtml(T('第') + ' ' + milestone.at + ' ' + T('点'))
       + (milestone.reached ? ' · ' + escapeHtml(T('已到达')) : '') + '</span></div>';
   }
-  function nodeMarkup(placement) {
-    if (placement.kind === 'task') return taskMarkup(placement);
+  function nodeMarkup(placement, model, task) {
+    if (placement.kind === 'task') return taskMarkup(placement, task);
     if (placement.kind === 'milestone') return milestoneMarkup(placement);
-    return branchMarkup(placement);
+    return branchMarkup(placement, model);
   }
-  function appearanceForPlacement(placement) {
-    if (!placement) return { color: '', shape: 'rounded' };
-    if (placement.kind === 'root') return {
-      color: String(state.tree.color || ''), shape: String(state.tree.shape || 'rounded'),
-    };
-    if (placement.kind === 'task') {
-      var task = findTask(placement.node.taskId) || {};
-      return { color: String(task.color || ''), shape: String(task.shape || 'rounded') };
-    }
+  function appearanceForPlacement(placement, task) {
+    var source = placement.kind === 'root' ? state.tree
+      : placement.kind === 'task' ? task : placement.node;
+    source = source || {};
     return {
-      color: String((placement.node && placement.node.color) || ''),
-      shape: String((placement.node && placement.node.shape) || 'rounded'),
+      color: String(source.color || ''),
+      shape: String(source.shape || 'rounded'),
     };
   }
   function preserveTreeExtensions(source, target) {
@@ -2414,6 +2429,7 @@
   }
   function syncNodeElements(seed, options) {
     options = options || {};
+    var model = seed.model;
     var wanted = new Set(seed.nodes.map(function (item) { return item.id; })), created = [];
     nodeElements.forEach(function (element, id) {
       if (wanted.has(id)) return;
@@ -2449,11 +2465,11 @@
         nodesHost.appendChild(element); nodeElements.set(placement.id, element); created.push(element);
       }
       var isExpansionEntrance = isNew && options.expandEntrance && !prefersReduced;
-      var appearance = appearanceForPlacement(placement);
-      var taskForGoal = placement.kind === 'task' ? findTask(placement.node.taskId) : null;
-      var taskGoalProgress = taskProgress(taskForGoal);
+      var task = placement.kind === 'task' ? model.byTask.get(placement.node.taskId) : null;
+      var appearance = appearanceForPlacement(placement, task);
+      var taskGoalProgress = taskProgress(task);
       var isGoalReady = !!(
-        (taskForGoal && taskForGoal.status !== 'done' && taskGoalProgress.target > 0
+        (task && task.status !== 'done' && taskGoalProgress.target > 0
           && taskGoalProgress.current >= taskGoalProgress.target)
         || (placement.kind === 'root' && (placement.metrics || {}).count > 0
           && (placement.metrics || {}).progress >= .999999)
@@ -2486,12 +2502,14 @@
         element.tabIndex = 0;
       }
       var taskMarkupSynced = !isNew && wasExistingTask && placement.kind === 'task'
-        && syncExistingTaskMarkup(element, placement);
+        && syncExistingTaskMarkup(element, placement, task);
       var rootMarkupSynced = !isNew && wasExistingRoot && placement.kind === 'root'
-        && syncExistingRootMarkup(element, placement);
+        && syncExistingRootMarkup(element, placement, model);
       var branchMarkupSynced = !isNew && wasExistingBranch && placement.kind === 'branch'
-        && syncExistingBranchMarkup(element, placement);
-      if (!taskMarkupSynced && !rootMarkupSynced && !branchMarkupSynced) element.innerHTML = nodeMarkup(placement);
+        && syncExistingBranchMarkup(element, placement, model);
+      if (!taskMarkupSynced && !rootMarkupSynced && !branchMarkupSynced) {
+        element.innerHTML = nodeMarkup(placement, model, task);
+      }
       if (options.expandingControlIds && options.expandingControlIds.has(placement.id)) {
         var expandingControl = element.querySelector('.study-route-collapse');
         if (expandingControl) {
@@ -2542,13 +2560,7 @@
           else replayClass(element, 'is-completion-restoring', 680);
         }
       }
-      var routeNodeColor = placement.kind === 'root'
-        ? String(state.tree.color || '')
-        : (placement.kind === 'branch'
-        ? (placement.node && placement.node.color) || ''
-        : (placement.kind === 'task'
-          ? ((findTask(placement.node.taskId) || {}).color) || ''
-          : ''));
+      var routeNodeColor = appearance.color;
       if (routeNodeColor) {
         element.style.setProperty('--branch-color', routeNodeColor);
         element.dataset.branchColor = routeNodeColor;
@@ -2601,6 +2613,7 @@
     applyView();
   }
   function render(options) {
+    if (!open || deferWorkspaceRender()) return;
     options = options || {};
     if (progressPanelSelectionTreeId !== state.activeTreeId) restoreProgressPanelSelection();
     else if (selectedProgressTaskId && !activeProgressTask(selectedProgressTaskId)) selectProgressTask('', true);
@@ -2608,6 +2621,10 @@
     syncActiveTreeReference();
     var previous = layout;
     var model = GoalTree.buildModel(state.tree, state.tasks, TREE_MODEL_OPTIONS);
+    // The shared model drops independent Tree appearance fields during normalization.
+    state.tree.nodes.forEach(function (node) {
+      if (node.kind === 'branch') model.byId.get(node.id).shape = node.shape;
+    });
     var first = GoalTree.layout(state.tree, state.tasks, {
       model: model, sizes: nodeSizeCache, collapsedIds: collapsedIds,
       showMilestones: progressBranchesVisible,
@@ -2637,24 +2654,25 @@
     syncEdgeElements(next, options);
     syncFreeItemElements();
     if (options.preserveViewAnchor) preserveViewAnchor(previous, next, options.preserveViewAnchor);
-    syncSummary(next.model.rootMetrics, !!previous && !options.suppressSummaryAnimation);
+    syncSummary(next.model, !!previous && !options.suppressSummaryAnimation);
     var layoutDuration = options.animateLayout === false ? 0 : (Number(options.duration) || 320);
     animateLayout(previous, next, layoutDuration, null, !!options.expandEntrance);
     applyView();
     syncProgressTaskSelection();
     syncProgressPanelContent();
+    if (!treeGoalBreathTimer) scheduleTreeGoalBreath(1400);
   }
-  function syncSummary(metrics, animate) {
-    metrics = metrics || { count: 0, progress: 0 };
+  function syncSummary(model, animate) {
+    var metrics = model.rootMetrics;
     var percent = Math.round(metrics.progress * 100);
-    var completed = state.tree.nodes.filter(function (node) {
-      var task = node.kind === 'task' && findTask(node.taskId);
+    var completed = model.tree.nodes.filter(function (node) {
+      var task = node.kind === 'task' && model.byTask.get(node.taskId);
       return task && task.status === 'done';
     }).length;
     var number = summary.querySelector('strong'), copy = summary.querySelector('span');
     if (!number) { number = document.createElement('strong'); summary.appendChild(number); }
     if (!copy) { copy = document.createElement('span'); summary.appendChild(copy); }
-    nextCandidates = GoalTree.nextTasks(layout ? layout.model : GoalTree.buildModel(state.tree, state.tasks, TREE_MODEL_OPTIONS));
+    nextCandidates = GoalTree.nextTasks(model);
     if (nextTaskIndex >= nextCandidates.length) nextTaskIndex = 0;
     copy.textContent = completed + ' / ' + metrics.count + ' ' + T('已完成');
     var from = Number(number.dataset.value);
@@ -3186,6 +3204,7 @@
   }
   var revealCleanupTimer = 0;
   function endTreeTransition() {
+    if (!open || workspaceReturn) return;
     scene.classList.remove('is-fading');
     // 切换淡入走零延迟（.is-revealing 规则）：把淡出后的黑屏停顿从 ~84ms 压到一帧；
     // 定时摘除，避免影响面板打开等其它淡入的 60ms 节奏。
@@ -3328,9 +3347,9 @@
     };
     motion.finished = new Promise(function (resolve) { motion.resolveFinished = resolve; });
     treeSwitchMotion = motion;
-    if (prefersReduced) {
+    if (prefersReduced || workspaceReturn) {
       motion.swapped = swap() !== false;
-      finishTreeSwitchMotion(motion, motion.swapped);
+      finishTreeSwitchMotion(motion, motion.swapped, !!workspaceReturn);
       return motion;
     }
     scene.classList.add('is-tree-switching');
@@ -3357,6 +3376,7 @@
       // 本地没有该树全量数据（快照陈旧）：退回淡出→等服务器回包→淡入。
       beginTreeTransition();
       return command({ command: 'switch-tree', treeId: treeId }).then(function () {
+        if (!open || workspaceReturn) return;
         if (!restoreView(state.activeTreeId)) fit(true);
         animateRootEntrance();
       }).finally(endTreeTransition);
@@ -3371,6 +3391,7 @@
       if (!open || requestId !== routeRequestId) return false;
       state.activeTreeId = treeId;
       state.tree = target;
+      if (deferWorkspaceRender()) { syncStudyCacheFromState(); return true; }
       var restored = restoreView(treeId);
       // 切树保留进度条与顶部数字的细腻变化，但不把“已有节点”误演成刚刚创建；
       // 整棵树只由场景级过渡承载方向和位移，避免节点缩放与横移互相打架。
@@ -3397,6 +3418,7 @@
           if (!open || requestId !== routeRequestId) return false;
           state.activeTreeId = previousTreeId;
           if (previous) state.tree = previous;
+          if (deferWorkspaceRender()) { syncStudyCacheFromState(); return true; }
           var restored = restoreView(previousTreeId);
           render({ animateLayout: false, suppressEntrance: true });
           renderRail();
@@ -3416,6 +3438,7 @@
     settleViewThenSave();
     beginTreeTransition();
     return command({ command: 'create-tree' }, { duration: 320 }).then(function () {
+      if (!open || workspaceReturn) return;
       if (!restoreView(state.activeTreeId)) fit(true);
       animateRootEntrance();
     }).finally(endTreeTransition);
@@ -3427,6 +3450,7 @@
     beginTreeTransition();
     return command({ command: 'delete-tree', treeId: state.activeTreeId }, { duration: 320 }).then(function () {
       try { localStorage.removeItem(viewKeyFor(removedTreeId)); } catch (e) {}
+      if (!open || workspaceReturn) return;
       if (!restoreView(state.activeTreeId)) fit(true);
       animateRootEntrance();
     }).finally(endTreeTransition);
@@ -3931,17 +3955,27 @@
     document.body.classList.remove('tree-page-visual-linking');
     nodesHost.innerHTML = '';
     edgesHost.innerHTML = '';
+    if (freeItemsHost) freeItemsHost.replaceChildren();
     nodeElements.clear();
     edgeElements.clear();
+    freeItemElements.clear();
     visualPlacements.clear();
     nodeSizeCache.clear();
     layout = null;
+    nextCandidates = [];
+    clearRailTransients();
+    railList.replaceChildren();
+    clearTimeout(revealCleanupTimer);
+    clearTimeout(rootEnterTimer);
+    revealCleanupTimer = rootEnterTimer = 0;
+    scene.style.opacity = '';
+    scene.classList.remove('is-fading', 'is-revealing', 'is-tree-switching');
     overlay.hidden = true;
     overlay.classList.remove('is-visible', 'is-closing');
   }
   function focusRequestedTask(requestId, taskId) {
     requestAnimationFrame(function () {
-      if (!open || requestId !== routeRequestId) return;
+      if (!treePageIsForeground() || requestId !== routeRequestId) return;
       var owner = taskId && GoalTree.taskOwner(state.tree, taskId);
       var target = owner && nodesHost.querySelector('[data-node-id="' + CSS.escape(owner.node.id) + '"]');
       if (guide.hidden) (target || viewport).focus();
@@ -3955,12 +3989,12 @@
     var previousTreeId = state.activeTreeId;
     state.tasks = json.tasks;
     applyTreePayloadInitial(json);
+    if (deferWorkspaceRender()) return true;
     scene.classList.remove('is-loading');
     var changedTree = previousTreeId !== state.activeTreeId;
     var restored = changedTree && restoreView(state.activeTreeId);
     render({ duration: 220, suppressEntrance: true });
     renderRail();
-    scheduleTreeGoalBreath(1400);
     if (!consumePendingViewReset() && changedTree && !restored) fit(true);
     return true;
   }
@@ -3973,16 +4007,30 @@
       applyAuthorityAfterGenerationChange(json);
     }).catch(function () {});
   }
-  function applyStudyPayload(json, requestId, taskId, requestedTreeId) {
+  function applyStudyPayload(json, requestId, taskId, requestedTreeId, resume) {
     if (requestId !== routeRequestId) return;
+    if (workspaceReturn) {
+      var epoch = treeEpoch;
+      workspaceReturn.applyPendingOpen = function () {
+        if (epoch === treeEpoch) applyStudyPayload(json, requestId, taskId, requestedTreeId, resume);
+      };
+      return;
+    }
     state.tasks = Array.isArray(json.tasks) ? json.tasks : [];
     applyTreePayloadInitial(json);
     scene.classList.remove('is-loading');
     var restored = restoreView(state.activeTreeId);
-    render();
+    render(resume ? { suppressEntrance: true } : undefined);
     renderRail();
-    scheduleTreeGoalBreath(1400);
     if (!consumePendingViewReset() && !restored) fit(true);
+    if (resume) {
+      if (resume.treeId === state.activeTreeId && resume.taskId && resume.taskId === progressPanelUsableTaskId) {
+        progressPanelUserScrolled = true;
+        progressPanelList.scrollTop = resume.scrollTop;
+        renderProgressPanelRows(true);
+      }
+      return;
+    }
     var requestedTree = requestedTreeId && state.trees.find(function (tree) { return tree.id === requestedTreeId; });
     if (!requestedTree && taskId && !GoalTree.taskOwner(state.tree, taskId)) {
       requestedTree = state.trees.find(function (tree) { return !!GoalTree.taskOwner(tree, taskId); });
@@ -3995,9 +4043,9 @@
     }
     focusRequestedTask(requestId, taskId);
   }
-  function applyStudyPayloadAfterFont(json, requestId, taskId, requestedTreeId) {
+  function applyStudyPayloadAfterFont(json, requestId, taskId, requestedTreeId, resume) {
     return ensureFreeItemFont().then(function () {
-      applyStudyPayload(json, requestId, taskId, requestedTreeId);
+      applyStudyPayload(json, requestId, taskId, requestedTreeId, resume);
     });
   }
   function ensureTreePageData() {
@@ -4030,13 +4078,14 @@
     treePagePreloadUsesIdle = false;
   }
   function scheduleTreePagePreload() {
+    if (!documentIsForeground()) return;
     if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
     if (window.RelatumPageLayout?.canPreload('canvas', 'tree') === false) return;
     if (treePagePreloadHandle || studyCache || studyPrefetchPromise) return;
     var warmTreePage = function () {
       treePagePreloadHandle = 0;
       treePagePreloadUsesIdle = false;
-      if (window.RelatumPageLayout?.canPreload('canvas', 'tree') === false) return;
+      if (!documentIsForeground() || window.RelatumPageLayout?.canPreload('canvas', 'tree') === false) return;
       prefetchStudyData().catch(function () {});
     };
     treePagePreloadUsesIdle = typeof window.requestIdleCallback === 'function';
@@ -4048,13 +4097,13 @@
     if (event.detail.workspace !== 'canvas') return;
     if (window.RelatumPageLayout.canPreload('canvas', 'tree')) scheduleTreePagePreload(); else cancelTreePagePreload();
   });
-  function loadTreePageForOpen(epoch, requestId, taskId, requestedTreeId, allowRetry) {
+  function loadTreePageForOpen(epoch, requestId, taskId, requestedTreeId, allowRetry, resume) {
     ensureTreePageData().then(function (json) {
       if (epoch !== treeEpoch) return;
-      return applyStudyPayloadAfterFont(json, requestId, taskId, requestedTreeId);
+      return applyStudyPayloadAfterFont(json, requestId, taskId, requestedTreeId, resume);
     }).catch(function (err) {
       if (allowRetry && open && requestId === routeRequestId && !studyCache) {
-        loadTreePageForOpen(epoch, requestId, taskId, requestedTreeId, false);
+        loadTreePageForOpen(epoch, requestId, taskId, requestedTreeId, false, resume);
         return;
       }
       if (requestId !== routeRequestId) return;
@@ -4062,7 +4111,7 @@
       showError(err);
     });
   }
-  function openRoute(trigger, taskId, requestedTreeId) {
+  function openRoute(trigger, taskId, requestedTreeId, resume) {
     var requestId = ++routeRequestId;
     cancelTreePagePreload();
     if (trigger && typeof trigger.focus === 'function') routeReturnFocus = trigger;
@@ -4072,7 +4121,7 @@
     if (studyCache && studyCache.tasks) {
       var epoch = treeEpoch;
       var cachedSnapshot = JSON.stringify(studyCache);
-      var cachedRender = applyStudyPayloadAfterFont(studyCache, requestId, taskId, requestedTreeId)
+      var cachedRender = applyStudyPayloadAfterFont(studyCache, requestId, taskId, requestedTreeId, resume)
         .then(function () { return true; }, function () { return false; });
       api('/api/tree-page').then(async function (json) {
         if (!json || !json.tasks) return;
@@ -4082,7 +4131,7 @@
         if (epoch !== treeEpoch || !open || requestId !== routeRequestId) return;
         if (cachedRendered && JSON.stringify(json) === cachedSnapshot) return;
         studyCache = json; window[STUDY_DATA_CACHE_KEY] = json;
-        return applyStudyPayloadAfterFont(json, requestId, taskId, requestedTreeId);
+        return applyStudyPayloadAfterFont(json, requestId, taskId, requestedTreeId, resume);
       }).catch(async function (error) {
         if (await cachedRender || epoch !== treeEpoch || !open || requestId !== routeRequestId) return;
         scene.classList.remove('is-loading');
@@ -4092,13 +4141,13 @@
     }
     if (shared && shared.tasks) {
       studyCache = shared;
-      applyStudyPayloadAfterFont(shared, requestId, taskId, requestedTreeId);
+      applyStudyPayloadAfterFont(shared, requestId, taskId, requestedTreeId, resume);
       return;
     }
     var epoch = treeEpoch;
-    loadTreePageForOpen(epoch, requestId, taskId, requestedTreeId, true);
+    loadTreePageForOpen(epoch, requestId, taskId, requestedTreeId, true, resume);
   }
-  function closeRoute(restoreFocus) {
+  function closeRoute(restoreFocus, immediate) {
     if (!open) return;
     if (visualLinkDrag) finishVisualLinkDrag(true);
     if (editingFreeItemId) commitFreeItemEdit();
@@ -4139,13 +4188,8 @@
     // 先停动画并把镜头钉到目标值，再落盘：保存的是用户意图的最终镜头，而不是缓动中间帧。
     view = Object.assign({}, viewTarget);
     applyView();
-    flushViewSave();
-    if (layoutFrame) cancelAnimationFrame(layoutFrame);
-    if (summaryFrame) cancelAnimationFrame(summaryFrame);
-    if (rootProgressFrame) cancelAnimationFrame(rootProgressFrame);
-    layoutFrame = 0;
-    summaryFrame = 0;
-    rootProgressFrame = 0;
+    if (!workspaceReturn || workspaceReturn.treeId === state.activeTreeId) flushViewSave();
+    stopTreeLayoutMotion();
     closePopover(false); closeConfirm(); closeGuide(false);
     if (reparentBadge) { reparentBadge.remove(); reparentBadge = null; }
     if (dropSlot) { dropSlot.remove(); dropSlot = null; }
@@ -4159,19 +4203,99 @@
     }
     // 起步页已经给树状页根层添加了 view-leaving：退场期间保留现有节点、连线和
     // 镜头画面，只停止运行时工作；横移淡出结束后再释放 DOM，避免只剩空背景退场。
-    if (!prefersReduced && overlay.classList.contains('view-leaving')) {
+    if (immediate || prefersReduced) {
+      finishRouteCloseVisuals();
+    } else if (overlay.classList.contains('view-leaving')) {
       routeCloseAnimationHandler = function (event) {
         if (event.target !== overlay) return;
         finishRouteCloseVisuals();
       };
       overlay.addEventListener('animationend', routeCloseAnimationHandler);
       routeCloseTimer = window.setTimeout(finishRouteCloseVisuals, 720);
-    } else if (prefersReduced) {
-      finishRouteCloseVisuals();
     } else {
       overlay.classList.remove('is-visible');
       overlay.classList.add('is-closing');
       routeCloseTimer = window.setTimeout(finishRouteCloseVisuals, 320);
+    }
+  }
+  function captureTreePageReturn() {
+    return {
+      treeId: state.activeTreeId,
+      taskId: progressPanelUsableTaskId,
+      scrollTop: progressPanelList ? progressPanelList.scrollTop : 0,
+    };
+  }
+  function deferWorkspaceRender() {
+    if (!workspaceReturn) return false;
+    workspaceReturn.renderPending = true;
+    return true;
+  }
+  function resumeTreePage(resume) {
+    if (!resume || document.body.dataset.startWorkspace !== 'canvas') return;
+    if (!overlay.closest('.book-view.tree-page-active')
+        || window.RelatumPageLayout?.isVisible('canvas', 'tree') === false) {
+      if (open) closeRoute(false, true);
+      return;
+    }
+    if (!open) { openRoute(null, null, null, resume); return; }
+    if (resume.applyPendingOpen) resume.applyPendingOpen();
+    if (resume.renderPending) {
+      var changedTree = state.activeTreeId !== resume.treeId;
+      var restored = changedTree && restoreView(state.activeTreeId);
+      scene.classList.remove('is-loading');
+      render({ animateLayout: false, suppressEntrance: true, suppressSummaryAnimation: true });
+      renderRail();
+      if (changedTree && !restored) fit(true);
+    }
+    if (resume.frozenSwitch) {
+      scene.style.opacity = '';
+      applyView();
+      scene.classList.remove('is-tree-switching');
+    }
+    scene.classList.remove('is-fading');
+    scheduleTreeGoalBreath(1400);
+  }
+  function stopTreeLayoutMotion() {
+    if (layoutFrame) cancelAnimationFrame(layoutFrame);
+    if (summaryFrame) cancelAnimationFrame(summaryFrame);
+    if (rootProgressFrame) cancelAnimationFrame(rootProgressFrame);
+    if (rootTitleSizeFrame) cancelAnimationFrame(rootTitleSizeFrame);
+    if (progressPanelRenderFrame) cancelAnimationFrame(progressPanelRenderFrame);
+    layoutFrame = summaryFrame = rootProgressFrame = rootTitleSizeFrame = progressPanelRenderFrame = 0;
+  }
+  function suspendTreePageMotion() {
+    if (!open) return;
+    var cameraMoving = !!(pan || panInertiaFrame || viewFrame);
+    cancelActivePointerGestures();
+    if (cameraMoving || viewSaveTimer) settleViewThenSave();
+    stopTreeGoalBreath();
+  }
+  function freezeTreeWorkspaceLayout() {
+    if (layoutFrame || summaryFrame || rootProgressFrame || rootTitleSizeFrame || progressPanelRenderFrame) {
+      workspaceReturn.renderPending = true;
+    }
+    stopTreeLayoutMotion();
+    if (treeSwitchMotion) {
+      var motion = treeSwitchMotion;
+      workspaceReturn.frozenSwitch = true;
+      finishTreeSwitchMotion(motion, true, true);
+      if (!motion.swapped) motion.swap();
+    }
+  }
+  function releaseTreePageAfterWorkspace() {
+    if (workspaceReturn && open) {
+      workspaceReturn.applyPendingOpen = null;
+      closeRoute(false, true);
+    } else if (routeCloseTimer) finishRouteCloseVisuals();
+  }
+  function syncTreePageVisibility() {
+    if (documentIsForeground()) {
+      if (open) scheduleTreeGoalBreath(1400);
+      else scheduleTreePagePreload();
+    } else {
+      cancelTreePagePreload();
+      suspendTreePageMotion();
+      releaseTreePageAfterWorkspace();
     }
   }
   function parentForAnchor(anchor) {
@@ -4453,8 +4577,19 @@
       if (!element || event.target.closest('button,.decor-resize-handle')) return;
       event.preventDefault(); event.stopPropagation(); enterFreeItemEdit(findFreeItem(element.dataset.freeItemId), false);
     });
+    freeItemsHost.addEventListener('compositionstart', function (event) {
+      if (event.target !== freeItemTextElement(editingFreeItemId) || editingFreeItemCompositionText !== null) return;
+      editingFreeItemCompositionText = readFreeItemText(event.target);
+      clearTimeout(freeItemTextSaveTimer);
+      freeItemTextSaveTimer = 0;
+    });
+    freeItemsHost.addEventListener('compositionend', function (event) {
+      if (event.target !== freeItemTextElement(editingFreeItemId)) return;
+      editingFreeItemCompositionText = null;
+      scheduleEditingFreeItemSave();
+    });
     freeItemsHost.addEventListener('input', function (event) {
-      if (event.target.closest('.text-box-content') && editingFreeItemId) scheduleEditingFreeItemSave();
+      if (!event.isComposing && event.target === freeItemTextElement(editingFreeItemId)) scheduleEditingFreeItemSave();
     });
     freeItemsHost.addEventListener('paste', function (event) {
       if (!editingFreeItemId || !event.target.closest('.text-box-content')) return;
@@ -5211,13 +5346,17 @@
         ? preserveTreeExtensions(current.baseTree,
           GoalTree.previewMove(current.baseTree, current.nodeId, current.candidate.primaryLink)) : null;
       if (preview) {
+        var requestId = routeRequestId;
+        var treeId = state.activeTreeId;
         state.tree = preview; render({ duration: 260, preserveViewAnchor: 'root' });
         command({
           command: 'move-node', nodeId: current.nodeId, primaryLink: current.candidate.primaryLink,
         }, { skipRender: true })
           .catch(function (error) {
-            state.tree = current.baseTree;
-            render({ duration: 260, preserveViewAnchor: 'root' });
+            if (requestId === routeRequestId && treeId === state.activeTreeId) {
+              state.tree = current.baseTree;
+              render({ duration: 260, preserveViewAnchor: 'root' });
+            }
             ignoreBusy(error);
           });
       } else {
@@ -5297,10 +5436,9 @@
   window.addEventListener('keydown', handleProgressPanelTab, true);
   overlay.addEventListener('keydown', function (event) {
     if (editingFreeItemId) {
+      if (event.isComposing || event.keyCode === 229 || editingFreeItemCompositionText !== null) return;
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
         event.preventDefault(); commitFreeItemEdit(); viewport.focus({ preventScroll: true });
-      } else if (event.key === 'Enter') {
-        event.preventDefault(); insertFreeItemPlainText('\n');
       } else if (event.key === 'Escape') {
         event.preventDefault(); cancelFreeItemEdit(); viewport.focus({ preventScroll: true });
       }
@@ -5432,28 +5570,34 @@
       syncProgressPanelContent({ taskChanged: true });
     });
   }
-  window.addEventListener('pagehide', function () {
-    if (open) closeRoute(false);
+  window.addEventListener('pagehide', function (event) {
+    cancelTreePagePreload();
+    if (open) {
+      if (event.persisted && !workspaceReturn) pageReturn = captureTreePageReturn();
+      closeRoute(false, true);
+    }
     else {
       if (editingFreeItemId) commitFreeItemEdit();
       if (progressPointEdit) finishProgressPointEdit(true);
       flushFreeItemCommands();
       flushProgressPointNames();
+      if (routeCloseTimer) finishRouteCloseVisuals();
     }
   });
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) {
-      cancelActivePointerGestures();
-      stopTreeGoalBreath();
-    }
-    else if (open) scheduleTreeGoalBreath(1400);
+  window.addEventListener('pageshow', function () {
+    var resume = pageReturn;
+    pageReturn = null;
+    resumeTreePage(resume);
+    syncTreePageVisibility();
   });
+  document.addEventListener('visibilitychange', syncTreePageVisibility);
+  window.addEventListener('canvasdesktop:visibility', syncTreePageVisibility);
   window.addEventListener('beforeunload', function () {
     if (editingFreeItemId) commitFreeItemEdit();
     if (progressPointEdit) finishProgressPointEdit(true);
     flushFreeItemCommands();
     flushProgressPointNames();
-    if (open) flushViewSave();
+    if (open && (!workspaceReturn || workspaceReturn.treeId === state.activeTreeId)) flushViewSave();
   });
   window.CanvasTreePage = {
     beforeLeave: function () {
@@ -5464,6 +5608,21 @@
     },
     activate: function () { if (!open) openRoute(); },
     deactivate: function () { if (open) closeRoute(false); },
+    suspendForWorkspace: function () {
+      if (!open) return;
+      workspaceReturn = captureTreePageReturn();
+      if (editingFreeItemId) commitFreeItemEdit();
+      if (progressPointEdit) finishProgressPointEdit(true);
+      flushProgressPointNames();
+      suspendTreePageMotion();
+      freezeTreeWorkspaceLayout();
+    },
+    releaseAfterWorkspace: releaseTreePageAfterWorkspace,
+    resumeAfterWorkspace: function () {
+      var resume = workspaceReturn;
+      workspaceReturn = null;
+      resumeTreePage(resume);
+    },
     open: function (taskId, trigger, treeId) { openRoute(trigger, taskId, treeId); },
     help: function (trigger) { openRoute(trigger); openGuide(trigger); },
     close: closeRoute,

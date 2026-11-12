@@ -168,6 +168,12 @@ async function checkRoute(browser, url, host) {
     await installProbes(page);
     const isTreePage = host.endpoint === 'tree-page';
     const original = fixture(80, isTreePage ? 2 : 6);
+    if (isTreePage) {
+      original.goalTrees[0].nodes.push({ id: 'branch', kind: 'branch', title: '阶段', shape: 'diamond' });
+      original.goalTrees[0].links[0].from = 'branch';
+      original.goalTrees[0].links.push({ id: 'link-branch', type: 'contains', primary: true,
+        from: null, to: 'branch', order: 0, side: 'right' });
+    }
     const api = await controlGet(page, host.endpoint, original);
     await page.goto(url + '/index.html');
     const scope = page.locator(host.selector);
@@ -196,6 +202,11 @@ async function checkRoute(browser, url, host) {
       await open();
       const request = await api.take();
       await task.waitFor();
+      if (isTreePage) {
+        const branch = scope.locator('[data-node-id="branch"]');
+        assert.match(await branch.getAttribute('class'), /\btree-page-shape-diamond\b/);
+        assert.equal(await branch.locator('[data-route-action="collapse"]').getAttribute('aria-disabled'), null);
+      }
       await settleFrames(page);
       const assertView = await checkCameraWhileWaiting(page, scope, task);
       await api.respond(request, original);
@@ -208,12 +219,14 @@ async function checkRoute(browser, url, host) {
 
     const changed = structuredClone(original);
     changed.tasks[0].title = '外部更新';
+    if (isTreePage) changed.goalTrees[0].nodes.find(node => node.id === 'branch').shape = 'circle';
     await open();
     let request = await api.take();
     await task.waitFor();
     const beforeChange = (await renderTimes(page, host.file)).length;
     await api.respond(request, changed);
     assert.equal(await taskTitle.textContent(), '外部更新');
+    if (isTreePage) assert.match(await scope.locator('[data-node-id="branch"]').getAttribute('class'), /\btree-page-shape-circle\b/);
     assert.equal((await renderTimes(page, host.file)).length, beforeChange + 1);
     await close();
 
@@ -311,6 +324,79 @@ async function checkStudy(browser, url, { mode, count, preload, failFirst }) {
   }
 }
 
+async function checkTreeFreeItemComposition(browser, url) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+  page.setDefaultTimeout(8000);
+  const commands = [];
+  try {
+    await page.addInitScript(() => {
+      localStorage.setItem('canvas:startWorkspace:v1', 'canvas');
+      localStorage.setItem('canvas:globalSystem:v1', JSON.stringify({ preload: false, dailyRetention: 'immediate' }));
+    });
+    page.on('request', request => {
+      if (!request.url().endsWith('/api/tree-page-command') || request.method() !== 'POST') return;
+      commands.push(request.postDataJSON());
+    });
+    await page.goto(url + '/index.html');
+    await click(page, '.left-spine [data-action="tree-page-view"]');
+    const scope = page.locator('.tree-page-embedded');
+    await scope.locator('.study-route-node.is-root').waitFor();
+    await scope.locator('[data-role="tree-page-item-dock-collapse"]').click();
+    await scope.locator('[data-tree-item-create="note"]').click();
+    await scope.locator('[data-role="study-route-viewport"]').click({ position: { x: 210, y: 120 } });
+    const editor = scope.locator('.tree-page-free-item .text-box-content');
+    await editor.waitFor();
+    const cdp = await page.context().newCDPSession(page);
+    const preedit = text => cdp.send('Input.imeSetComposition', {
+      text, selectionStart: text.length, selectionEnd: text.length,
+    });
+    const imeKey = (key, isComposing, keyCode) => editor.evaluate((element, init) => {
+      return element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
+    }, { key, isComposing, keyCode });
+    const savedTexts = () => commands.filter(command => command.command === 'update-free-item')
+      .map(command => command.patch.text);
+
+    await preedit('zhong');
+    assert.equal(await editor.innerText(), 'zhong', 'Chromium inserts temporary candidate text');
+    await delay(450);
+    assert.deepEqual(savedTexts(), [], 'an open candidate must never be autosaved');
+    assert.equal(await imeKey('Enter', true, 0), true, 'candidate Enter is left to the IME');
+    assert.equal(await imeKey('Escape', false, 229), true, 'candidate Escape is left to the IME');
+    assert.equal(await editor.getAttribute('contenteditable'), 'plaintext-only', 'candidate Escape leaves the new note open');
+    assert.equal(await editor.innerText(), 'zhong', 'candidate Enter does not add a newline');
+
+    const confirmed = page.waitForRequest(request => request.url().endsWith('/api/tree-page-command')
+      && request.method() === 'POST' && request.postDataJSON().patch?.text === '中');
+    await cdp.send('Input.insertText', { text: '中' });
+    await confirmed;
+    await preedit('wen');
+    await preedit('');
+    await delay(450);
+    assert.deepEqual(savedTexts(), ['中'], 'a cancelled candidate never creates a write');
+
+    await page.keyboard.press('Enter');
+    await page.keyboard.insertText('文');
+    await page.keyboard.press('Control+Enter');
+    await page.evaluate(() => window.CanvasTreePage.beforeLeave());
+    assert.equal(await editor.getAttribute('contenteditable'), 'false');
+    assert.deepEqual(savedTexts(), ['中', '中\n文'], 'ordinary Enter and Ctrl+Enter keep their editing behavior');
+    assert.equal(commands.some(command => command.command === 'delete-free-item'), false);
+
+    await editor.dblclick();
+    await page.keyboard.insertText('清');
+    await editor.evaluate(element => {
+      // Model a native composition that has not reported its outcome on blur.
+      element.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      element.textContent = 'unfinished';
+    });
+    await page.evaluate(() => window.CanvasTreePage.beforeLeave());
+    assert.equal(await editor.innerText(), '清');
+    assert.deepEqual(savedTexts(), ['中', '中\n文', '清'], 'leaving preserves committed text without the unresolved candidate');
+  } finally {
+    await page.close();
+  }
+}
+
 async function main() {
   const socket = net.createServer();
   await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
@@ -333,6 +419,8 @@ async function main() {
       headless: true,
       executablePath: process.env.RELATUM_EDGE_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
     });
+    await checkTreeFreeItemComposition(browser, url);
+    console.log('tree-page free item composition passed');
     for (const host of routeHosts) console.log(JSON.stringify(await checkRoute(browser, url, host)));
     for (const mode of ['list', 'progress']) {
       for (const count of [80, 400]) console.log(JSON.stringify(await checkStudy(browser, url, { mode, count })));

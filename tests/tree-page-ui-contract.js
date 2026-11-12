@@ -121,7 +121,10 @@ assert(syncNodeElementsSource.includes("replayClass(element, 'is-completion-rest
   'dragHitId', 'autoPanDrag', 'updateDragCandidate', 'flushDragFrame',
   'onDragMove', 'onDragEnd', 'onDragCancel', 'endPan',
 ].forEach((name) => {
-  assert.strictEqual(functionSource(tree, name), functionSource(route, name),
+  const source = functionSource(tree, name)
+    .replace('    if (!open || !railList || deferWorkspaceRender()) return;', '    if (!railList) return;')
+    .replace('    if (!open || workspaceReturn) return;\n', '');
+  assert.strictEqual(source, functionSource(route, name),
     'goal-tree runtime drifted in critical function: ' + name);
 });
 
@@ -427,10 +430,10 @@ assert(tree.includes("var required = node && node.kind === 'root' ? '' : ' requi
   'study-progress-track-shell tree-page-task-progress', 'study-progress-track', 'study-progress-fill',
   'is-goal-pending', 'is-goal-celebrating', 'is-goal-breathing',
   'function scheduleTreeGoalBreath(delay)', "replayClass(node, 'is-goal-celebrating', 1480)",
-  'scheduleTreeGoalBreath(1560)', 'function syncExistingTaskMarkup(element, placement)',
+  'scheduleTreeGoalBreath(1560)', 'function syncExistingTaskMarkup(element, placement, task)',
   "currentTrack.classList.toggle('is-full'", 'currentFill.style.width = nextFill.style.width',
-  'tree-page-root-progress-track', 'function syncExistingRootMarkup(element, placement)',
-  'function syncExistingBranchMarkup(element, placement)', 'branchMarkupSynced',
+  'tree-page-root-progress-track', 'function syncExistingRootMarkup(element, placement, model)',
+  'function syncExistingBranchMarkup(element, placement, model)', 'branchMarkupSynced',
 ].forEach((needle) => assert(tree.includes(needle), 'missing copied study progress motion: ' + needle));
 assert(!tree.includes('nextProgressShell.replaceWith(oldProgressShell)'),
   'the progress fill must never be detached and reattached during +/- updates');

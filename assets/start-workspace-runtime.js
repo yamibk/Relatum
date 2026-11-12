@@ -408,7 +408,10 @@
 
   // Workspace-specific loading and handoff live here; navigation uses catalog metadata.
   const lifecycle = {
-    canvas: {},
+    canvas: {
+      leave: () => window.CanvasTreePage?.suspendForWorkspace?.(),
+      afterLeave: () => window.CanvasTreePage?.releaseAfterWorkspace?.(),
+    },
     notes: { load: loadNoteWorkspace, leave: () => window.CanvasNoteWorkspace?.deactivate() },
     research: { load: loadResearchWorkspace, leave: () => researchWorkspaceApi?.suspend() },
     career: { load: loadCareerWorkspace },
@@ -424,6 +427,7 @@
     syncWorkspaceControls(name);
     config.onChange();
     showWorkspacePanel(name, previous, options.animate !== false && name !== previous, previousStageTop);
+    if (name === 'canvas' && name !== previous) window.CanvasTreePage?.resumeAfterWorkspace?.();
     if (options.persist !== false && name !== 'none') {
       try { localStorage.setItem(START_WORKSPACE_KEY, name); } catch (e) {}
     }

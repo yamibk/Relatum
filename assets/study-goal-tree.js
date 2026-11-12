@@ -139,8 +139,9 @@
     result.forEach(function (items) { items.sort(function (a, b) { return number(a.order) - number(b.order) || a.id.localeCompare(b.id); }); });
     return result;
   }
-  function subtreeIds(tree, nodeId) {
-    var children = primaryChildren(tree), result = new Set();
+  function subtreeIds(tree, nodeId, children) {
+    children = children || primaryChildren(tree);
+    var result = new Set();
     (function visit(id) {
       if (!id || result.has(id)) return;
       result.add(id);
@@ -475,7 +476,9 @@
       var center = centers.get(id); if (!center && id !== 'root') return;
       center = center || { x: 0, y: 0, side: 'root', depth: 0 };
       var size = sizeMap.get(id), hiddenCount = 0;
-      if (node.kind === 'branch' && collapsed.has(id)) hiddenCount = Math.max(0, subtreeIds(model.tree, id).size - 1);
+      if (node.kind === 'branch' && collapsed.has(id)) {
+        hiddenCount = Math.max(0, subtreeIds(model.tree, id, model.children).size - 1);
+      }
       placements.push({
         id: id, kind: node.kind, node: node, depth: center.depth, side: center.side,
         x: center.x - size.width / 2, y: center.y, width: size.width, height: size.height,
