@@ -34,7 +34,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     source = source.replace('  async function openNote(path, options) {',
       '  function openNote(path, options) { const task = testOpenNote(path, options); (window.noteOpenTasks ||= []).push(task); return task; }\n  async function testOpenNote(path, options) {');
     source = source.replace('  window.CanvasNoteWorkspace = {',
-      '  window.T = {state, openNote, refreshTree, stopExternalSync, stopDocumentPrefetch, get editor(){return liveEditor;}};\n  window.CanvasNoteWorkspace = {');
+      '  window.T = {state, openNote, refreshTree, checkExternalChanges, stopExternalSync, stopDocumentPrefetch, get editor(){return liveEditor;}};\n  window.CanvasNoteWorkspace = {');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
     await page.addInitScript(() => {
       localStorage.setItem('canvas:startWorkspace:v1', 'notes');
@@ -66,6 +66,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
         inert: document.querySelector('[data-role="note-editor"]').inert })),
       { path: file, opening: '', switching: false, inert: false });
       assert.equal(await page.locator('[data-role="note-current-path"] .is-file').innerText(), file, 'breadcrumb returns to the displayed note');
+      assert.equal(await page.locator('.note-tab.active').getAttribute('data-note-tab-path'), file, 'the active tab matches the displayed note');
       assert.equal(await tree.locator('.note-tree-row.active').getAttribute('data-note-path'), file);
     }
     async function holdNext(pattern, failure) {
@@ -150,9 +151,87 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       assert.equal(await completed(await startFile('C.md')), true);
     }
     const failedRead = await holdNext('**/api/note?path=A.md', true);
-    const failedOpen = await startFile('A.md'); await failedRead.received; await failedRead.release();
+    const failedOpen = await startFile('A.md'); await failedRead.received;
+    assert.deepEqual(await page.evaluate(() => ({
+      opacity: getComputedStyle(document.querySelector('.note-document-body')).opacity,
+      breadcrumb: document.querySelector('[data-role="note-current-path"] .is-file').textContent,
+      tab: document.querySelector('.note-tab.active').dataset.noteTabPath,
+      inert: document.querySelector('[data-role="note-editor"]').inert,
+      target: document.querySelector('[data-role="note-tree"] .note-tree-row.opening').dataset.notePath,
+    })), { opacity: '1', breadcrumb: 'C.md', tab: 'C.md', inert: true, target: 'A.md' },
+    'during a cold read the selected tree row acknowledges the click while the old note stays visually stable');
+    await failedRead.release();
     assert.equal(await completed(failedOpen), false);
     await expectReleased('C.md'); await expectTabWorks();
+
+    // A changed disk signature must not evict a surviving note's failed draft.
+    assert.equal(await completed(await startFile('B.md')), true);
+    const draft = '需要重试保存的正文\n';
+    const rejectDraft = route => route.fulfill({ status: 507, json: { error: 'Isolated draft save failure' } });
+    await page.route('**/api/note-save', rejectDraft);
+    const failedDraft = page.waitForRequest('**/api/note-save');
+    const switched = page.evaluate(async draft => {
+      T.editor.view.dispatch({ changes: { from: 0, to: T.editor.view.state.doc.length, insert: draft }, userEvent: 'input.type' });
+      return T.openNote('C.md');
+    }, draft);
+    const attemptedDraft = await failedDraft;
+    assert.equal(attemptedDraft.postDataJSON().path, 'B.md');
+    assert.equal(await switched, true);
+    assert.deepEqual(await page.evaluate(async () => {
+      const saved = await T.state.saveChain;
+      clearTimeout(T.state.retryTimer);
+      T.stopExternalSync();
+      const cached = T.state.documentCache.get('B.md');
+      return { saved, content: cached?.content, dirty: cached?.editGeneration > cached?.persistedGeneration };
+    }), { saved: false, content: draft, dirty: true });
+
+    const draftPath = path.join(root, 'notes', 'B.md');
+    const external = '外部程序修改了这篇笔记，新的文件大小与原文件不同。\n';
+    fs.writeFileSync(draftPath, external);
+    const disk = await page.request.get(url + '/api/note?path=B.md');
+    assert.equal((await disk.json()).content, external);
+    await page.waitForFunction(async size => {
+      await T.refreshTree(false);
+      return T.state.entryIndex.get('B.md')?.size === size;
+    }, Buffer.byteLength(external), { polling: 150 });
+    assert.equal(await page.evaluate(() => T.state.documentCache.get('B.md')?.content), draft,
+      'refreshing directory metadata retains the inactive unsaved document');
+    await page.unroute('**/api/note-save', rejectDraft);
+    assert.equal(await completed(await startFile('B.md')), true);
+    assert.equal(await page.evaluate(() => T.editor.snapshot().value), draft);
+    assert.equal(await page.evaluate(() => CanvasNoteWorkspace.flushSave()), true);
+    assert.equal(fs.readFileSync(draftPath, 'utf8'), draft);
+    assert.equal(await completed(await startFile('C.md')), true);
+
+    // A late external update must not commit over the pending open.
+    const priorText = await page.evaluate(() => {
+      T.stopExternalSync();
+      T.stopDocumentPrefetch();
+      T.state.documentCache.delete('A.md');
+      return T.editor.snapshot().value;
+    });
+    const changedText = '外部修改了当前笔记。\n';
+    fs.writeFileSync(path.join(root, 'notes', 'C.md'), changedText);
+    const delayedSync = await holdNext('**/api/note?path=C.md');
+    const syncing = page.evaluate(() => T.checkExternalChanges(false));
+    await delayedSync.received;
+    const delayedOpen = await holdNext('**/api/note?path=A.md', true);
+    const pendingOpen = await startFile('A.md');
+    await delayedOpen.received;
+    await delayedSync.release();
+    assert.equal(await syncing, true);
+    assert.deepEqual(await page.evaluate(() => ({
+      path: T.state.current?.path,
+      opening: T.state.openingPath,
+      inert: document.querySelector('[data-role="note-editor"]').inert,
+      text: T.editor.snapshot().value,
+    })), { path: 'C.md', opening: 'A.md', inert: true, text: priorText });
+    await delayedOpen.release();
+    assert.equal(await completed(pendingOpen), false);
+    await expectReleased('C.md');
+    assert.equal(await page.evaluate(() => T.checkExternalChanges(false)), true);
+    assert.equal(await page.evaluate(() => T.editor.snapshot().value), changedText);
+
     fs.unlinkSync(path.join(root, 'notes', 'A.md'));
     await page.evaluate(() => T.state.documentCache.delete('A.md'));
     assert.equal(await completed(await startFile('A.md')), false, 'a file removed externally cannot leave the editor locked');

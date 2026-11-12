@@ -2010,7 +2010,7 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
   background: var(--bg);
   transition: opacity 140ms ease;
 }
-.note-document-switch-pending .note-document-body { opacity: .68; cursor: progress; }
+.note-document-switch-pending .note-document-body { cursor: progress; }
 
 /* Note discovery uses the existing sidebar and document stage. */
 .note-workspace, .note-link-completion, .note-search-popover {

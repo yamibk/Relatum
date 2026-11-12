@@ -3693,7 +3693,7 @@
           }
           if (notebookTree && !liveEntry.notebook && expandTreePath(liveEntry.path, false)) renderTree({ keepNotebookTree: true });
           updateTreeSelection();
-        } else { state.selectedFolder = parentPath(liveEntry.path); state.openingPath = liveEntry.path; renderCurrentPath(liveEntry.path); updateTreeSelection(); openNote(liveEntry.path, { selectionPrimed: true, reuseActiveTab: !newTab }); }
+        } else { state.selectedFolder = parentPath(liveEntry.path); state.openingPath = liveEntry.path; updateTreeSelection(); openNote(liveEntry.path, { reuseActiveTab: !newTab }); }
       }
       row.addEventListener('click', (event) => activateRow(notebookEntry && !toggle.contains(event.target) ? null : undefined,
         !notebookTree && event.button === 0 && event.ctrlKey));
@@ -3945,7 +3945,14 @@
       const liveRoots = new Set(notebookRoots().map(entry => entry.path));
       previousNotebookRoots.forEach(path => { if (path && !liveRoots.has(path)) updateNoteGraphSession(path); });
       if (browserChanged || indexChanged) { noteBrowser?.invalidate(); noteGraph?.checkExternalChanges(); }
-      state.documentCache.forEach((documentState, path) => { const entry = findEntry(path); if (!entry) { if (state.current !== documentState) state.documentCache.delete(path); return; } if (state.current !== documentState && documentState.treeModifiedNs && (documentState.treeModifiedNs !== entry.modifiedNs || documentState.treeSize !== entry.size)) state.documentCache.delete(path); });
+      state.documentCache.forEach((documentState, path) => {
+        if (state.current === documentState) return;
+        const entry = findEntry(path);
+        if (!entry || !hasPendingEdits(documentState) && documentState.treeModifiedNs
+            && (documentState.treeModifiedNs !== entry.modifiedNs || documentState.treeSize !== entry.size)) {
+          state.documentCache.delete(path);
+        }
+      });
       const folders = new Set(flat.filter((entry) => entry.kind === 'folder').map((entry) => entry.path));
       state.expanded.forEach((path) => { if (!folders.has(path)) state.expanded.delete(path); });
       if (state.selectedFolder && !folders.has(state.selectedFolder)) state.selectedFolder = '';
@@ -4202,21 +4209,22 @@
       if (!state.restoringNotebookSelection && !options?.preserveNotebook) selectNotebook(notebookRootForPath(path));
       state.rootTargeted = false; state.selectedPath = path; state.selectedFolder = parentPath(path);
     };
-    if (!fromGraph) commitSelection();
-    if (state.current && state.current.path === path && !(options && options.force)) { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); updateEditorVisibility(); if (!(options && (options.noRecent || options.force))) recordRecent(path); return true; }
+    if (state.current && state.current.path === path && !(options && options.force)) { commitSelection(); state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); updateEditorVisibility(); if (!(options && (options.noRecent || options.force))) recordRecent(path); return true; }
     cancelLinksRefresh();
     const previous = state.current; rememberEditorState(previous);
     attempt.sequence = ++state.openSeq; state.openingPath = path;
-    if (!fromGraph) { state.rootTargeted = false; state.selectedPath = path; state.selectedFolder = parentPath(path); }
-    renderTabs();
-    const treeExpanded = state.notebookRoot === notebookRootForPath(path) && expandTreePath(path, false);
-    if (!fromGraph && !(options && options.selectionPrimed)) { renderCurrentPath(path); if (treeExpanded) renderTree(); else updateTreeSelection(); }
+    if (!fromGraph) {
+      state.rootTargeted = false;
+      state.selectedPath = path;
+      state.selectedFolder = parentPath(path);
+      updateTreeSelection();
+    }
     const cached = state.documentCache.get(path);
     if (cached && !(options && options.force)) {
       if (!(options && options.skipSave) && previous) flushSave(previous);
       if (previous) await window.RelatumNoteCanvas?.releaseNote(previous.path);
       if (!current()) return false;
-      if (fromGraph) commitSelection();
+      commitSelection();
       applyDocument(cached);
       if (!(options && (options.noRecent || options.force))) recordRecent(path);
       if (!(options && options.noFocus)) requestAnimationFrame(() => { if (state.current === cached) focusEditor(); });
@@ -4231,10 +4239,10 @@
       if (!shown || (!hasPendingEdits(shown) && shown.revision !== data.revision)) {
         if (previous) await window.RelatumNoteCanvas?.releaseNote(previous.path);
         if (!current()) return false;
-        if (fromGraph) commitSelection();
+        commitSelection();
         applyDocument(data);
       }
-      else { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); resumeLinksRefresh(); }
+      else { commitSelection(); state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); resumeLinksRefresh(); }
       if (!(options && (options.noRecent || options.force))) recordRecent(path);
       if (!(options && options.noFocus)) requestAnimationFrame(() => { if (state.current && state.current.path === path) focusEditor(); });
       return true;
@@ -5674,6 +5682,8 @@
     const settings = options || {};
     const seq = ++state.externalSeq;
     const current = () => seq === state.externalSeq && noteWorkspaceVisible();
+    const openSeq = state.openSeq;
+    const openUnchanged = () => !noteOpenAttempt && openSeq === state.openSeq;
     const path = state.current && state.current.path;
     const generation = state.editGeneration;
     const revision = state.current && state.current.revision;
@@ -5684,7 +5694,8 @@
     await noteBrowser?.checkExternalCanvases();
     if (!current()) return false;
     await noteGraph?.checkExternalChanges();
-    if (!current() || state.imageTextBusy || !path || !state.current || state.current.path !== path || state.editGeneration !== generation) return true;
+    if (!current() || !openUnchanged() || state.imageTextBusy || !path || !state.current
+        || state.current.path !== path || state.editGeneration !== generation) return true;
     const entry = findEntry(path);
     if (!entry) return true;
     const metadataChanged = previousModifiedNs !== entry.modifiedNs || previousSize !== entry.size || entry.revision && entry.revision !== revision;
@@ -5692,7 +5703,8 @@
     if (state.saveRunning || hasPendingEdits() || window.RelatumNoteCanvas?.dirty) return true;
     try {
       const disk = await request('/api/note?path=' + encodeURIComponent(path));
-      if (!current() || state.imageTextBusy || !state.current || state.current.path !== path || state.editGeneration !== generation || state.current.revision !== revision || hasPendingEdits()) return true;
+      if (!current() || !openUnchanged() || state.imageTextBusy || !state.current || state.current.path !== path
+          || state.editGeneration !== generation || state.current.revision !== revision || hasPendingEdits()) return true;
       if (disk.revision !== revision) applyDocument(disk, { preserveViewState: true });
       else {
         state.current.treeModifiedNs = entry.modifiedNs || 0;
@@ -5702,6 +5714,7 @@
       return true;
     } catch (error) {
       if (!current()) return false;
+      if (!openUnchanged()) return true;
       if (isMissingError(error)) {
         await refreshTree(false, { silentErrors: true, externalSeq: seq });
         return true;
@@ -6208,7 +6221,7 @@
   window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeWorkspacePopovers(); cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0; stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
   window.addEventListener('pageshow', () => { aiPageHiding = false; state.linksRefreshSuspended = false; syncNotePageVisibility(); });
   window.addEventListener('beforeunload', () => { cancelTabCloseMotion(); cancelTabScroll(); cancelLinksRefresh(); stopExternalSync(); flushWorkspaceState(true); });
-  document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); noteGraph?.setLanguage(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
+  document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); noteGraph?.setLanguage(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.current?.path || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeSettingsDialog();
   fileColorHost = window.RelatumNoteExtensions.attachWorkspace('file-colors', {

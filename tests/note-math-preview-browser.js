@@ -77,12 +77,19 @@ async function checkMathAutoload(browser, url) {
         editor.setDocument({ value, notePath: 'autoload.md', anchor: at, head: at }); editor.focus();
         if (kind === 'reading-live') {
           const host = document.createElement('div'); host.style.width = '820px'; document.body.appendChild(host);
+          const createTreeWalker = document.createTreeWalker;
+          window.__readingMathScans = 0;
+          document.createTreeWalker = function (root, ...options) {
+            if (root === host.firstElementChild) window.__readingMathScans++;
+            return createTreeWalker.call(this, root, ...options);
+          };
           RelatumNoteLiveEditor.renderMarkdown(host, value, 'reading.md');
         }
       }, { value, kind });
       const count = kind === 'reading-live' ? 4 : kind === 'inline' ? 3 : 2;
       await page.waitForFunction(count => document.querySelectorAll('mjx-container').length === count
         && !document.querySelector('.note-live-math-stage'), count);
+      if (kind === 'reading-live') assert.equal(await page.evaluate(() => window.__readingMathScans), 1, 'reading collects formula roots once');
       const metrics = await page.evaluate(() => ({
         red: [...document.querySelectorAll('mtext[mathcolor="red"]')].map(node => node.textContent),
         errors: [...document.querySelectorAll('mjx-merror,[data-mjx-error],merror')].map(node => node.textContent),

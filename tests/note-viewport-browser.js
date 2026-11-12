@@ -33,7 +33,8 @@ const resources = '---\ntitle: Viewport fixture\n---\n\n## Section 8000\n\n'
   + '```js\nconst resource = "source span";\n```\n\n'
   + '> [!note]- Folded\n> Hidden detail\n>\n> - Nested item\n>   - Nested child\n\n'
   + '- List item\n  - Nested list item\n\n| Column | Value |\n| --- | --- |\n| First | Body |\n| Second | Body |\n\n'
-  + '![canvas](canvases/Viewport.canvas)\n\n$$\n\\frac{x^2+1}{2}=y\n$$\n\n'
+  + '![canvas with an extended label](canvases/Viewport.canvas)\n\n'
+  + '> [!tip]+ After canvas\n> Quoted text\nLazy continuation after canvas.\n\n$$\n\\frac{x^2+1}{2}=y\n$$\n\n'
   + '```mermaid\ngraph TD\nA[Start] --> B[Finish]\n```\n\n![delayed](slow.svg)\n\n'
   + '## Section 90000\n\n' + Array.from({ length: 80 }, (_, i) => `Para ${90000 + i}-0: ` + 'Resource layout and user scrolling. '.repeat(15)).join('\n\n')
   + '\n\nReference[^v].\n\n[^v]: Footnote body\n';
@@ -204,7 +205,9 @@ function paintedSection() {
         assert(resources.slice(spans[key].from, spans[key].to).startsWith(prefix), key + ': original source position ' + JSON.stringify(spans[key]));
       }
       assert.equal(spans.heading.from, resources.indexOf('## Section 90000'), 'canvas placeholders do not shift later paragraphs');
-      assert.equal(spans.canvas, resources.indexOf('![canvas]'), 'embedded canvas retains its source span');
+      assert.equal(spans.canvas, resources.indexOf('![canvas with an extended label]'), 'embedded canvas retains its source span');
+      assert((await page.locator('.note-reading-content .note-block[data-callout="tip"] .md-callout-body').textContent()).includes('Lazy continuation after canvas.'),
+        'reading Callout ranges follow the source after canvas replacement');
       // Restore into an already folded block without opening it or moving the caret.
       await page.evaluate(() => {
         const host = document.querySelector('[data-role="note-reading-view"]'), from = T.state.current.content.indexOf('> Hidden detail');

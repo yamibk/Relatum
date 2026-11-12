@@ -718,9 +718,7 @@
 
   // Keep Lezer's lazy quote continuation rules in reading mode too. Positions
   // stay in the original Markdown; only the renderer's block boundaries change.
-  function readingCallouts(source) {
-    if (!/>\s*\[!/.test(source)) return [];
-    if (!noteHeadingParser) noteHeadingParser = markdownLanguage.parser.configure(plainParagraphExtension);
+  function readingCallouts(source, tree) {
     const starts = [0];
     for (let at = source.indexOf('\n'); at >= 0; at = source.indexOf('\n', at + 1)) starts.push(at + 1);
     const lineAt = position => {
@@ -729,7 +727,7 @@
       return low;
     };
     const ranges = [];
-    noteHeadingParser.parse(source).iterate({ enter(node) {
+    (tree || headingParser().parse(source)).iterate({ enter(node) {
       if (/^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock)$/.test(node.name)) return false;
       if (node.name === 'Blockquote' && node.to - node.from <= RICH_BLOCK_LIMIT && parseCalloutSource(source.slice(node.from, node.to))) {
         ranges.push({ startLine: lineAt(node.from), endLine: lineAt(Math.max(node.from, node.to - 1)) });
@@ -860,9 +858,9 @@
   }
 
   let noteHeadingParser = null;
+  function headingParser() { return noteHeadingParser ||= markdownLanguage.parser.configure(plainParagraphExtension); }
   function* parseHeadingTree(source) {
-    if (!noteHeadingParser) noteHeadingParser = markdownLanguage.parser.configure(plainParagraphExtension);
-    const parsing = noteHeadingParser.startParse(source);
+    const parsing = headingParser().startParse(source);
     let tree;
     while (!(tree = parsing.advance())) yield;
     return tree;
@@ -873,7 +871,7 @@
   // note does not force full-document parsing into CodeMirror's input listener.
   function* scanNoteHeadings(value, options) {
     const source = window.MarkdownMini.structure.normalizeSource(value);
-    let tree = yield* parseHeadingTree(source);
+    let tree = options?.initialTree || (yield* parseHeadingTree(source));
     const protectedRanges = [], inlineCode = [], customRanges = [];
     const protectedName = /^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock|CommentBlock|Blockquote|BulletList|OrderedList|Table)$/;
     for (let node = tree.topNode.firstChild; node; node = node.nextSibling) {
@@ -3183,8 +3181,11 @@
       const ordinal = canvasRefs.length - index - 1;
       renderedSource = renderedSource.slice(0, ref.from) + '![](relatum-canvas-placeholder-' + ordinal + ')' + renderedSource.slice(ref.to);
     });
+    const hasCallouts = />\s*\[!/.test(renderedSource);
+    // Headings need original offsets; Callout ranges follow the rendered source.
+    const initialTree = hasCallouts && !canvasRefs.length ? headingParser().parse(original) : null;
     let canvasShift = 0, canvasIndex = 0;
-    const noteHeadings = noteHeadingsFromString(original).map(heading => {
+    const noteHeadings = noteHeadingsFromString(original, { initialTree }).map(heading => {
       while (canvasIndex < canvasRefs.length && canvasRefs[canvasIndex].to <= heading.from) {
         const ref = canvasRefs[canvasIndex];
         canvasShift += ('![](relatum-canvas-placeholder-' + canvasIndex + ')').length - (ref.to - ref.from);
@@ -3205,7 +3206,8 @@
       return entry ? position < entry.end ? entry.from : position - entry.shift : position;
     };
     const readingSyntax = window.MarkdownMini.noteSyntax.scan(renderedSource);
-    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts: readingCallouts(renderedSource), noteSourcePosition, noteSourceMap: true, noteContext: readingSyntax, renderFence: noteFence });
+    const noteCallouts = hasCallouts ? readingCallouts(renderedSource, initialTree) : [];
+    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts, noteSourcePosition, noteSourceMap: true, noteContext: readingSyntax, renderFence: noteFence });
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
@@ -3284,26 +3286,22 @@
     let mathQueue = Promise.resolve();
     function typesetVisibleMath() {
       if (!result.features?.math || !current() || host.closest('[hidden]')) return;
-      // Split only at hidden descendants, so MathJax never walks folded bodies.
-      // No observer is needed: opening a fold explicitly reuses this queue.
-      const roots = [];
-      const visit = element => {
-        if (element.hidden || element.matches('pre,code,template,script,style,mjx-container')) return;
-        if (element.querySelector('[hidden]')) { for (const child of element.children) visit(child); return; }
-        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, { acceptNode(node) {
-          return node.parentElement.closest('pre,code,template,script,style,mjx-container') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
-        } });
-        let text = '', node; while ((node = walker.nextNode())) text += node.textContent;
-        if (window.MarkdownMini.mathRanges(text).length || /\\(?:begin|ref|eqref)\{/.test(text)) roots.push(element);
-      };
-      visit(content);
-      if (!roots.length) return;
       mathQueue = mathQueue.then(async () => {
         if (!current() || host.closest('[hidden]')) return;
-        roots.length = 0; visit(content);
-        const visible = roots.filter(root => root.isConnected && !root.closest('[hidden]'));
-        if (!visible.length) return;
-        if (await typesetMathNodes(visible, () => current() && !host.closest('[hidden]'))) scheduleViewportRestore(host);
+        // Collect against the current fold state, after earlier MathJax work.
+        // Split at hidden descendants so MathJax never walks folded bodies.
+        const roots = [];
+        const visit = element => {
+          if (element.hidden || element.matches('pre,code,template,script,style,mjx-container')) return;
+          if (element.querySelector('[hidden]')) { for (const child of element.children) visit(child); return; }
+          const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, { acceptNode(node) {
+            return node.parentElement.closest('pre,code,template,script,style,mjx-container') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+          } });
+          let text = '', node; while ((node = walker.nextNode())) text += node.textContent;
+          if (window.MarkdownMini.mathRanges(text).length || /\\(?:begin|ref|eqref)\{/.test(text)) roots.push(element);
+        };
+        visit(content);
+        if (roots.length && await typesetMathNodes(roots, () => current() && !host.closest('[hidden]'))) scheduleViewportRestore(host);
       }).catch(() => { if (current()) host.classList.add('is-failed'); });
     }
     if (content.querySelector('.note-quiz-carrier')) host.__relatumReadingQuiz = attachNoteQuiz(content, {
