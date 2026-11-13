@@ -3,28 +3,52 @@
   'use strict';
   const host = document.querySelector('main');
   const editor = window.RelatumNoteLiveEditor;
+  const IMAGE_TIMEOUT = 30000;
+  const IMAGE_CONCURRENCY = 4;
 
   async function loadImages(content) {
-    const results = await Promise.all(Array.from(content.querySelectorAll('img[data-note-image]'), async image => {
-      const frame = image.closest('.md-local-image');
-      if (image.dataset.notePrintReference) return 0;
-      try {
-        await image.decode();
-        if (/\.svg$/i.test(image.dataset.noteImage)) {
+    const images = Array.from(content.querySelectorAll('img[data-note-print-src]'));
+    if (!images.length) return 0;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), IMAGE_TIMEOUT);
+    const { signal } = controller;
+    let next = 0, warnings = 0;
+    async function loadBatch() {
+      while (!signal.aborted && next < images.length) {
+        const image = images[next++];
+        const loaded = await new Promise(resolve => {
+          const done = () => {
+            image.removeEventListener('load', done);
+            image.removeEventListener('error', done);
+            signal.removeEventListener('abort', done);
+            resolve(!signal.aborted && image.naturalWidth > 0);
+          };
+          image.addEventListener('load', done);
+          image.addEventListener('error', done);
+          signal.addEventListener('abort', done);
+          image.src = image.dataset.notePrintSrc;
+          if (image.complete) done();
+        });
+        if (signal.aborted) { image.removeAttribute('src'); break; }
+        const frame = image.closest('.md-local-image');
+        if (!loaded) {
+          frame.classList.add('is-failed');
+          const fallback = frame.querySelector('.md-local-image-fallback');
+          fallback.textContent = image.alt + ' · ' + (document.documentElement.lang === 'en' ? 'Image unavailable' : '图片无法加载');
+          image.removeAttribute('src');
+          warnings++;
+        } else if (/\.svg$/i.test(image.dataset.noteImage)) {
           frame.classList.add('has-svg-auto-size');
           frame.style.setProperty('--note-svg-natural-width', image.naturalWidth + 'px');
           frame.style.setProperty('--note-svg-ratio', image.naturalWidth / image.naturalHeight);
         }
-        return 0;
-      } catch (_) {
-        frame.classList.add('is-failed');
-        const fallback = frame.querySelector('.md-local-image-fallback');
-        fallback.textContent = image.alt + ' · ' + (document.documentElement.lang === 'en' ? 'Image unavailable' : '图片无法加载');
-        image.removeAttribute('src');
-        return 1;
       }
-    }));
-    return results.reduce((count, warning) => count + warning, 0);
+    }
+    try {
+      await Promise.all(Array.from({ length: Math.min(IMAGE_CONCURRENCY, images.length) }, loadBatch));
+      if (signal.aborted) throw new Error('image-timeout');
+      return warnings;
+    } finally { clearTimeout(timer); }
   }
 
   function fitImages(content) {

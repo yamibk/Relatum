@@ -5259,6 +5259,14 @@
   }
   let pdfExportBusy = false;
 
+  function waitForPdfStep(promise, milliseconds, code = 'timeout') {
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(code)), milliseconds);
+    });
+    return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+  }
+
   async function printNoteInBrowser(payload, onReady) {
     const frame = document.createElement('iframe');
     frame.title = payload.language === 'en' ? 'Note for printing' : '笔记打印页';
@@ -5268,27 +5276,26 @@
     const controller = new AbortController();
     const close = () => controller.abort();
     const cleanup = () => {
-      clearTimeout(timer);
       window.removeEventListener('pagehide', close);
       frame.remove();
     };
-    const timer = setTimeout(close, 90000);
     window.addEventListener('pagehide', close, { once: true });
     try {
-      const result = await new Promise((resolve, reject) => {
-        controller.signal.addEventListener('abort', () => reject(new Error('Print page timed out or closed')), { once: true });
+      const rendering = new Promise((resolve, reject) => {
+        controller.signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
         frame.addEventListener('load', async () => {
           try { resolve(await frame.contentWindow.RelatumNotePrint.render(payload)); } catch (error) { reject(error); }
         }, { once: true });
         frame.src = 'note-print.html';
         document.body.append(frame);
       });
-      clearTimeout(timer);
-      await new Promise((resolve, reject) => {
+      const result = await waitForPdfStep(rendering, 90000);
+      const printing = new Promise((resolve, reject) => {
         controller.signal.addEventListener('abort', resolve, { once: true });
         frame.contentWindow.addEventListener('afterprint', resolve, { once: true });
         try { frame.contentWindow.print(); } catch (error) { reject(error); }
       });
+      await waitForPdfStep(printing, 300000);
       if (!controller.signal.aborted) onReady(result.warnings);
     } finally { cleanup(); }
   }
@@ -5298,13 +5305,27 @@
     if (pdfExportBusy || target?.path !== path || state.openingPath) return;
     pdfExportBusy = true;
     const english = language() === 'en';
+    const messages = {
+      size: ['笔记超过 4 MiB，无法导出。', 'The note exceeds 4 MiB.'],
+      note: ['无法读取要导出的笔记。', 'The note could not be read.'],
+      destination: ['请选择以 .pdf 结尾的文件名。', 'Choose a filename ending in .pdf.'],
+      'destination-changed': ['目标文件已变化，请重新选择保存位置。', 'The destination changed. Choose a save location again.'],
+      'image-timeout': ['图片加载超时，PDF 未生成，请重试。', 'Images took too long to load. No PDF was created. Try again.'],
+      'input-timeout': ['请结束当前输入后再导出 PDF。', 'Finish the current edit before exporting the PDF.'],
+      timeout: ['导出 PDF 超时，请重试。', 'PDF export timed out. Try again.'],
+      busy: ['正在导出 PDF。', 'A PDF export is in progress.'],
+    };
+    const showError = code => {
+      if (code === 'cancelled') return;
+      showToast((messages[code] || ['导出 PDF 失败，请重试。', 'Could not export PDF. Try again.'])[english ? 1 : 0], 'error');
+    };
     const warn = count => {
       if (count) showToast(english ? 'Some images, formulas or diagrams could not be rendered.'
         : '部分图片、公式或图表未能渲染，已在 PDF 中保留说明或源码。', 'warning');
     };
     try {
       if (editorInputPending()) {
-        const settled = await whenEditorInputSettled();
+        const settled = await waitForPdfStep(whenEditorInputSettled(), 5000, 'input-timeout');
         if ([settled].flat(Infinity).includes(false)) return;
       }
       if (state.current !== target || target.path !== path || state.openingPath) return;
@@ -5316,24 +5337,18 @@
           mermaid: !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid') }, warn);
         return;
       }
-      const result = await desktop.exportNotePdf(path, value, language());
+      const result = await waitForPdfStep(desktop.exportNotePdf(path, value, language()), 550000);
       if (result.status === 'saved') {
         if (result.warnings) warn(result.warnings);
         else showToast(english ? 'PDF saved' : 'PDF 已保存');
-      } else if (result.status !== 'cancelled') {
-        const labels = {
-          size: ['笔记超过 4 MiB，无法导出。', 'The note exceeds 4 MiB.'],
-          note: ['无法读取要导出的笔记。', 'The note could not be read.'],
-          destination: ['请选择以 .pdf 结尾的文件名。', 'Choose a filename ending in .pdf.'],
-          'destination-changed': ['目标文件已变化，请重新选择保存位置。', 'The destination changed. Choose a save location again.'],
-          timeout: ['导出 PDF 超时，请重试。', 'PDF export timed out. Try again.'],
-          busy: ['正在导出 PDF。', 'A PDF export is in progress.'],
-        };
-        showToast((labels[result.code || result.status] || ['导出 PDF 失败，请重试。', 'Could not export PDF. Try again.'])[english ? 1 : 0], 'error');
-      }
-    } catch (_) {
-      showToast(english ? 'Could not export PDF. Try again.' : '导出 PDF 失败，请重试。', 'error');
-    } finally { pdfExportBusy = false; }
+      } else showError(result.code || result.status);
+    } catch (error) {
+      showError(error?.message);
+    } finally {
+      pdfExportBusy = false;
+      const action = contextOpen && contextMenu.querySelector('[data-note-action="export-pdf"]');
+      if (action) action.disabled = !!state.openingPath;
+    }
   }
 
   function openContextMenu(entry, x, y, options) {

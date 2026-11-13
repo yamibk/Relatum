@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-pdf-'));
-const note = '研究笔记.md', other = 'Other.md';
+const note = '研究笔记.md', other = 'Other.md', imageNote = 'Images.md';
 const pdf = path.join(root, '研究笔记.pdf');
 const notes = path.join(root, 'notes'), attachments = path.join(notes, '研究笔记.assets');
 fs.mkdirSync(attachments, { recursive: true });
@@ -31,6 +31,11 @@ const source = [
 ].join('\n');
 fs.writeFileSync(path.join(notes, note), source);
 fs.writeFileSync(path.join(notes, other), '# Other note');
+fs.writeFileSync(path.join(notes, imageNote), Array.from({ length: 12 }, (_, index) => {
+  const filename = 'image-' + index + '.png';
+  fs.copyFileSync(path.join(attachments, 'local.png'), path.join(attachments, filename));
+  return '![Image ' + index + '|450x280](研究笔记.assets/' + filename + ')';
+}).join('\n\n'));
 
 async function freePort() {
   const socket = net.createServer();
@@ -128,7 +133,9 @@ async function verifyPrintFrame(frame) {
     }, { note, other });
     let workspace = fs.readFileSync(path.join(__dirname, '../assets/note-workspace.js'), 'utf8').replace(
       '  window.CanvasNoteWorkspace = {', '  window.pdfTest = { state, openNote, setViewMode, get editor() { return liveEditor; } };\n  window.CanvasNoteWorkspace = {');
-    if (!native) workspace = workspace.replace('frame.contentWindow.print();', 'frame.contentWindow.__didPrint = true;');
+    if (!native) workspace = workspace
+      .replace('frame.contentWindow.print();', 'frame.contentWindow.__didPrint = true;')
+      .replace('waitForPdfStep(printing, 300000)', 'waitForPdfStep(printing, window.__printTimeout || 300000)');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: workspace }));
     const requests = [];
     page.on('request', request => requests.push(request.url()));
@@ -162,6 +169,19 @@ async function verifyPrintFrame(frame) {
       assert(output.startsWith('%PDF-') && /\/Count [2-9]\b/.test(output));
       assert(!fs.readdirSync(root).some(name => name.startsWith('.relatum-pdf-')));
       console.log(pdf);
+      await page.evaluate(path => pdfTest.openNote(path), imageNote);
+      const imagePdf = path.join(root, 'Images.pdf');
+      for (let attempt = 0; attempt < 8; attempt++) {
+        if (fs.existsSync(imagePdf)) fs.writeFileSync(imagePdf, 'previous output');
+        await openMenu('导出成 PDF');
+        assert(await action.isEnabled());
+        await action.click();
+        await page.getByText('PDF 已保存', { exact: true }).waitFor();
+        const output = fs.readFileSync(imagePdf).toString('latin1');
+        assert(output.startsWith('%PDF-') && /\/Subtype \/Image\b/.test(output));
+        assert(!fs.readdirSync(root).some(name => name.startsWith('.relatum-pdf-')));
+        assert.equal(browser.contexts()[0].pages().filter(tab => tab.url().includes('/note-print.html')).length, 0);
+      }
     } else {
       for (const mode of ['live', 'source', 'reading']) {
         await page.evaluate(mode => pdfTest.setViewMode(mode), mode);
@@ -196,6 +216,47 @@ async function verifyPrintFrame(frame) {
         if (mode !== 'source') assert.deepEqual(await selection(), before);
       }
       assert(!requests.some(url => url.startsWith('https://example.com')));
+      await page.evaluate(path => pdfTest.openNote(path), imageNote);
+      await page.route('**/note-print.js', async route => {
+        const source = fs.readFileSync(path.join(__dirname, '../assets/note-print.js'), 'utf8');
+        await route.fulfill({ contentType: 'text/javascript',
+          body: source.replace('const IMAGE_TIMEOUT = 30000;', 'const IMAGE_TIMEOUT = 300;') });
+      });
+      let stalled = false;
+      const holdImage = async route => {
+        if (!route.request().frame().url().includes('/note-print.html')
+          || !new URL(route.request().url()).searchParams.get('src').endsWith('/image-0.png')) return route.continue();
+        stalled = true;
+        // Keep a print-only request open until the export timeout tears down its frame.
+        await pause(750);
+        await route.abort().catch(() => {});
+      };
+      await page.route('**/api/note-asset?*', holdImage);
+      await openMenu('Export as PDF');
+      await action.click();
+      await openMenu('Export as PDF');
+      assert(await action.isDisabled());
+      await page.getByText('Images took too long to load. No PDF was created. Try again.').waitFor();
+      assert(stalled);
+      await action.waitFor();
+      assert(await action.isEnabled(), 'an already-open menu unlocks when the export exits');
+      await page.locator('iframe[src="note-print.html"]').waitFor({ state: 'detached' });
+      await page.unroute('**/api/note-asset?*', holdImage);
+      await page.unroute('**/note-print.js');
+      await page.evaluate(() => { window.__printTimeout = 500; });
+      await action.click();
+      await page.waitForFunction(() => document.querySelector('iframe[src="note-print.html"]')?.contentWindow.__didPrint);
+      await page.getByText('PDF export timed out. Try again.').waitFor();
+      await page.locator('iframe[src="note-print.html"]').waitFor({ state: 'detached' });
+      await openMenu('Export as PDF');
+      assert(await action.isEnabled(), 'missing afterprint leaves export ready to retry');
+      await page.evaluate(() => { window.__printTimeout = 0; });
+      await action.click();
+      await page.waitForFunction(() => document.querySelector('iframe[src="note-print.html"]')?.contentWindow.__didPrint);
+      const retryFrame = page.frames().find(frame => frame.url().endsWith('/note-print.html'));
+      assert.equal(await retryFrame.locator('img').evaluateAll(images => images.filter(image => image.naturalWidth > 0).length), 12);
+      await page.evaluate(() => document.querySelector('iframe[src="note-print.html"]').contentWindow.dispatchEvent(new Event('afterprint')));
+      await page.locator('iframe[src="note-print.html"]').waitFor({ state: 'detached' });
     }
     console.log('Note PDF export verified (' + (native ? 'WebView2' : 'browser') + ')');
   } catch (error) {

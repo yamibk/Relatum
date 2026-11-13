@@ -3304,12 +3304,11 @@
       if (printing) {
         image.loading = 'eager';
         if (isRemoteTarget(image.dataset.noteImage) || absoluteImageTarget(image.dataset.noteImage)) {
-          image.dataset.notePrintReference = '1';
           frame.classList.add('is-failed');
           frame.querySelector('.md-local-image-fallback').textContent = image.alt + ' (' + image.dataset.noteImage + ')';
           return;
         }
-        image.src = safeOptions.imageUrl(notePath, image.dataset.noteImage, image.dataset.noteImageSyntax);
+        image.dataset.notePrintSrc = safeOptions.imageUrl(notePath, image.dataset.noteImage, image.dataset.noteImageSyntax);
         return;
       }
       prepareLocalImage(image, frame, safeOptions.imageUrl(String(notePath || ''), image.dataset.noteImage || '', image.dataset.noteImageSyntax),
