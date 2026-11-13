@@ -5257,6 +5257,85 @@
       }
     });
   }
+  let pdfExportBusy = false;
+
+  async function printNoteInBrowser(payload, onReady) {
+    const frame = document.createElement('iframe');
+    frame.title = payload.language === 'en' ? 'Note for printing' : '笔记打印页';
+    frame.tabIndex = -1;
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:178mm;height:265mm;border:0;pointer-events:none';
+    const controller = new AbortController();
+    const close = () => controller.abort();
+    const cleanup = () => {
+      clearTimeout(timer);
+      window.removeEventListener('pagehide', close);
+      frame.remove();
+    };
+    const timer = setTimeout(close, 90000);
+    window.addEventListener('pagehide', close, { once: true });
+    try {
+      const result = await new Promise((resolve, reject) => {
+        controller.signal.addEventListener('abort', () => reject(new Error('Print page timed out or closed')), { once: true });
+        frame.addEventListener('load', async () => {
+          try { resolve(await frame.contentWindow.RelatumNotePrint.render(payload)); } catch (error) { reject(error); }
+        }, { once: true });
+        frame.src = 'note-print.html';
+        document.body.append(frame);
+      });
+      clearTimeout(timer);
+      await new Promise((resolve, reject) => {
+        controller.signal.addEventListener('abort', resolve, { once: true });
+        frame.contentWindow.addEventListener('afterprint', resolve, { once: true });
+        try { frame.contentWindow.print(); } catch (error) { reject(error); }
+      });
+      if (!controller.signal.aborted) onReady(result.warnings);
+    } finally { cleanup(); }
+  }
+
+  async function exportNotePdf(path) {
+    const target = state.current;
+    if (pdfExportBusy || target?.path !== path || state.openingPath) return;
+    pdfExportBusy = true;
+    const english = language() === 'en';
+    const warn = count => {
+      if (count) showToast(english ? 'Some images, formulas or diagrams could not be rendered.'
+        : '部分图片、公式或图表未能渲染，已在 PDF 中保留说明或源码。', 'warning');
+    };
+    try {
+      if (editorInputPending()) {
+        const settled = await whenEditorInputSettled();
+        if ([settled].flat(Infinity).includes(false)) return;
+      }
+      if (state.current !== target || target.path !== path || state.openingPath) return;
+      const value = editorSnapshot().value;
+      showToast(english ? 'Preparing PDF…' : '正在准备 PDF…');
+      const desktop = window.CanvasDesktop;
+      if (!desktop?.exportNotePdf) {
+        await printNoteInBrowser({ path, value, language: language(),
+          mermaid: !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid') }, warn);
+        return;
+      }
+      const result = await desktop.exportNotePdf(path, value, language());
+      if (result.status === 'saved') {
+        if (result.warnings) warn(result.warnings);
+        else showToast(english ? 'PDF saved' : 'PDF 已保存');
+      } else if (result.status !== 'cancelled') {
+        const labels = {
+          size: ['笔记超过 4 MiB，无法导出。', 'The note exceeds 4 MiB.'],
+          note: ['无法读取要导出的笔记。', 'The note could not be read.'],
+          destination: ['请选择以 .pdf 结尾的文件名。', 'Choose a filename ending in .pdf.'],
+          'destination-changed': ['目标文件已变化，请重新选择保存位置。', 'The destination changed. Choose a save location again.'],
+          timeout: ['导出 PDF 超时，请重试。', 'PDF export timed out. Try again.'],
+          busy: ['正在导出 PDF。', 'A PDF export is in progress.'],
+        };
+        showToast((labels[result.code || result.status] || ['导出 PDF 失败，请重试。', 'Could not export PDF. Try again.'])[english ? 1 : 0], 'error');
+      }
+    } catch (_) {
+      showToast(english ? 'Could not export PDF. Try again.' : '导出 PDF 失败，请重试。', 'error');
+    } finally { pdfExportBusy = false; }
+  }
+
   function openContextMenu(entry, x, y, options) {
     closeContextMenu({ instant: true });
     if (!entry) { showContext([contextButton(tr('newNote'), () => createEntry('note', { parent: state.notebookRoot })), contextButton(tr('newFolder'), () => createEntry('folder', { parent: state.notebookRoot })), separator(), contextButton(tr('refresh'), () => triggerExternalSync({ announce: true })), contextButton(tr('openLibrary'), () => reveal(state.notebookRoot, false))], x, y); return; }
@@ -5279,6 +5358,12 @@
       );
     }
     if (entry.kind === 'folder') items.push(contextButton(tr('createHere'), () => createEntry('note', { parent: entry.path })), contextButton(tr('createFolderHere'), () => createEntry('folder', { parent: entry.path })), separator()); else items.push(contextButton(tr('open'), () => openNote(entry.path)));
+    if (entry.kind === 'note' && options?.source === 'current-menu') {
+      const pdf = contextButton(language() === 'en' ? 'Export as PDF' : '导出成 PDF', () => exportNotePdf(entry.path));
+      pdf.dataset.noteAction = 'export-pdf';
+      pdf.disabled = pdfExportBusy || !!state.openingPath;
+      items.push(pdf);
+    }
     items.push(contextButton(tr('rename'), () => beginInlineRename(entry.path, options?.renameHost || treeEl)));
     if (entry.kind === 'note') items.push(contextButton(tr('copyPath'), () => copyText(entry.path)));
     items.push(contextButton(tr('explorer'), () => reveal(entry.path, false)));

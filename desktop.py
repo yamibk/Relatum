@@ -475,6 +475,7 @@ class DesktopBridge:
         self._close_after_flush = False
         self._quit_after_flush = False
         self._markdown_enabled = False
+        self._note_pdf = None
         self._geometry_lock = threading.RLock()
         self._geometry_timer = None
         self._geometry_closed = False
@@ -527,6 +528,11 @@ class DesktopBridge:
     def markdown_files(self, action: str = 'status', value=None) -> dict:
         from markdown_desktop import management
         return management(self, action, value)
+
+    def export_note_pdf(self, path, value, language) -> dict:
+        if self._note_pdf is None:
+            return {"status": "error", "code": "unavailable"}
+        return self._note_pdf.export(self._window, path, value, language)
 
     def update_window_preferences(self, delta: dict, launcher_language=None) -> dict:
         return self._preferences.update(delta, launcher_language) if self._preferences is not None else {"ok": True}
@@ -1001,6 +1007,10 @@ def main() -> int:
     bridge = DesktopBridge(width, height)
     bridge._preferences = preferences
     bridge._markdown_enabled = profile.enabled('notes')
+    if bridge._markdown_enabled:
+        from note_pdf import NotePdfExport
+        bridge._note_pdf = NotePdfExport(f"http://127.0.0.1:{port}/note-print.html", app.NOTES_STORE,
+                                        mermaid=profile.enabled('notes.mermaid'))
     try:
         window = webview.create_window(
             "Relatum",
@@ -1208,6 +1218,8 @@ def main() -> int:
     window.events.restored += on_restored
     window.events.minimized += on_minimized
     window.events.closing += confirm_close
+    if bridge._note_pdf is not None:
+        window.events.closed += bridge._note_pdf.close
     window.events.closed += stop_server
     window.events.closed += bridge._close_window_geometry
 

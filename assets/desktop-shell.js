@@ -70,6 +70,9 @@
   }
 
   window.CanvasDesktop = {
+    exportNotePdf(path, value, language) {
+      return callApi('export_note_pdf', path, value, language);
+    },
     setDirty(value) {
       pendingDirty = !!value;
       // 冷启动期间 dirty 会高频变化，只保留最终值；pywebviewready 处理器会统一同步。

@@ -447,6 +447,7 @@
 
   function attach(root, options = {}) {
     root.__noteMermaid?.destroy();
+    const printing = options.mode === 'print';
     let disposed = false, paused = false, pageActive = true, watching = false, measure = 0, midnight = 0;
     let intersection = null, resize = null;
     const byElement = new Map(), documentId = 'note-diagrams-' + (++nextId);
@@ -462,10 +463,10 @@
       if (!foreground()) return [];
       return entries.filter(current).flatMap(entry => [entry.key, lastGood.get(options.historyKey)]).filter(Boolean);
     }, fontsChanged(changed) {
-      if (!changed || entries.some(entry => entry.fontNames?.some(name => changed.includes(name)))) sync();
+      if (!printing && (!changed || entries.some(entry => entry.fontNames?.some(name => changed.includes(name))))) sync();
     } };
     function foreground() {
-      return enabled() && !disposed && !paused && pageActive && !document.hidden
+      return enabled() && !disposed && !paused && pageActive && (printing || !document.hidden)
         && document.documentElement.dataset.desktopMinimized !== '1' && root.isConnected && !root.closest('[hidden]')
         && (!root.closest('.note-workspace') || document.body.dataset.startWorkspace === 'notes')
         && (!options.isCurrent || options.isCurrent());
@@ -494,7 +495,7 @@
       entry.el.querySelectorAll(':scope > :not(template)').forEach(el => el.remove()); releaseReservation(entry.el);
       entry.el.append(stage); entry.el.classList.add('is-rendered'); entry.el.classList.remove('is-error');
       entry.el.dataset.noteMermaidRendered = '1'; entry.key = key; entry.failure = null;
-      controls(entry); layout(); armMidnight();
+      controls(entry); layout(); if (!printing) armMidnight();
     }
     function armMidnight() {
       if (midnight || !entries.some(entry => entry.visible && /(?:^|\n)\s*gantt\b/i.test(entry.source))) return;
@@ -564,7 +565,7 @@
         if (entry.ticket === ticket) {
           entry.ticket = null;
           const again = entry.again || requestedRevision !== null && requestedRevision !== currentFontStamp(); entry.again = false;
-          if (again) schedule(entry);
+          if (again && !printing) schedule(entry);
         }
       }
     }
@@ -578,7 +579,7 @@
         : keepDrawing ? text('图表暂未更新：', 'Diagram has not updated: ') + String(error?.message || error)
         : text('图表暂未显示：', 'Diagram unavailable: ') + String(error?.message || error);
       box.append(message);
-      if (retryable) {
+      if (retryable && !printing) {
         const button = document.createElement('button'); button.type = 'button'; button.dataset.noteMermaidControl = 'retry';
         button.textContent = text('重试', 'Retry');
         button.addEventListener('mousedown', event => { event.preventDefault(); event.stopPropagation(); });
@@ -595,6 +596,31 @@
         entry.el.querySelectorAll(':scope > :not(template)').forEach(el => el.remove());
       }
       entry.el.append(box); layout();
+    }
+    if (printing) {
+      const controller = {
+        ready: Promise.resolve().then(async () => {
+          watch(owner);
+          try {
+            for (const entry of entries) {
+              if (!foreground()) break;
+              entry.visible = true;
+              if (entry.source) {
+                await draw(entry);
+                if (!entry.key && !entry.error && current(entry)) await draw(entry);
+              }
+            }
+            return entries.filter(entry => entry.source && !entry.key).length;
+          } finally { unwatch(owner); }
+        }),
+        destroy() {
+          if (disposed) return;
+          disposed = true; stop();
+          if (root.__noteMermaid === controller) delete root.__noteMermaid;
+        },
+      };
+      root.__noteMermaid = controller;
+      return controller;
     }
     function sync() {
       if (!foreground()) { if (watching) stop(); return; }

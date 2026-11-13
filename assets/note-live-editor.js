@@ -3169,13 +3169,14 @@
         return '/api/note-asset?note=' + encodeURIComponent(path || '') + '&src=' + encodeURIComponent(target || '') + '&syntax=' + encodeURIComponent(syntax || 'markdown');
       },
     }, options || {});
+    const printing = safeOptions.print === true;
     releaseReadingDocument(host);
     const epoch = host.dataset.noteReadingEpoch;
     const imageTextSizer = createImageTextSizer();
     host.__relatumImageTextSizer = imageTextSizer;
     const original = window.MarkdownMini.structure.normalizeSource(source);
-    quizSession?.enterDocument(notePath, original);
-    const canvasRefs = canvasEnabled() ? window.MarkdownMini.canvasReferences(original) : [];
+    if (!printing) quizSession?.enterDocument(notePath, original);
+    const canvasRefs = printing || canvasEnabled() ? window.MarkdownMini.canvasReferences(original) : [];
     let renderedSource = original;
     canvasRefs.slice().reverse().forEach((ref, index) => {
       const ordinal = canvasRefs.length - index - 1;
@@ -3207,23 +3208,44 @@
     };
     const readingSyntax = window.MarkdownMini.noteSyntax.scan(renderedSource);
     const noteCallouts = hasCallouts ? readingCallouts(renderedSource, initialTree) : [];
-    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts, noteSourcePosition, noteSourceMap: true, noteContext: readingSyntax, renderFence: noteFence });
+    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts, noteSourcePosition, noteSourceMap: true, noteContext: readingSyntax,
+      renderFence: printing ? block => block.language === 'quiz' ? null : noteFence(block) : noteFence });
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
-    const jumpReading = event => {
-      const link = event.target.closest('[data-note-jump]'); if (!link) return;
-      if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
-      event.preventDefault(); event.stopPropagation();
-      const position = Number(link.dataset.noteJump);
+    const jumpTarget = position => {
       let target = content.querySelector('[data-note-heading-from="' + position + '"], [data-note-definition-from="' + position + '"], [data-note-source-from="' + position + '"]');
       if (!target) {
         const use = readingSyntax.uses.find(item => noteSourcePosition(item.from) === position);
         if (use) target = content.querySelector('[data-note-footnote-ref^="' + use.number + '-"]');
       }
-      if (target) { target.scrollIntoView({ block: 'center' }); target.tabIndex = -1; target.focus({ preventScroll: true }); }
+      return target;
     };
-    content.addEventListener('click', jumpReading); content.addEventListener('keydown', jumpReading);
+    if (printing) {
+      const targets = new Map();
+      content.querySelectorAll('[data-note-heading-from], [data-note-definition-from], [data-note-source-from]').forEach(node => {
+        for (const position of [node.dataset.noteHeadingFrom, node.dataset.noteDefinitionFrom, node.dataset.noteSourceFrom]) {
+          if (position !== undefined && !targets.has(position)) targets.set(position, node);
+        }
+      });
+      content.querySelectorAll('a[data-note-jump]').forEach(link => {
+        const position = link.dataset.noteJump, target = targets.get(position);
+        if (target) { target.id ||= 'note-print-' + position; link.setAttribute('href', '#' + target.id); }
+      });
+      content.querySelectorAll('a[data-href]').forEach(link => {
+        const target = link.dataset.href;
+        if (/^(?:https?:\/\/|mailto:)/i.test(target)) link.setAttribute('href', target);
+      });
+    } else {
+      const jumpReading = event => {
+        const link = event.target.closest('[data-note-jump]'); if (!link) return;
+        if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault(); event.stopPropagation();
+        const target = jumpTarget(Number(link.dataset.noteJump));
+        if (target) { target.scrollIntoView({ block: 'center' }); target.tabIndex = -1; target.focus({ preventScroll: true }); }
+      };
+      content.addEventListener('click', jumpReading); content.addEventListener('keydown', jumpReading);
+    }
     const sourceLines = original.split('\n');
     let sourceOffset = 0;
     const sourceLineOffsets = sourceLines.map(line => { const from = sourceOffset; sourceOffset += line.length + 1; return from; });
@@ -3234,6 +3256,7 @@
       const button = block.querySelector('.note-callout-fold');
       const body = block.querySelector('.md-callout-body');
       if (!button) return;
+      if (printing) { button.remove(); if (body) body.hidden = false; return; }
       const line = Number(block.dataset.ln) + lineOffset;
       const position = sourceLineOffsets[line] || 0;
       const session = safeOptions.calloutSession;
@@ -3243,7 +3266,7 @@
       button.addEventListener('click', () => { collapsed = !collapsed; if (session) session.set(position, collapsed); refresh(); host.__relatumReadingQuiz?.sync(); host.__relatumReadingCards?.resume(); typesetVisibleMath(); });
     });
     // Notes present every table row as data, including the first Markdown row.
-    content.querySelectorAll('table th').forEach((header) => {
+    if (!printing) content.querySelectorAll('table th').forEach((header) => {
       const cell = document.createElement('td');
       Array.from(header.attributes).forEach((attribute) => cell.setAttribute(attribute.name, attribute.value));
       cell.append(...header.childNodes); header.replaceWith(cell);
@@ -3253,6 +3276,15 @@
       if (placeholder) {
         const ref = canvasRefs[Number(placeholder[1])]; if (!ref) return;
         const prior = image.closest('.md-local-image');
+        if (printing) {
+          const label = document.createElement('span');
+          label.className = 'note-print-reference';
+          const name = ref.parsed.alt || ref.parsed.target.split('/').pop();
+          const prefix = document.documentElement.lang === 'en' ? 'Canvas' : '画布';
+          label.textContent = prefix + ' · ' + (name === ref.parsed.target ? name : name + ' (' + ref.parsed.target + ')');
+          prior.replaceWith(label);
+          return;
+        }
         const frame = document.createElement('div'); frame.className = 'note-live-image-frame is-block has-explicit-size';
         const width = ref.parsed.width || 640, height = ref.parsed.height || width * 9 / 16;
         frame.style.cssText = `display:block;width:${width}px;max-width:100%;aspect-ratio:${width}/${height};border-radius:7px`;
@@ -3269,6 +3301,17 @@
         return;
       }
       const frame = image.closest('.md-local-image');
+      if (printing) {
+        image.loading = 'eager';
+        if (isRemoteTarget(image.dataset.noteImage) || absoluteImageTarget(image.dataset.noteImage)) {
+          image.dataset.notePrintReference = '1';
+          frame.classList.add('is-failed');
+          frame.querySelector('.md-local-image-fallback').textContent = image.alt + ' (' + image.dataset.noteImage + ')';
+          return;
+        }
+        image.src = safeOptions.imageUrl(notePath, image.dataset.noteImage, image.dataset.noteImageSyntax);
+        return;
+      }
       prepareLocalImage(image, frame, safeOptions.imageUrl(String(notePath || ''), image.dataset.noteImage || '', image.dataset.noteImageSyntax),
         image.dataset.noteImage, () => host.dataset.noteReadingEpoch === epoch && content.isConnected);
       if (frame && frame.classList.contains('has-image-text')) {
@@ -3278,6 +3321,11 @@
     });
     content.querySelectorAll('input.md-task-box').forEach((box) => { box.disabled = true; });
     host.replaceChildren(content);
+    if (printing) {
+      return { ...result, content, measureImages() {
+        content.querySelectorAll('.md-local-image.has-image-text').forEach(imageTextSizer.update);
+      } };
+    }
     readingPositionIndex(host, content);
     content.addEventListener('load', readingLayout, true);
     host.classList.toggle('is-failed', !!result.error);
@@ -8144,7 +8192,7 @@
     headingMarkerProjectionEnd,
     richBlockEditPosition,
   };
-  window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath };
+  window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath, loadNoteMermaid };
   Object.assign(window.RelatumNoteLiveEditor, { quizFence, renderFence: noteFence, attachCards: attachNoteCards, attachQuiz: attachNoteQuiz,
     remapQuiz(source, destination) { quizSession?.remap(source, destination); } });
   window.RelatumNoteLiveEditor.releaseReadingDocument = releaseReadingDocument;

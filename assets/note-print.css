@@ -1,0 +1,80 @@
+@page {
+  size: A4 portrait;
+  margin: 16mm;
+}
+
+html:has(body.note-print),
+body.note-print {
+  width: auto;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+  margin: 0;
+  padding: 0;
+  background: #fff;
+  color-scheme: light;
+}
+
+.note-print {
+  --bg: #fff;
+  --surface: #fff;
+  --text: #202124;
+  --text-secondary: #444;
+  --note-font-text: "Relatum Open Sans", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --note-font-mono: Consolas, "Noto Sans SC", monospace;
+  print-color-adjust: exact;
+}
+
+.note-print .note-reading-content {
+  width: 178mm;
+  max-width: none;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  font: 11pt/1.55 var(--note-font-text);
+  overflow-wrap: anywhere;
+}
+
+@media print {
+  .note-print .note-reading-content { width: auto; }
+}
+
+.note-print .note-reading-content :is(h1, h2, h3, h4, h5, h6) { break-after: avoid; }
+.note-print .note-reading-content p { orphans: 3; widows: 3; }
+.note-print .note-reading-content a[href] { color: #235386; text-decoration: underline; }
+.note-print .note-reading-content .md-scroll-x { overflow: visible; display: block; }
+.note-print .note-reading-content table.md-table { display: table; table-layout: fixed; width: 100%; min-width: 0; }
+.note-print .note-reading-content table.md-table thead { display: table-header-group; break-inside: avoid; }
+.note-print .note-reading-content table.md-table :is(th, td) { white-space: normal; overflow-wrap: anywhere; }
+.note-print .note-reading-content table.md-table tr { break-inside: avoid; }
+.note-print .note-reading-content :is(pre, pre code) {
+  max-height: none;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.note-print .note-reading-content .md-math-block { overflow: visible; break-inside: avoid; }
+.note-print .note-reading-content :is(.md-local-image, .mermaid-diagram) { break-inside: avoid; }
+.note-print .note-reading-content .md-local-image { max-height: 252mm; }
+.note-print .note-reading-content .md-local-image img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 252mm;
+  object-fit: contain;
+}
+.note-print .note-reading-content .md-local-image.has-explicit-size:not(.has-explicit-box) img {
+  width: 100%;
+  max-height: 252mm;
+}
+.note-print .note-reading-content .note-mermaid-stage > svg {
+  max-width: 100%;
+  max-height: 252mm;
+  height: auto;
+}
+.note-print .note-reading-content .note-cards-grid { display: block; }
+.note-print .note-reading-content .note-card { margin-block: .5em; }
+.note-print .note-reading-content .note-print-reference {
+  color: var(--text-secondary);
+  font-size: .9em;
+}
