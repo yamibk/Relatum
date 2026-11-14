@@ -1033,6 +1033,7 @@
           ['附件', '在画布里使用“清理附件”，删除未引用的素材。'],
           ['回收站', '确认不再需要后，在应用内清空。'],
           ['上传的背景', '先换成内置背景，再清理 <code>data/backgrounds</code>。'],
+          ['独立 Markdown 磁盘缓存', '保存文档并关闭所有独立 Markdown 窗口后，可删除 <code>data/desktop-sessions/markdown-files/WebView2/EBWebView/Default/Cache</code>。重新打开窗口时，缓存会自动重建。备份时可以跳过这个 <code>Cache</code> 子目录。'],
         ]],
         ['笔记运行缓存', '在“笔记设置 → 系统”查看缓存概览，或使用“清理未使用缓存”释放闲置的正文、图谱和 Mermaid 内存缓存。当前正文、撤销和 AI 对话保留；这不会删除磁盘上的笔记索引、文件配色或内容文件。'],
         ['删除前', '先备份，再清理。笔记移动、画布改名和删除请优先在应用内操作。只有笔记索引能从现有文件重建；缺失的正文、附件和历史记录不会自动恢复。'],
@@ -1070,7 +1071,7 @@
     },
     {
       id: 'data', eyebrow: '03 · DATA', title: '功能数据',
-      subtitle: '以下路径位于 <code>data</code> 中。除可重建的笔记索引外，删除对应文件会丢失记录或设置。',
+      subtitle: '以下路径位于 <code>data</code> 中。删除记录或设置文件会丢失其中的数据。可重建的笔记索引和可重新生成的生涯报告见下方。',
       sections: [
         ['可重建的笔记索引', '', [
           ['<code>note-index.sqlite3</code>', '笔记目录、派生搜索文字、标签、双链和图谱关系的本地缓存。Markdown 与附件仍是原始数据。'],
@@ -1146,7 +1147,7 @@
           ['精简模式窗口', '<code>data/desktop-sessions/&lt;模式&gt;/window-state.json</code>：对应模式的窗口位置与大小。'],
           ['独立 Markdown 偏好', '<code>data/desktop-sessions/markdown-files/preferences.json</code>：简洁窗口的外观和扩展偏好，与完整笔记工作区分开保存。'],
           ['Markdown 窗口记忆', '<code>data/desktop-sessions/markdown-files/window-state.json</code>：所有独立 Markdown 窗口共用最近调整的大小、位置和最大化状态，不按文件保存。'],
-          ['WebView2 运行数据', '桌面浏览器内核管理的本机缓存与运行数据。'],
+          ['WebView2 运行数据', '桌面版使用系统安装的 WebView2 Runtime。独立 Markdown 窗口运行时会在 <code>data/desktop-sessions/markdown-files/WebView2</code> 生成浏览器数据。关闭所有独立 Markdown 窗口后，删除整个目录会清空其中的缓存、本地存储和历史记录。已保存的正文和附件仍在文档原位置，最近文件列表、窗口记忆和已保存的外观偏好另存于 JSON。'],
           ['启动器功能选择', '<code>data/launcher-profile.json</code>：上次选择的工作区与功能。'],
           ['跳过启动选择', '<code>data/launcher-settings.json</code>：是否跳过功能选择窗口。可在全局设置“系统”中修改。'],
           ['启动器语言', '<code>data/launcher-language.json</code>：桌面版最近一次主动切换的语言。恢复其他窗口的旧偏好不会覆盖它；删除此文件后，启动器默认使用中文。'],
@@ -1179,6 +1180,7 @@
           ['Attachments', 'Use “Clean attachments” inside a canvas to remove unused assets.'],
           ['Trash', 'Empty it in the app once you no longer need its contents.'],
           ['Uploaded backgrounds', 'Switch to a built-in background before cleaning <code>data/backgrounds</code>.'],
+          ['Standalone Markdown disk cache', 'Save your documents and close all standalone Markdown windows before deleting <code>data/desktop-sessions/markdown-files/WebView2/EBWebView/Default/Cache</code>. The cache is recreated when you reopen a window. You can skip this <code>Cache</code> subfolder when backing up.'],
         ]],
         ['Note runtime caches', 'Open Notes settings → System to view cache usage or use “Clear unused caches” to release idle text, graph and Mermaid memory caches. Current text, undo history and AI chats remain. This does not delete the note index, file colors or content files on disk.'],
         ['Before deleting', 'Back up first. Use the app to move notes, rename canvases and delete content. The note index can be rebuilt from existing files; missing text, attachments and history cannot be restored automatically.'],
@@ -1216,7 +1218,7 @@
     },
     {
       id: 'data', eyebrow: '03 · DATA', title: 'Feature data',
-      subtitle: 'These paths are inside <code>data</code>. Apart from the rebuildable note index, deleting a file removes its records or settings.',
+      subtitle: 'These paths are inside <code>data</code>. Deleting files that store records or settings removes that data. The note index can be rebuilt and the Career report can be generated again.',
       sections: [
         ['Rebuildable note index', '', [
           ['<code>note-index.sqlite3</code>', 'A local cache of the note catalog, derived search text, tags, backlinks and graph relations. Markdown and attachments remain the source data.'],
@@ -1292,7 +1294,7 @@
           ['Reduced-mode window', '<code>data/desktop-sessions/&lt;mode&gt;/window-state.json</code>: window position and size for that mode.'],
           ['Standalone Markdown preferences', '<code>data/desktop-sessions/markdown-files/preferences.json</code>: appearance and extension preferences for the simple editor, saved separately from the full Notes workspace.'],
           ['Markdown window state', '<code>data/desktop-sessions/markdown-files/window-state.json</code>: the most recently adjusted size, position and maximized state, shared by all standalone Markdown windows rather than saved per file.'],
-          ['WebView2 runtime data', 'Local caches and runtime data managed by the desktop browser engine.'],
+          ['WebView2 runtime data', 'The desktop app uses the system-installed WebView2 Runtime. Standalone Markdown windows create browser data in <code>data/desktop-sessions/markdown-files/WebView2</code> when they run. After closing all standalone Markdown windows, deleting this entire folder clears its caches, local storage and history. Saved documents and attachments stay in their original locations. The recent file list, window placement and saved appearance preferences are stored separately in JSON.'],
           ['Launcher feature choices', '<code>data/launcher-profile.json</code>: the previously selected workspaces and features.'],
           ['Skip launcher selection', '<code>data/launcher-settings.json</code>: whether to skip the feature selection window. Change it in Settings → System.'],
           ['Launcher language', '<code>data/launcher-language.json</code>: the most recent deliberate desktop language choice. Restoring another window’s saved settings does not override it. Deleting this file makes the launcher default to Chinese.'],

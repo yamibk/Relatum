@@ -42,7 +42,7 @@ assert(html.includes('01 / 04'));
   'career-report-v2.json',
   'preferences.json',
   'API Key',
-  '删除对应文件会丢失记录或设置',
+  '删除记录或设置文件会丢失其中的数据',
   "canvas:dataGuideClicked:v1",
 ].forEach((token) => assert(start.includes(token), 'missing local data guide token: ' + token));
 [
@@ -63,6 +63,11 @@ assert(i18n.includes("'查看本地数据与空间管理说明': 'View the local
 assert(i18n.includes("'canvases 文件夹': 'canvases folder'"));
 assert(i18n.includes("'本机偏好': 'On-device preferences'"));
 const helpCopy = start.slice(start.indexOf('const START_HELP_PAGES_ZH'), start.indexOf('function startHelpPages()'));
+const markdownWebView = 'data/desktop-sessions/markdown-files/WebView2';
+assert.equal(helpCopy.split(`<code>${markdownWebView}/EBWebView/Default/Cache</code>`).length - 1, 2,
+  'both guide languages must document the standalone Markdown disk cache');
+assert.equal(helpCopy.split(`<code>${markdownWebView}</code>`).length - 1, 2,
+  'both guide languages must document the standalone Markdown WebView2 data folder');
 assert.equal((helpCopy.match(/data\/launcher-language\.json/g) || []).length, 2,
   'both guide languages must document the launcher language file');
 assert(helpCopy.includes('最近一次主动切换的语言'));
