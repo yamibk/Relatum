@@ -75,7 +75,9 @@ async function verifyCreation(page, surface, row, toggle) {
   await editor.waitFor();
   const protection = await toggle.getAttribute('aria-pressed');
   await page.keyboard.type('10');
-  assert.equal(await editor.textContent(), '10');
+  await page.keyboard.press('Backquote');
+  await page.keyboard.press('Shift+Backquote');
+  assert.equal(await editor.textContent(), '10`~');
   assert.equal(await selected('purple'), 'true');
   assert.equal(await toggle.getAttribute('aria-pressed'), protection);
   await stopEditing();
@@ -96,22 +98,31 @@ async function verifyCreation(page, surface, row, toggle) {
   const search = page.locator('.notes-search-capture');
   await search.waitFor({ state: 'attached' });
   await page.keyboard.type('10');
-  assert.equal(await search.inputValue(), '10');
+  await page.keyboard.press('Backquote');
+  await page.keyboard.press('Shift+Backquote');
+  assert.equal(await search.inputValue(), '10`~');
   await page.keyboard.press('Escape');
   assert.equal(await selected('purple'), 'true');
   assert.equal(await toggle.getAttribute('aria-pressed'), protection);
-  await page.evaluate(() => {
+  const forwarded = await page.evaluate(() => {
+    const deliver = (key, options) => document.dispatchEvent(new KeyboardEvent('keydown', {
+      key, shiftKey: key === '~', bubbles: true, cancelable: true, ...options,
+    }));
+    const results = [];
     for (const options of [{ isComposing: true }, { keyCode: 229 }, { ctrlKey: true }]) {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true, ...options }));
+      for (const key of ['1', '`', '~']) results.push(deliver(key, options));
     }
     const dialog = document.createElement('dialog');
     document.body.append(dialog);
     dialog.showModal();
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true, cancelable: true }));
+    for (const key of ['1', '`', '~']) results.push(deliver(key));
     dialog.close();
     dialog.remove();
+    return results.every(Boolean);
   });
+  assert(forwarded, 'composition, modified keys and modal dialogs retain keyboard input');
   assert.equal(await selected('purple'), 'true');
+  assert.equal(await toggle.getAttribute('aria-pressed'), protection);
 
   const consoleTrigger = page.locator('[data-role="notes-console-trigger"]');
   await page.mouse.move(box.x + box.width - 2, box.y + box.height / 2);
@@ -239,7 +250,10 @@ async function main() {
     assert.equal(await toggle.textContent().then(text => text.trim()), '');
     assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
     assert.equal(await collapse.getAttribute('aria-expanded'), 'true');
-    assert.equal(await toggle.getAttribute('data-ui-tooltip'), '开启划线保护');
+    assert.equal(await toggle.getAttribute('data-ui-tooltip'), '开启划线保护（0 / ` / ~）');
+    assert.equal(await toggle.getAttribute('aria-keyshortcuts'), '0 ` Shift+`');
+    const shortcutHelp = page.locator('#notes-console-shortcuts dl > div').filter({ hasText: '切换划线保护' });
+    assert.deepEqual(await shortcutHelp.locator('kbd').allTextContents(), ['0', '`', '~']);
     assert.equal(await page.evaluate(keys => keys.every(key => localStorage.getItem(key) === null),
       [notesCollapsedKey, protectionKey, fixedColorKey]), true, 'first visit does not write defaults');
     await waitCounts([2, 1, 1]);
@@ -274,7 +288,7 @@ async function main() {
     assert.deepEqual(await counts(), [2, 1, 1]);
 
     await swipe(true, async () => {
-      await page.keyboard.press('0');
+      await page.keyboard.press('Backquote');
       assert.equal(await slash.count(), 0, 'enabling protection cancels the active swipe immediately');
     });
     assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
@@ -348,7 +362,13 @@ async function main() {
     await page.evaluate(() => document.activeElement.blur());
     await page.keyboard.press('0');
     assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
-    await page.keyboard.press('0');
+    await page.keyboard.down('Backquote');
+    await page.keyboard.down('Backquote');
+    await page.keyboard.up('Backquote');
+    assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
+    await page.keyboard.press('Shift+Backquote');
+    assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
+    await page.keyboard.press('Shift+Backquote');
     assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
     await page.keyboard.press('6');
     assert.deepEqual(await selectedColors(), ['teal']);
@@ -412,7 +432,7 @@ async function main() {
     assert.equal(await narrowSelected.getAttribute('data-fixed-color'), 'teal');
     assert.equal(await narrowSelected.getAttribute('data-ui-tooltip'), 'Teal · 6');
     assert(await narrowSelected.evaluate(el => getComputedStyle(el).boxShadow !== 'none'));
-    assert.equal(await narrowButton.getAttribute('data-ui-tooltip'), 'Turn off swipe deletion protection');
+    assert.equal(await narrowButton.getAttribute('data-ui-tooltip'), 'Turn off swipe deletion protection (0 / ` / ~)');
     assert.equal(await narrowRow.getAttribute('aria-label'), 'Quick Notes toolbar');
     const styles = await narrowRow.evaluate(el => {
       const { x, y, width, height } = el.getBoundingClientRect();
@@ -426,7 +446,7 @@ async function main() {
     assert(Math.abs(styles.y + styles.height - (580 - 12)) <= 1);
     await narrowButton.click();
     await narrow.evaluate(() => RelatumI18n.setLanguage('zh-CN'));
-    assert.equal(await narrowButton.getAttribute('data-ui-tooltip'), '开启划线保护');
+    assert.equal(await narrowButton.getAttribute('data-ui-tooltip'), '开启划线保护（0 / ` / ~）');
     assert.equal(await narrow.locator(collapseSelector).getAttribute('aria-label'), '收起工具栏');
     assert.equal(await narrowSelected.getAttribute('data-ui-tooltip'), '青绿 · 6');
     await narrow.setViewportSize({ width: 320, height: 580 });

@@ -180,7 +180,7 @@
     }
     function syncProtection() {
       protection.setAttribute('aria-pressed', String(slashDeletionDisabled));
-      syncTooltip(protection, slashDeletionDisabled ? '关闭划线保护' : '开启划线保护');
+      syncTooltip(protection, slashDeletionDisabled ? '关闭划线保护（0 / ` / ~）' : '开启划线保护（0 / ` / ~）');
       protection.setAttribute('aria-label', T('划线保护'));
     }
     function syncFixedColor() {
@@ -249,14 +249,16 @@
     dock.hidden = false;
 
     function handleShortcut(event) {
-      if (!/^[0-9]$/.test(event.key) || event.defaultPrevented || event.isComposing || event.keyCode === 229
-        || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || notesView.inert) return false;
+      const protectionKey = event.key === '`' || event.key === '~' || (event.key === '0' && !event.shiftKey);
+      const colorKey = !event.shiftKey && /^[1-9]$/.test(event.key);
+      if ((!protectionKey && !colorKey) || event.defaultPrevented || event.isComposing || event.keyCode === 229
+        || event.ctrlKey || event.metaKey || event.altKey || notesView.inert) return false;
+      const swatch = colorKey && swatches.find(item => item.shortcut === event.key);
+      if (!protectionKey && !swatch) return false;
       const control = event.target?.closest?.('button, input, select, textarea, [contenteditable], dialog, [role="dialog"], [role="alertdialog"]');
       if ((control && !dock.contains(control)) || pagePalette?.isOpen() || document.querySelector('dialog:modal')) return false;
       const modals = document.querySelectorAll('[aria-modal="true"]');
       if (Array.from(modals).some(el => !el.closest('[hidden], [inert]') && el.getClientRects().length)) return false;
-      const swatch = swatches.find(item => item.shortcut === event.key);
-      if (event.key !== '0' && !swatch) return false;
       event.preventDefault();
       event.stopPropagation();
       if (!event.repeat) {
