@@ -67,16 +67,12 @@
     resumeAfterPageShow: false,
     expandedDays: new Set(),  // 当天任务超过 10 条时，记录哪些天被展开过；换天自动收起
   };
-  let entranceExitFrozen = false;
   const dayColumnAnimations = new Set();
   if (host.state.day) {
     state.day = host.state.day; state.year = host.state.year; state.month = host.state.month;
   }
-  const prefersReduced = (function () {
-    try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
-    catch (error) { return false; }
-  })();
-
+  const motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
+  const prefersReduced = motionPreference.matches;
 
   function localDay(value) {
     const year = value.getFullYear();
@@ -1853,51 +1849,22 @@
     if (head) head.classList.remove('calendar-page-head-enter');
     if (card) card.classList.remove('calendar-card-enter');
     if (records) records.classList.remove('calendar-records-enter');
+    root.classList.remove('calendar-refreshing');
+    root.querySelectorAll('.calendar-countdown-revealing, .calendar-countdown-updated, .calendar-editor-enter, .calendar-day-arrived, .calendar-grid-from-next, .calendar-grid-from-prev, .calendar-month-title-enter').forEach(element => {
+      element.classList.remove('calendar-countdown-revealing', 'calendar-countdown-updated', 'calendar-editor-enter', 'calendar-day-arrived', 'calendar-grid-from-next', 'calendar-grid-from-prev', 'calendar-month-title-enter');
+    });
+    state.countdownRevealPending = false;
   }
 
-  function freezeEntranceMotionForExit() {
-    if (entranceExitFrozen) return;
-    entranceExitFrozen = true;
-    root.classList.add('calendar-exit-frozen');
-    dayColumnAnimations.forEach(animation => animation.pause());
-  }
-
-  function finalizeEntranceExit(force) {
-    if (!entranceExitFrozen || (!force && state.active)) return;
+  function finalizeEntranceExit() {
     clearEntranceMotion();
     clearDayColumnAnimations();
-    root.classList.remove('calendar-exit-frozen');
-    entranceExitFrozen = false;
-  }
-
-  // 每次翻进日历页都完整重播错峰入场：页头（含倒数日进度条）、月历卡片、右侧整列
-  // （日记 + 三栏：卡片错峰与条目上滑是 WAAPI 动画，由 animateDayColumn/revealDayColumnEnter 重播）。
-  function replayEntranceMotion(interrupted) {
-    if (prefersReduced || !state.loaded) return;
-    // A completed exit already removed the entrance classes. Arm them while
-    // still hidden, so showing the page needs no synchronous layout or flash.
-    if (!interrupted && pageRoot?.getAttribute('aria-hidden') === 'true') {
-      enterAfterRefresh();
-      return;
-    }
-    clearEntranceMotion();
-    // 强制结算一次 class 移除，下一帧重新添加即可重播；不重建 DOM、不重新读取数据。
-    void root.offsetWidth;
-    requestAnimationFrame(() => {
-      if (!state.active) return;
-      const head = root.querySelector('.calendar-page-head');
-      const card = root.querySelector('.calendar-month-card');
-      if (head) head.classList.add('calendar-page-head-enter');
-      if (card) card.classList.add('calendar-card-enter');
-      const column = root.querySelector('.calendar-day-column');
-      if (column) animateDayColumn(column, { kind: 'enter', direction: 0 });
-    });
   }
 
   // 首次加载入场：页头错峰淡入 + 左侧网格格子错峰浮现。
-  // 后续重新进入由 replayEntranceMotion 复用同一套 class，不重建页面。
+  // 后续重新进入由 enterAfterRefresh 复用同一套 class。
   function activateEntranceMotion(motion) {
-    if (prefersReduced || !motion || motion.kind !== 'initial') return;
+    if (motionPreference.matches || !motion || motion.kind !== 'initial') return;
     const head = root.querySelector('.calendar-page-head');
     const card = root.querySelector('.calendar-month-card');
     if (head) head.classList.add('calendar-page-head-enter');
@@ -1976,7 +1943,7 @@
       const dx = before.left - now.left;
       const dy = before.top - now.top;
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-      item.animate([
+      scope.animate(item, [
         { transform: 'translate3d(' + dx + 'px,' + dy + 'px,0)' },
         { transform: 'translate3d(0,0,0)' },
       ], { duration: 220, easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)' });
@@ -2044,16 +2011,16 @@
     const proceed = () => {
       if (done) return;
       done = true;
-      if (requestId !== state.requestSeq) return;
+      if (!state.active || requestId !== state.requestSeq) return;
       renderDayColumn({ kind: 'enter', direction: 0 });
     };
     const skeleton = column.querySelector('.calendar-records-loading');
-    if (prefersReduced || !skeleton || !skeleton.animate) { proceed(); return; }
-    const fade = skeleton.animate(
+    if (motionPreference.matches || !skeleton || !skeleton.animate) { proceed(); return; }
+    const fade = scope.animate(skeleton,
       [{ opacity: 1 }, { opacity: 0, transform: 'translateY(-6px)' }],
-      { duration: 280, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' }
+      { duration: 280, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' }, { hold: true }
     );
-    fade.onfinish = proceed;
+    fade.onfinish = () => { proceed(); fade.cancel(); };
     fade.oncancel = proceed;
     setTimeout(proceed, 380);  // 兜底：动画事件没触发也要继续，绝不卡在骨架上
   }
@@ -2067,10 +2034,11 @@
       );
       let last = null;
       leaving.forEach((el) => {
-        last = el.animate(
+        last = scope.animate(el,
           [{ opacity: 1 }, { opacity: 0, transform: 'translateY(5px)' }],
-          { duration: 190, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' }
+          { duration: 190, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' }, { hold: true }
         );
+        dayColumnAnimations.add(last);
       });
       if (!last) { resolve(); return; }
       let settled = false;
@@ -2089,7 +2057,7 @@
   function beginColumnExit(requestId) {
     const column = root.querySelector('.calendar-day-column');
     const writeIn = () => {
-      if (requestId !== state.requestSeq) return;  // 期间被新导航顶替则让位
+      if (!state.active || requestId !== state.requestSeq) return;
       if (!root.querySelector('.calendar-day-column')) { renderDayPanel(); return; }
       renderDayColumn({ kind: 'enter', direction: 0, speed: 0.62, withHeading: true });
     };
@@ -2108,7 +2076,7 @@
 
   function animateDayColumn(column, motion) {
     const isEnter = !!(motion && motion.kind === 'enter');
-    if (prefersReduced || !motion
+    if (motionPreference.matches || !motion
         || (motion.kind !== 'day' && motion.kind !== 'month' && !isEnter)) return;
     clearDayColumnAnimations();
     const now = performance.now();
@@ -2117,7 +2085,7 @@
     if (rapid) return;  // 连续快翻时跳过（首开 lastDayMotionAt=0，永不算 rapid，照常揭示）
     const play = (element, frames, duration, delay, easing) => {
       if (!element) return;
-      const animation = element.animate(frames, {
+      const animation = scope.animate(element, frames, {
         duration,
         delay: delay || 0,
         easing: easing || 'cubic-bezier(0.22, 1, 0.36, 1)',
@@ -2900,7 +2868,7 @@
   function enterAfterRefresh() {
     if (!state.active) return;
     root.classList.remove('calendar-refreshing');
-    if (prefersReduced) return;
+    if (motionPreference.matches) return;
     const head = root.querySelector('.calendar-page-head');
     const card = root.querySelector('.calendar-month-card');
     if (head) head.classList.add('calendar-page-head-enter');
@@ -2909,21 +2877,24 @@
     if (column) animateDayColumn(column, { kind: 'enter', direction: 0 });
   }
 
-  function activateCalendarPanel({ workspaceReturn = false } = {}) {
-    const interrupted = entranceExitFrozen;
-    finalizeEntranceExit(true);
+  function activateCalendarPanel({ workspaceReturn = false, resumeMotion = false } = {}) {
     state.active = true;
     if (state.loaded && (workspaceReturn || state.payload?.today !== localDay(new Date()))) {
       // Reuse the retained frame while checking authoritative data, including
       // midnight and changes made while this workspace was suspended.
       root.classList.remove('calendar-refreshing');
-      replayEntranceMotion(interrupted);
+      if (!resumeMotion) enterAfterRefresh();
       state.stale = true;
       load(state.day, { kind: 'refresh', direction: 0 });
       scheduleCountdownProgressBreath(900);
       return;
     }
-    if (!state.loaded || state.stale) {
+    if (resumeMotion && state.loaded) {
+      if (state.stale || root.querySelector('.calendar-records-loading')) {
+        root.classList.remove('calendar-refreshing');
+        load(state.day, { kind: 'refresh', direction: 0 });
+      }
+    } else if (!state.loaded || state.stale) {
       // 首次进入由 render 的 initial 入场负责；非首次（stale 刷新）时：
       // 等待数据期间先隐藏整个日历内容区（calendar-refreshing），
       // 禁止旧内容无动画生硬展示；数据到达后同帧解除隐藏并启动入场。
@@ -2937,15 +2908,13 @@
         })
         .catch(() => {});
     } else {
-      replayEntranceMotion(interrupted);
+      enterAfterRefresh();
     }
     scheduleCountdownProgressBreath(900);
   }
 
   function deactivateCalendarPanel() {
-    const wasActive = state.active;
     state.active = false;
-    if (wasActive) freezeEntranceMotionForExit();
     state.resumeAfterPageShow = false;
     cancelCalendarNetworkWork();
     closeCountdownClock();
@@ -2961,7 +2930,7 @@
 
 return {
   activate: activateCalendarPanel,
-  finalizeExitMotion() { finalizeEntranceExit(false); },
+  finalizeExitMotion: finalizeEntranceExit,
   async beforeLeave() {
     captureCurrentDraft();
     const values = await Promise.all([...state.drafts.values()].filter(draft => !draft.deleting).map(draft => queueDiarySave(draft.day, true)));
@@ -2969,7 +2938,7 @@ return {
   },
   deactivate({ freeze = false } = {}) {
     Object.assign(host.state, { day: state.day, year: state.year, month: state.month });
-    deactivateCalendarPanel(); if (!freeze) finalizeEntranceExit(true); scope.stop({ freeze });
+    deactivateCalendarPanel(); if (!freeze) finalizeEntranceExit(); scope.stop({ freeze });
   },
   destroy() {
     this.deactivate(); window.MathJax?.typesetClear?.([root]);

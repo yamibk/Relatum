@@ -37,7 +37,6 @@
     settingsPositionFrame: 0, deleteTimer: 0,
     unitPopover: null, unitTrigger: null, unitSaving: false,
     highlightId: '', entranceTimer: 0,
-    entranceExitFrozen: false, entranceExitAnimations: [],
     monthMotionTimer: 0, mutationSeq: new Map(), mutationChains: new Map(),
     pendingMutations: 0, needsReload: false, reloadPromise: null,
     pageRailOver: false, pageRailVisible: false, pageWheelAccum: 0, pageWheelTimer: 0,
@@ -616,7 +615,7 @@
   }
 
   function animateEntryChanges(previous) {
-    if (reducedMotion || !previous || !previous.size) return;
+    if (!state.active || reducedMotion || !previous || !previous.size) return;
     entryRows.forEach((entry, id) => {
       if (!entry.isConnected) return;
       const before = previous.get(id);
@@ -625,7 +624,7 @@
       const dx = before.left - after.left;
       const dy = before.top - after.top;
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-      entry.animate([{ transform: 'translate3d(' + dx + 'px,' + dy + 'px,0)' },
+      scope.animate(entry, [{ transform: 'translate3d(' + dx + 'px,' + dy + 'px,0)' },
         { transform: 'translate3d(0,0,0)' }],
       { duration: 190, easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)' });
     });
@@ -1640,9 +1639,8 @@
   // —— 整版错峰入场：与学习页一致，纯 CSS class（.is-revealing）驱动，
   //    不使用 WAAPI element.animate（其 pending 帧会造成“完整内容闪一帧”的闪烁）。
   function startPageEntrance() {
-    if (!dom.page || reducedMotion || !state.active) return;
+    if (!dom.page || matchMedia('(prefers-reduced-motion: reduce)').matches || !state.active) return;
     clearTimeout(state.entranceTimer);
-    void dom.page.offsetWidth;
     dom.page.classList.add('is-revealing');
     state.entranceTimer = setTimeout(() => {
       state.entranceTimer = 0;
@@ -1656,32 +1654,10 @@
     if (dom.page) dom.page.classList.remove('is-revealing');
   }
 
-  function freezePageEntranceForExit() {
-    clearTimeout(state.entranceTimer);
-    state.entranceTimer = 0;
-    if (!dom.page || !dom.page.classList.contains('is-revealing') || state.entranceExitFrozen) return;
-    state.entranceExitFrozen = true;
-    if (typeof dom.page.getAnimations !== 'function') return;
-    try {
-      state.entranceExitAnimations = dom.page.getAnimations({ subtree: true }).filter((animation) => {
-        return animation.playState === 'running' || animation.playState === 'pending';
-      });
-      state.entranceExitAnimations.forEach((animation) => {
-        try { animation.pause(); } catch (error) {}
-      });
-    } catch (error) {
-      state.entranceExitAnimations = [];
-    }
-  }
-
-  function finalizePageEntranceExit(force) {
-    if (!state.entranceExitFrozen || (!force && state.active)) return;
-    state.entranceExitAnimations.forEach((animation) => {
-      try { animation.cancel(); } catch (error) {}
-    });
-    state.entranceExitAnimations = [];
-    state.entranceExitFrozen = false;
+  function finalizePageEntranceExit() {
     stopPageEntrance();
+    dom.flow?.classList.remove('ledger-month-next', 'ledger-month-previous');
+    if (!state.active) resetFlowHeightFloor();
   }
 
   // 首屏空闲时预取整本账本：用户第一次翻进记账视图直接消费内存快照。
@@ -1739,35 +1715,35 @@
   mount();
 
   return {
-    activate() {
-      finalizePageEntranceExit(true);
+    activate({ resumeMotion = false } = {}) {
       state.active = true;
       // 保险清理：切页交接若被离页/重入打断，不能残留透明度、位移或入场动画。
       clearPageSwitchMotion();
       if (languageDirty) { syncLanguage(); languageDirty = false; }
-      if (dom.page) {
-        dom.page.classList.remove('is-revealing');
-      }
       if (!state.activatedOnce) {
         const today = new Date(); state.year = today.getFullYear(); state.month = today.getMonth() + 1;
         state.activatedOnce = true;
       }
       renderPageRail(); requestAnimationFrame(renderPageRail);
-      syncLedger({ skipFlip: true }); startPageEntrance();
+      syncLedger({ skipFlip: true });
+      if (!resumeMotion || dom.page?.classList.contains('is-revealing')) startPageEntrance();
+      if (resumeMotion && dom.flow?.matches('.ledger-month-next, .ledger-month-previous')) {
+        state.monthMotionTimer = setTimeout(() => dom.flow.classList.remove('ledger-month-next', 'ledger-month-previous'), 380);
+      }
       loadLedger({ sync: false });
     },
     deactivate({ freeze = false } = {}) {
       Object.assign(host.state, { year: state.year, month: state.month });
       state.active = false;
-      freezePageEntranceForExit();
       resetFlowHeightFloor();
       setPageRailVisible(false);
       discardDraft({ instant: true }); cancelMainRequest(); closeSettings(false, true);
       closeUnitSettings(false, true);
       if (paletteController) paletteController.close(false, true);
       scope.stop({ freeze });
+      if (!freeze) finalizePageEntranceExit();
     },
-    finalizeExitMotion() { finalizePageEntranceExit(false); },
+    finalizeExitMotion: finalizePageEntranceExit,
     async beforeLeave(){await Promise.allSettled([...state.mutationChains.values()]);return !state.pendingMutations;},
     destroy(){this.deactivate();paletteController?.destroy?.();scope.destroy();entryRows.clear();dayGroups.clear();state.ledger=null;root.replaceChildren();},
     getMonth() { return { year: state.year, month: state.month }; },

@@ -175,18 +175,28 @@ function replayClass(element, className, cleanupMs) {
     }
   }
 function replayEntrance() {
-    if (prefersReduced) return;
-    root.classList.remove('focus-reentering');
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     ringFill?.style.setProperty('--focus-ring-empty', RING_C.toFixed(1));
     ringFill?.style.setProperty('--focus-ring-target', ringFill.style.strokeDashoffset || '0');
-    replayClass(root, 'focus-reentering', 1250);
+    root.classList.add('focus-reentering');
+    setTimeout(() => root.classList.remove('focus-reentering'), 1250);
     try {
       if (localStorage.getItem('daily:focusHelpSeen') !== '1') replayClass(helpBtn, 'is-inviting', 2600);
     } catch (_) {}
   }
+function finalizeFocusEntrance() {
+    root.classList.remove('focus-reentering');
+    helpBtn?.classList.remove('is-inviting');
+}
+const pendingDismissals = new Map();
 function dismiss(element, exitClass, after) {
     if (!element || element.hidden) { if (after) after(); return; }
-    if (prefersReduced) {
+    if (pendingDismissals.has(element)) {
+      const alreadyClosing = element.classList.contains(exitClass);
+      pendingDismissals.get(element)();
+      if (alreadyClosing) { if (after) after(); return; }
+    }
+    if (prefersReduced || !host.isActive()) {
       element.classList.remove(exitClass);
       element.hidden = true;
       if (after) after();
@@ -200,6 +210,7 @@ function dismiss(element, exitClass, after) {
       done = true;
       clearTimeout(timer);
       element.removeEventListener('animationend', onEnd);
+      pendingDismissals.delete(element);
       // 退场途中又被重新打开（开场逻辑会移除 exitClass）时，别再把它藏起来。
       if (!element.classList.contains(exitClass)) return;
       element.classList.remove(exitClass);
@@ -209,6 +220,7 @@ function dismiss(element, exitClass, after) {
     const onEnd = (event) => { if (event.target === element) finish(); };
     element.classList.add(exitClass);
     element.addEventListener('animationend', onEnd);
+    pendingDismissals.set(element, finish);
     timer = setTimeout(finish, 360);
   }
 function pulseStats() {
@@ -812,9 +824,23 @@ function updateFromService() {
 listen(document, 'canvas:data-changed', () => { if (host.isActive()) loadSessions(); });
 goalEl.value=service.goal;outcomeEl.value=service.outcome;syncSettingsInputs();syncModeUI();updateNoiseVolRow();
 return {
-  activate() { if (!unsubscribe) unsubscribe = service.subscribe(updateFromService); syncDisplay(); if (service.pendingSession) renderPendingWrapup(); replayEntrance(); return Promise.allSettled([loadDaily(), loadSessions()]); },
-  deactivate({ freeze = false } = {}) { unsubscribe?.(); unsubscribe = null; service.goal = goalEl.value; service.outcome = outcomeEl.value; exitZen(); toggleSettings(false); toggleHelp(false); closeSessionEditor(); scope.stop({ freeze }); service.releaseIdleAudio(); },
-  showDay(day, id) { footprintDay = day; footprintSessionId = id || ''; return loadSessions().then(() => { if (id && host.isActive()) openSessionEditor(id); }); },
+  activate({ resumeMotion = false } = {}) {
+    if (!unsubscribe) unsubscribe = service.subscribe(updateFromService);
+    syncDisplay(); if (service.pendingSession) renderPendingWrapup();
+    if (resumeMotion) setTimeout(finalizeFocusEntrance, 2600); else replayEntrance();
+    return Promise.allSettled([loadDaily(), loadSessions()]);
+  },
+  deactivate({ freeze = false } = {}) {
+    unsubscribe?.(); unsubscribe = null;
+    service.goal = goalEl.value; service.outcome = outcomeEl.value; exitZen();
+    toggleSettings(false); toggleHelp(false); closeSessionEditor();
+    scope.stop({ freeze }); if (!freeze) finalizeFocusEntrance(); service.releaseIdleAudio();
+  },
+  finalizeExitMotion: finalizeFocusEntrance,
+  showDay(day, id, { isCurrent = host.isActive } = {}) {
+    footprintDay = day; footprintSessionId = id || '';
+    return loadSessions({ isCurrent }).then(() => { if (id && isCurrent()) openSessionEditor(id); });
+  },
   destroy() { this.deactivate(); scope.destroy(); },
 };
   };

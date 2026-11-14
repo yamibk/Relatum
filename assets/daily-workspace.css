@@ -12,6 +12,16 @@
 .daily-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
 .daily-workspace .daily-page { position: absolute; inset: 0; overflow: auto; padding: 24px clamp(20px, 3vw, 56px) 52px; opacity: 1; transform: none; pointer-events: auto; min-height: 0; }
 .daily-workspace .daily-page[hidden] { display: none !important; }
+.daily-workspace .daily-page[inert] { pointer-events: none; }
+.daily-page[data-daily-motion="forward"] { animation: startViewEnterForward var(--start-turn-ms, 210ms) var(--easing-start-view) both; }
+.daily-page[data-daily-motion="back"] { animation: startViewEnterBack var(--start-turn-ms, 210ms) var(--easing-start-view) both; }
+.daily-stage:has(> .daily-page:not([hidden])[inert]) > .daily-page:not([inert]) { z-index: 1; }
+.daily-motion-frozen,
+.daily-motion-frozen *,
+.daily-motion-frozen *::before,
+.daily-motion-frozen *::after { animation-play-state: paused !important; }
+/* The root keeps moving while the contents hold their last frame. */
+.daily-motion-frozen.daily-page { animation-play-state: running !important; }
 .daily-page-tasks { display: grid; grid-template-rows: minmax(0, 1fr); }
 .daily-page-tasks > .focus-daily { min-height: 0; height: 100%; }
 .daily-page-focus > .focus-shell { min-height: 100%; }
@@ -28,4 +38,7 @@ body[data-start-theme="dark"] .daily-nav-slider { background: #e8ebe6; color: #1
   .daily-nav-slider-track > span { padding: 9px 12px; }
   .daily-workspace .daily-page { padding: 12px 14px 32px; }
 }
-@media (prefers-reduced-motion: reduce) { .daily-navigation button, .daily-nav-slider, .daily-nav-slider-track { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .daily-navigation button, .daily-nav-slider, .daily-nav-slider-track { transition: none; }
+  .daily-page[data-daily-motion] { animation: none; }
+}

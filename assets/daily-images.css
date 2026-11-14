@@ -1,6 +1,15 @@
 .daily-workspace .daily-page-images { overflow: hidden; padding: 20px clamp(16px, 2vw, 36px) 24px; }
 .images-workbench { --images-paper: #fff; --images-surface: #fff; --images-bed: #efefed; --images-border: rgba(40, 42, 38, .12); --images-muted: #777b74; --images-ink: #20231f; display: flex; flex-direction: column; gap: 12px; width: 100%; height: 100%; min-height: 0; color: var(--images-ink); font-family: var(--font-ui, system-ui, sans-serif); }
 .images-workbench [hidden] { display: none !important; }
+@media (prefers-reduced-motion: no-preference) {
+  .images-entering :is(.images-head, .images-toolbar, .images-viewport, .images-footer) {
+    animation: dailyImagesReveal calc(var(--start-turn-ms, 210ms) + 160ms) var(--easing-page) both;
+  }
+  .images-entering .images-toolbar { animation-delay: 55ms; }
+  .images-entering .images-viewport { animation-delay: 105ms; }
+  .images-entering .images-footer { animation-delay: 140ms; }
+}
+@keyframes dailyImagesReveal { from { opacity: 0; } to { opacity: 1; } }
 .images-workbench button, .images-context-menu button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; transition: background 120ms, color 120ms; }
 .images-workbench button:hover:not(:disabled), .images-context-menu button:hover:not(:disabled) { background: var(--images-bed, #eceeeb); }
 .images-workbench button:active:not(:disabled) { background: var(--images-border); }

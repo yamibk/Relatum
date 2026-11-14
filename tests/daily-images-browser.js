@@ -7,6 +7,7 @@ const repo = path.resolve(__dirname, '..'), pause = ms => new Promise(resolve =>
 const catalog = JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json'), 'utf8'));
 const artifacts = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-image-markup-'));
 const native = process.argv.includes('--native');
+const turnsOnly = process.argv.includes('--turns-only');
 async function freePort() {
   const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve)); return port;
@@ -66,6 +67,118 @@ async function load(page, image) {
   await page.locator('.images-file-input').setInputFiles(image);
   await page.waitForFunction(() => document.querySelector('.images-empty').hidden && !document.querySelector('[data-images-action="copy"]').disabled && document.querySelector('.images-loading').hidden);
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+async function pageTurnChecks(page) {
+  await load(page, await imageFile(page, { color: '#2466bb' }));
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const result = await page.evaluate(async () => {
+    const workspace = RelatumDailyWorkspace;
+    const root = document.querySelector('.daily-page-images');
+    const canvas = root.querySelector('.images-canvas');
+    const nav = document.querySelector('.daily-navigation');
+    const turn = deltaY => nav.dispatchEvent(new WheelEvent('wheel', { deltaY, bubbles: true, cancelable: true }));
+    const tell = node => {
+      const style = getComputedStyle(node);
+      return { opacity: Number(style.opacity), x: new DOMMatrix(style.transform === 'none' ? undefined : style.transform).m41 };
+    };
+    const paint = () => [...canvas.getContext('2d').getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data];
+    const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
+    const finish = async node => {
+      const animations = node.getAnimations();
+      await Promise.all(animations.map(animation => animation.ready));
+      animations.forEach(animation => animation.finish());
+    };
+    const visits = [];
+    const observe = event => visits.push(event.detail.page);
+    document.addEventListener('daily:pagechange', observe);
+    const style = document.documentElement.style;
+    style.setProperty('--start-turn-ms', '500ms');
+    style.setProperty('--start-turn-leave-ms', '460ms');
+    const startColor = paint();
+    await workspace.navigate('ledger');
+    const exit = root.getAnimations()[0];
+    await exit.ready;
+    exit.pause(); exit.currentTime = 155;
+    const exiting = { ...tell(root), pixels: paint(), hidden: root.hidden, inert: root.inert, a11y: root.getAttribute('aria-hidden'), duration: exit.effect.getTiming().duration };
+    const backward = document.querySelector('.daily-page-ledger').getAnimations().find(animation => animation.animationName === 'startViewEnterBack');
+    const backwardX = new DOMMatrix(backward.effect.getKeyframes()[0].transform).m41;
+    const returning = workspace.navigate('images');
+    await returning;
+    const returned = { ...tell(root), width: canvas.width, first: root.getAnimations()[0].effect.getKeyframes()[0], current: nav.querySelector('[aria-current="page"]').dataset.dailyPage };
+    const suspended = document.querySelector('.daily-page-ledger');
+    await Promise.all([finish(root), finish(suspended)]);
+    await nextFrame(); await nextFrame();
+    const settled = document.querySelectorAll('.daily-page:not([hidden])').length;
+    visits.length = 0;
+    turn(-60); turn(-60); turn(-60); turn(60);
+    await new Promise(resolve => document.addEventListener('daily:pagechange', resolve, { once: true }));
+    const batched = [...visits];
+    const focus = document.querySelector('.daily-page-focus');
+    await finish(root); await nextFrame();
+    const cleared = canvas.width === 0 && root.hidden;
+    const forward = await workspace.navigate('images');
+    const forwardX = new DOMMatrix((root.getAnimations()[0].effect.getKeyframes()[0].transform)).m41;
+    const retiring = focus.getAnimations()[0]; await retiring.ready; retiring.finish();
+    await nextFrame(); await nextFrame();
+    await finish(root); await nextFrame();
+    const beforeMinimum = workspace.current;
+    turn(-60);
+    document.documentElement.dataset.desktopMinimized = '1';
+    window.dispatchEvent(new Event('canvasdesktop:visibility'));
+    await new Promise(resolve => setTimeout(resolve, 90));
+    const minimized = { current: workspace.current, width: canvas.width, motions: document.querySelectorAll('[data-daily-motion],.daily-motion-frozen').length };
+    document.documentElement.dataset.desktopMinimized = '0';
+    window.dispatchEvent(new Event('canvasdesktop:visibility'));
+    document.removeEventListener('daily:pagechange', observe);
+    style.setProperty('--start-turn-ms', '210ms');
+    style.setProperty('--start-turn-leave-ms', '193ms');
+    return { startColor, exiting, backwardX, returned, settled, batched, cleared, forward, forwardX, beforeMinimum, minimized };
+  });
+  assert.deepEqual(result.startColor, [36, 102, 187, 255]);
+  assert.deepEqual(result.exiting.pixels, result.startColor, 'retiring image keeps its painted pixels');
+  assert(result.exiting.inert && !result.exiting.hidden && result.exiting.a11y === 'true');
+  assert(result.exiting.opacity > 0 && result.exiting.opacity < 1 && result.exiting.x > 0);
+  assert.equal(result.exiting.duration, 460);
+  assert.equal(result.backwardX, -42);
+  assert.equal(result.returned.current, 'images');
+  assert(result.returned.width > 0);
+  assert(Math.abs(result.returned.first.opacity - result.exiting.opacity) < .01);
+  assert(Math.abs(result.returned.x - result.exiting.x) < 1, 'reversal begins at the displayed position');
+  assert.equal(result.settled, 1);
+  assert.deepEqual(result.batched, ['focus'], 'wheel burst commits only its last intended page');
+  assert(result.cleared, 'completed image exit releases the backing canvas');
+  assert.equal(result.forward, true);
+  assert.equal(result.forwardX, 42);
+  assert.equal(result.beforeMinimum, 'images');
+  assert.deepEqual(result.minimized, { current: 'images', width: 0, motions: 0 });
+  await page.evaluate(() => RelatumDailyWorkspace.navigate('ledger'));
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await frames(page);
+  assert.equal(await page.locator('.daily-page:not([hidden])').count(), 1);
+  assert.equal(await page.locator('[data-daily-motion],.daily-motion-frozen').count(), 0);
+  await page.evaluate(() => RelatumDailyWorkspace.navigate('tasks'));
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const directions = await page.evaluate(async () => {
+    const order = ['tasks', 'calendar', 'focus', 'ledger', 'images'];
+    const sequence = [...order.slice(1), ...order.slice(0, -1).reverse()];
+    const directions = [];
+    for (const id of sequence) {
+      const previous = document.querySelector('.daily-page-' + RelatumDailyWorkspace.current);
+      await RelatumDailyWorkspace.navigate(id);
+      const incoming = document.querySelector('.daily-page-' + id);
+      directions.push([id, incoming.dataset.dailyMotion, previous.inert && !previous.hidden]);
+      await Promise.all([...previous.getAnimations(), ...incoming.getAnimations()].map(async animation => {
+        await animation.ready; animation.finish();
+      }));
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }
+    return directions;
+  });
+  assert.deepEqual(directions, [
+    ['calendar', 'forward', true], ['focus', 'forward', true], ['ledger', 'forward', true], ['images', 'forward', true],
+    ['ledger', 'back', true], ['focus', 'back', true], ['calendar', 'back', true], ['tasks', 'back', true],
+  ]);
+  console.log('Daily page turns: frozen image, reversible layers, wheel batching and minimize passed');
 }
 async function point(page, x, y, width = 800, height = 500) {
   return page.locator('.images-viewport').evaluate((node, { x, y, width, height }) => {
@@ -191,6 +304,11 @@ async function interactionChecks(page) {
 (async () => {
   const f = await fixture(), { page } = f;
   try {
+    if (turnsOnly) {
+      await pageTurnChecks(page);
+      assert.deepEqual(f.errors, []);
+      return;
+    }
     await interactionChecks(page);
     const original = await imageFile(page); await load(page, original);
     await drag(page, null, 100, 100, 300, 220);

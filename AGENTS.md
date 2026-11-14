@@ -1033,12 +1033,13 @@ Cards 快捷键 `cards` 使用 `Mod-f`，通过 `insert:cards-template` 插入�
 
 ### 日常工作区 `daily-workspace.js`
 
-- 入口默认任务、日历、专注、记账、图片编辑，可在全局“导航”排序与隐藏；键盘按实际顺序切换，宽窗上下、窄窗左右。独立选中滑块和反向文字轨道沿用画布滑块时长及缓动，失败回原页，快速反向接续当前显示位置。导航栏内滚轮累计 24 单位翻页，200ms 安静清零，从最新目标继续，首尾停止；正文、横向与缩放手势不被接管。尺寸、语言、恢复及低动态立即校准，离场/隐藏/最小化/销毁清理动画、滚轮定时器与测量任务，闲置无 RAF。
+- 入口默认任务、日历、专注、记账、图片编辑，可在全局“导航”排序与隐藏；键盘按实际顺序切换，宽窗上下、窄窗左右。独立选中滑块和反向文字轨道沿用画布滑块时长及缓动。滚轮累计 24 单位翻页，200ms 安静清零，从最新目标继续，首尾停止；宽窗热区包含导航右侧 16px 内的舞台空白，窄窗仅顶部导航，正文、编辑、横向与缩放手势保留。尺寸、语言、恢复及低动态立即校准，离场/隐藏/最小化/销毁清理动画、滚轮定时器与测量任务，闲置无 RAF。
+- 点击、键盘及滚轮共用 40ms 合并窗口，滑块立即响应。旧页从当前帧轻淡至 78%，日记保存和目标模板/脚本准备完成后才提交页面语义和 `daily:page:v1`。候选期间保留编辑，结束后接续最新目标；准备失败或取消从当前帧恢复。`daily-workspace.js/css` 使用共享翻页时长、缓动及入场关键帧，按可见页序交接 ±42px；退场页即时 inert，最多保留一个。CSS 局部类与页面持有的 WAAPI 句柄冻结内部入场，快速反向复用退场根层和显示帧；退场完成隐藏并清理。四页沿用错峰入场，图片编辑新增标题、工具栏、视口及底栏错峰淡入，离场立即停止交互和绘制，最后一帧及解码资源保留至退场完成。低动态、隐藏、原生最小化和工作区交接结清子页动效。
 
 - `daily` 追加在工作区清单末尾，默认隐藏；全局设置可独立勾选、排序及恢复。功能归 `daily.tasks / daily.calendar / daily.focus / daily.ledger / daily.images`，动态桌面为 `daily.calendar.wallpaper`；旧功能 ID 和旧界面偏好不迁移。仅日常启动不加载画布首页；全部子功能关闭时工作区不可用，启动器父项仍可重新勾选子项。
-- 首页只常驻 `daily-loader.js` 的轻量接线。五个子页的模板（如有）、专属 CSS 与工厂脚本首次打开才加载，工作区内保留视图；离场交接完成后默认释放，也可在全局系统设置选 30 秒、5 分钟或直到关闭窗口。限时从外层离场结束计算，仅用一次定时器；改档按原离场时间计算，返回核对过期并作废旧任务。保留期间清理冻结动画、停止绘制/页面计时/轮询和专注视图订阅，导航观察器返回重接；隐藏整个日常工作区或 pagehide 释放实例。`activate({workspaceReturn})` 让日历在保留画面时复核权威数据和跨日状态，其他页沿用原读取；图片编辑继续释放解码及绘图资源，仅保留编辑会话。共享空闲调度仅在进入日常后串行预读任务和专注快照，尊重后台预加载开关，隐藏、最小化和离场取消；账本、日历和图片编辑不预热，日历邻月预读也服从同一开关。
+- 首页只常驻 `daily-loader.js` 的轻量接线。五个子页的模板（如有）、专属 CSS 与工厂脚本首次打开才加载，工作区内保留视图；离场交接完成后默认释放，也可在全局系统设置选 30 秒、5 分钟或直到关闭窗口。限时从外层离场结束计算，仅用一次定时器；改档按原离场时间计算，返回核对过期并作废旧任务。保留期间清理冻结动画、停止绘制/页面计时/轮询和专注视图订阅，导航观察器返回重接；隐藏整个日常工作区或 pagehide 释放实例。`activate({workspaceReturn, resumeMotion})` 让日历在保留画面时复核权威数据和跨日状态，并在尚未退场完毕时恢复内层动效；其他页沿用原读取。图片编辑退场完成后释放解码及绘图资源，仅保留编辑会话。共享空闲调度仅在进入日常后串行预读任务和专注快照，尊重后台预加载开关，隐藏、最小化和离场取消；账本、日历和图片编辑不预热，日历邻月预读也服从同一开关。
 - 计时与声音的服务寿命独立于视图；任务绑定、日历跳转和页内便签通过宿主接口接入。`daily:` 偏好纳入桌面快照，数据继续使用原 JSON / Markdown 和原子写入。专注记录按稳定 id 去重，任务分钟用同一 requestId 的有界收据去重。
-- 验证入口：`tests/daily-workspace-browser.js`、`tests/daily-focus-service.js`、`tests/test_daily_workspace.py`、功能裁剪和全局设置回归；性能与隐藏桌面壳私有内存测量为 `tests/daily-workspace-performance.js`，仅使用临时数据。边界、复现和测量口径见 `docs/daily-workspace-2026-10-25.md`。
+- 验证入口：`tests/daily-workspace-browser.js`、`tests/page-navigation-browser.js`、`tests/daily-focus-service.js`、`tests/test_daily_workspace.py`、功能裁剪和全局设置回归。`tests/daily-images-browser.js --turns-only` 验证真实中间帧、退场像素、反向起点、滚轮合并与最小化，追加 `--native` 使用源码 WebView2。性能与隐藏桌面壳私有内存测量为 `tests/daily-workspace-performance.js`，仅使用临时数据。边界、复现和测量口径见 `docs/daily-workspace-2026-10-25.md`。
 
 ### 图片编辑 `daily-images.js`
 
@@ -1055,7 +1056,7 @@ Cards 快捷键 `cards` 使用 `Mod-f`，通过 `insert:cards-template` 插入�
 - 日期间隔浮窗的总天数摘要与日期段列表（含列表子元素）在 `assets/styles.css` 的起步页全局禁选规则后显式允许文本选择，并由 `assets/start-sticky-notes.js` 的 `selectstart` 拦截器放行，支持鼠标选中后复制；修改时须同时保留样式和事件两处例外。
 
 - 日历是日常工作区的独立子页，由 `RelatumDailyCalendar(root,host)` 创建，提供 activate、beforeLeave、deactivate、destroy。日历与记账各有明确入口，不再内部切换或互相预热；日记保存失败阻止导航，离场取消读取与动效，工作区交接完成后销毁视图。
-- 日历离页用 `calendar-exit-frozen` 暂停内部 CSS 入场；右栏 WAAPI 动画只维护自身句柄，完成后释放填充效果，重播、退场收尾时集中取消，不逐后代查询 `getAnimations()`。未激活的日历不重复冻结。缓存重进且上次退场完成时，在外层显示前同步准备入场，无需强制布局；中断退场的快速返回仍复用原重播交接。日常宿主另外在外层退场前暂停作用域内的有限动画，快速返回先取消旧冻结，外层结束后释放；验证见 `tests/daily-workspace-browser.js`。
+- 日历随宿主冻结内部 CSS 入场，右栏 WAAPI 由页面作用域持有，完成后释放填充效果，重播、退场收尾时集中取消。缓存重进同步准备错峰入场，子页退场中返回则接续已暂停的动画；完整工作区交接继续按页面保留策略复核数据。验证见 `tests/daily-workspace-browser.js`。
 - 日记是每天一个 Markdown 文件，带 frontmatter：`title/date/tags/updatedAt`。
 - `app.py` 的日记索引只缓存最多 4096 篇摘要，不保留正文；每次请求仍检查文件修改/创建时间、大小和文件身份，变化项沿原解析路径重读，读取前后签名一致才缓存。保存/删除成功立即失效，外部删除或读取失败清理旧项，切换数据目录清空缓存；响应字典和标签列表独立复制。超过容量时保留有效缓存，额外日记只生成本次摘要，避免按扫描顺序反复淘汰造成全库重读。缓存使用独立锁，不增加通用数据锁的扫描范围。`tests/test_diary_index.py` 覆盖一致性、并发和容量边界；`tests/diary-index-performance.py --baseline-ref <旧提交>` 使用一次性日记库测量前后摘要耗时及文件查询/正文读取次数。
 - 日历聚合日记、画布活动、每日任务打卡、学习任务完成与倒数日；不读取 `data/calendar-pins.json`。`/api/calendar` 的 day 返回 `canvasActivity`（当天画布活动：标题/秒数/新建/修改标记，按时长降序）、`daily`（当天每日任务打卡摘要：**只记录已打卡的任务**——按 doneDates 判定，未打卡项不返回、不参与入场动画；`checkedCount`/`totalCount`/`items[{name,checked,totalDays}]`，条目按名称排序）、`studyCompleted`（当天**归档**的学习任务：学习归档记录中 kind=study 且落在该日的条目，按时间升序；不读未归档的 study.json）。月网格圆点与右侧三栏一一对应：`canvas`（当天画布活动：有前台时长或新建/修改）、`daily`（当天打过卡：任一每日任务 doneDates 含该日）、`study`（当天有学习归档：kind=study 记录落在该日），图例三色即画布活动 / 每日打卡 / 学习任务；旧 diary/due/focusTask/completed/focusSessions/archives 桶字段保留但不再渲染。右侧三栏在数据未到时**完全隐藏**（不渲染加载骨架白块），数据到达后整列入场动画揭示；每次翻进日历页（activate）都完整重播错峰入场——页头（含进度条）与月历卡片用 CSS 类，右侧整列（日记 + 三栏卡片错峰/条目上滑）由 `animateDayColumn({kind:'enter'})` 走 WAAPI。**非 stale 重进**走 `replayEntranceMotion`：完整退场后在显示前同步准备，中断退场时用原 rAF 重播；**stale 刷新**（用户在他页改过数据）走 `enterAfterRefresh`——数据渲染与入场动画同帧生效（同步加类、不经过 rAF），避免「新内容先完整显示一帧、再闪回动画起点」；首次进入由 render 的 initial 入场负责、不双播。倒数日卡片在数据未到时也**隐藏**（`hidden = !countdownEnabled || !countdown`，不渲染"创建第一个倒数日"占位按钮），数据到达后由 `syncCountdownCard` 以 reveal 动画淡入，避免「占位 → 重建」闪现。

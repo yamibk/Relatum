@@ -192,8 +192,8 @@
       const b = C.bounds(object);
       return [{ key: 'nw', x: b.x, y: b.y }, { key: 'ne', x: b.x + b.w, y: b.y }, { key: 'se', x: b.x + b.w, y: b.y + b.h }, { key: 'sw', x: b.x, y: b.y + b.h }];
     }
-    function draw() {
-      paint = 0; if (!visible()) return;
+    function draw(finalFrame) {
+      paint = 0; if (finalFrame !== true && !visible()) return;
       const m = measure(), dpr = window.devicePixelRatio || 1, scene = draftScene || session.scene;
       const width = Math.round(m.w * dpr), height = Math.round(m.h * dpr);
       if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
@@ -507,9 +507,14 @@
       } else if (!mod && !event.altKey && ['Delete', 'Backspace'].includes(event.key) && !menu) { event.preventDefault(); event.stopPropagation(); removeMark(); }
       else if (!mod && !event.altKey && event.code === 'Space') { event.preventDefault(); space = true; sync(); }
     }
-    function activate() {
+    function finishEntrance(event) {
+      if (event.animationName === 'dailyImagesReveal' && event.target.matches('.images-footer')) root.classList.remove('images-entering');
+    }
+    scope.listen(root, 'animationend', finishEntrance);
+    function activate({ resumeMotion = false } = {}) {
       if (destroyed || active) return;
       active = true; epoch++; composing = false; textBlurPending = false; foreground = new AbortController();
+      if (!resumeMotion && !matchMedia('(prefers-reduced-motion: reduce)').matches) root.classList.add('images-entering');
       const listen = (target, type, callback, options = {}) => target.addEventListener(type, callback, { ...options, signal: foreground.signal });
       listen(document, 'paste', event => {
         if (!visible() || composing || inputTarget(event.target) || document.querySelector('dialog[open]')) return;
@@ -527,21 +532,30 @@
       }
       updateLanguage(); ensureImage(); queuePaint();
     }
-    function deactivate() {
+    function finalizeExitMotion() {
+      root.classList.remove('images-entering');
+      if (active) return;
+      closeResource(); canvas.width = canvas.height = 0; overlay.replaceChildren();
+    }
+    function deactivate({ freeze = false } = {}) {
       if (!active) return;
+      const committedText = !!textDraft && !composing;
       if (textDraft) {
         if (!composing) finishText(true);
         else { updateText(); session.textDraft = textDraft; textDraft = null; editor.hidden = true; }
       }
       active = false; epoch++; importId++; decodeId++; loading = false; cancelCopy(); cancelGesture(); pendingCrop = null; space = false;
       scope.cancelAnimationFrame(paint); paint = 0; closeMenu(); choices.close(); foreground?.abort(); foreground = null;
-      observer?.disconnect(); observer = null; closeResource(); canvas.width = canvas.height = 0; overlay.replaceChildren(); viewport.classList.remove('is-drag-over');
+      observer?.disconnect(); observer = null; viewport.classList.remove('is-drag-over');
+      scope.stop({ freeze });
+      if (!freeze) finalizeExitMotion();
+      else if (committedText && resource) draw(true);
     }
     updateLanguage();
     return {
-      activate, deactivate,
-      async beforeLeave() { if (composing) { editor.blur(); await new Promise(resolve => setTimeout(resolve, 0)); } return finishText(true); },
-      destroy() { deactivate(); destroyed = true; scope.destroy(); choices.dispose(); choicePortal.remove(); closeMenu(); closeResource(); },
+      activate, deactivate, finalizeExitMotion,
+      beforeLeave() { return !composing; },
+      destroy() { deactivate(); finalizeExitMotion(); destroyed = true; scope.destroy(); choices.dispose(); choicePortal.remove(); closeMenu(); },
     };
   };
 })();

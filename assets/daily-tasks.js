@@ -12,9 +12,8 @@ function deferMutation(callback, delay) {
   const run = () => { deferredMutations.delete(run); clearTimeout(timer); callback(); };
   deferredMutations.add(run); timer = setTimeout(run, delay);
 }
-const prefersReduced = (() => {
-    try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
-  })();
+const motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
+const prefersReduced = motionPreference.matches;
 const T = (window.RelatumI18n && window.RelatumI18n.t) || function (s) { return s; };
 const dailyRoot = root.querySelector('[data-role="focus-daily"]');
 const dailyScrollEl = root.querySelector('[data-role="focus-daily-scroll"]');
@@ -220,7 +219,7 @@ function setDailyLoading(loading, reveal) {
       dailySkeletonEl.hidden = false;
       return;
     }
-    if (reveal && !prefersReduced && !dailySkeletonEl.hidden && pageActive()) {
+    if (reveal && !motionPreference.matches && !dailySkeletonEl.hidden && pageActive()) {
       dailyRoot.classList.add('is-data-revealing');
       dailyDataRevealTimer = setTimeout(() => {
         dailyRoot.classList.remove('is-data-revealing');
@@ -241,7 +240,7 @@ function armDailyViewEntranceCleanup() {
     }, 1450);
   }
 function replayDailyViewEntrance(key, options) {
-    if (!dailyRoot || prefersReduced || !pageActive()) return;
+    if (!dailyRoot || motionPreference.matches || !pageActive()) return;
     const opts = options || {};
     const revealKey = String(key || 'manual');
     if (dailyRevealKey === revealKey) {
@@ -253,12 +252,19 @@ function replayDailyViewEntrance(key, options) {
     }
     dailyRevealKey = revealKey;
     clearTimeout(dailyRevealTimer);
-    dailyRoot.classList.remove('is-revealing');
-    void dailyRoot.offsetWidth;
     dailyRoot.classList.add('is-revealing');
     dailyRevealWaitingForData = !!opts.waitForData;
     if (!dailyRevealWaitingForData) armDailyViewEntranceCleanup();
   }
+function finalizeDailyEntrance() {
+    clearTimeout(dailyRevealTimer);
+    clearTimeout(dailyDataRevealTimer);
+    dailyRevealTimer = dailyDataRevealTimer = 0;
+    dailyRevealWaitingForData = false;
+    dailyRoot?.classList.remove('is-revealing', 'is-data-revealing');
+    if (dailySkeletonEl && !dailyRoot?.classList.contains('is-loading')) dailySkeletonEl.hidden = true;
+    settleDailyCelebration();
+}
 function showTimerView() { return host.navigate('focus'); }
 function allDailyDone() {
     return dailyTasks.length > 0 && dailyTasks.every((task) => task.doneToday);
@@ -364,7 +370,7 @@ function animateDailyListMoves(previous, options) {
           if (animation.effect && animation.effect.target === m.row) animation.cancel();
         });
       }
-      m.row.animate([
+      scope.animate(m.row, [
         { transform: 'translate3d(' + m.dx.toFixed(1) + 'px,' + m.dy.toFixed(1) + 'px,0)' },
         { transform: 'translate3d(0,0,0)' },
       ], {
@@ -1630,6 +1636,14 @@ function commitDailyCelebratePhase(phase) {
       dailyScrollEl.setAttribute('aria-hidden', blocked ? 'true' : 'false');
     }
   }
+function settleDailyCelebration() {
+    if (dailyCelebratePhase === 'entering') {
+      dailyCelebrateEl.classList.remove('is-entering');
+      commitDailyCelebratePhase('visible');
+    } else if (dailyCelebratePhase === 'leaving') {
+      hideDailyCelebrate({ instant: true, restoreFocus: false });
+    }
+}
 function dailyCelebrateReturnTarget() {
     if (dailyCelebrateReturnId && dailyListEl) {
       const row = dailyListEl.querySelector('.focus-daily-row[data-id="' + dailyCelebrateReturnId + '"]');
@@ -1972,7 +1986,7 @@ function finishDailyDragVisual(d, targetRow) {
     if (row) {
       row.classList.remove('is-dragging');
       if (!prefersReduced) {
-        row.animate([{ opacity: 0.18 }, { opacity: 1 }], { duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'forwards' });
+        scope.animate(row, [{ opacity: 0.18 }, { opacity: 1 }], { duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'forwards' });
       }
     }
     const cleanup = () => { if (d && d.ghost) d.ghost.remove(); };
@@ -1987,7 +2001,7 @@ function finishDailyDragVisual(d, targetRow) {
     const dist = Math.hypot(target.left - fromL, target.top - fromT);
     const duration = Math.max(220, Math.min(420, 180 + dist * 0.22));
     // 幽灵：先飞到落点（~62%），再就地淡出；和真身淡入交叉 → 不再「瞬间消失」
-    const animation = d.ghost.animate([
+    const animation = scope.animate(d.ghost, [
       { transform: start, opacity: 1 },
       { transform: end, opacity: 1, offset: 0.62 },
       { transform: end, opacity: 0 },
@@ -2868,19 +2882,32 @@ function toggleDailyTask(id) {
 
 listen(document,'keydown',event=>{if(!host.isActive()||event.key!=='Escape')return; if(dailyMilestoneDialog)closeDailyMilestoneDialog(false,true);else if(dailyDetailTaskId)closeDailyDetail({restore:false,instant:true});else if(dailyEditId)closeDailyEdit();else closeDailyComposer({focus:false});});
 return {
-  async activate() {
+  async activate({ resumeMotion = false } = {}) {
     taskLifecycleActive = true; taskActivationSeq++;
     const key = 'activation-' + taskActivationSeq;
-    replayDailyViewEntrance(key, { waitForData: !dailyLoaded });
+    if (!resumeMotion || !dailyLoaded || dailyRoot?.classList.contains('is-revealing')) {
+      replayDailyViewEntrance(key, { waitForData: !dailyLoaded });
+    }
+    if (resumeMotion && ['entering', 'leaving'].includes(dailyCelebratePhase)) {
+      dailyCelebrateMotionTimer = setTimeout(settleDailyCelebration, dailyCelebratePhase === 'entering' ? 2360 : 280);
+    }
+    if (resumeMotion && dailyRoot?.classList.contains('is-data-revealing')) {
+      dailyDataRevealTimer = setTimeout(() => {
+        dailyRoot.classList.remove('is-data-revealing'); dailySkeletonEl.hidden = true; dailyDataRevealTimer = 0;
+      }, 520);
+    }
     await loadDaily({ reveal: !dailyLoaded, revealKey: key });
   },
   deactivate({ freeze = false } = {}) {
     taskLifecycleActive = false; taskActivationSeq++;
     deferredMutations.forEach(run => run());
     cancelDailyRead(); endDailyPointerDrag(null, false);
-    closeDailyDetail({ restore: false, instant: true }); closeDailyMilestoneDialog(false, true); closeDailyComposer({ focus: false });
+    dailySuppressClick = false;
+    closeDailyDetail({ restore: false, instant: true }); closeDailyMilestoneDialog(false, true); closeDailyComposer({ focus: false, instant: true });
     scope.stop({ freeze });
+    if (!freeze) finalizeDailyEntrance();
   },
+  finalizeExitMotion: finalizeDailyEntrance,
   destroy() { this.deactivate(); scope.destroy(); dailyListEl?.replaceChildren(); dailyTasks = []; dailyGroups = []; },
 };
   };

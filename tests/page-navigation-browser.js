@@ -131,6 +131,10 @@ async function sliderChecks(page) {
   await page.mouse.wheel(0, -60); await page.waitForFunction(() => RelatumDailyWorkspace.current === 'calendar');
   await page.mouse.move(nav.x + nav.width + 200, nav.y + 200); await page.mouse.wheel(0, -60); await frames(page);
   assert.equal(await page.evaluate(() => RelatumDailyWorkspace.current), 'calendar', 'content wheel does not flip pages');
+  const edge = await page.locator('.daily-stage').boundingBox();
+  await page.mouse.move(edge.x + 8, edge.y + edge.height - 15); await page.mouse.wheel(0, 60);
+  await page.waitForFunction(() => RelatumDailyWorkspace.current === 'focus');
+  await page.mouse.wheel(0, -60); await page.waitForFunction(() => RelatumDailyWorkspace.current === 'calendar');
   await page.evaluate(() => {
     const nav = document.querySelector('.daily-navigation');
     for (const deltaY of [-60, -60]) nav.dispatchEvent(new WheelEvent('wheel', { deltaY, bubbles: true, cancelable: true }));
@@ -165,6 +169,9 @@ async function sliderChecks(page) {
   await page.locator('[data-daily-page="calendar"]').hover(); await page.mouse.wheel(0, -60);
   await page.waitForFunction(() => RelatumDailyWorkspace.current === 'tasks');
   await page.mouse.wheel(0, 60); await page.waitForFunction(() => RelatumDailyWorkspace.current === 'calendar'); await frames(page);
+  const narrow = await page.locator('.daily-stage').boundingBox();
+  await page.mouse.move(narrow.x + 8, narrow.y + 120); await page.mouse.wheel(0, 60); await pause(100);
+  assert.equal(await page.evaluate(() => RelatumDailyWorkspace.current), 'calendar', 'narrow content edge keeps native scrolling');
   assert(await page.evaluate(() => {
     const pill = document.querySelector('.daily-nav-slider').getBoundingClientRect(), button = document.querySelector('[data-daily-page="calendar"]').getBoundingClientRect();
     return Math.abs(pill.x - button.x) < 1 && Math.abs(pill.y - button.y) < 1;

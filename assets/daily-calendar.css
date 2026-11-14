@@ -24,14 +24,6 @@ html[data-ui-language="en"] .calendar-records h3{
 }
 
 
-.calendar-exit-frozen,
-.calendar-exit-frozen *,
-.calendar-exit-frozen *::before,
-.calendar-exit-frozen *::after{
-  animation-play-state: paused !important;
-}
-
-
 .calendar-spine-glyph{
   position: relative;
   z-index: 3;

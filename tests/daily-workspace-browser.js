@@ -74,6 +74,39 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert(await page.evaluate(() => __dailyRootBeforeExit === document.querySelector('.daily-page-calendar')
       && !__dailyRootBeforeExit.getAnimations({ subtree: true }).some(animation => animation.playState === 'paused')), 'quick return keeps its root and clears the old frozen animations');
     await page.evaluate(() => { delete window.__dailyRootBeforeExit; delete window.__dailyExitFrames; });
+    await page.evaluate(() => RelatumDailyWorkspace.navigate('calendar'));
+    await page.waitForSelector('[data-diary-body]');
+    let imageRequested, releaseImage;
+    const imageStarted = new Promise(resolve => { imageRequested = resolve; });
+    await page.route('**/daily-images.js', async route => {
+      imageRequested();
+      await new Promise(resolve => { releaseImage = resolve; });
+      await route.abort();
+    });
+    await page.evaluate(() => { window.__dailyFailedOpen = RelatumDailyWorkspace.navigate('images'); });
+    await imageStarted;
+    await page.waitForFunction(() => {
+      const root = document.querySelector('.daily-page-calendar');
+      return !root.inert && getComputedStyle(root).opacity === '0.78';
+    });
+    assert.equal(await page.locator('[data-daily-page][aria-current="page"]').getAttribute('data-daily-page'), 'calendar');
+    releaseImage();
+    assert.equal(await page.evaluate(() => __dailyFailedOpen), false);
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.daily-page-calendar')).opacity === '1');
+    assert.equal(await page.locator('.daily-page-images').count(), 0, 'failed activation never replaces the editor');
+    await page.unroute('**/daily-images.js');
+    const composition = await page.evaluate(async () => {
+      const field = document.querySelector('[data-diary-body]');
+      field.focus(); field.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      const first = RelatumDailyWorkspace.navigate('ledger');
+      const second = RelatumDailyWorkspace.navigate('tasks');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const held = document.activeElement === field && RelatumDailyWorkspace.current === 'calendar';
+      field.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+      field.value = '候选结束后的文本'; field.dispatchEvent(new Event('input', { bubbles: true }));
+      return { held, first: await first, second: await second, page: RelatumDailyWorkspace.current };
+    });
+    assert.deepEqual(composition, { held: true, first: false, second: true, page: 'tasks' });
     await page.evaluate(() => RelatumDailyWorkspace.navigate('tasks'));
     let releaseFocus, focusArrived;
     const focusGate = new Promise(resolve => { focusArrived = resolve; });
@@ -93,6 +126,8 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     const failedSave = page.waitForResponse(response => response.url().endsWith('/api/diary-save') && response.status() === 500);
     await page.locator('[data-daily-page="tasks"]').click(); await failedSave;
     assert.equal(await page.evaluate(() => window.RelatumDailyWorkspace.current), 'calendar', 'failed diary save blocks navigation');
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.daily-page-calendar')).opacity === '1');
+    assert.equal(await page.locator('[data-diary-body]').inputValue(), '第一行\n第二行');
     assert.equal(await page.evaluate(() => RelatumPageLayout.apply('daily', { ...RelatumPageLayout.layout('daily'), hidden: ['calendar'] })), false, 'failed diary save blocks hiding its page');
     assert.equal(await page.evaluate(() => RelatumPageLayout.isVisible('daily', 'calendar')), true);
     assert.equal(await page.evaluate(() => RelatumDailyWorkspace.current), 'calendar');
