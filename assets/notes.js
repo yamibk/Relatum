@@ -3,7 +3,6 @@
   // / 在空白处「快速划一刀」划过便签/线条即删除 / 右键拖出箭头 / Ctrl+Z·Ctrl+Y 撤销重做 / 全程自动存盘。
 // 叠摞：拖一张压到另一张上叠成一摞；悬停一摞扇形展开预览，移开收回；展开态拖一张可拉出。
 // 数据独立存 data/notes.json（含可选 stack 摞 id），与 .canvas、学习任务完全解耦。
-// 页面本身不放任何文字 / 提示 / 按钮，保持一面干净的墙。
 (function () {
   'use strict';
 
@@ -29,6 +28,8 @@
   const STACK_HOVER_DELAY_MIN = 0;
   const STACK_HOVER_DELAY_MAX = 1200;
   const CREATE_BROWSE_SHORTCUTS_DISABLED_KEY = 'canvas:notesCreateBrowseShortcutsDisabled:v1';
+  const NOTES_DOCK_COLLAPSED_KEY = 'canvas:notesDockCollapsed:v1';
+  const NOTES_SLASH_DELETION_DISABLED_KEY = 'canvas:notesSlashDeletionDisabled:v1';
   const NOTES_VIEW_KEY = 'canvas:notesView';
   const NOTES_PAGE_KEY = 'canvas:notesPage:v1';
   const NOTES_PAGE_COLORS_KEY = 'canvas:notesPageColors:v1';
@@ -63,6 +64,7 @@
   let stackHoverDelay = STACK_HOVER_DELAY_DEFAULT;
   let interacting = false;     // 拖拽中：暂停悬停展开逻辑
   let cancelPointerGesture = null;
+  let cancelSlashGesture = null;
   function cancelActiveGesture() {
     const cancel = cancelPointerGesture;
     cancelPointerGesture = null;
@@ -95,6 +97,7 @@
   let keyboardBrowseActive = false;
   let createBrowseShortcutsDisabled = true;
   const notesView = surface.closest('[data-role="notes-view"]');
+  let slashDeletionDisabled = false;
   let currentPage = 1;
   try { currentPage = normalizePage(localStorage.getItem(NOTES_PAGE_KEY)); } catch (e) {}
   let requestedPage = currentPage;
@@ -123,6 +126,66 @@
   function pageUsable() {
     return notesPageActive() && document.body.dataset.startWorkspace === 'canvas'
       && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1';
+  }
+  function bindNotesDock() {
+    const dock = notesView.querySelector('[data-role="notes-dock"]');
+    if (!dock) return;
+    const row = dock.querySelector('#notes-dock-row');
+    const collapse = dock.querySelector('[data-role="notes-dock-collapse"]');
+    const protection = dock.querySelector('[data-role="notes-slash-toggle"]');
+    let collapsed = false;
+    try {
+      collapsed = localStorage.getItem(NOTES_DOCK_COLLAPSED_KEY) === '1';
+      slashDeletionDisabled = localStorage.getItem(NOTES_SLASH_DELETION_DISABLED_KEY) === '1';
+    } catch (e) {}
+
+    function syncTooltip(button, source) {
+      button.dataset.i18nSourceTitle = source;
+      const label = T(source);
+      if (button.dataset.uiTooltip !== label) button.title = label;
+      return label;
+    }
+    function syncCollapse() {
+      if (collapsed && row.contains(document.activeElement)) collapse.focus({ preventScroll: true });
+      dock.classList.toggle('is-collapsed', collapsed);
+      row.inert = collapsed;
+      collapse.setAttribute('aria-expanded', String(!collapsed));
+      const label = syncTooltip(collapse, collapsed ? '展开工具栏' : '收起工具栏');
+      collapse.setAttribute('aria-label', label);
+    }
+    function syncProtection() {
+      protection.setAttribute('aria-pressed', String(slashDeletionDisabled));
+      syncTooltip(protection, slashDeletionDisabled ? '关闭划线保护' : '开启划线保护');
+      protection.setAttribute('aria-label', T('划线保护'));
+    }
+    function syncLanguage() {
+      row.setAttribute('aria-label', T('速记工具栏'));
+      syncCollapse();
+      syncProtection();
+    }
+
+    // 与编辑器相同，点击工具栏时保留墙面或正文的键盘焦点。
+    dock.addEventListener('mousedown', (event) => {
+      if (event.button === 0) event.preventDefault();
+    });
+    collapse.addEventListener('click', () => {
+      if (!pageUsable()) return;
+      collapsed = !collapsed;
+      syncCollapse();
+      try { localStorage.setItem(NOTES_DOCK_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (e) {}
+    });
+    protection.addEventListener('click', () => {
+      if (!pageUsable() || collapsed) return;
+      slashDeletionDisabled = !slashDeletionDisabled;
+      if (slashDeletionDisabled && cancelSlashGesture) cancelSlashGesture();
+      syncProtection();
+      try {
+        localStorage.setItem(NOTES_SLASH_DELETION_DISABLED_KEY, slashDeletionDisabled ? '1' : '0');
+      } catch (e) {}
+    });
+    document.addEventListener('relatum:languagechange', syncLanguage);
+    syncLanguage();
+    dock.hidden = false;
   }
   function rememberPage() {
     let state = pageStates.get(currentPage);
@@ -2043,7 +2106,6 @@
       cancelNoteInertia(true);
       cancelViewPanInertia();
     }
-    const rect = surface.getBoundingClientRect();
     if (e.button === 2) {
       startArrowDraw(e);
       return;
@@ -2051,6 +2113,7 @@
     if (e.button !== 0) return;
     if (e.target.closest('.sticky-note')) return;
     if (spaceHeld) {
+      const rect = surface.getBoundingClientRect();
       e.preventDefault();
       interacting = true;
       cancelCollapse();
@@ -2130,6 +2193,8 @@
       surface.addEventListener('pointercancel', onCancel);
       return;
     }
+    if (slashDeletionDisabled) return;
+    const rect = surface.getBoundingClientRect();
     const st = {
       points: [{ x: e.clientX - rect.left, y: e.clientY - rect.top }],
       rect: rect, started: false, svg: null, line: null, length: 0,
@@ -2154,6 +2219,7 @@
       if (ev.clientX - rect.left !== last.x || ev.clientY - rect.top !== last.y) onMove(ev);
       if (slashFrame) { cancelAnimationFrame(slashFrame); paintSlash(); }
       cancelPointerGesture = null;
+      cancelSlashGesture = null;
       surface.removeEventListener('pointermove', onMove);
       surface.removeEventListener('pointerup', onUp);
       surface.removeEventListener('pointercancel', onCancel);
@@ -2164,13 +2230,14 @@
       if (slashFrame) cancelAnimationFrame(slashFrame);
       slashFrame = 0;
       cancelPointerGesture = null;
+      cancelSlashGesture = null;
       surface.removeEventListener('pointermove', onMove);
       surface.removeEventListener('pointerup', onUp);
       surface.removeEventListener('pointercancel', onCancel);
       try { surface.releasePointerCapture(e.pointerId); } catch (err) {}
       if (st.svg) st.svg.remove();
     };
-    cancelPointerGesture = onCancel;
+    cancelSlashGesture = cancelPointerGesture = onCancel;
     surface.addEventListener('pointermove', onMove);
     surface.addEventListener('pointerup', onUp);
     surface.addEventListener('pointercancel', onCancel);
@@ -2985,5 +3052,6 @@
       }
     });
   } catch (e) {}
+  bindNotesDock();
   schedulePreload();
 })();

@@ -770,6 +770,21 @@
       <!-- 速记 · 便签墙独立前置页（位于活跃与树状之间；便签由 notes.js 创建/渲染/存盘）。 -->
       <section class="notes-embedded" data-role="notes-view" aria-label="速记便签墙页">
         <div class="notes-surface" data-role="notes-surface"></div>
+        <div class="text-format-dock notes-dock" data-role="notes-dock" data-i18n-managed hidden>
+          <div class="text-format-row" id="notes-dock-row" role="toolbar" aria-label="速记工具栏">
+            <button type="button" class="text-dock-btn notes-slash-toggle" data-role="notes-slash-toggle"
+              title="开启划线保护" aria-label="划线保护" aria-pressed="false">
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <rect class="notes-slash-icon" x="3.5" y="3.5" width="13" height="13" rx="1.5"/>
+                <path class="notes-slash-icon-off" d="M8 3.5h7a1.5 1.5 0 0 1 1.5 1.5v7M16.5 16a1.5 1.5 0 0 1-1.5.5H5A1.5 1.5 0 0 1 3.5 15V5M2.5 2.5l15 15"/>
+              </svg>
+            </button>
+          </div>
+          <button type="button" class="text-dock-collapse" data-role="notes-dock-collapse"
+            title="收起工具栏" aria-label="收起工具栏" aria-expanded="true" aria-controls="notes-dock-row">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 7.5 4.5 4.5 4.5-4.5"/></svg>
+          </button>
+        </div>
         <nav class="study-task-page-rail notes-page-rail auto-hide" data-role="notes-page-rail" aria-label="速记页切换">
           <span class="study-task-page-orb" data-role="notes-page-orb" aria-hidden="true"></span>
           <div class="study-task-page-scroll" data-role="notes-page-top">

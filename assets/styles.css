@@ -26814,7 +26814,7 @@ mark[data-hl="gray"]   { background: rgba(183, 190, 187, 0.42); }
 }
 .sel-tool-clear:hover { background: rgba(0, 0, 0, 0.05); color: var(--text); }
 
-/* ── 常驻文字属性带：全部控件共用一个单行容器 ───────────────── */
+/* ── 画布编辑器与速记共用的底部工具栏 ───────────────── */
 .text-format-dock {
   --td-hl: rgba(250, 224, 120, 0.92);
   --td-tc: #98721d;
@@ -26939,6 +26939,17 @@ mark[data-hl="gray"]   { background: rgba(183, 190, 187, 0.42); }
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+.notes-dock { position: absolute; }
+.notes-slash-toggle .notes-slash-icon-off,
+.notes-slash-toggle[aria-pressed="true"] .notes-slash-icon {
+  display: none;
+}
+.notes-slash-toggle[aria-pressed="true"] .notes-slash-icon-off { display: inline; }
+.notes-slash-toggle[aria-pressed="true"] { background: rgba(45, 58, 52, 0.085); }
+.notes-slash-toggle:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
 .text-dock-btn.td-bold { font: 760 18px/1 Georgia, serif; }
 .text-dock-btn.td-highlight,
 .text-dock-btn.td-color { position: relative; }
@@ -27020,7 +27031,8 @@ mark[data-hl="gray"]   { background: rgba(183, 190, 187, 0.42); }
 .text-snap-guide.horizontal { height: 1px; }
 .text-snap-guide[hidden] { display: none; }
 
-.editor-page[data-background-tone="dark"] .text-format-row {
+.editor-page[data-background-tone="dark"] .text-format-row,
+.start-page[data-start-theme="dark"] .notes-dock .text-format-row {
   color: rgba(245, 247, 244, 0.94);
   background: rgba(20, 29, 28, 0.98);
   border-color: rgba(218, 237, 229, 0.16);
@@ -27028,14 +27040,20 @@ mark[data-hl="gray"]   { background: rgba(183, 190, 187, 0.42); }
 }
 .editor-page[data-background-tone="dark"] .text-dock-btn:hover,
 .editor-page[data-background-tone="dark"] .text-dock-btn.active,
-.editor-page[data-background-tone="dark"] .text-color-rail button:hover {
+.editor-page[data-background-tone="dark"] .text-color-rail button:hover,
+.start-page[data-start-theme="dark"] .notes-slash-toggle:is(:hover, [aria-pressed="true"]) {
   background: rgba(225, 239, 231, 0.10);
 }
-.editor-page[data-background-tone="dark"] .text-dock-collapse {
+.editor-page[data-background-tone="dark"] .text-dock-collapse,
+.start-page[data-start-theme="dark"] .notes-dock .text-dock-collapse {
   color: rgba(225, 239, 231, 0.50);
 }
-.editor-page[data-background-tone="dark"] .text-dock-collapse:hover {
+.editor-page[data-background-tone="dark"] .text-dock-collapse:hover,
+.start-page[data-start-theme="dark"] .notes-dock .text-dock-collapse:is(:hover, :focus-visible) {
   color: rgba(245, 247, 244, 0.84);
+}
+.start-page[data-start-theme="dark"] .notes-dock .text-dock-collapse:focus-visible {
+  outline-color: currentColor;
 }
 .editor-page[data-background-tone="dark"] .text-dock-sep { background: rgba(218, 237, 229, 0.13); }
 .editor-page[data-background-tone="dark"] .text-color-rail .td-swatch.active {

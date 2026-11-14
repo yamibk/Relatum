@@ -117,6 +117,8 @@
     '拖拽惯性': 'Drag inertia', '稳': 'Steady', '滑': 'Fluid',
     '叠放展开延迟': 'Stack expansion delay', '瞬发': 'Instant', '长按': 'Long press',
     '速记控制台': 'Quick Notes controls', '打开速记控制台': 'Open Quick Notes controls',
+    '速记工具栏': 'Quick Notes toolbar', '划线保护': 'Swipe deletion protection',
+    '开启划线保护': 'Turn on swipe deletion protection', '关闭划线保护': 'Turn off swipe deletion protection',
     '速记页切换': 'Quick Notes pages', '读取速记失败，请重试': 'Could not load Quick Notes. Please retry.',
     '保存速记失败，请重试': 'Could not save Quick Notes. Please retry.', '速记操作失败': 'Quick Notes operation failed',
     '生成颜色': 'Generated colors', '新建与随机换色从选中色中抽取': 'New notes and random recoloring use the selected colors.',
