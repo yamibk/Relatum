@@ -772,8 +772,10 @@
         <div class="notes-surface" data-role="notes-surface"></div>
         <div class="text-format-dock notes-dock" data-role="notes-dock" data-i18n-managed hidden>
           <div class="text-format-row" id="notes-dock-row" role="toolbar" aria-label="速记工具栏">
+            <div class="text-color-rail" data-role="notes-fixed-colors" role="group" aria-label="新建便签固定色"></div>
+            <span class="text-dock-sep" aria-hidden="true"></span>
             <button type="button" class="text-dock-btn notes-slash-toggle" data-role="notes-slash-toggle"
-              title="开启划线保护" aria-label="划线保护" aria-pressed="false">
+              title="开启划线保护" aria-label="划线保护" aria-pressed="false" aria-keyshortcuts="0">
               <svg viewBox="0 0 20 20" aria-hidden="true">
                 <rect class="notes-slash-icon" x="3.5" y="3.5" width="13" height="13" rx="1.5"/>
                 <path class="notes-slash-icon-off" d="M8 3.5h7a1.5 1.5 0 0 1 1.5 1.5v7M16.5 16a1.5 1.5 0 0 1-1.5.5H5A1.5 1.5 0 0 1 3.5 15V5M2.5 2.5l15 15"/>
@@ -828,7 +830,7 @@
               <div class="notes-console-section-head">
                 <div>
                   <h3 id="notes-console-colors-title">生成颜色</h3>
-                    <p>新建与随机换色从选中色中抽取；未选中任何颜色时，仍使用全部颜色。</p>
+                  <p>随机配色和随机换色使用这里选中的颜色；全部取消时使用全部颜色。底部工具栏的固定色优先用于新建便签。</p>
                 </div>
                 <button type="button" data-action="notes-colors-all">全选</button>
               </div>
@@ -899,11 +901,14 @@
                   <div><dt><kbd>Space</kbd></dt><dd>按住后拖动视野</dd></div>
                   <div><dt><kbd>↑ ↓ ← →</kbd></dt><dd>平移视野</dd></div>
                   <div><dt><kbd>Shift</kbd> + <kbd>↑ ↓ ← →</kbd></dt><dd>快速平移视野</dd></div>
-                  <div><dt><kbd>0</kbd></dt><dd>总览全部便签</dd></div>
                   <div><dt><kbd>F</kbd></dt><dd>定位当前便签</dd></div>
                   <div><dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Z</kbd></dt><dd>撤销</dd></div>
                   <div><dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Y</kbd></dt><dd>重做</dd></div>
                   <div><dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd></dt><dd>重做</dd></div>
+                </dl></section>
+                <section><h4>速记工具栏</h4><dl>
+                  <div><dt><kbd>1</kbd>–<kbd>9</kbd></dt><dd>选中固定色，再按一次取消</dd></div>
+                  <div><dt><kbd>0</kbd></dt><dd>切换划线保护</dd></div>
                 </dl></section>
               </div>
               <p class="notes-console-shortcuts-note">勾选控制台“？”旁的圆形按钮后，将禁用“创建与连接”和“浏览与搜索”两组快捷键；取消勾选即可恢复。</p>

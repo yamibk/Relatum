@@ -26940,6 +26940,12 @@ mark[data-hl="gray"]   { background: rgba(183, 190, 187, 0.42); }
   stroke-linejoin: round;
 }
 .notes-dock { position: absolute; }
+.notes-dock .notes-slash-toggle { flex: 0 0 auto; }
+.notes-dock .text-color-rail .td-swatch { background: var(--notes-swatch); }
+.notes-dock .td-swatch:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
 .notes-slash-toggle .notes-slash-icon-off,
 .notes-slash-toggle[aria-pressed="true"] .notes-slash-icon {
   display: none;
@@ -27055,8 +27061,10 @@ mark[data-hl="gray"]   { background: rgba(183, 190, 187, 0.42); }
 .start-page[data-start-theme="dark"] .notes-dock .text-dock-collapse:focus-visible {
   outline-color: currentColor;
 }
-.editor-page[data-background-tone="dark"] .text-dock-sep { background: rgba(218, 237, 229, 0.13); }
-.editor-page[data-background-tone="dark"] .text-color-rail .td-swatch.active {
+.editor-page[data-background-tone="dark"] .text-dock-sep,
+.start-page[data-start-theme="dark"] .notes-dock .text-dock-sep { background: rgba(218, 237, 229, 0.13); }
+.editor-page[data-background-tone="dark"] .text-color-rail .td-swatch.active,
+.start-page[data-start-theme="dark"] .notes-dock .td-swatch.active {
   box-shadow: 0 0 0 2px rgba(20, 29, 28, 0.98), 0 0 0 3px rgba(225, 239, 231, 0.46);
 }
 @media (max-width: 720px) {

@@ -153,6 +153,9 @@ async function main() {
           sample.work = Object.fromEntries(['ScriptDuration', 'TaskDuration', 'LayoutCount', 'LayoutDuration', 'RecalcStyleCount'].map(key => [key, after[key] - before[key]]));
           runs.push({ round, count, piled, version, kind, ...sample });
           if (version === 'current' && kind === 'drag') assert(sample.writes < sample.inputEvents * (piled ? 8 : 1), 'drag style writes must be coalesced');
+          if (version === 'current' && kind === 'slash') {
+            assert(sample.reads < count + 100, 'slash completion must reuse note bounds for connected endpoints');
+          }
         }
         await page.waitForTimeout(1000);
         assert.deepEqual(await page.evaluate(() => __hotPending()), [], 'idle must have no pending frames');

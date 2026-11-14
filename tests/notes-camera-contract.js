@@ -38,11 +38,12 @@ assert(notes.includes("const NOTES_VIEW_KEY = 'canvas:notesView';")
   'Quick Notes must retain its existing camera persistence key and format');
 assert(notes.includes('if (spaceHeld)') && notes.includes('startViewPanInertia(panState);'),
   'Space-drag panning and its inertia must remain available');
-assert(notes.includes("points: [{ x: e.clientX - rect.left, y: e.clientY - rect.top }]")
+assert(notes.includes('const start = surfaceLocalPoint(e.clientX, e.clientY, rect);')
+  && notes.includes('points: [start]')
   && notes.includes('finishSlash(st);'),
   'blank-surface slash deletion must remain available');
-assert(start.includes("if (notesActive && window.CanvasNotes && typeof window.CanvasNotes.resetView === 'function')")
-  && start.includes('window.CanvasNotes.resetView();'),
+assert(start.includes("setNotesActive(true, { action: isView('notes') ? 'reset' : undefined });")
+  && start.includes("else if (ctx.options.action === 'reset') api?.resetView?.();"),
   'clicking the active Quick Notes spine must retain default-camera reset');
 assert(start.includes("notesConsolePanel.addEventListener('wheel', (event) => event.stopPropagation()"),
   'the Quick Notes console must isolate its own wheel input');

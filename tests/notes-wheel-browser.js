@@ -203,7 +203,7 @@ async function main() {
     checks.push('same-target deduplication and return to the mounted page');
 
     // Reload to discard page caches so these exercise real late/failing requests.
-    await notes.reload(); await notes.waitForFunction(() => window.CanvasNotes?.count() === 1); await notes.waitForTimeout(850);
+    await notes.goto(url + '/?view=notes'); await settled(1);
     responseDelays.set(5, 450); failures.add(7); responseDelays.set(7, 80);
     await resetProbe(notes);
     await notes.evaluate(() => { window.__lateTurn = CanvasNotes.changePage(5); });
@@ -304,8 +304,8 @@ async function main() {
         notePage: 99, notes: [{ id: 'p99', x: 0, y: 0, text: '最后一页', color: 'sage' }], edges: [], arrows: [],
       }) }); if (!response.ok) throw Error('Fixture save failed');
     });
-    await notes.reload(); await notes.waitForFunction(() => window.CanvasNotes?.getPage() === 2 && CanvasNotes.count() === 1);
-    await notes.waitForTimeout(850); await turn(99); await hoverRail(notes);
+    await notes.goto(url + '/?view=notes'); await settled(2);
+    await turn(99); await hoverRail(notes);
     const top = notes.locator('[data-role="notes-page-top"]'), bottom = notes.locator('[data-role="notes-page-bottom"]');
     await top.evaluate(el => { el.scrollTop = 0; });
     const bounds = await top.boundingBox(); await notes.mouse.move(bounds.x + bounds.width / 2, bounds.y + 70);

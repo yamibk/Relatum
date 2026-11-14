@@ -30,6 +30,8 @@
   const CREATE_BROWSE_SHORTCUTS_DISABLED_KEY = 'canvas:notesCreateBrowseShortcutsDisabled:v1';
   const NOTES_DOCK_COLLAPSED_KEY = 'canvas:notesDockCollapsed:v1';
   const NOTES_SLASH_DELETION_DISABLED_KEY = 'canvas:notesSlashDeletionDisabled:v1';
+  const NOTES_FIXED_COLOR_KEY = 'canvas:notesFixedColor:v1';
+  const NOTES_FIXED_COLORS = ['yellow', 'orange', 'coral', 'purple', 'blue', 'teal', 'green', 'stone', 'paper'];
   const NOTES_VIEW_KEY = 'canvas:notesView';
   const NOTES_PAGE_KEY = 'canvas:notesPage:v1';
   const NOTES_PAGE_COLORS_KEY = 'canvas:notesPageColors:v1';
@@ -98,6 +100,7 @@
   let createBrowseShortcutsDisabled = true;
   const notesView = surface.closest('[data-role="notes-view"]');
   let slashDeletionDisabled = false;
+  let fixedNoteColor = '';
   let currentPage = 1;
   try { currentPage = normalizePage(localStorage.getItem(NOTES_PAGE_KEY)); } catch (e) {}
   let requestedPage = currentPage;
@@ -133,11 +136,32 @@
     const row = dock.querySelector('#notes-dock-row');
     const collapse = dock.querySelector('[data-role="notes-dock-collapse"]');
     const protection = dock.querySelector('[data-role="notes-slash-toggle"]');
+    const palette = dock.querySelector('[data-role="notes-fixed-colors"]');
+    const swatches = [];
     let collapsed = false;
     try {
       collapsed = localStorage.getItem(NOTES_DOCK_COLLAPSED_KEY) === '1';
       slashDeletionDisabled = localStorage.getItem(NOTES_SLASH_DELETION_DISABLED_KEY) === '1';
+      const savedColor = localStorage.getItem(NOTES_FIXED_COLOR_KEY);
+      if (NOTES_FIXED_COLORS.includes(savedColor)) fixedNoteColor = savedColor;
     } catch (e) {}
+
+    for (const [index, key] of NOTES_FIXED_COLORS.entries()) {
+      const color = stickyPalette?.byKey(key);
+      if (!color) continue;
+      const shortcut = String(index + 1);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'td-swatch';
+      button.dataset.fixedColor = key;
+      button.setAttribute('aria-keyshortcuts', shortcut);
+      button.style.setProperty('--notes-swatch', color.hex);
+      button.addEventListener('click', () => {
+        if (pageUsable() && !collapsed) toggleFixedColor(key);
+      });
+      swatches.push({ button, color, shortcut });
+      palette.append(button);
+    }
 
     function syncTooltip(button, source) {
       button.dataset.i18nSourceTitle = source;
@@ -152,14 +176,48 @@
       collapse.setAttribute('aria-expanded', String(!collapsed));
       const label = syncTooltip(collapse, collapsed ? '展开工具栏' : '收起工具栏');
       collapse.setAttribute('aria-label', label);
+      if (!collapsed) revealFixedColor();
     }
     function syncProtection() {
       protection.setAttribute('aria-pressed', String(slashDeletionDisabled));
       syncTooltip(protection, slashDeletionDisabled ? '关闭划线保护' : '开启划线保护');
       protection.setAttribute('aria-label', T('划线保护'));
     }
+    function syncFixedColor() {
+      for (const { button, color } of swatches) {
+        const selected = color.key === fixedNoteColor;
+        button.classList.toggle('active', selected);
+        button.setAttribute('aria-pressed', String(selected));
+      }
+    }
+    function revealFixedColor() {
+      if (collapsed || row.scrollWidth <= row.clientWidth) return;
+      const selected = swatches.find(({ color }) => color.key === fixedNoteColor)?.button;
+      if (!selected) return;
+      const swatch = selected.getBoundingClientRect();
+      const bounds = row.getBoundingClientRect();
+      const inset = 5;
+      if (swatch.left < bounds.left + inset) row.scrollLeft -= bounds.left + inset - swatch.left;
+      else if (swatch.right > bounds.right - inset) row.scrollLeft += swatch.right - bounds.right + inset;
+    }
+    function toggleFixedColor(key) {
+      fixedNoteColor = fixedNoteColor === key ? '' : key;
+      syncFixedColor();
+      revealFixedColor();
+      try {
+        if (fixedNoteColor) localStorage.setItem(NOTES_FIXED_COLOR_KEY, fixedNoteColor);
+        else localStorage.removeItem(NOTES_FIXED_COLOR_KEY);
+      } catch (e) {}
+    }
     function syncLanguage() {
       row.setAttribute('aria-label', T('速记工具栏'));
+      palette.setAttribute('aria-label', T('新建便签固定色'));
+      const english = window.RelatumI18n?.language === 'en';
+      for (const { button, color, shortcut } of swatches) {
+        const label = (english ? color.en : color.zh) + ' · ' + shortcut;
+        button.setAttribute('aria-label', label);
+        button.dataset.uiTooltip = label;
+      }
       syncCollapse();
       syncProtection();
     }
@@ -174,18 +232,40 @@
       syncCollapse();
       try { localStorage.setItem(NOTES_DOCK_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (e) {}
     });
-    protection.addEventListener('click', () => {
-      if (!pageUsable() || collapsed) return;
+    function toggleProtection() {
       slashDeletionDisabled = !slashDeletionDisabled;
       if (slashDeletionDisabled && cancelSlashGesture) cancelSlashGesture();
       syncProtection();
       try {
         localStorage.setItem(NOTES_SLASH_DELETION_DISABLED_KEY, slashDeletionDisabled ? '1' : '0');
       } catch (e) {}
+    }
+    protection.addEventListener('click', () => {
+      if (pageUsable() && !collapsed) toggleProtection();
     });
     document.addEventListener('relatum:languagechange', syncLanguage);
+    syncFixedColor();
     syncLanguage();
     dock.hidden = false;
+
+    function handleShortcut(event) {
+      if (!/^[0-9]$/.test(event.key) || event.defaultPrevented || event.isComposing || event.keyCode === 229
+        || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || notesView.inert) return false;
+      const control = event.target?.closest?.('button, input, select, textarea, [contenteditable], dialog, [role="dialog"], [role="alertdialog"]');
+      if ((control && !dock.contains(control)) || pagePalette?.isOpen() || document.querySelector('dialog:modal')) return false;
+      const modals = document.querySelectorAll('[aria-modal="true"]');
+      if (Array.from(modals).some(el => !el.closest('[hidden], [inert]') && el.getClientRects().length)) return false;
+      const swatch = swatches.find(item => item.shortcut === event.key);
+      if (event.key !== '0' && !swatch) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) {
+        if (swatch) toggleFixedColor(swatch.color.key);
+        else toggleProtection();
+      }
+      return true;
+    }
+    return { handleShortcut, revealFixedColor };
   }
   function rememberPage() {
     let state = pageStates.get(currentPage);
@@ -1016,13 +1096,6 @@
     return 'M' + a.x.toFixed(1) + ',' + a.y.toFixed(1)
       + ' L' + b.x.toFixed(1) + ',' + b.y.toFixed(1);
   }
-  function arrowPoints(ar, srect) {
-    const a = ar.fromNote ? noteCenter(ar.fromNote, srect) : worldToSurfacePoint(Number(ar.x1), Number(ar.y1));
-    const b = ar.toNote ? noteCenter(ar.toNote, srect) : worldToSurfacePoint(Number(ar.x2), Number(ar.y2));
-    if (!a || !b || !Number.isFinite(a.x) || !Number.isFinite(a.y)
-      || !Number.isFinite(b.x) || !Number.isFinite(b.y)) return null;
-    return { a: a, b: b };
-  }
   function pointSegmentDistance(p, a, b) {
     const vx = b.x - a.x;
     const vy = b.y - a.y;
@@ -1045,30 +1118,32 @@
     if (o4 === 0 && pointSegmentDistance(b, c, d) < 0.5) return true;
     return (o1 > 0) !== (o2 > 0) && (o3 > 0) !== (o4 > 0);
   }
-  function edgeHitBySlash(ed, pts, srect) {
-    const a = noteCenter(ed.from, srect);
-    const b = noteCenter(ed.to, srect);
-    if (!a || !b || pts.length < 2) return false;
+  function lineHitBySlash(a, b, { points, left, right, top, bottom }) {
+    if (!a || !b || !Number.isFinite(a.x) || !Number.isFinite(a.y)
+      || !Number.isFinite(b.x) || !Number.isFinite(b.y)) return false;
     const HIT = 12;
-    for (let i = 1; i < pts.length; i++) {
-      const p0 = pts[i - 1];
-      const p1 = pts[i];
+    if (Math.max(a.x, b.x) + HIT < left || Math.min(a.x, b.x) - HIT > right
+      || Math.max(a.y, b.y) + HIT < top || Math.min(a.y, b.y) - HIT > bottom) return false;
+    for (let i = 1; i < points.length; i++) {
+      const p0 = points[i - 1];
+      const p1 = points[i];
       if (segmentsIntersect(p0, p1, a, b)) return true;
       if (pointSegmentDistance(p0, a, b) <= HIT || pointSegmentDistance(p1, a, b) <= HIT) return true;
       if (pointSegmentDistance(a, p0, p1) <= HIT || pointSegmentDistance(b, p0, p1) <= HIT) return true;
     }
     return false;
   }
-  function arrowHitBySlash(ar, pts, srect) {
-    const ab = arrowPoints(ar, srect);
-    if (!ab || pts.length < 2) return false;
-    const HIT = 12;
-    for (let i = 1; i < pts.length; i++) {
-      const p0 = pts[i - 1];
-      const p1 = pts[i];
-      if (segmentsIntersect(p0, p1, ab.a, ab.b)) return true;
-      if (pointSegmentDistance(p0, ab.a, ab.b) <= HIT || pointSegmentDistance(p1, ab.a, ab.b) <= HIT) return true;
-      if (pointSegmentDistance(ab.a, p0, p1) <= HIT || pointSegmentDistance(ab.b, p0, p1) <= HIT) return true;
+  function noteHitBySlash(a, b, { points, left, right, top, bottom }) {
+    if (b.x < left || a.x > right || b.y < top || a.y > bottom) return false;
+    const topRight = { x: b.x, y: a.y };
+    const bottomLeft = { x: a.x, y: b.y };
+    for (let i = 1; i < points.length; i++) {
+      const from = points[i - 1], to = points[i];
+      if (Math.max(from.x, to.x) < a.x || Math.min(from.x, to.x) > b.x
+        || Math.max(from.y, to.y) < a.y || Math.min(from.y, to.y) > b.y) continue;
+      if ((to.x >= a.x && to.x <= b.x && to.y >= a.y && to.y <= b.y)
+        || segmentsIntersect(from, to, a, topRight) || segmentsIntersect(from, to, topRight, b)
+        || segmentsIntersect(from, to, b, bottomLeft) || segmentsIntersect(from, to, bottomLeft, a)) return true;
     }
     return false;
   }
@@ -1447,7 +1522,7 @@
       id: genId(),
       x: Math.round(landing.x),
       y: Math.round(landing.y),
-      color: nextColor(),
+      color: fixedNoteColor || nextColor(),
       text: '',
       rotate: Math.round((Math.random() * 8 - 4) * 10) / 10,   // -4°~4°
       createdAt: new Date().toISOString(),
@@ -2002,11 +2077,6 @@
   surface.addEventListener('mouseleave', () => { if (!interacting) setExpanded(null); });
 
   // ── 台面：在空白处「划一刀」删除划过的便签 ──
-  function pathLen(pts) {
-    let d = 0;
-    for (let i = 1; i < pts.length; i++) d += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
-    return d;
-  }
   function ensureSlashSvg(st) {
     if (st.svg) return;
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -2073,18 +2143,24 @@
     setTimeout(() => svg.remove(), 260);
   }
   function finishSlash(st) {
-    if (pathLen(st.points) >= SLASH_MIN) {
-      // 用元素的实际渲染矩形判定（兼容摞的偏移 / 展开扇形）
+    if (st.length >= SLASH_MIN) {
+      // 共用同一轮实际渲染矩形，保留堆叠偏移及展开动画中的位置。
+      const centers = new Map();
       const hits = notes.filter((data) => {
         const el = elById(data.id);
         if (!el) return false;
         const r = el.getBoundingClientRect();
-        const x0 = r.left - st.rect.left;
-        const y0 = r.top - st.rect.top;
-        return st.points.some((p) => p.x >= x0 && p.x <= x0 + r.width && p.y >= y0 && p.y <= y0 + r.height);
+        const a = surfaceLocalPoint(r.left, r.top, st.rect);
+        const b = surfaceLocalPoint(r.right, r.bottom, st.rect);
+        centers.set(data.id, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+        return noteHitBySlash(a, b, st);
       });
-      const hitIds = new Set(edges.filter((ed) => edgeHitBySlash(ed, st.points, st.rect)).map((ed) => ed.id));
-      const hitArrowIds = new Set(arrows.filter((ar) => arrowHitBySlash(ar, st.points, st.rect)).map((ar) => ar.id));
+      const hitIds = new Set(edges.filter(ed => lineHitBySlash(centers.get(ed.from), centers.get(ed.to), st)).map(ed => ed.id));
+      const hitArrowIds = new Set(arrows.filter(ar => {
+        const a = ar.fromNote ? centers.get(ar.fromNote) : worldToSurfacePoint(Number(ar.x1), Number(ar.y1));
+        const b = ar.toNote ? centers.get(ar.toNote) : worldToSurfacePoint(Number(ar.x2), Number(ar.y2));
+        return lineHitBySlash(a, b, st);
+      }).map(ar => ar.id));
       if (hits.length || hitIds.size || hitArrowIds.size) {
         commit(snapshot());
         hits.forEach(applyDelete);
@@ -2195,18 +2271,25 @@
     }
     if (slashDeletionDisabled) return;
     const rect = surface.getBoundingClientRect();
+    const start = surfaceLocalPoint(e.clientX, e.clientY, rect);
     const st = {
-      points: [{ x: e.clientX - rect.left, y: e.clientY - rect.top }],
+      points: [start], left: start.x, right: start.x, top: start.y, bottom: start.y,
       rect: rect, started: false, svg: null, line: null, length: 0,
     };
     let slashFrame = 0;
     const paintSlash = () => { slashFrame = 0; updateSlashLine(st); };
     try { surface.setPointerCapture(e.pointerId); } catch (err) {}
     const onMove = (ev) => {
-      const point = { x: ev.clientX - st.rect.left, y: ev.clientY - st.rect.top };
+      if (ev.pointerId !== e.pointerId) return;
+      const point = surfaceLocalPoint(ev.clientX, ev.clientY, rect);
       const previous = st.points[st.points.length - 1];
+      if (point.x === previous.x && point.y === previous.y) return;
       st.length += Math.hypot(point.x - previous.x, point.y - previous.y);
       st.points.push(point);
+      st.left = Math.min(st.left, point.x);
+      st.right = Math.max(st.right, point.x);
+      st.top = Math.min(st.top, point.y);
+      st.bottom = Math.max(st.bottom, point.y);
       if (!st.started) {
         if (st.length < 8) return;
         st.started = true;
@@ -2214,33 +2297,34 @@
       }
       if (!slashFrame) slashFrame = requestAnimationFrame(paintSlash);
     };
-    const onUp = (ev) => {
-      const last = st.points[st.points.length - 1];
-      if (ev.clientX - rect.left !== last.x || ev.clientY - rect.top !== last.y) onMove(ev);
-      if (slashFrame) { cancelAnimationFrame(slashFrame); paintSlash(); }
+    const cleanup = () => {
       cancelPointerGesture = null;
       cancelSlashGesture = null;
       surface.removeEventListener('pointermove', onMove);
       surface.removeEventListener('pointerup', onUp);
       surface.removeEventListener('pointercancel', onCancel);
-      try { surface.releasePointerCapture(ev.pointerId); } catch (err) {}
+      surface.removeEventListener('lostpointercapture', onCancel);
+      try { surface.releasePointerCapture(e.pointerId); } catch (err) {}
+    };
+    const onUp = (ev) => {
+      if (ev.pointerId !== e.pointerId) return;
+      onMove(ev);
+      if (slashFrame) { cancelAnimationFrame(slashFrame); paintSlash(); }
+      cleanup();
       finishSlash(st);
     };
-    const onCancel = () => {
+    const onCancel = (ev) => {
+      if (ev && ev.pointerId !== e.pointerId) return;
       if (slashFrame) cancelAnimationFrame(slashFrame);
       slashFrame = 0;
-      cancelPointerGesture = null;
-      cancelSlashGesture = null;
-      surface.removeEventListener('pointermove', onMove);
-      surface.removeEventListener('pointerup', onUp);
-      surface.removeEventListener('pointercancel', onCancel);
-      try { surface.releasePointerCapture(e.pointerId); } catch (err) {}
+      cleanup();
       if (st.svg) st.svg.remove();
     };
     cancelSlashGesture = cancelPointerGesture = onCancel;
     surface.addEventListener('pointermove', onMove);
     surface.addEventListener('pointerup', onUp);
     surface.addEventListener('pointercancel', onCancel);
+    surface.addEventListener('lostpointercapture', onCancel);
   });
   surface.addEventListener('contextmenu', (e) => e.preventDefault());
   surface.addEventListener('pointermove', (e) => {
@@ -2331,6 +2415,7 @@
     if (e.key === 'Escape' && cancelPointerGesture) { e.preventDefault(); cancelActiveGesture(); return; }
     if (searchInput) return;                          // 搜索输入自身接管文字、回车与退出
     if (editingEl) return;                            // 写字时让浏览器做字符级撤销
+    if (notesDock?.handleShortcut(e)) return;
     if (e.target && e.target.closest && e.target.closest('button, input, select, textarea, [contenteditable], [role="dialog"]')) return;
     const plainKey = !e.ctrlKey && !e.metaKey && !e.altKey;
     const lowerKey = e.key.toLowerCase();
@@ -2391,12 +2476,6 @@
         e.preventDefault();
         e.stopPropagation();
       }
-      return;
-    }
-    if (e.key === '0' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      fitAllNotes();
       return;
     }
     if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -2982,6 +3061,7 @@
         if (!pageUsable()) return true;
         if (notesRuntimeActive) return true;
         notesRuntimeActive = true;
+        notesDock?.revealFixedColor();
         surface.style.transition = ''; surface.style.opacity = ''; surface.style.transform = '';
         // 隐藏预渲染时 content-visibility 会跳过尺寸计算；页面显现后重算一次端点。
         stopEdgeRefresh();
@@ -3052,6 +3132,6 @@
       }
     });
   } catch (e) {}
-  bindNotesDock();
+  const notesDock = bindNotesDock();
   schedulePreload();
 })();

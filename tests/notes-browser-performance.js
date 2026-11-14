@@ -317,7 +317,7 @@ async function main() {
       if (round === 0) {
         await page.screenshot({ path: path.join(dataRoot, 'notes.png') });
         results.idle = {};
-        for (const name of ['notes', 'tree-page', 'study', 'focus', 'calendar', 'review', 'cadence']) {
+        for (const name of ['notes', 'tree-page', 'study', 'review', 'cadence']) {
           if (name !== 'notes') await page.locator(`.left-spine [data-action="${name}-view"]`).click();
           await page.waitForTimeout(1200);
           results.idle[name] = await page.evaluate(() => __sampleNotes(false, 600));
