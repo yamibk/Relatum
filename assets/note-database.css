@@ -143,10 +143,11 @@ body[data-start-theme="dark"] .note-database {
   user-select: none;
 }
 .note-database .note-database-cell-value.is-link { color: var(--db-link); text-decoration: underline; text-underline-offset: .13em; }
-.note-database .note-database-cell-value.is-selected { background: color-mix(in srgb, var(--db-focus) 8%, var(--db-paper)); }
-.note-database .note-database-cell-value.is-active { box-shadow: inset 0 0 0 1px var(--db-focus); }
+.note-database:where(:focus-within) .note-database-cell-value.is-selected { background: color-mix(in srgb, var(--db-focus) 8%, var(--db-paper)); }
+.note-database:where(:focus-within) .note-database-cell-value.is-active { box-shadow: inset 0 0 0 1px var(--db-focus); }
 .note-database .note-database-cell-value:focus-visible { outline-width: 1px; outline-offset: -1px; }
-.note-database .note-database-cell-input { display: block; width: 100%; height: 31px; min-height: 31px; padding: 4px 8px; border: 0; border-radius: 0; outline: 1px solid var(--db-focus); outline-offset: -1px; resize: none; }
+.note-database .note-database-cell-input { display: block; width: 100%; height: 31px; min-height: 31px; padding: 4px 8px; border: 0; border-radius: 0; resize: none; }
+.note-database:where(:focus-within) .note-database-cell-input { outline: 1px solid var(--db-focus); outline-offset: -1px; }
 .note-database .note-database-cell-input:focus-visible { outline-width: 1px; outline-offset: -1px; }
 .note-database button.note-database-cell-value:is([data-db-type="text"], [data-db-type="number"]) { cursor: text; }
 .note-database :is(.note-database-cell-value, .note-database-cell-input)[data-db-type="number"] { text-align: end; font-variant-numeric: tabular-nums; }
