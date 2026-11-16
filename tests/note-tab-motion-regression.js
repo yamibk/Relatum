@@ -284,7 +284,7 @@ function closeHarness() {
   const documents = new Map(['a', 'b', 'c'].map(name => [name, { path: name }]));
   const state = { tabs: ['a', 'b', 'c'], activeTab: 'c', current: documents.get('c'), documentCache: documents };
   const renders = [], releases = [], saved = [];
-  const sandbox = { state, tabCloseMotionPending: false, noteMovePromise: null, noteGraphIntentSequence: 0,
+  const sandbox = { state, tabCloseMotionPending: false, noteMovePromise: null, noteGraphIntentSequence: 0, noteDatabase: null,
     noteGraph: { deactivate(options) { releases.push(options); } },
     flushCanvases: async () => true, flushSave: async document => { saved.push(document.path); return true; },
     isSpecialTab: tab => tab === GRAPH_TAB || tab.startsWith('blank:'), isGraphTab: tab => tab === GRAPH_TAB,
@@ -297,7 +297,7 @@ function closeHarness() {
 }
 function attachCloseToRenderer(h) {
   const s = h.sandbox;
-  Object.assign(s, { noteMovePromise: null, flushCanvases: async () => true, flushSave: async () => true,
+  Object.assign(s, { noteMovePromise: null, noteDatabase: null, flushCanvases: async () => true, flushSave: async () => true,
     isSpecialTab: tab => tab === GRAPH_TAB || tab.startsWith('blank:'), persistTabs() {}, backgroundTargetChanged() {},
     clearCurrent(options) {
       s.state.current = null;
@@ -311,6 +311,18 @@ function attachCloseToRenderer(h) {
 }
 
 (async () => {
+  {
+    const h = closeHarness(), cleared = [];
+    h.sandbox.noteDatabase = {
+      whenInputSettled: async path => path === 'a',
+      clear: path => cleared.push(path),
+    };
+    assert.equal(await h.close.one('b'), false);
+    assert.equal(await h.close.all(), false);
+    assert.deepEqual(h.state.tabs, ['a', 'b', 'c']);
+    assert.equal(await h.close.one('a'), true);
+    assert.deepEqual(cleared, ['a']);
+  }
   {
     const h = closeHarness(); h.sandbox.flushSave = async () => false;
     assert.equal(await h.close.one('b'), false);

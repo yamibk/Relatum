@@ -1,7 +1,7 @@
 # Optional host runtimes; app assets remain offline and dependency free.
 param([string]$Python = 'python', [string]$Node = 'node', [switch]$Browser)
 $ErrorActionPreference = 'Stop'
-& $Python -m unittest tests.test_note_index tests.test_note_index_api tests.test_note_link_completion tests.test_notes_library tests.test_markdown_files tests.test_note_svg tests.test_note_browser tests.test_note_graph tests.test_note_notebooks tests.test_note_reveal tests.test_note_canvas_browser tests.test_note_canvases tests.test_note_trash tests.test_career_report tests.test_feature_profile
+& $Python -m unittest tests.test_note_index tests.test_note_index_api tests.test_note_link_completion tests.test_notes_library tests.test_note_database tests.test_markdown_files tests.test_note_svg tests.test_note_browser tests.test_note_graph tests.test_note_notebooks tests.test_note_reveal tests.test_note_canvas_browser tests.test_note_canvases tests.test_note_trash tests.test_career_report tests.test_feature_profile
 if ($LASTEXITCODE -ne 0) { throw 'Note backend checks failed.' }
 & $Node (Join-Path $PSScriptRoot 'note-cards-regression.js')
 if ($LASTEXITCODE -ne 0) { throw 'Cards regression failed.' }
@@ -14,6 +14,10 @@ if ($Browser) {
     if ($LASTEXITCODE -ne 0) { throw 'Inline formula preview checks failed.' }
     & $Node (Join-Path $PSScriptRoot 'note-link-completion-browser.js')
     if ($LASTEXITCODE -ne 0) { throw 'Link completion browser checks failed.' }
+    foreach ($check in @('note-database-editor-browser.js','note-database-controls-browser.js','note-database-browser.js')) {
+        & $Node (Join-Path $PSScriptRoot $check)
+        if ($LASTEXITCODE -ne 0) { throw ('Failed: ' + $check) }
+    }
     & $Node (Join-Path $PSScriptRoot 'note-cards-browser.js')
     if ($LASTEXITCODE -ne 0) { throw 'Cards browser checks failed.' }
     & $Node (Join-Path $PSScriptRoot 'note-cards-markdown-browser.js')

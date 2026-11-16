@@ -1,5 +1,5 @@
 // Relatum 托管笔记的单表面 Markdown Live Preview。
-// Markdown 字符串始终是唯一事实来源；CodeMirror/Lezer 只维护编辑状态和视觉投影。
+// CodeMirror/Lezer 维护 Markdown 正文及视觉投影。
 (function () {
   'use strict';
 
@@ -91,6 +91,10 @@
   const mermaidEditEffect = StateEffect.define();
   const mermaidLayoutEffect = StateEffect.define();
   const blockLayoutEffect = StateEffect.define();
+  let databaseBlocksEnabled;
+  const databaseMarker = '```database\n```';
+  const databaseOpener = /^```database[\t ]*$/m;
+  const databaseAttachmentExtension = /\.(?:pdf|md|markdown|csv|tsv|txt|doc|docx|xls|xlsx|ppt|pptx|rtf|odt|ods|odp)$/i;
   let nextBlockSpecId = 1;
   let nextTableCellVersion = 1;
   const noteSyntaxContexts = new WeakMap();
@@ -1161,6 +1165,65 @@
     return ranges;
   }
 
+  function databaseFenceSource(doc, node) {
+    if (node.parent?.name !== 'Document') return '';
+    const opener = doc.lineAt(node.from), closer = doc.lineAt(Math.max(node.from, node.to - 1));
+    if (opener.from !== node.from || closer.number <= opener.number || closer.to - opener.from > RICH_BLOCK_LIMIT
+        || !/^```database[\t ]*$/.test(opener.text) || !/^```[\t ]*$/.test(closer.text)) return '';
+    const source = doc.sliceString(opener.from, closer.to);
+    return /^```database[\t ]*\n(?:[\t ]*\n)*```[\t ]*$/.test(source) ? source : '';
+  }
+
+  function excludeDatabaseMath(doc, positions, protectedBlocks, start) {
+    if (!positions.size) return;
+    const end = doc.lineAt(Array.from(positions).reduce((last, position) => Math.max(last, position), start)).number;
+    const ranges = protectedBlocks.slice().sort((a, b) => a.from - b.from);
+    let next = 0, protectedUntil = -1, closing = '';
+    for (let number = doc.lineAt(start).number; number <= end; number++) {
+      const line = doc.line(number);
+      while (next < ranges.length && ranges[next].from <= line.from) {
+        protectedUntil = Math.max(protectedUntil, ranges[next++].to);
+      }
+      if (closing) positions.delete(line.from);
+      if (protectedUntil > line.from) continue;
+      const marker = window.MarkdownMini.quoteLine(line.text).text.trim();
+      if (closing && marker === closing) closing = '';
+      else if (!closing && (marker === '$$' || marker === '\\[')) closing = marker === '$$' ? '$$' : '\\]';
+    }
+  }
+
+  function databaseBlockPositions(source, initialTree) {
+    const positions = new Set();
+    if (!databaseOpener.test(source)) return positions;
+    const { doc } = EditorState.create({ doc: source });
+    const tree = initialTree || headingParser().parse(source);
+    const metadata = documentFrontmatter(doc);
+    const protectedBlocks = metadata ? [metadata] : [];
+    tree.iterate({ enter(node) {
+      if (/^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock|InlineCode)$/.test(node.name)) {
+        protectedBlocks.push({ from: node.from, to: node.to });
+        if (node.name === 'FencedCode' && node.from >= (metadata?.to || 0) && databaseFenceSource(doc, node.node)) positions.add(node.from);
+        return false;
+      }
+      return undefined;
+    } });
+    if (positions.size && source.includes('%%')) {
+      const comments = scanSourceComments(doc, 0, doc.length, protectedBlocks);
+      for (const position of positions) if (comments.some(range => range.from <= position && range.to > position)) positions.delete(position);
+      protectedBlocks.push(...comments);
+    }
+    if (source.includes('$$') || source.includes('\\[')) excludeDatabaseMath(doc, positions, protectedBlocks, 0);
+    return positions;
+  }
+
+  function hasDatabaseBlock(value) {
+    return databaseBlockPositions(window.MarkdownMini.structure.normalizeSource(value)).size > 0;
+  }
+
+  function isDatabaseAttachmentFile(file) {
+    return databaseAttachmentExtension.test(file?.name || '');
+  }
+
   function scanBlockSpecs(state, from, to, reusable, completeTree, mathProtected) {
     const doc = state.doc;
     const specs = [];
@@ -1169,6 +1232,8 @@
     const end = clamp(typeof to === 'number' ? to : doc.length, start, doc.length);
     const raw = [];
     const seen = new Set();
+    const databaseEnabled = databaseBlocksEnabled && state.field(databaseBlocksEnabled, false);
+    let databasePositions;
     let reusableMedia;
     const protectedBlocks = [];
     const metadata = documentFrontmatter(doc);
@@ -1211,6 +1276,14 @@
           const quote = window.MarkdownMini.quoteLine(firstLine.text);
           const opener = fenceStart(quote.text);
           if (!opener) return false;
+          if (opener.language === 'database' && databaseEnabled) {
+            const source = databaseFenceSource(doc, node.node);
+            if (source) {
+              (databasePositions ||= new Set()).add(node.from);
+              push({ from: node.from, to: firstLine.from + source.length, kind: 'database', source });
+            }
+            return false;
+          }
           const kind = opener.language === 'cards' && window.RelatumNoteCards ? 'cards' : opener.language === 'quiz' && quizEnabled() ? 'quiz' : opener.language === 'derive' ? 'derive' : mermaidEnabled() && MERMAID_LANGS.has(opener.language) ? 'mermaid' : '';
           const limit = kind === 'mermaid' ? MERMAID_LIMIT : RICH_BLOCK_LIMIT;
           if (!kind || node.to - firstLine.from > limit || !isFenceEnd(window.MarkdownMini.stripQuote(lastLine.text, quote.depth), opener)) return false;
@@ -1268,7 +1341,16 @@
 
     // Skip known code/HTML without reading it; comments are scanned only in
     // bounded gaps and can continue across a protected block.
-    protectedBlocks.push(...scanSourceComments(doc, start, end, protectedBlocks));
+    const comments = scanSourceComments(doc, start, end, protectedBlocks);
+    protectedBlocks.push(...comments);
+    if (databasePositions) {
+      const sourceStart = Math.max(0, start - BLOCK_MATH_LIMIT);
+      excludeDatabaseMath(doc, databasePositions, protectedBlocks, sourceStart);
+      for (let index = raw.length - 1; index >= 0; index--) {
+        const spec = raw[index];
+        if (spec.kind === 'database' && (!databasePositions.has(spec.from) || comments.some(range => range.from <= spec.from && range.to > spec.from))) raw.splice(index, 1);
+      }
+    }
     if (mathProtected) mathProtected.push(...protectedBlocks);
 
     // $$ is a Relatum extension rather than a Lezer Markdown block. Its search is
@@ -3149,6 +3231,8 @@
     delete host.__relatumReadingMermaid;
     host.__relatumReadingQuiz?.destroy(); delete host.__relatumReadingQuiz;
     host.__relatumReadingCards?.destroy(); delete host.__relatumReadingCards;
+    host.__relatumReadingDatabases?.forEach(dispose => dispose?.());
+    delete host.__relatumReadingDatabases;
     if (host.__relatumReadingCode) host.__relatumReadingCode.destroy();
     delete host.__relatumReadingCode;
     host.querySelectorAll('[data-canvas-source]').forEach(frame => frame.__noteCanvas?.destroy());
@@ -3183,8 +3267,10 @@
       renderedSource = renderedSource.slice(0, ref.from) + '![](relatum-canvas-placeholder-' + ordinal + ')' + renderedSource.slice(ref.to);
     });
     const hasCallouts = />\s*\[!/.test(renderedSource);
+    const hasDatabaseCandidate = (printing || safeOptions.database) && databaseOpener.test(original);
     // Headings need original offsets; Callout ranges follow the rendered source.
-    const initialTree = hasCallouts && !canvasRefs.length ? headingParser().parse(original) : null;
+    const initialTree = hasDatabaseCandidate || hasCallouts && !canvasRefs.length ? headingParser().parse(original) : null;
+    const databasePositions = hasDatabaseCandidate ? databaseBlockPositions(original, initialTree) : null;
     let canvasShift = 0, canvasIndex = 0;
     const noteHeadings = noteHeadingsFromString(original, { initialTree }).map(heading => {
       while (canvasIndex < canvasRefs.length && canvasRefs[canvasIndex].to <= heading.from) {
@@ -3207,9 +3293,15 @@
       return entry ? position < entry.end ? entry.from : position - entry.shift : position;
     };
     const readingSyntax = window.MarkdownMini.noteSyntax.scan(renderedSource);
-    const noteCallouts = hasCallouts ? readingCallouts(renderedSource, initialTree) : [];
+    const noteCallouts = hasCallouts ? readingCallouts(renderedSource, canvasRefs.length ? null : initialTree) : [];
     const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts, noteSourcePosition, noteSourceMap: true, noteContext: readingSyntax,
-      renderFence: printing ? block => block.language === 'quiz' ? null : noteFence(block) : noteFence });
+      renderFence(block) {
+        if (block.language === 'database' && databasePositions?.has(block.from)) {
+          return '<div class="note-database-carrier"></div>';
+        }
+        return printing && block.language === 'quiz' ? null : noteFence(block);
+      },
+    });
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
@@ -3355,6 +3447,10 @@
       notePath, isCurrent: current, onLink: safeOptions.onOpenExternal, onLayout: readingLayout,
     });
     if (content.querySelector('.note-cards')) host.__relatumReadingCards = attachNoteCards(content, { isCurrent: current, onLink: safeOptions.onOpenExternal, onLayout: readingLayout });
+    if (databasePositions?.size) {
+      host.__relatumReadingDatabases = Array.from(content.querySelectorAll('.note-database-carrier'), element =>
+        safeOptions.database.mount(element, { path: notePath, readOnly: true, observe: true, onLayout: readingLayout }));
+    }
     host.__relatumReadingCode = prepareReadingCode(content, current);
     if (result.features && result.features.mermaid && mermaidEnabled()) {
       window.RelatumNoteMermaid?.reserve?.(content, { mode: 'reading' });
@@ -3942,7 +4038,30 @@
   }
 
   function blockIsProjected(spec, activeIds) {
-    return usesBlockReplacement(spec) && (spec.kind === 'media' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'table' || !activeIds.has(spec.id));
+    return usesBlockReplacement(spec) && (spec.kind === 'database' || spec.kind === 'media' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'table' || !activeIds.has(spec.id));
+  }
+
+  class DatabaseBlockWidget extends WidgetType {
+    constructor(spec, path, database) {
+      super();
+      this.id = spec.id;
+      this.path = path;
+      this.database = database;
+    }
+    get estimatedHeight() { return 72; }
+    eq(other) { return this.id === other.id && this.path === other.path && this.database === other.database; }
+    toDOM(view) {
+      const element = document.createElement('div');
+      element.className = 'note-database-carrier';
+      element.contentEditable = 'false';
+      element.__relatumDatabaseDispose = this.database.mount(element, {
+        path: this.path, readOnly: view.state.readOnly, observe: true,
+        onLayout: () => { if (element.isConnected) view.requestMeasure(); },
+      });
+      return element;
+    }
+    ignoreEvent() { return true; }
+    destroy(element) { element.__relatumDatabaseDispose?.(); }
   }
 
   const remembersBlockLayout = spec => /^(?:image|math|table|mermaid|media)$/.test(spec.kind);
@@ -4143,6 +4262,7 @@
       return coordinator.layout && remembersBlockLayout(spec) ? new MeasuredBlockWidget(widget, coordinator) : widget;
     }
     if (spec.kind === 'quiz') return new QuizBlockWidget(spec, path, options, coordinator, selected);
+    if (spec.kind === 'database') return new DatabaseBlockWidget(spec, path, options.database);
     if (spec.kind === 'canvas') return new CanvasBlockWidget(spec, path, options, coordinator, selected);
     const widget = spec.kind === 'table' && options.tableController && spec.tableModel
       ? options.tableController.widget(spec, path, coordinator)
@@ -4155,7 +4275,7 @@
     // to deliver native input without a keydown to the selected image text box.
     const imageTextInput = spec.kind === 'image' && spec.from === 0 && spec.to === state.doc.length
       && options.imageTextController?.active;
-    return !imageTextInput && (spec.kind === 'media' || spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz' || spec.kind === 'table' || editableFence(spec));
+    return !imageTextInput && (spec.kind === 'media' || spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz' || spec.kind === 'table' || spec.kind === 'database' || editableFence(spec));
   }
 
   function blockAtomicRange(spec, state) {
@@ -5968,6 +6088,24 @@
     return true;
   }
 
+  function insertDatabaseBlock(view, position, moveSelection) {
+    const doc = view.state.doc;
+    let node = syntaxTree(view.state).resolveInner(position, -1);
+    while (node.parent && node.parent.name !== 'Document') node = node.parent;
+    // Inserting before protected content also handles an unfinished example
+    // fence, which would otherwise consume the new marker.
+    const protectedBlock = /^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock|Blockquote|BulletList|OrderedList)$/.test(node.name);
+    const at = protectedBlock ? doc.lineAt(node.from).from : doc.lineAt(position).to;
+    const before = doc.sliceString(Math.max(0, at - 2), at);
+    const after = doc.sliceString(at, Math.min(at + 2, doc.length));
+    const leading = at === 0 || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+    const trailing = after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
+    const insert = leading + databaseMarker + trailing;
+    view.dispatch({ changes: { from: at, insert }, userEvent: 'input.note-command',
+      ...(moveSelection ? { selection: EditorSelection.cursor(Math.min(at + insert.length + Number(after.startsWith('\n')), doc.length + insert.length)), scrollIntoView: true } : {}) });
+    return true;
+  }
+
   function exitEmptyQuoteMarkup(view) {
     if (!view || !view.state || view.state.selection.ranges.length !== 1) return false;
     const range = view.state.selection.main;
@@ -6029,6 +6167,7 @@
     let suppressChanges = false;
     let documentSetSeq = 0;
     const imageInsertions = new Set();
+    const databaseInsertions = new Set();
     let scrollRestoreSeq = 0;
     let destroyed = false;
     let highlightActive = true;
@@ -7117,6 +7256,7 @@
         selectionMatchHighlightCompartment.of(selectionMatchHighlight ? highlightSelectionMatches() : []),
         markdownCompartment.of(markdownExtensions()),
         noteSyntaxField,
+        ...(options.database ? [databaseBlocksEnabled ||= StateField.define({ create: () => true, update: value => value })] : []),
         extensionCompartment.of(extensionHost ? extensionHost.configuration() : []),
         codeHighlighting,
         livePreviewCompartment.of(livePreviewExtensions()),
@@ -7224,6 +7364,9 @@
               target.from = update.changes.mapPos(target.from, 1);
               target.to = update.changes.mapPos(target.to, empty ? 1 : -1);
             }
+          }
+          if (update.docChanged && databaseInsertions.size) {
+            for (const target of databaseInsertions) target.position = update.changes.mapPos(target.position, 1);
           }
           if (tableSyntaxRevision !== noteSyntaxRevision && !inputPending()) {
             tableSyntaxRevision = noteSyntaxRevision; tableController?.refreshNoteSyntax();
@@ -7473,6 +7616,40 @@
     }
 
     const view = new EditorView({ state: makeState(options.value || '', EditorSelection.cursor(0)), parent: host });
+    const databaseFileDropEnabled = () => options.database && typeof options.onDatabaseFiles === 'function'
+      && !sourceMode && !view.state.readOnly && !imageTextController.active;
+    function hasDroppedFiles(event) { return Array.from(event.dataTransfer?.types || []).includes('Files'); }
+    function dragOverDatabaseFiles(event) {
+      if (databaseFileDropEnabled() && hasDroppedFiles(event)) event.preventDefault();
+    }
+    function dropDatabaseFiles(event) {
+      if (!databaseFileDropEnabled() || !hasDroppedFiles(event)) return;
+      const files = Array.from(event.dataTransfer.files || []);
+      const attachments = files.filter(isDatabaseAttachmentFile);
+      const images = files.filter(file => !isDatabaseAttachmentFile(file)
+        && (/^image\//i.test(file.type || '') || /\.(?:png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name || '')));
+      if (!attachments.length && images.length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!attachments.length) return;
+      const target = { position: view.posAtCoords({ x: event.clientX, y: event.clientY }, false) ?? view.state.selection.main.head,
+        path: currentPath, sequence: documentSetSeq };
+      databaseInsertions.add(target);
+      const insertAtDrop = () => {
+        if (!databaseInsertions.delete(target) || destroyed || sourceMode || target.path !== currentPath || target.sequence !== documentSetSeq
+            || inputPending() || view.state.readOnly || hasDatabaseBlock(serializedDocument(view.state.doc))) return false;
+        return insertDatabaseBlock(view, target.position, false);
+      };
+      Promise.resolve().then(() => {
+        if (target.sequence !== documentSetSeq || target.path !== currentPath || destroyed) return;
+        if (images.length) safeOptions.onImageFiles(images);
+        return options.onDatabaseFiles(attachments, insertAtDrop);
+      }).finally(() => databaseInsertions.delete(target)).catch(() => {});
+    }
+    if (options.database && options.onDatabaseFiles) {
+      view.dom.addEventListener('dragover', dragOverDatabaseFiles, true);
+      view.dom.addEventListener('drop', dropDatabaseFiles, true);
+    }
     // Selection can replace an image widget between the two clicks. Listen on
     // the stable editor, retaining the actual second pointer target even when
     // Chromium dispatches dblclick to their common ancestor instead of the img.
@@ -7585,6 +7762,7 @@
       highlightInputs.forEach(input => input.dismiss());
       for (const target of imageInsertions) target.valid = false;
       imageInsertions.clear();
+      databaseInsertions.clear();
       formatInputOwners.delete(view);
       if (inputPending()) {
         pendingDocumentState = Object.assign({}, documentState || {});
@@ -7902,6 +8080,7 @@
       }
       if (name === 'copy' || name === 'cut') return { enabled: view.state.selection.ranges.some((range) => !range.empty), checked: false };
       if (name === 'insert:canvas' && !canvasEnabled()) return { enabled: false, checked: false };
+      if (name === 'insert:database') return { enabled: !!options.database && !view.state.readOnly && view.state.selection.ranges.length === 1, checked: false };
       if (name === 'insert:cards-template') return { enabled: cardsTemplateAllowed(view.state), checked: false };
       if (name === 'insert:cards') return { enabled: view.state.selection.ranges.length === 1 && !protectedParagraph(view.state, paragraphLines(view.state)), checked: false };
       if (name === 'insert:table' || name === 'insert:rule' || name === 'insert:canvas') {
@@ -7939,6 +8118,7 @@
       let done;
       if (name.startsWith('highlight-color:')) done = applyHighlightColor(view, name.slice(16));
       else if (name.startsWith('paragraph:')) done = paragraphCommand(view, name.slice(10));
+      else if (name === 'insert:database') done = insertDatabaseBlock(view, view.state.selection.main.to, true);
       else if (name.startsWith('insert:')) done = insertBlockCommand(view, name.slice(7), document.documentElement.lang === 'en', text);
       else if (name === 'cut' && selectedMermaid(view)) done = deleteSelectedMermaid(view);
       else if (name === 'cut' || name === 'paste' || name === 'paste-plain') {
@@ -8143,8 +8323,11 @@
         imagePreviewPointer = null;
         view.dom.removeEventListener('pointerdown', rememberPreviewImage, true);
         view.dom.removeEventListener('dblclick', previewImage, true);
+        view.dom.removeEventListener('dragover', dragOverDatabaseFiles, true);
+        view.dom.removeEventListener('drop', dropDatabaseFiles, true);
         extensionHost?.destroy();
         imageInsertions.clear();
+        databaseInsertions.clear();
         pendingSelectionMatchHighlight = null;
         serializedDoc = null; serializedValue = '';
         if (imageTextController.adapter) imageTextController.adapter.cancelDraft(true);
@@ -8191,8 +8374,9 @@
     headingMarkerProjectionEnd,
     richBlockEditPosition,
   };
-  window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath, loadNoteMermaid };
-  Object.assign(window.RelatumNoteLiveEditor, { quizFence, renderFence: noteFence, attachCards: attachNoteCards, attachQuiz: attachNoteQuiz,
+  window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath };
+  Object.assign(window.RelatumNoteLiveEditor, { loadNoteMermaid, hasDatabaseBlock, isDatabaseAttachmentFile,
+    quizFence, renderFence: noteFence, attachCards: attachNoteCards, attachQuiz: attachNoteQuiz,
     remapQuiz(source, destination) { quizSession?.remap(source, destination); } });
   window.RelatumNoteLiveEditor.releaseReadingDocument = releaseReadingDocument;
   Object.assign(window.RelatumNoteLiveEditor, { normalizeViewportAnchor, captureReadingViewport, restoreReadingViewport, cancelViewportRestore });

@@ -315,6 +315,8 @@
         "note-table-editor.js",
         "note-link-completion.js",
         "note-workspace.js",
+        "note-database.js",
+        "note-database.css",
         "note-print.html",
         "note-print.js",
         "note-print.css",

@@ -47,6 +47,11 @@ body.note-print {
 .note-print .note-reading-content table.md-table thead { display: table-header-group; break-inside: avoid; }
 .note-print .note-reading-content table.md-table :is(th, td) { white-space: normal; overflow-wrap: anywhere; }
 .note-print .note-reading-content table.md-table tr { break-inside: avoid; }
+.note-print .note-database-carrier { margin-block: .7em; }
+.note-print .note-database-carrier table { border-collapse: collapse; table-layout: fixed; width: 100%; }
+.note-print .note-database-carrier thead { display: table-header-group; break-inside: avoid; }
+.note-print .note-database-carrier tr { break-inside: avoid; }
+.note-print .note-database-carrier :is(th, td) { border: 1px solid #ddd; padding: .25em .45em; overflow-wrap: anywhere; white-space: pre-wrap; }
 .note-print .note-reading-content :is(pre, pre code) {
   max-height: none;
   overflow: visible;

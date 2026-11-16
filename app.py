@@ -9973,6 +9973,8 @@ NOTES_POST_ROUTES = {
     "/api/note-file-colors/set",
     "/api/note-file-colors/clear",
     "/api/note-cleanup-unused-images",
+    "/api/note-database/action",
+    "/api/note-database/attachment/import",
     "/api/note-image-text-merge",
     "/api/note-image-text-cleanup",
     "/api/note-create",
@@ -10421,6 +10423,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json(400, {'error': str(err), 'code': 'invalid'})
             except (sqlite3.Error, RuntimeError) as err:
                 return self._send_json(503, {'error': str(err), 'code': 'index_unavailable'})
+        if parsed.path == "/api/note-database":
+            params = urllib.parse.parse_qs(parsed.query)
+            try:
+                query = json.loads(params.get('query', ['{}'])[0])
+                with _cross_process_mutation_lock(), NOTES_MUTATION_LOCK:
+                    result = NOTES_STORE.database.read(params.get('path', [''])[0], query)
+                return self._send_json(200, result)
+            except NotesError as err:
+                return self._send_notes_error(err)
+            except (ValueError, RecursionError):
+                return self._send_json(400, {'error': '数据库查询参数无效', 'code': 'invalid'})
+            except (OSError, sqlite3.Error):
+                return self._send_json(500, {'error': '读取笔记数据库失败', 'code': 'database_failed'})
         if parsed.path == "/api/note":
             q = urllib.parse.parse_qs(parsed.query)
             try:
@@ -10838,6 +10853,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json(500, {'error': f'移到系统回收站失败：{err}'})
         if path == "/api/note-upload-image":
             return self._api_note_upload_image(body)
+        if path in {"/api/note-database/action", "/api/note-database/attachment/import"}:
+            return self._api_note_database(body, upload=path.endswith('/import'))
         if path in {"/api/note-image-text-merge", "/api/note-image-text-cleanup"}:
             return self._api_note_image_text(body, merge=path.endswith("-merge"))
         if path == "/api/note-cleanup-unused-images":
@@ -11102,6 +11119,30 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _send_notes_error(self, err: NotesError):
         return self._send_json(err.status, {"error": str(err), "code": err.code})
+
+    def _api_note_database(self, body: dict, *, upload: bool):
+        try:
+            note = body.get('path')
+            query = body.get('query')
+            if upload:
+                from note_database import MAX_DATABASE_ATTACHMENT_BYTES
+                encoded = body.get('data')
+                if not isinstance(encoded, str):
+                    raise NotesError('附件数据无效')
+                if len(encoded) > 4 * ((MAX_DATABASE_ATTACHMENT_BYTES + 2) // 3):
+                    raise NotesError('附件超过 100 MiB', status=413, code='too_large')
+                try:
+                    content = base64.b64decode(encoded, validate=True)
+                except (ValueError, binascii.Error) as err:
+                    raise NotesError('附件数据无效') from err
+                result = NOTES_STORE.database.import_file(note, body.get('name'), content, query)
+            else:
+                result = NOTES_STORE.database.action(note, body.get('action'), query, recycle=_move_paths_to_recycle_bin)
+            return self._send_json(200, result)
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except (OSError, sqlite3.Error):
+            return self._send_json(500, {'error': '笔记数据库操作失败', 'code': 'database_failed'})
 
     def _api_note_create(self, body: dict):
         try:
@@ -12942,6 +12983,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         kind='url'  → 只允许 http/https/mailto，调 webbrowser.open（系统处理程序自带防护）。
         kind='note-file-url' → 用户主动激活的本机 file URL，单个文件授权，不扩展目录权限；
         kind='note-file' → 相对当前 Markdown 笔记解析，只允许笔记库内普通文件；
+        kind='note-database-attachment' → 按当前笔记和已登记附件 ID 解析；
         kind='file' → 相对路径相对 baseDir（当前 .canvas 目录）解析；
                       规范化后做后缀黑名单 + 存在性检查，再 os.startfile。
         """
@@ -12978,15 +13020,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json(500, {"error": f"打开失败：{err}"})
             return self._send_json(200, {"ok": True})
 
-        if kind == "note-file":
+        if kind in {"note-file", "note-database-attachment"}:
             try:
-                with NOTES_MUTATION_LOCK:
-                    if body.get('imageSyntax') is not None:
-                        p, _ = NOTES_STORE.resolve_image(body.get("note"), target, syntax=body['imageSyntax'])
-                    else:
-                        p = NOTES_STORE.resolve_link_target(body.get("note"), target)
+                if kind == 'note-database-attachment':
+                    if not self.launch_profile.enabled('notes'):
+                        return self._send_json(403, {'error': '本次启动未启用笔记', 'code': 'feature-disabled'})
+                    with _cross_process_mutation_lock(), NOTES_MUTATION_LOCK:
+                        p = NOTES_STORE.database.resolve_attachment(body.get('note'), target)
+                else:
+                    with NOTES_MUTATION_LOCK:
+                        if body.get('imageSyntax') is not None:
+                            p, _ = NOTES_STORE.resolve_image(body.get("note"), target, syntax=body['imageSyntax'])
+                        else:
+                            p = NOTES_STORE.resolve_link_target(body.get("note"), target)
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
+            except (OSError, sqlite3.Error):
+                return self._send_json(500, {'error': '无法读取附件', 'code': 'open_failed'})
             ext = p.suffix.lower()
             if ext in DANGEROUS_EXTS:
                 return self._send_json(

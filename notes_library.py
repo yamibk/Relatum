@@ -564,12 +564,15 @@ class NotesStore:
         index_path: Path | None = None,
         background_index: bool = False,
     ) -> None:
+        from note_database import NoteDatabases
+
         self.root = Path(root)
         self.atomic_text = atomic_text or _default_atomic_text
         self.atomic_bytes = atomic_bytes or _default_atomic_bytes
         self.index = NoteIndex(index_path or self.root.parent / 'data' / 'note-index.sqlite3', self.root,
                                persistent=background_index)
         self.sync = NoteSync(self, background=background_index)
+        self.database = NoteDatabases(self)
         self.file_colors = NoteFileColors(self.root.parent / 'data' / 'note-file-colors.sqlite3')
         self.file_color_warning = ''
         self.graph_index_enabled = True
@@ -1546,7 +1549,14 @@ class NotesStore:
         self.atomic_text(target, content)
         revision = _revision(encoded)
         self._cache_document(normalized, encoded, text=content, revision=revision)
-        return {"path": normalized, "revision": revision}
+        result = {"path": normalized, "revision": revision}
+        try:
+            if self.database.auto_create(target, current, content):
+                result['databaseCreated'] = True
+        except (OSError, sqlite3.Error, NotesError):
+            # Markdown has already been committed. The visible block can retry explicitly.
+            result['databaseCreateFailed'] = True
+        return result
 
     def _post_move_paths(self, paths: list[str], source: str, destination: str,
                          source_is_folder: bool) -> dict[str, str]:
@@ -1678,6 +1688,8 @@ class NotesStore:
         stage = self.root / f".relatum-txn-{uuid.uuid4().hex}"
         stage.mkdir()
         backups: list[tuple[Path, str, str]] = []
+        database_applied: list[tuple[Path, Path]] = []
+        database_rollback_failed = False
         moved = False
         companion_moved = False
         source_companion = source_path.with_name(source_path.stem + ".assets") if source_path.is_file() else None
@@ -1697,6 +1709,7 @@ class NotesStore:
         self.sync._condition.acquire()
         self.sync._epoch += 1
         try:
+            database_changes = self.database.prepare_move(mapping, source_rel, stage, warnings)
             for index, post_relative in enumerate(updates):
                 pre_relative = reverse_mapping.get(post_relative, post_relative)
                 pre_path = self._absolute(pre_relative)
@@ -1734,6 +1747,7 @@ class NotesStore:
                 companion_moved = True
             for post_relative, text in updates.items():
                 self.atomic_text(self._absolute(post_relative), text)
+            self.database.apply_move(database_changes, source_rel, destination_rel, database_applied)
             moved_paths = self.index.remap(source_rel, destination_rel)
             self.sync_file_colors('remap', source_rel, destination_rel)
             for path in moved_paths:
@@ -1742,6 +1756,11 @@ class NotesStore:
                 self.sync.enqueue(path, priority=True)
             self.invalidate()
         except Exception:
+            for database, backup in reversed(database_applied):
+                try:
+                    os.replace(backup, database)
+                except OSError:
+                    database_rollback_failed = True
             for backup, pre_relative, post_relative in reversed(backups):
                 current_relative = post_relative if moved else pre_relative
                 try:
@@ -1767,7 +1786,8 @@ class NotesStore:
             raise
         finally:
             self.sync._condition.release()
-            shutil.rmtree(stage, ignore_errors=True)
+            if not database_rollback_failed:
+                shutil.rmtree(stage, ignore_errors=True)
         return {
             "path": destination_rel,
             "rewritten": len(updates),
@@ -2018,6 +2038,8 @@ class NotesStore:
         Caller holds NOTES_MUTATION_LOCK. Other live notes protect shared
         references within the current library.
         """
+        from note_database import DATABASE_DIRECTORY
+
         normalized = self.normalize_path(note)
         note_path = self._absolute(normalized)
         raw = self._read_note_bytes(note_path)
@@ -2033,7 +2055,8 @@ class NotesStore:
         candidates = {}
         for base, directories, filenames in os.walk(asset_root, followlinks=False):
             directory = Path(base)
-            directories[:] = [name for name in directories if not _is_reparse(directory / name)]
+            directories[:] = [name for name in directories
+                              if name.casefold() != DATABASE_DIRECTORY and not _is_reparse(directory / name)]
             for name in filenames:
                 path = directory / name
                 if path.suffix.casefold() not in NOTE_IMAGE_TYPES or _is_reparse(path) or not path.is_file():

@@ -103,6 +103,51 @@
   let guideTopic = 'callout';
   try { const saved = localStorage.getItem(GUIDE_TOPIC_KEY); if (['callout', 'markdown', 'mermaid', 'quiz', 'cards', 'media'].includes(saved)) guideTopic = saved; } catch (_) {}
   let liveEditor = null;
+  let noteDatabase = null, noteDatabaseLoader = null, noteDatabaseManagement = false;
+  function syncNoteDatabase() {
+    noteDatabase?.setActive(state.current?.path || '', noteWorkspaceVisible() && state.viewMode !== 'source'
+      && !graphPresentation && !browserResultsActive());
+  }
+  function loadNoteDatabase() {
+    if (noteDatabase) return Promise.resolve(noteDatabase);
+    if (noteDatabaseLoader) return noteDatabaseLoader;
+    const script = document.createElement('script'); script.src = 'note-database.js'; script.async = true;
+    const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = 'note-database.css';
+    const ready = element => new Promise((resolve, reject) => {
+      element.onload = resolve; element.onerror = reject;
+    });
+    noteDatabaseLoader = Promise.all([ready(css), ready(script)]).then(() => {
+      noteDatabase = window.RelatumNoteDatabase.create({ language,
+        onOpenNote: path => openNote(path, { reuseActiveTab: false }),
+        onError: error => { if (noteWorkspaceVisible()) showToast(error.message || tr('saveFailed'), 'error'); },
+        onNotice: message => { if (noteWorkspaceVisible()) showToast(message); },
+        onDirtyChange: () => desktopDirty(hasPendingEdits()), confirm: confirmNoteDatabase,
+        confirmEdit: (message, isCurrent) => confirmNoteDatabase(message, isCurrent, true),
+      });
+      syncNoteDatabase();
+      return noteDatabase;
+    }).catch(() => {
+      script.remove(); css.remove(); noteDatabaseLoader = null;
+      throw new Error(language() === 'en' ? 'Could not load the database tools.' : '无法加载数据库工具。');
+    });
+    document.head.append(css, script);
+    return noteDatabaseLoader;
+  }
+  const noteDatabaseHost = {
+    mount(element, options) {
+      let disposed = false, unmount;
+      const mount = () => loadNoteDatabase().then(database => {
+        if (!disposed) unmount = database.mount(element, options);
+      }).catch(error => {
+        if (disposed) return;
+        const retry = document.createElement('button'); retry.type = 'button';
+        retry.textContent = error.message;
+        retry.addEventListener('click', mount, { once: true }); element.replaceChildren(retry);
+      });
+      mount();
+      return () => { disposed = true; unmount?.(); };
+    },
+  };
   let noteBrowser = null, browserLoader = null, browserSequence = 0, browserIntent = false;
   let browserFolderIndex = null, browserFolderSize = -1, browserFolderPaths = [];
   let treeNameLocale = '', treeNameComparator = null;
@@ -1505,13 +1550,12 @@
   }
 
   function whenEditorInputSettled() {
-    return liveEditor && typeof liveEditor.whenInputSettled === 'function'
-      ? liveEditor.whenInputSettled()
-      : Promise.resolve(true);
+    const editor = liveEditor && typeof liveEditor.whenInputSettled === 'function' ? liveEditor.whenInputSettled() : Promise.resolve(true);
+    return noteDatabase?.inputPending() ? Promise.all([editor, noteDatabase.whenInputSettled(state.current?.path || '')]) : editor;
   }
 
   function editorInputPending() {
-    return !!(liveEditor && liveEditor.inputPending);
+    return !!(liveEditor?.inputPending || noteDatabase?.inputPending());
   }
 
   function editorScrollElement() {
@@ -1570,6 +1614,7 @@
   }
 
   function setEditorDocument(documentState) {
+    syncNoteDatabase();
     cancelDocumentViewportRestore();
     deferredViewportDocument = documentState && normalizeViewport(documentState.viewport) && !noteWorkspaceVisible() ? documentState : null;
     closeContextMenu();
@@ -2055,7 +2100,7 @@
     const documentState = payload || readingPayload();
     if (state.current && normalizeViewport(documentState.viewport) && !noteWorkspaceVisible()) deferredViewportDocument = state.current;
     if (window.RelatumNoteLiveEditor && typeof window.RelatumNoteLiveEditor.renderMarkdown === 'function') {
-      window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', { calloutSession: liveEditor?.calloutSession, onOpenExternal: openMarkdownTarget });
+      window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', { calloutSession: liveEditor?.calloutSession, onOpenExternal: openMarkdownTarget, database: noteDatabaseHost });
     } else {
       const result = window.MarkdownMini && window.MarkdownMini.renderResult
         ? window.MarkdownMini.renderResult(documentState.value || '', { localImages: true, noteBlocks: true, noteSyntax: true, mermaid: !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid') })
@@ -2132,6 +2177,8 @@
           onOpenExternal: (target) => openMarkdownTarget(target),
           onOpenLocalFile: (target, syntax) => openLocalNoteFile(target, syntax),
           onImageFiles: (files) => uploadImages(files),
+          database: noteDatabaseHost,
+          onDatabaseFiles: importNoteDatabaseFiles,
           clipboardText: clipboardLinkMarkdown,
           onImageSelectionChange: (selection) => updateImageTextTools(selection),
           onImagePreview: (image) => openImagePreview(image),
@@ -2603,7 +2650,7 @@
     if (wordCountEl && (statistics || knownWords !== undefined)) wordCountEl.textContent = tr('words', { count: Number.isFinite(words) ? words.toLocaleString() : '—' });
     if (characterCountEl) characterCountEl.textContent = tr('characters', { count: Math.max(0, characters).toLocaleString() });
   }
-  function desktopDirty(value) { if (window.CanvasDesktop && typeof window.CanvasDesktop.setDirty === 'function') window.CanvasDesktop.setDirty(!!value || !!window.RelatumNoteCanvas?.dirty); }
+  function desktopDirty(value) { if (window.CanvasDesktop && typeof window.CanvasDesktop.setDirty === 'function') window.CanvasDesktop.setDirty(!!value || !!window.RelatumNoteCanvas?.dirty || !!noteDatabase?.dirty); }
   async function request(url, options) {
     let response;
     try { response = await fetch(url, Object.assign({ credentials: 'same-origin' }, options || {})); }
@@ -2981,8 +3028,10 @@
       return false;
     }
     const activeIndex = state.tabs.indexOf(state.activeTab);
-    if (reuseActive && activeIndex >= 0 && !isGraphTab(state.activeTab)) state.tabs.splice(activeIndex, 1, path);
-    else state.tabs.push(path);
+    if (reuseActive && activeIndex >= 0 && !isGraphTab(state.activeTab)) {
+      const [replaced] = state.tabs.splice(activeIndex, 1, path);
+      noteDatabase?.clear(replaced);
+    } else state.tabs.push(path);
     state.activeTab = path;
     persistTabs();
     return true;
@@ -3261,12 +3310,14 @@
     if (!state.tabs.includes(tabPath)) return false;
     const cached = isSpecialTab(tabPath) ? null : state.documentCache.get(tabPath);
     if (!(options && options.skipSave) && cached && !(await flushSave(cached))) return false;
+    if (noteDatabase && !(await noteDatabase.whenInputSettled(tabPath))) return false;
     // Saving can yield to another close or tab switch; use the current identity.
     const index = state.tabs.indexOf(tabPath);
     if (index < 0) return false;
     const active = state.activeTab === tabPath;
     tabCloseMotionPending = true;
     state.tabs.splice(index, 1);
+    noteDatabase?.clear(tabPath);
     if (isGraphTab(tabPath)) {
       noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); backgroundTargetChanged(true);
     }
@@ -3290,7 +3341,9 @@
       const cached = state.documentCache.get(path);
       if (cached && cached !== current && !(await flushSave(cached))) return false;
     }
+    if (noteDatabase && !(await noteDatabase.whenInputSettled())) return false;
     tabCloseMotionPending = true;
+    for (const path of state.tabs) noteDatabase?.clear(path);
     state.tabs = [];
     state.activeTab = '';
     noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true });
@@ -4044,6 +4097,7 @@
     document.dispatchEvent(new Event('relatum:usage-target'));
   }
   function syncEditorExtensions() {
+    syncNoteDatabase();
     fileColorHost?.refresh();
     liveEditor?.setExtensionsActive(noteWorkspaceVisible() && !!state.current && state.viewMode !== 'reading'
       && !graphPresentation && !browserResultsActive());
@@ -4136,6 +4190,7 @@
       try {
         const result = await post('/api/note-save', { path, content, revision: target.revision });
         target.revision = result.revision || target.revision;
+        if (result.databaseCreated) noteDatabase?.noteSaved(path);
         recordRecent(path); if (noteBrowser) noteBrowser.invalidate(); noteGraph?.invalidate(notebookRootForPath(path));
         target.persistedGeneration = Math.max(target.persistedGeneration, generation);
         if (target.editGeneration <= generation) target.content = content;
@@ -4413,12 +4468,14 @@
     // The disk transaction has committed. Read its rewritten references before
     // changing the editor's asset base; a later read failure must not undo the UI path.
     window.RelatumNoteCanvas?.remapViews(source, destination, true);
+    noteDatabase?.remap?.(source, destination);
     updateNoteGraphSession(source, destination);
     noteGraph?.invalidate(notebookRootForPath(source));
     if (notebookRootForPath(source) !== notebookRootForPath(destination)) noteGraph?.invalidate(notebookRootForPath(destination));
     backgroundTargetChanged();
     try { await syncMovedDocument(); }
     catch (error) { showToast(error.message || tr('readFailed'), 'error'); }
+    syncNoteDatabase(); noteDatabase?.refresh();
     if (result.rewritten) {
       state.documentCache.forEach((cached, path) => { if (cached !== state.current && !hasPendingEdits(cached)) state.documentCache.delete(path); });
     }
@@ -4637,7 +4694,7 @@
     bullet: ['无序列表', 'Bulleted list'], ordered: ['有序列表', 'Numbered list'], task: ['任务列表', 'Task list'],
     body: ['正文', 'Normal text'], quote: ['引用', 'Quote'], table: ['表格', 'Table'], callout: ['标注', 'Callout'],
     rule: ['分隔线', 'Horizontal rule'], 'code-block': ['代码块', 'Code block'], math: ['数学块', 'Math block'],
-    canvas: ['画布', 'Canvas'], cards: ['Cards', 'Cards'],
+    canvas: ['画布', 'Canvas'], cards: ['Cards', 'Cards'], database: ['数据库', 'Database'],
     cut: ['剪切', 'Cut'], copy: ['复制', 'Copy'], paste: ['粘贴', 'Paste'], 'paste-plain': ['以纯文本形式粘贴', 'Paste as plain text'],
     'select-all': ['全选', 'Select all'], paragraph: ['段落设置', 'Paragraph'], insert: ['插入', 'Insert'],
     'highlight-color': ['高亮颜色', 'Highlight color'],
@@ -4880,6 +4937,38 @@
       dialog.append(input, actions); return input;
     });
   }
+  function confirmNoteDatabase(message, isCurrent, editing = false) {
+    const english = language() === 'en';
+    return promptNoteModal(english ? 'Database' : '数据库', false, (dialog, finish) => {
+      const description = document.createElement('p');
+      description.textContent = message[english ? 1 : 0];
+      const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
+      const cancel = contextButton(tr('cancel'), () => finish(false));
+      const action = editing ? (english ? 'Delete' : '删除') : (english ? 'Move to Recycle Bin' : '移到系统回收站');
+      actions.append(cancel, contextButton(action, () => finish(true), true));
+      dialog.append(description, actions);
+      return cancel;
+    }, { isCurrent });
+  }
+  async function manageNoteDatabase(path, action) {
+    if (noteDatabaseManagement || noteMovePromise || !noteWorkspaceVisible()) return;
+    noteDatabaseManagement = true;
+    const source = state.current, activeTab = state.activeTab, epoch = noteVisibilityEpoch;
+    const current = () => state.current === source && state.activeTab === activeTab && epoch === noteVisibilityEpoch
+      && noteWorkspaceVisible() && !noteMovePromise;
+    try {
+      const database = await loadNoteDatabase();
+      if (editorInputPending()) await whenEditorInputSettled();
+      const target = source?.path === path ? source : state.documentCache.get(path);
+      if (!current() || target && !(await flushSave(target)) || !current()) return;
+      await database[action](path, message => current() && confirmNoteDatabase(message, current));
+    } catch (error) {
+      if (current()) showToast(error.message || tr('saveFailed'), 'error');
+    } finally {
+      if (!state.tabs.includes(path)) noteDatabase?.clear(path);
+      noteDatabaseManagement = false;
+    }
+  }
   async function renameCanvas(target) {
     if (target?.session && !target.path) {
       const adapter = target, documentState = state.current;
@@ -5101,12 +5190,12 @@
     const paragraph = parent.dataset.noteSubmenu === 'paragraph';
     const highlight = parent.dataset.noteSubmenu === 'highlight-color';
     const commands = paragraph ? ['bullet', 'ordered', 'task', 'heading-1', 'heading-2', 'heading-3', 'heading-4', 'heading-5', 'heading-6', 'body', 'quote']
-      : ['table', 'callout', 'cards', 'rule', 'code-block', 'math'];
-    if (!paragraph && !highlight && canvasEnabled()) commands.splice(3, 0, 'canvas');
+      : ['table', 'database', 'callout', 'cards', 'rule', 'code-block', 'math'];
+    if (!paragraph && !highlight && canvasEnabled()) commands.splice(4, 0, 'canvas');
     const submenu = document.createElement('div'); submenu.className = 'note-context-menu note-context-submenu';
     submenu.setAttribute('role', 'menu'); submenu.setAttribute('aria-label', parent.textContent);
     (highlight ? window.MarkdownMini.noteSyntax.highlightColors.map(item => item.id) : commands).forEach((kind, index) => {
-      if (!highlight && ((paragraph && (index === 3 || index === 10)) || (!paragraph && index === 3))) submenu.appendChild(separator());
+      if (!highlight && ((paragraph && (index === 3 || index === 10)) || (!paragraph && index === 4))) submenu.appendChild(separator());
       submenu.appendChild(bodyCommandButton((highlight ? 'highlight-color:' : paragraph ? 'paragraph:' : 'insert:') + kind));
     });
     contextMenu.appendChild(submenu); bodyMenuSubmenu = submenu; bodyMenuParent = parent;
@@ -5320,8 +5409,8 @@
       showToast((messages[code] || ['导出 PDF 失败，请重试。', 'Could not export PDF. Try again.'])[english ? 1 : 0], 'error');
     };
     const warn = count => {
-      if (count) showToast(english ? 'Some images, formulas or diagrams could not be rendered.'
-        : '部分图片、公式或图表未能渲染，已在 PDF 中保留说明或源码。', 'warning');
+      if (count) showToast(english ? 'Some content could not be rendered. The PDF includes a note or the original source.'
+        : '部分内容未能渲染，已在 PDF 中保留说明或源码。', 'warning');
     };
     try {
       if (editorInputPending()) {
@@ -5389,6 +5478,12 @@
       cleanup.dataset.noteAction = 'cleanup-unused-images';
       cleanup.disabled = !!(state.assetCleanupBusy || state.imageTextBusy);
       items.push(contextButton(tr('assets'), () => reveal(entry.path, true)), cleanup);
+      const cleanupAttachments = contextButton(language() === 'en' ? 'Clean up unused attachments' : '清理未使用的附件', () => manageNoteDatabase(entry.path, 'cleanup'));
+      const deleteDatabase = contextButton(language() === 'en' ? 'Delete database' : '删除数据库', () => manageNoteDatabase(entry.path, 'remove'), true);
+      cleanupAttachments.dataset.noteAction = 'cleanup-unused-database-attachments';
+      deleteDatabase.dataset.noteAction = 'delete-database';
+      cleanupAttachments.disabled = deleteDatabase.disabled = !!(noteDatabaseManagement || state.assetCleanupBusy || state.imageTextBusy || noteMovePromise);
+      items.push(cleanupAttachments, deleteDatabase);
     }
     items.push(separator(), contextButton(tr('recycle'), () => recycleEntry(entry), true));
     showContext(items, x, y, options && options.source);
@@ -5701,6 +5796,25 @@
     } finally { clearTimeout(timeout); }
   }
   let imageUploadChain = Promise.resolve();
+  async function importNoteDatabaseFiles(files, insertAtDrop) {
+    const source = state.current, path = source?.path, visibility = noteVisibilityEpoch;
+    const current = () => path && state.current === source && source.path === path && visibility === noteVisibilityEpoch
+      && noteWorkspaceVisible() && state.viewMode === 'live' && !state.openingPath && !noteMovePromise;
+    if (!current()) return false;
+    try {
+      const database = await loadNoteDatabase();
+      if (!current()) return false;
+      const imported = await database.importFiles(path, files);
+      if (imported && current()) {
+        if (editorInputPending()) await whenEditorInputSettled();
+        if (current() && insertAtDrop()) await flushSave(source);
+      }
+      return !!imported;
+    } catch (error) {
+      if (current()) showToast(error.message || tr('saveFailed'), 'error');
+      return false;
+    }
+  }
   async function uploadImages(files, commandContext) {
     if (!state.current || !files.length || !noteWorkspaceVisible() || state.viewMode === 'reading') return;
     const documentState = state.current, path = documentState.path, sequence = state.openSeq;
@@ -6253,7 +6367,7 @@
       if (!(await flushCanvases())) return false;
       if (state.current && !(await flushSave())) return false;
       for (const cached of state.documentCache.values()) if (cached !== state.current && hasPendingEdits(cached) && !(await flushSave(cached))) return false;
-      return true;
+      return !noteDatabase || await noteDatabase.whenInputSettled();
     })();
     persistViewStates();
     const settings = flushNotebookSettings(keepalive);
@@ -6316,7 +6430,7 @@
     }
   }
   document.addEventListener('visibilitychange', syncNotePageVisibility);
-  window.addEventListener('pagehide', () => { clearNoteTreeDrag(); aiPageHiding = true; closeNoteModal(); guideSequence++; guideController?.suspend(); aiSequence++; aiController?.suspend(true); indexActivity(false, true); });
+  window.addEventListener('pagehide', () => { clearNoteTreeDrag(); aiPageHiding = true; noteDatabase?.setActive('', false); closeNoteModal(); guideSequence++; guideController?.suspend(); aiSequence++; aiController?.suspend(true); indexActivity(false, true); });
   window.addEventListener('canvasdesktop:visibility', syncNotePageVisibility);
   window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeWorkspacePopovers(); cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0; stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
   window.addEventListener('pageshow', () => { aiPageHiding = false; state.linksRefreshSuspended = false; syncNotePageVisibility(); });

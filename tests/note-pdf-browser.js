@@ -23,11 +23,12 @@ const source = [
   '', '## 屏外内容', '', '![Local image](研究笔记.assets/local.png)', '',
   '![Missing image](研究笔记.assets/missing.png)', '', '![Remote image](https://example.com/image.png)', '',
   '![Shared.canvas|640x360](canvases/Shared.canvas)', '',
+  fence + 'database', fence, '',
   '$$x^2+1$$', '', fence + 'mermaid', 'flowchart LR', 'A[MermaidStart] --> B[MermaidEnd]', fence, '',
   '$$\\notARealMathCommand$$', '', fence + 'mermaid', 'flowchart LR', 'A[', fence, '',
   '![Tall|100x1500](研究笔记.assets/tall.svg)', '',
   fence + 'quiz', 'Quiz question', '- [x] Answer', '- [ ] Distractor', fence, '',
-  '[^a]: Footnote content', '', '## Tail marker', '',
+  '[^a]: Footnote content', '', '## Tail marker', '', fence + 'database', fence, '',
 ].join('\n');
 fs.writeFileSync(path.join(notes, note), source);
 fs.writeFileSync(path.join(notes, other), '# Other note');
@@ -45,6 +46,31 @@ async function freePort() {
   return port;
 }
 
+async function seedDatabase(page) {
+  await page.evaluate(async path => {
+    async function post(suffix, body) {
+      const response = await fetch('/api/note-database/' + suffix, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, ...body }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || response.statusText);
+      return result;
+    }
+    const perform = action => post('action', { action });
+    let snapshot = await perform({ type: 'create' });
+    snapshot = await perform({ type: 'renameColumn', revision: snapshot.revision, name: 'Database record', column: snapshot.columns[0].id });
+    snapshot = await perform({ type: 'addColumn', revision: snapshot.revision, name: 'Attachments', columnType: 'attachment' });
+    const imported = await post('attachment/import', { name: 'Source document.txt', data: btoa('private-file-contents') });
+    const { items } = await perform({ type: 'searchAttachments', query: 'Source document' });
+    snapshot = imported;
+    for (let number = 1; number <= 51; number++) {
+      const values = { [snapshot.columns[0].id]: 'Database row ' + number };
+      if (number === 1) values[snapshot.columns[1].id] = { kind: 'attachment', id: items[0].id };
+      snapshot = await perform({ type: 'addRow', revision: snapshot.revision, values });
+    }
+  }, note);
+}
+
 async function verifyPrintFrame(frame) {
   const contents = await frame.evaluate(() => {
     const article = document.querySelector('article.note-reading-content');
@@ -53,6 +79,13 @@ async function verifyPrintFrame(frame) {
       links: [...article.querySelectorAll('a[data-note-jump]')].map(link => link.hash && !!document.getElementById(link.hash.slice(1))),
       external: article.querySelector('a[href="https://example.com"]')?.href,
       table: article.querySelector('thead th')?.textContent,
+      databases: [...article.querySelectorAll('.note-database-carrier')].map(block => ({
+        rows: block.querySelectorAll('tbody tr').length,
+        heading: block.querySelector('thead th')?.textContent,
+        filename: block.querySelector('tbody tr td:nth-child(2)')?.textContent,
+        links: block.querySelectorAll('a').length,
+        text: block.textContent,
+      })),
       svg: article.querySelector('.note-mermaid-stage svg')?.textContent,
       math: !!article.querySelector('mjx-container'),
       mathFallback: article.querySelector('.md-math-block pre')?.textContent,
@@ -69,6 +102,16 @@ async function verifyPrintFrame(frame) {
   assert(contents.links.length >= 3 && contents.links.every(Boolean), JSON.stringify(contents.links));
   assert.equal(contents.external, 'https://example.com/');
   assert.equal(contents.table, 'Repeated heading');
+  assert.equal(contents.databases.length, 2);
+  for (const database of contents.databases) {
+    assert.equal(database.rows, 50);
+    assert.equal(database.heading, 'Database record');
+    assert.equal(database.filename, 'Source document.txt');
+    assert.equal(database.links, 0);
+    assert.match(database.text, /Database row 50/);
+    assert.match(database.text, /(?:1 more rows|另有 1 行)/);
+    assert.doesNotMatch(database.text, /Database row 51|private-file-contents/);
+  }
   assert.match(contents.svg, /MermaidEnd/);
   assert(contents.math && contents.image && contents.missing && !contents.remote);
   assert.match(contents.mathFallback, /notARealMathCommand/);
@@ -142,6 +185,7 @@ async function verifyPrintFrame(frame) {
     await page.goto(native ? new URL('/?desktop=1', page.url()).href : origin);
     await page.waitForFunction(note => window.pdfTest?.state.current?.path === note && pdfTest.editor, note);
     assert(!requests.some(url => url.includes('note-print.')));
+    await seedDatabase(page);
     const menu = page.locator('button[data-note-action="current-menu"]');
     const action = page.locator('button[data-note-action="export-pdf"]');
     async function openMenu(label) {
@@ -164,9 +208,10 @@ async function verifyPrintFrame(frame) {
       assert.equal(fs.readFileSync(path.join(root, 'blocked.pdf'), 'utf8'), 'existing destination');
       fs.writeFileSync(pdf, 'old PDF');
       await openMenu('导出成 PDF'); await action.click();
-      await page.getByText('部分图片、公式或图表未能渲染，已在 PDF 中保留说明或源码。', { exact: true }).waitFor();
+      await page.getByText('部分内容未能渲染，已在 PDF 中保留说明或源码。', { exact: true }).waitFor();
       const output = fs.readFileSync(pdf).toString('latin1');
       assert(output.startsWith('%PDF-') && /\/Count [2-9]\b/.test(output));
+      assert.doesNotMatch(output, /\/Type \/EmbeddedFile\b/);
       assert(!fs.readdirSync(root).some(name => name.startsWith('.relatum-pdf-')));
       console.log(pdf);
       await page.evaluate(path => pdfTest.openNote(path), imageNote);

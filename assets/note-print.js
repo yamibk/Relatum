@@ -94,6 +94,30 @@
     } catch (_) { return content.querySelectorAll('.mermaid-diagram:not(.is-rendered)').length; }
   }
 
+  async function renderDatabases(content, path, language) {
+    const [first, ...duplicates] = content.querySelectorAll('.note-database-carrier');
+    if (!first) return 0;
+    let warnings;
+    try {
+      if (!window.RelatumNoteDatabase) {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          const timer = setTimeout(() => { script.remove(); reject(new Error('Database script timed out')); }, 15000);
+          script.src = new URL('note-database.js', document.baseURI).href;
+          script.onload = () => { clearTimeout(timer); resolve(); };
+          script.onerror = () => { clearTimeout(timer); script.remove(); reject(new Error('Database script failed')); };
+          document.head.append(script);
+        });
+      }
+      warnings = await window.RelatumNoteDatabase.renderPrint(first, path, language);
+    } catch (_) {
+      first.textContent = language === 'en' ? 'Database unavailable' : '数据库无法读取';
+      warnings = 1;
+    }
+    for (const element of duplicates) element.replaceChildren(...Array.from(first.childNodes, node => node.cloneNode(true)));
+    return warnings;
+  }
+
   window.RelatumNotePrint = {
     async render({ path, value, language, mermaid }) {
       document.documentElement.lang = language === 'en' ? 'en' : 'zh-CN';
@@ -108,16 +132,17 @@
       // Preload the actual glyphs at the final body width before measuring SVGs.
       content.getBoundingClientRect();
       await document.fonts.ready;
-      const [images, math, diagrams] = await Promise.all([
+      const [images, math, diagrams, databases] = await Promise.all([
         loadImages(content),
         result.features.math || content.querySelector('[data-note-cards-math="1"]') ? renderMath(content) : 0,
         result.features.mermaid ? renderDiagrams(content) : 0,
+        renderDatabases(content, path, language),
       ]);
       fitImages(content);
       content.getBoundingClientRect();
       await document.fonts.ready;
       result.measureImages();
-      return { warnings: images + math + diagrams };
+      return { warnings: images + math + diagrams + databases };
     },
   };
 })();

@@ -112,13 +112,14 @@ def _comment_source(source: str) -> str:
     return _mask(source, ranges)
 
 
-def _block_source(source: str) -> str:
+def _block_source(source: str, on_fence=None) -> str:
     ranges = []
     header = frontmatter(source)
     header_end = header[1] if header else 0
     if header:
         ranges.append(header)
     fence = None
+    fence_start = None
     html_block = None
     comment = None
     math = None
@@ -177,6 +178,8 @@ def _block_source(source: str) -> str:
         if fence:
             ranges.append((offset, offset + len(raw)))
             if fence_marker and fence_marker[1][0] == fence[0] and len(fence_marker[1]) >= fence[1] and not fence_marker[2].strip():
+                if on_fence and fence_start is not None:
+                    on_fence(fence_start, offset + len(raw))
                 fence = None
         elif html_block:
             if not content.strip() and html_block == "blank":
@@ -188,6 +191,8 @@ def _block_source(source: str) -> str:
         elif fence_marker:
             if fence_marker[1][0] != "`" or "`" not in fence_marker[2]:
                 fence = (fence_marker[1][0], len(fence_marker[1]), quote_depth)
+                if on_fence:
+                    fence_start = offset if not quote_depth and not list_indent else None
                 ranges.append((offset, offset + len(raw)))
         elif content.startswith("\t") or content.startswith("    "):
             ranges.append((offset, offset + len(raw)))
