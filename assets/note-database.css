@@ -266,7 +266,7 @@ body[data-start-theme="dark"] .note-database {
   border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
 .note-database-manager .note-modal-actions button { min-height: 32px; padding: 4px 10px; border-radius: 8px;
   border: 1px solid color-mix(in srgb, currentColor 16%, transparent); background: transparent; color: inherit; font: inherit; cursor: pointer; }
-.note-database-manager .note-modal-actions button:hover:enabled { background: color-mix(in srgb, currentColor 8%, transparent); }
+.note-database-manager .note-modal-actions button:where(:not(.note-database-confirm-primary)):hover:enabled { background: color-mix(in srgb, currentColor 8%, transparent); }
 .note-database-manager .note-modal-actions button:disabled { opacity: .48; cursor: default; }
 .note-database-manager .note-modal-actions button.danger { color: #a63b32; }
 body[data-start-theme="dark"] .note-database-manager .note-modal-actions button.danger { color: #f18e82; }
@@ -282,7 +282,7 @@ body[data-start-theme="dark"] :is(.note-database-confirm, .note-database-manager
 body[data-start-theme="dark"] .note-database-manager .note-modal-actions button.note-database-confirm-primary {
   color: var(--db-confirm-paper); background: var(--db-confirm-ink); border-color: var(--db-confirm-ink);
 }
-:is(.note-database-confirm, .note-database-manager) .note-modal-actions :is(button.note-database-confirm-primary, button.note-database-confirm-secondary):enabled:hover,
+.note-database-manager .note-modal-actions button.note-database-confirm-secondary:enabled:hover,
 .note-database-confirm .note-modal-actions > button:enabled:hover { opacity: .82; }
 :is(.note-database-confirm, .note-database-manager) .note-modal-actions > button:focus-visible { outline: 2px solid var(--db-confirm-ink); outline-offset: 2px; }
 .note-database-manager [data-note-action="purge-databases"] { margin-inline-end: auto; }

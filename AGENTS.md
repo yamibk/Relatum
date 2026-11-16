@@ -70,7 +70,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 `note_database.py` 为每篇笔记维护 `<笔记名>.assets/.relatum-databases/database.sqlite3` 与共享 `files/`，备份时连同 `.md` 一起复制。历史单库文件保留在原目录。数据库随伴生目录移动，应用内重命名也更新其他表的笔记引用及对应修订。文档投放到表内或最近的可用表时导入共享附件，没有有效表时导入成功后在投放处新建表。附件按所属笔记和登记 ID 解析，普通图片仍走原图片流程，两代数据库目录均跳过图片清理。共享附件清理根据所有现存表（包括不再出现在正文里的表）计算引用，并走系统回收站。
 
-文件树「删除数据库」大浮窗列出表名、记录和引用。删除选中表永久清除其数据，保留共享附件。二次确认「删除全部表格和共享附件」会同时永久清空本篇表和 `files/`。锁内复核后暂移附件目录，SQLite 提交前失败可还原目录，提交后或下次访问收尾。正文保留围栏，已删除 ID 保留标记，防止通过再保存复活。PDF 按 ID 各取未筛选的前 50 行和剩余数量，同 ID 多块复用一次读取。验证入口为 `python -B -m unittest tests.test_note_database`、`node tests/note-database-editor-browser.js`、`node tests/note-database-controls-browser.js`、`node tests/note-database-browser.js` 和 `node tests/note-pdf-browser.js`。后两项支持 `--notes-only` 和 `--webview2`，使用隔离数据和现有浏览器环境变量。
+文件树「删除数据库」大浮窗列出表名、记录和引用。删除选中表永久清除其数据，保留共享附件。二次确认「删除全部表格和共享附件」会同时永久清空本篇表和 `files/`。主删除按钮悬停时保持深浅主题对应的纯色填充和文字对比度。锁内复核后暂移附件目录，SQLite 提交前失败可还原目录，提交后或下次访问收尾。正文保留围栏，已删除 ID 保留标记，防止通过再保存复活。PDF 按 ID 各取未筛选的前 50 行和剩余数量，同 ID 多块复用一次读取。验证入口为 `python -B -m unittest tests.test_note_database`、`node tests/note-database-editor-browser.js`、`node tests/note-database-controls-browser.js`、`node tests/note-database-browser.js` 和 `node tests/note-pdf-browser.js`。后两项支持 `--notes-only` 和 `--webview2`，使用隔离数据和现有浏览器环境变量。
 
 实时预览双击表格标题或键盘激活可重命名，与视图菜单共用入口。搜索与视图之间的垃圾桶使用带黑白圆角按钮的确认窗口，校验修订后只删除本表，同 ID 视图显示已删除占位。附件格底部的「上传文件」支持现有文档与 Windows 笔记图片的同种格式，图片沿用内容校验及 40 MiB 限制。附件登记与单格关联一次提交，失败保留原值，替换时保留旧文件供其他表引用。有效附件可用「下载文件」复制原字节（含库内 `.md`），服务端按已保存单格校验，Windows 解析系统下载目录，重名追加编号。原生文件选择器和导入回包绑定发起的编辑会话，测试将下载目录重定向到隔离目录。
 
