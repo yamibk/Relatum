@@ -12,10 +12,12 @@ const { features } = require('../assets/feature-catalog.json');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-database-'));
 const notes = path.join(root, 'notes');
-const marker = '```database\n```';
-const databaseFile = note => path.join(notes, note + '.assets', '.relatum-database', 'database.sqlite3');
+const downloads = path.join(root, 'downloads');
+const marker = id => '```database ' + id + '\n```';
+const databaseFile = note => path.join(notes, note + '.assets', '.relatum-databases', 'database.sqlite3');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 fs.mkdirSync(notes);
+fs.mkdirSync(downloads);
 fs.mkdirSync(path.join(root, 'recycled'));
 for (const name of ['Main', 'Drop', 'Other']) fs.writeFileSync(path.join(notes, name + '.md'), name + ' body\n');
 
@@ -43,7 +45,12 @@ async function until(fn) {
   const origin = 'http://127.0.0.1:' + port;
   const python = process.env[native ? 'RELATUM_WEBVIEW_PYTHON' : 'RELATUM_PYTHON'] || 'python';
   const code = 'import os, sys, uuid, app; from pathlib import Path; '
+    + 'import note_database; '
+    + 'from note_database import NoteDatabases; initialize = NoteDatabases._initialize; failures = {"retry-once"}; '
+    + 'exec("def initialize_once(connection, identity, language):\\n if identity in failures:\\n  failures.remove(identity)\\n  raise OSError(\\\"simulated database write failure\\\")\\n return initialize(connection, identity, language)"); '
+    + 'NoteDatabases._initialize = staticmethod(initialize_once); '
     + 'root = Path(os.environ["RELATUM_DATA_ROOT"]); '
+    + 'note_database._downloads_directory = lambda: root / "downloads"; '
     + 'app._move_paths_to_recycle_bin = lambda paths: [p.rename(root / "recycled" / (uuid.uuid4().hex + "-" + p.name)) for p in paths]; '
     + (native ? 'import desktop; sys.argv[0] = "desktop.py"; sys.exit(desktop.main())' : 'sys.argv[0] = "app.py"; sys.exit(app.main())');
   const args = ['-B', '-c', code];
@@ -92,6 +99,10 @@ async function until(fn) {
     const body = page.locator('[data-role="note-editor"] .cm-content').first();
     const blocks = page.locator('.note-database-carrier:visible');
     const documentText = () => page.evaluate(() => __databaseTest.editor.snapshot().value);
+    const reveal = end => page.evaluate(end => {
+      const { view } = __databaseTest.editor;
+      view.dispatch({ selection: { anchor: end ? view.state.doc.length : 0 }, scrollIntoView: true });
+    }, end);
     async function append(text) {
       await page.evaluate(text => {
         const { view } = __databaseTest.editor;
@@ -104,8 +115,10 @@ async function until(fn) {
       await row.click({ button: 'right' });
       await page.locator(`[data-role="note-context-menu"] [data-note-action="${name}"]`).click();
     }
-    async function get(note) {
-      const response = await page.request.get(new URL('/api/note-database?path=' + encodeURIComponent(note), page.url()).href);
+    let mainId;
+    async function get(note, databaseId = mainId) {
+      const params = new URLSearchParams({ path: note, databaseId });
+      const response = await page.request.get(new URL('/api/note-database?' + params, page.url()).href);
       assert(response.ok(), await response.text());
       return response.json();
     }
@@ -116,13 +129,24 @@ async function until(fn) {
     assert.equal(await page.locator('script[src$="note-database.js"]').count(), 0, 'load the database runtime only on demand');
     const menu = page.locator('[data-role="note-context-menu"]');
     await menu.locator('[data-note-submenu="insert"]').hover();
+    let releaseSave;
+    const gated = new Promise(resolve => { releaseSave = resolve; });
+    const slowSave = async route => { await gated; await route.continue(); };
+    await page.route('**/api/note-save', slowSave);
     await menu.locator('[data-note-command="insert:database"]').click();
+    try {
+      await blocks.first().waitFor();
+      assert.equal(await blocks.first().locator('table, [data-db-role="retry-create"]').count(), 0);
+      assert.equal(requests.length, 0, 'an unsaved block starts no database read');
+    } finally { releaseSave(); }
     await save();
-    assert((await documentText()).includes(marker));
+    await page.unroute('**/api/note-save', slowSave);
     await blocks.first().locator('table').waitFor();
+    mainId = await blocks.first().getAttribute('data-database-id');
+    assert((await documentText()).includes(marker(mainId)));
     const first = await get('Main.md');
     assert(fs.existsSync(databaseFile('Main')) && first.exists && first.columns.length === 1);
-    await append('\n\n' + marker + '\n');
+    await append('\n\n' + marker(mainId) + '\n');
     await blocks.nth(1).locator('table').waitFor();
     await blocks.first().locator('[data-db-role="add-row"]').click();
     await blocks.nth(1).locator('tbody tr').first().waitFor();
@@ -137,6 +161,9 @@ async function until(fn) {
     await editor.fill('First record');
     await editor.press('Enter');
     await blocks.nth(1).getByText('First record', { exact: true }).waitFor();
+    await firstCell.click();
+    assert.equal(await editor.inputValue(), 'First record');
+    await editor.press('Escape');
     await firstCell.press('Shift+F10');
     await grid.locator('.note-database-panel button').filter({ hasText: /Delete row|删除记录/ }).click();
     await until(async () => (await get('Main.md')).total === 0);
@@ -150,6 +177,7 @@ async function until(fn) {
     }
     const columns = (await get('Main.md')).columns;
     const status = columns.find(column => column.type === 'status'), number = columns.find(column => column.type === 'number');
+    assert.deepEqual(status.choices.map(option => option.tone), ['neutral', 'blue', 'green']);
     const done = status.choices.at(-1);
     await grid.locator('[data-db-role="view"]').click();
     await grid.locator('.review-choice-trigger').click();
@@ -159,11 +187,11 @@ async function until(fn) {
     await grid.locator('.review-choice-popup').waitFor({ state: 'detached' });
     await page.keyboard.press('Escape');
     await grid.locator('.note-database-panel').waitFor({ state: 'detached' });
-    await grid.locator('tbody tr').first().locator('td button').nth(1).dblclick();
+    await grid.locator('tbody tr').first().locator('td button').nth(1).click();
     await grid.locator('.note-database-panel').getByRole('button', { name: done.name, exact: true }).click();
     await until(async () => (await get('Main.md')).rows[0].values[status.id] === done.id);
     async function paste(text) {
-      await firstCell.click();
+      await firstCell.focus();
       await firstCell.evaluate((node, value) => {
         const clipboardData = new DataTransfer();
         clipboardData.setData('text/plain', value);
@@ -210,10 +238,85 @@ async function until(fn) {
     await grid.locator('[data-db-role="edit-' + status.id + '"]').click();
     await grid.locator('.note-database-panel button').filter({ hasText: /Move left|左移/ }).click();
     await until(async () => (await get('Main.md')).columns[0].id === status.id);
+    const drag = grid.locator('[data-db-role="edit-' + status.id + '"]');
+    const drop = grid.locator('[data-db-role="edit-' + number.id + '"]');
+    await drag.dragTo(drop, { targetPosition: { x: 14, y: 14 } });
+    await until(async () => (await get('Main.md')).columns[1].id === status.id);
     await grid.locator('[data-db-role="edit-' + status.id + '"]').click();
     await grid.locator('.note-database-panel button').filter({ hasText: /Hide field|隐藏字段/ }).click();
-    await until(async () => (await get('Main.md')).columns[0].hidden);
+    await until(async () => (await get('Main.md')).columns.find(column => column.id === status.id).hidden);
     await blocks.nth(1).locator('[data-db-role="edit-' + status.id + '"]').waitFor({ state: 'detached' });
+    const nameHeader = grid.locator('[data-db-role="edit-' + columns[0].id + '"]');
+    if (!native) await page.setViewportSize({ width: 970, height: 885 });
+    await nameHeader.dragTo(drop, { targetPosition: { x: 128, y: 14 } });
+    await until(async () => (await get('Main.md')).columns[0].id === number.id);
+    assert.equal((await get('Main.md')).columns[1].id, status.id, 'hidden fields keep their previous slots');
+    if (!native) await page.setViewportSize({ width: 1310, height: 885 });
+
+    for (const [type, expected] of [['select', /Single tag|单标签/], ['multiSelect', /Multiple tags|多标签/]]) {
+      await grid.locator('[data-db-role="add-column"]').click();
+      const entry = grid.locator('[data-db-role="type-' + type + '"]');
+      assert.match(await entry.innerText(), expected);
+      await entry.click();
+      const added = await until(async () => (await get('Main.md')).columns.find(column => column.type === type));
+      assert.match(added.name, expected);
+    }
+    const single = grid.locator('tbody tr').first().locator('[data-db-type="select"]');
+    await single.click();
+    await grid.locator('.note-database-panel input').fill('Reference');
+    await grid.locator('[data-db-role="create-choice"]').click();
+    await single.getByText('Reference', { exact: true }).waitFor();
+    await single.click();
+    await grid.getByRole('button', { name: /(?:Edit option|编辑选项) · Reference/ }).press('Enter');
+    const colors = grid.locator('.note-database-option-menu');
+    await colors.getByRole('button', { name: /^(?:Brown|棕色)$/ }).click();
+    await colors.waitFor({ state: 'detached' });
+    await blocks.nth(1).locator('[data-db-tone="brown"]').getByText('Reference', { exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+
+    const title = grid.locator('[data-db-role="rename-database"]');
+    await title.click();
+    assert.equal(await grid.locator('.note-database-panel').count(), 0);
+    await title.dblclick();
+    const nameEditor = grid.getByRole('textbox', { name: /^(?:Database name|数据库名称)$/ });
+    await nameEditor.fill('Attachment ledger');
+    await nameEditor.press('Enter');
+    await blocks.nth(1).getByText('Attachment ledger', { exact: true }).waitFor();
+    await title.press('Enter');
+    assert.equal(await nameEditor.inputValue(), 'Attachment ledger');
+    await page.keyboard.press('Escape');
+    await grid.locator('[data-db-role="add-column"]').click();
+    await grid.locator('[data-db-role="type-attachment"]').click();
+    const attachmentColumn = await until(async () => (await get('Main.md')).columns.find(column => column.type === 'attachment'));
+    const attachmentCell = grid.locator('tbody tr').first().locator('button[data-db-type="attachment"]');
+    await attachmentCell.click({ position: { x: 24, y: 13 } });
+    const upload = grid.locator('[data-db-role="upload-attachment"]');
+    const download = grid.locator('[data-db-role="download-attachment"]');
+    async function pick(file) {
+      const [chooser] = await Promise.all([page.waitForEvent('filechooser'), upload.click()]);
+      await chooser.setFiles(file);
+    }
+    const pdf = { name: 'fixture.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.7 fixture') };
+    await pick(pdf);
+    await attachmentCell.getByText(pdf.name, { exact: true }).waitFor();
+    await attachmentCell.click({ position: { x: 24, y: 13 } });
+    await download.click();
+    await until(() => fs.existsSync(path.join(downloads, pdf.name)));
+    await download.click();
+    await until(() => fs.existsSync(path.join(downloads, 'fixture (2).pdf')));
+    assert.deepEqual(fs.readFileSync(path.join(downloads, pdf.name)), pdf.buffer);
+    await pick([]);
+    await grid.locator('input[type="file"]').waitFor({ state: 'detached' });
+    assert.equal((await get('Main.md')).rows[0].values[attachmentColumn.id].name, pdf.name);
+    await pick({ name: 'invalid.png', mimeType: 'image/png', buffer: Buffer.from('not an image') });
+    await grid.getByRole('status').getByText(/图片内容与扩展名不一致/).waitFor();
+    assert.equal((await get('Main.md')).rows[0].values[attachmentColumn.id].name, pdf.name);
+    const picture = { name: 'fixture.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>') };
+    await pick(picture);
+    await attachmentCell.getByText(picture.name, { exact: true }).waitFor();
+    const sharedFiles = path.join(path.dirname(databaseFile('Main')), 'files');
+    assert.equal(fs.readdirSync(sharedFiles).length, 2);
+    assert.equal((await get('Main.md')).rows[0].values[attachmentColumn.id].name, picture.name);
 
     const idle = requests.length;
     await append('\n\nOrdinary text.');
@@ -223,17 +326,61 @@ async function until(fn) {
     await blocks.first().locator('table').waitFor();
     await mode('source');
     assert.equal(await blocks.count(), 0);
-    assert.equal((await documentText()).split(marker).length, 3);
+    assert.equal((await documentText()).split(marker(mainId)).length, 3);
     await mode('live');
-    await command('delete-database');
-    await page.locator('.note-modal-actions button.danger').click();
-    await until(() => !fs.existsSync(databaseFile('Main')));
+    await append('\n\n' + marker('independent'));
+    await reveal(true);
+    await page.locator('.note-database-carrier[data-database-id="independent"] table').waitFor();
+    assert.equal((await get('Main.md', 'independent')).total, 0);
+    await reveal(false);
+    const trash = blocks.first().locator('[data-db-role="delete-database"]');
+    assert.deepEqual(await trash.evaluate(node => [node.previousElementSibling.dataset.dbRole, node.nextElementSibling.dataset.dbRole]), ['search-toggle', 'view']);
+    const smallConfirmation = page.locator('.note-database-confirm');
+    await trash.click();
+    const cancelDelete = smallConfirmation.getByRole('button', { name: /^(?:Cancel|取消)$/ });
+    await cancelDelete.waitFor();
+    assert(await cancelDelete.evaluate(node => document.activeElement === node));
+    await cancelDelete.click();
+    assert((await get('Main.md')).exists);
+    await trash.click();
+    const confirmDelete = smallConfirmation.getByRole('button', { name: /^(?:Delete|删除)$/ });
+    assert.equal(await confirmDelete.evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(0, 0, 0)');
+    const oldTheme = await page.evaluate(() => {
+      const theme = document.body.dataset.startTheme;
+      document.body.dataset.startTheme = 'dark';
+      return theme;
+    });
+    assert.equal(await confirmDelete.evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(255, 255, 255)');
+    await page.evaluate(theme => {
+      if (theme == null) delete document.body.dataset.startTheme;
+      else document.body.dataset.startTheme = theme;
+    }, oldTheme);
+    const table = await get('Main.md');
+    const renameOutside = await page.request.post(new URL('/api/note-database/action', page.url()).href, { data: {
+      path: 'Main.md', databaseId: mainId, action: { type: 'renameDatabase', revision: table.revision, name: 'Renamed elsewhere' },
+    } });
+    assert(renameOutside.ok());
+    await confirmDelete.click();
+    await title.filter({ hasText: 'Renamed elsewhere' }).waitFor();
+    assert((await get('Main.md')).exists, 'a modification during confirmation prevents deletion');
+    await trash.click();
+    await confirmDelete.click();
+    await smallConfirmation.waitFor({ state: 'detached' });
+    await until(async () => (await get('Main.md')).deleted);
+    const manager = page.locator('.note-database-manager');
+    assert((await get('Main.md', 'independent')).exists);
+    assert.equal(fs.readdirSync(sharedFiles).length, 2);
     await append('\nAfter removal.');
-    assert(!(await get('Main.md')).exists);
-    assert.equal((await documentText()).split(marker).length, 3);
-    await blocks.first().locator('[data-db-role="create"]').click();
-    await until(() => fs.existsSync(databaseFile('Main')));
-    await blocks.nth(1).locator('table').waitFor();
+    assert((await get('Main.md')).deleted);
+    assert.equal((await documentText()).split(marker(mainId)).length, 3);
+    await reveal(false);
+    await page.locator('.note-database-carrier[data-database-id="' + mainId + '"]').first().getByText(/Database deleted|数据库已删除/).waitFor();
+    await append('\n\n' + marker('retry-once'));
+    await reveal(true);
+    const retryBlock = page.locator('.note-database-carrier[data-database-id="retry-once"]');
+    await retryBlock.locator('[data-db-role="retry-create"]').click();
+    await retryBlock.locator('table').waitFor();
+    assert((await get('Main.md', 'retry-once')).exists);
 
     await open('Drop.md');
     const transfer = await page.evaluateHandle(() => {
@@ -243,8 +390,9 @@ async function until(fn) {
     });
     await body.dispatchEvent('drop', { dataTransfer: transfer, clientX: 500, clientY: 350 });
     await blocks.first().locator('table').waitFor();
-    await until(() => fs.readFileSync(path.join(notes, 'Drop.md'), 'utf8').includes(marker));
-    assert.equal((await get('Drop.md')).rows.length, 0, 'attachment import does not add rows');
+    const dropId = await blocks.first().getAttribute('data-database-id');
+    await until(() => fs.readFileSync(path.join(notes, 'Drop.md'), 'utf8').includes(marker(dropId)));
+    assert.equal((await get('Drop.md', dropId)).rows.length, 0, 'attachment import does not add rows');
     const files = path.join(path.dirname(databaseFile('Drop')), 'files');
     assert.equal(fs.readdirSync(files).length, 1);
     await command('cleanup-unused-database-attachments', 'Drop.md');
@@ -252,7 +400,17 @@ async function until(fn) {
     assert.match(await confirmation.locator('p').innerText(), /1/);
     await confirmation.locator('.note-modal-actions button.danger').click();
     await until(() => fs.readdirSync(files).length === 0);
-    assert((await get('Drop.md')).exists, 'attachment cleanup preserves the database');
+    assert((await get('Drop.md', dropId)).exists, 'attachment cleanup preserves the database');
+    await body.dispatchEvent('drop', { dataTransfer: transfer, clientX: 500, clientY: 350 });
+    await until(() => fs.readdirSync(files).length === 1);
+    assert.equal(await blocks.count(), 1, 'dropping near a table reuses the shared files directory');
+    await command('delete-database', 'Drop.md');
+    await manager.locator('[data-note-action="purge-databases"]').click();
+    assert.match(await manager.locator('.note-database-manager-list').innerText(), /1 .*1 /);
+    await manager.locator('[data-note-action="confirm-database-delete"]').click();
+    await manager.waitFor({ state: 'detached' });
+    assert(!fs.existsSync(files));
+    assert((await get('Drop.md', dropId)).deleted);
     assert.deepEqual(errors, []);
     console.log('Note database workspace verified (' + (native ? 'WebView2' : notesOnly ? 'notes only' : 'browser') + ')');
   } catch (error) {

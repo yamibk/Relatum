@@ -1523,7 +1523,7 @@ class NotesStore:
             counter += 1
         return self.create(parent_relative, name, "folder")
 
-    def save(self, relative: object, content: object, expected_revision: object) -> dict:
+    def save(self, relative: object, content: object, expected_revision: object, *, database_language='zh') -> dict:
         self.sync.foreground()
         normalized = self.normalize_path(relative)
         target = self._absolute(normalized)
@@ -1550,12 +1550,7 @@ class NotesStore:
         revision = _revision(encoded)
         self._cache_document(normalized, encoded, text=content, revision=revision)
         result = {"path": normalized, "revision": revision}
-        try:
-            if self.database.auto_create(target, current, content):
-                result['databaseCreated'] = True
-        except (OSError, sqlite3.Error, NotesError):
-            # Markdown has already been committed. The visible block can retry explicitly.
-            result['databaseCreateFailed'] = True
+        result.update(self.database.auto_create(target, current, content, database_language))
         return result
 
     def _post_move_paths(self, paths: list[str], source: str, destination: str,
@@ -2038,7 +2033,7 @@ class NotesStore:
         Caller holds NOTES_MUTATION_LOCK. Other live notes protect shared
         references within the current library.
         """
-        from note_database import DATABASE_DIRECTORY
+        from note_database import DATABASE_DIRECTORY, LEGACY_DATABASE_DIRECTORY
 
         normalized = self.normalize_path(note)
         note_path = self._absolute(normalized)
@@ -2056,7 +2051,7 @@ class NotesStore:
         for base, directories, filenames in os.walk(asset_root, followlinks=False):
             directory = Path(base)
             directories[:] = [name for name in directories
-                              if name.casefold() != DATABASE_DIRECTORY and not _is_reparse(directory / name)]
+                              if name.casefold() not in (DATABASE_DIRECTORY, LEGACY_DATABASE_DIRECTORY) and not _is_reparse(directory / name)]
             for name in filenames:
                 path = directory / name
                 if path.suffix.casefold() not in NOTE_IMAGE_TYPES or _is_reparse(path) or not path.is_file():

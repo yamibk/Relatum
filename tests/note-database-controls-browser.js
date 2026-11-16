@@ -7,10 +7,19 @@ const http = require('node:http');
 const path = require('node:path');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 
+const statuses = [
+  { id: 'waiting', name: '未开始', tone: 'neutral' },
+  { id: 'going', name: '进行中', tone: 'blue' },
+  { id: 'done', name: '已完成', tone: 'green' },
+];
+const tags = [{ id: 'alpha', name: '数学', tone: 'violet' }, { id: 'beta', name: '物理', tone: 'amber' }];
 const columns = [
   { id: 'name', name: '名称', type: 'text' }, { id: 'number', name: '数字', type: 'number' },
   { id: 'date', name: '日期', type: 'date' }, { id: 'check', name: '勾选', type: 'checkbox' },
   { id: 'file', name: '附件', type: 'attachment' },
+  { id: 'status', name: '状态', type: 'status', choices: statuses },
+  { id: 'pick', name: '单选', type: 'select', choices: tags },
+  { id: 'tags', name: '多选', type: 'multiSelect', choices: tags },
 ];
 const rows = Array.from({ length: 52 }, (_, index) => ({ id: `r${index}`, values: { name: `名称${index}`, number: index } }));
 const note = { kind: 'note', path: 'folder/实验记录.md', name: '实验记录.md', exists: true };
@@ -19,7 +28,7 @@ const calls = [];
 let revision = 1, conflict = false, beforeSetCell = null;
 const html = `<!doctype html><html lang="zh-CN" data-note-theme="apple"><meta charset="utf-8">
 <link rel="stylesheet" href="/review-controls.css"><link rel="stylesheet" href="/note-database.css"><body class="start-page" data-start-theme="dark">
-<style>body{background:#1c1c1e;color:#eee;--note-theme-paper:#1c1c1e;--note-theme-surface:#2c2c2e;
+<style>body[data-start-theme="dark"]{background:#1c1c1e;color:#eee;--note-theme-paper:#1c1c1e;--note-theme-surface:#2c2c2e;
 --note-theme-nav:#242426;--note-theme-link:#0a84ff;--note-theme-table-line:#535355}</style>
 <main id="first"></main><main id="second"></main><script src="/review-controls.js"></script><script src="/note-database.js"></script>
 <script>
@@ -27,8 +36,8 @@ window.opened = [];
 window.layouts = 0;
 window.database = RelatumNoteDatabase.create({language: () => 'zh', onOpenNote: path => window.opened.push(path)});
 database.setActive('note.md');
-database.mount(document.querySelector('#first'), {path: 'note.md'});
-database.mount(document.querySelector('#second'), {path: 'note.md', onLayout: () => window.layouts++});
+database.mount(document.querySelector('#first'), {path: 'note.md', databaseId: 'main'});
+database.mount(document.querySelector('#second'), {path: 'note.md', databaseId: 'main', onLayout: () => window.layouts++});
 </script>`;
 
 function list(query = {}) {
@@ -63,6 +72,19 @@ async function handle(req, res) {
   if (url.pathname === '/api/open-external') return json({ error: 'missing' }, 404);
   const { action } = body;
   if (action.type === 'searchAttachments') return json({ items: [note, attachment].filter(item => item.name.includes(action.query)) });
+  if (action.type === 'createChoiceValue') {
+    const column = columns.find(column => column.id === action.column);
+    const id = 'created';
+    column.choices = [...column.choices, { id, name: action.name, tone: 'green' }];
+    rows.find(row => row.id === action.row).values[action.column] = id;
+    revision++;
+  }
+  if (action.type === 'setChoices') {
+    if (conflict) { conflict = false; revision++; }
+    if (action.revision !== String(revision)) return json({ code: 'revision_conflict', error: 'changed' }, 409);
+    columns.find(column => column.id === action.column).choices = action.choices;
+    revision++;
+  }
   if (action.type === 'setCell') {
     const gate = beforeSetCell;
     beforeSetCell = null;
@@ -96,7 +118,7 @@ async function main() {
     await waitTitle('名称0');
     assert.equal(calls.filter(call => call.query && !call.action).length, 1, 'duplicate views share the initial page');
     assert(await first.locator('.note-database-overflow').evaluate(node => node.scrollWidth > node.clientWidth));
-    await cell(0).click();
+    await cell(0).focus();
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('ArrowRight');
     const revealed = await cell(2).evaluate(node => {
@@ -110,6 +132,8 @@ async function main() {
     assert((await addColumn.boundingBox()).x + (await addColumn.boundingBox()).width <= 410);
     await addColumn.click();
     await first.locator('[data-db-role="type-status"]').waitFor();
+    assert.equal(await first.locator('[data-db-role="type-select"]').innerText(), '单标签');
+    assert.equal(await first.locator('[data-db-role="type-multiSelect"]').innerText(), '多标签');
     assert.equal(await first.locator('.note-database-panel').evaluate(node => getComputedStyle(node).animationName), 'none');
     await page.keyboard.press('Escape');
 
@@ -144,7 +168,8 @@ async function main() {
     await waitTitle('名称0');
 
     // A conflict retains both the draft and the focus. Only explicit Enter retries.
-    await cell(0).dblclick();
+    await cell(0).click();
+    assert(await field.evaluate(node => node.selectionStart === node.selectionEnd), 'a pointer edit places a caret instead of selecting the value');
     await field.fill('保留的草稿');
     conflict = true;
     await field.press('Enter');
@@ -157,25 +182,32 @@ async function main() {
     assert.equal(await page.evaluate(() => database.dirty), false);
 
     const beforeEdit = await page.evaluate(() => window.layouts);
-    await cell(1).dblclick();
+    await cell(1).click();
     await field.fill('83.25');
     await field.press('Enter');
     await cell(1).getByText('83.25').waitFor();
     assert.equal(await page.evaluate(() => window.layouts), beforeEdit + 1, 'other visible view lays out once per cell commit');
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
-    await cell(0).click();
-    await cell(0).press('Shift+ArrowRight');
+    await cell(0).focus();
+    await cell(1).click({ modifiers: ['Shift'] });
+    assert.equal(await field.count(), 0, 'shift-click extends the grid range without editing');
     await page.keyboard.press('Control+C');
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), '保留的草稿\t83.25');
-    await cell(2).dblclick();
+    const start = await cell(0).boundingBox(), next = await cell(1).boundingBox();
+    await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(next.x + next.width / 2, next.y + next.height / 2);
+    await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+    await page.mouse.up();
+    assert.equal(await field.count(), 0, 'returning to the first cell during a drag does not activate an editor');
+    await cell(2).click();
     await field.fill('2026-11-16');
-    await field.press('Enter');
     await cell(2).getByText('2026-11-16').waitFor();
     await cell(3).click();
     await first.getByRole('checkbox', { name: '勾选 · 已勾选', checked: true }).waitFor();
     assert.deepEqual(rows[0].values, { name: '保留的草稿', number: 83.25, date: '2026-11-16', check: true });
 
-    await cell(4).dblclick();
+    await cell(4).click();
     const picker = first.getByRole('combobox', { name: '附件' });
     // Chromium generates compositionstart, input, compositionend in the native path.
     const cdp = await page.context().newCDPSession(page);
@@ -195,7 +227,7 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector('#first tbody tr td:nth-child(5) button').classList.contains('is-link'));
     assert.equal(await page.evaluate(() => opened.length), 1, 'a deleted note never opens a cached tab');
 
-    await cell(4).dblclick();
+    await cell(4).click();
     await picker.fill('pdf');
     await first.getByRole('option', { name: /实验记录\.pdf/ }).click();
     await cell(4).getByText('实验记录.pdf').waitFor();
@@ -205,8 +237,102 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector('#first tbody tr td:nth-child(5) button').classList.contains('is-link'));
     assert(calls.some(call => call.kind === 'note-database-attachment' && call.target === 'pdf'));
 
+    for (const [index, option] of statuses.entries()) {
+      const status = data(first, index).nth(5).locator('button');
+      await status.click();
+      const panel = first.getByRole('dialog');
+      await panel.getByRole('button', { name: option.name, exact: true }).click();
+      await status.locator('.note-database-choice[data-db-tone="' + option.tone + '"]').waitFor();
+    }
+    const statusColors = () => first.locator('tbody .note-database-choice.is-status').evaluateAll(nodes =>
+      nodes.map(node => getComputedStyle(node).backgroundColor));
+    const darkColors = await statusColors();
+    assert.equal(new Set(darkColors).size, 3, 'status pills have three distinct backgrounds in dark mode');
+    await page.evaluate(() => { document.body.dataset.startTheme = 'light'; });
+    const lightColors = await statusColors();
+    assert.equal(new Set(lightColors).size, 3, 'status pills have three distinct backgrounds in light mode');
+    assert(lightColors.every((color, index) => color !== darkColors[index]));
+    await cell(6).click();
+    await first.getByRole('dialog').getByRole('button', { name: tags[0].name, exact: true }).click();
+    await cell(6).locator('.note-database-choice').waitFor();
+    await cell(6).click();
+    const optionSearch = first.getByRole('textbox', { name: '搜索选项' });
+    await cdp.send('Input.imeSetComposition', { text: '历史', selectionStart: 2, selectionEnd: 2 });
+    assert.equal(await first.locator('[data-db-role="create-choice"]').count(), 0);
+    await cdp.send('Input.insertText', { text: '历史' });
+    await optionSearch.press('Enter');
+    await cell(6).getByText('历史', { exact: true }).waitFor();
+    assert.equal(await first.locator('[data-db-role="edit-pick"]').innerText(), '单选', 'saved column names are preserved');
+    await cell(6).click();
+    await optionSearch.fill('历史');
+    const more = first.getByRole('button', { name: '编辑选项 · 历史' });
+    await more.focus();
+    await more.press('Enter');
+    const editorMenu = first.getByRole('dialog', { name: '编辑选项', exact: true });
+    assert.equal(await editorMenu.getAttribute('data-placement'), 'over');
+    assert.equal(await editorMenu.evaluate(node => getComputedStyle(node).animationName), 'none');
+    const square = editorMenu.locator('.note-database-color-square');
+    assert.equal(await square.count(), 10);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('End');
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), '红色');
+    const writesBefore = calls.filter(call => call.action?.type === 'setChoices').length;
+    await page.keyboard.press('Enter');
+    await editorMenu.waitFor({ state: 'detached' });
+    assert.equal(await optionSearch.inputValue(), '历史');
+    assert(await more.evaluate(node => node === document.activeElement));
+    await second.locator('tbody tr').first().locator('[data-db-tone="red"]').getByText('历史', { exact: true }).waitFor();
+    assert.equal(calls.filter(call => call.action?.type === 'setChoices').length, writesBefore + 1);
+    await more.press('Enter');
+    const optionName = editorMenu.getByRole('textbox', { name: '选项名称' });
+    await cdp.send('Input.imeSetComposition', { text: '历史资料', selectionStart: 4, selectionEnd: 4 });
+    assert.equal(calls.filter(call => call.action?.type === 'setChoices').length, writesBefore + 1);
+    await cdp.send('Input.insertText', { text: '历史资料' });
+    await editorMenu.getByRole('button', { name: '粉色', exact: true }).click();
+    await cell(6).locator('[data-db-tone="rose"]').getByText('历史', { exact: true }).waitFor();
+    assert.equal(await optionName.inputValue(), '历史资料', 'applying color keeps the unsubmitted name');
+    conflict = true;
+    await editorMenu.getByRole('button', { name: '橙色', exact: true }).click();
+    await editorMenu.getByText(/已保留当前输入/).waitFor();
+    assert.equal(await optionName.inputValue(), '历史资料');
+    assert(await editorMenu.getByRole('button', { name: '粉色', exact: true, pressed: true }).count());
+    await optionName.press('Enter');
+    await editorMenu.waitFor({ state: 'detached' });
+    await cell(6).locator('[data-db-tone="rose"]').getByText('历史资料', { exact: true }).waitFor();
+    await first.getByRole('button', { name: '编辑选项 · 历史资料' }).press('Enter');
+    await page.keyboard.press('Escape');
+    await editorMenu.waitFor({ state: 'detached' });
+    assert(await optionSearch.isVisible());
+    await page.keyboard.press('Escape');
+    await cell(7).click();
+    const choiceMenu = first.getByRole('dialog');
+    for (const tag of tags) {
+      await choiceMenu.getByRole('button', { name: tag.name, exact: true }).click();
+      await choiceMenu.getByRole('button', { name: tag.name, exact: true, pressed: true }).waitFor();
+    }
+    assert.deepEqual(await cell(7).locator('.note-database-choice').allTextContents(), ['数学', '物理']);
+    await page.keyboard.press('Escape');
+
+    await page.setViewportSize({ width: 1100, height: 800 });
+    for (const [margin, placement] of [['0', 'right'], ['auto', 'left']]) {
+      await first.evaluate((host, margin) => {
+        host.style.width = '490px'; host.style.marginLeft = margin;
+        const scroller = host.querySelector('.note-database-overflow');
+        scroller.scrollLeft = scroller.scrollWidth;
+      }, margin);
+      await cell(7).click();
+      await first.getByRole('button', { name: '编辑选项 · 数学' }).press('Enter');
+      assert.equal(await editorMenu.getAttribute('data-placement'), placement);
+      const bounds = await editorMenu.boundingBox();
+      assert(bounds.x >= 8 && bounds.x + bounds.width <= 1092 && bounds.y >= 8 && bounds.y + bounds.height <= 792);
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Escape');
+    }
+    await first.evaluate(host => { host.style.width = ''; host.style.marginLeft = ''; });
+    await page.setViewportSize({ width: 410, height: 800 });
+
     // Clicking Search while committing a cell on blur must leave Search focused.
-    await cell(0).dblclick();
+    await cell(0).click();
     await page.evaluate(() => navigator.clipboard.writeText('失焦保存'));
     await field.press('Control+A');
     await field.press('Control+V');
@@ -219,7 +345,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('#first tbody').rows.length === 1);
     assert.equal(await getTitle(second), '失焦保存');
 
-    await cell(0).dblclick();
+    await cell(0).click();
     await field.fill('筛选切换时保存');
     const layoutsBeforeSwitch = await page.evaluate(() => window.layouts);
     let releaseWrite, markWaiting;

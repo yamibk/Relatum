@@ -8,7 +8,8 @@ const path = require('node:path');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 
 const assets = path.resolve(__dirname, '../assets');
-const fence = '```database\n```';
+const fence = '```database sample\n```';
+const generatedFence = /```database [a-f0-9-]{36}\n```/;
 const resources = ['markdown.js', 'markdown-table.js', 'vendor/codemirror/relatum-codemirror.min.js', 'note-table-editor.js', 'note-live-editor.js'];
 const fixture = `<!doctype html><html lang="en"><meta charset="utf-8"><base href="/assets/">
 <link rel="stylesheet" href="styles.css">
@@ -19,16 +20,18 @@ window.mounts = [];
 window.disposals = [];
 window.imports = [];
 window.images = [];
+window.dropCandidates = [];
 window.database = { mount(element, options) {
   const id = mounts.length + 1;
-  mounts.push({ id, path: options.path, readOnly: options.readOnly, observe: options.observe });
+  mounts.push({ id, path: options.path, databaseId: options.databaseId, readOnly: options.readOnly, observe: options.observe });
   element.textContent = 'Database ' + id;
   return () => disposals.push(id);
 } };
 window.editor = RelatumNoteLiveEditor.create(document.querySelector('#editor'), {
   database, notePath: 'A.md', onImageFiles: files => images.push(...files.map(file => file.name)),
-  onDatabaseFiles(files, insert) {
+  onDatabaseFiles(files, insert, candidates) {
     imports.push(...files.map(file => file.name));
+    dropCandidates.push(candidates);
     return new Promise(resolve => { window.completeImport = () => { const inserted = insert(); resolve(); return inserted; }; });
   },
 });
@@ -56,7 +59,8 @@ window.editor = RelatumNoteLiveEditor.create(document.querySelector('#editor'), 
     const open = (value, path = 'A.md') => page.evaluate(([value, path]) => editor.setDocument({ value, notePath: path }), [value, path]);
     const markers = '# Before\n\n' + fence + '\n\nwords\n\n' + fence + '\n\nAfter';
     const examples = [
-      ['```database  \r\n \t\r\n``` \r\n', true],
+      ['```database sample  \r\n \t\r\n``` \r\n', true],
+      ['```database\n```', false],
       ['```database\n``` trailing', false],
       ['```database\nSELECT 1\n```', false],
       ['```database', false],
@@ -77,7 +81,7 @@ window.editor = RelatumNoteLiveEditor.create(document.querySelector('#editor'), 
     assert.equal(await page.locator('#editor .note-database-carrier').count(), 0);
     await open(markers);
     await page.waitForFunction(() => document.querySelectorAll('#editor .note-database-carrier').length === 2);
-    assert.deepEqual(await page.evaluate(() => mounts.map(({ path, readOnly, observe }) => [path, readOnly, observe])), [['A.md', false, true], ['A.md', false, true]]);
+    assert.deepEqual(await page.evaluate(() => mounts.map(({ path, databaseId, readOnly, observe }) => [path, databaseId, readOnly, observe])), [['A.md', 'sample', false, true], ['A.md', 'sample', false, true]]);
     await page.evaluate(() => editor.setSourceMode(true));
     await page.waitForFunction(() => !document.querySelector('#editor .note-database-carrier'));
     assert.equal(await page.locator('#editor .cm-line').filter({ hasText: 'database' }).count(), 2);
@@ -101,7 +105,7 @@ window.editor = RelatumNoteLiveEditor.create(document.querySelector('#editor'), 
     await open('# heading\n\nBody');
     await page.evaluate(() => { editor.setSourceMode(false); editor.view.dispatch({ selection: { anchor: 5 } }); });
     assert.equal(await page.evaluate(() => editor.executeCommand('insert:database')), true);
-    assert.equal(await page.evaluate(() => editor.snapshot().value), '# heading\n\n' + fence + '\n\nBody');
+    assert.equal((await page.evaluate(() => editor.snapshot().value)).replace(generatedFence, '[database]'), '# heading\n\n[database]\n\nBody');
     await page.keyboard.press('Control+z');
     assert.equal(await page.evaluate(() => editor.snapshot().value), '# heading\n\nBody');
 
@@ -122,7 +126,7 @@ window.editor = RelatumNoteLiveEditor.create(document.querySelector('#editor'), 
     assert.deepEqual(await page.evaluate(() => images), ['image.png']);
     await page.evaluate(() => editor.view.dispatch({ changes: { from: 0, insert: 'New\n\n' } }));
     assert.equal(await page.evaluate(() => window.completeImport()), true);
-    assert.equal(await page.evaluate(() => editor.snapshot().value), 'New\n\nStart\n\ndrop here\n\n' + fence + '\n\nEnd');
+    assert.equal((await page.evaluate(() => editor.snapshot().value)).replace(generatedFence, '[database]'), 'New\n\nStart\n\ndrop here\n\n[database]\n\nEnd');
 
     await open('drop here');
     await page.evaluate(() => { window.completeImport = null; });
@@ -131,20 +135,25 @@ window.editor = RelatumNoteLiveEditor.create(document.querySelector('#editor'), 
     assert.equal(await page.evaluate(() => window.completeImport()), false);
     assert.equal(await page.evaluate(() => editor.snapshot().value), 'Other note');
 
+    await open(fence + '\n\n' + 'A longer paragraph. '.repeat(25) + '\n\ndrop here\n\n' + fence.replace('sample', 'nearby'), 'B.md');
+    await page.evaluate(() => { window.completeImport = null; });
+    await drop();
+    assert.deepEqual(await page.evaluate(() => dropCandidates.at(-1)), ['nearby', 'sample']);
+
     await page.route('**/assets/note-database.js', route => route.fulfill({ contentType: 'text/javascript', body: `
       window.renderedDatabases = [];
-      window.RelatumNoteDatabase = { async renderPrint(host, path, language) {
-        renderedDatabases.push({ path, language });
+      window.RelatumNoteDatabase = { async renderPrint(host, path, databaseId, language) {
+        renderedDatabases.push({ path, databaseId, language });
         const table = document.createElement('table'), cell = table.insertRow().insertCell();
-        cell.textContent = 'Database print contents';
+        cell.textContent = 'Database print contents ' + databaseId;
         host.append(table);
         return 0;
       } };
     ` }));
     await page.goto(origin + '/assets/note-print.html');
-    assert.deepEqual(await page.evaluate(async value => RelatumNotePrint.render({ path: 'A.md', value, language: 'en' }), markers), { warnings: 0 });
-    assert.deepEqual(await page.locator('.note-database-carrier table').allTextContents(), ['Database print contents', 'Database print contents']);
-    assert.deepEqual(await page.evaluate(() => renderedDatabases), [{ path: 'A.md', language: 'en' }]);
+    assert.deepEqual(await page.evaluate(async value => RelatumNotePrint.render({ path: 'A.md', value, language: 'en' }), markers + '\n\n' + fence.replace('sample', 'second')), { warnings: 0 });
+    assert.deepEqual(await page.locator('.note-database-carrier table').allTextContents(), ['Database print contents sample', 'Database print contents sample', 'Database print contents second']);
+    assert.deepEqual(await page.evaluate(() => renderedDatabases), [{ path: 'A.md', databaseId: 'sample', language: 'en' }, { path: 'A.md', databaseId: 'second', language: 'en' }]);
     assert.deepEqual(errors, []);
     console.log('Database editing, reading, PDF projection, history, mapped drop and late response verified.');
   } finally {

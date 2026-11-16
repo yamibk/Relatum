@@ -92,8 +92,7 @@
   const mermaidLayoutEffect = StateEffect.define();
   const blockLayoutEffect = StateEffect.define();
   let databaseBlocksEnabled;
-  const databaseMarker = '```database\n```';
-  const databaseOpener = /^```database[\t ]*$/m;
+  const databaseOpener = /^```database[\t ]+([a-z0-9][a-z0-9-]{0,47})[\t ]*$/m;
   const databaseAttachmentExtension = /\.(?:pdf|md|markdown|csv|tsv|txt|doc|docx|xls|xlsx|ppt|pptx|rtf|odt|ods|odp)$/i;
   let nextBlockSpecId = 1;
   let nextTableCellVersion = 1;
@@ -1169,14 +1168,14 @@
     if (node.parent?.name !== 'Document') return '';
     const opener = doc.lineAt(node.from), closer = doc.lineAt(Math.max(node.from, node.to - 1));
     if (opener.from !== node.from || closer.number <= opener.number || closer.to - opener.from > RICH_BLOCK_LIMIT
-        || !/^```database[\t ]*$/.test(opener.text) || !/^```[\t ]*$/.test(closer.text)) return '';
+        || !databaseOpener.test(opener.text) || !/^```[\t ]*$/.test(closer.text)) return '';
     const source = doc.sliceString(opener.from, closer.to);
-    return /^```database[\t ]*\n(?:[\t ]*\n)*```[\t ]*$/.test(source) ? source : '';
+    return /^```database[\t ]+[a-z0-9][a-z0-9-]{0,47}[\t ]*\n(?:[\t ]*\n)*```[\t ]*$/.test(source) ? source : '';
   }
 
   function excludeDatabaseMath(doc, positions, protectedBlocks, start) {
     if (!positions.size) return;
-    const end = doc.lineAt(Array.from(positions).reduce((last, position) => Math.max(last, position), start)).number;
+    const end = doc.lineAt(Array.from(positions.keys()).reduce((last, position) => Math.max(last, position), start)).number;
     const ranges = protectedBlocks.slice().sort((a, b) => a.from - b.from);
     let next = 0, protectedUntil = -1, closing = '';
     for (let number = doc.lineAt(start).number; number <= end; number++) {
@@ -1193,7 +1192,7 @@
   }
 
   function databaseBlockPositions(source, initialTree) {
-    const positions = new Set();
+    const positions = new Map();
     if (!databaseOpener.test(source)) return positions;
     const { doc } = EditorState.create({ doc: source });
     const tree = initialTree || headingParser().parse(source);
@@ -1202,14 +1201,17 @@
     tree.iterate({ enter(node) {
       if (/^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock|InlineCode)$/.test(node.name)) {
         protectedBlocks.push({ from: node.from, to: node.to });
-        if (node.name === 'FencedCode' && node.from >= (metadata?.to || 0) && databaseFenceSource(doc, node.node)) positions.add(node.from);
+        if (node.name === 'FencedCode' && node.from >= (metadata?.to || 0)) {
+          const marker = databaseFenceSource(doc, node.node);
+          if (marker) positions.set(node.from, { id: databaseOpener.exec(marker)[1], to: node.from + marker.length });
+        }
         return false;
       }
       return undefined;
     } });
     if (positions.size && source.includes('%%')) {
       const comments = scanSourceComments(doc, 0, doc.length, protectedBlocks);
-      for (const position of positions) if (comments.some(range => range.from <= position && range.to > position)) positions.delete(position);
+      for (const position of positions.keys()) if (comments.some(range => range.from <= position && range.to > position)) positions.delete(position);
       protectedBlocks.push(...comments);
     }
     if (source.includes('$$') || source.includes('\\[')) excludeDatabaseMath(doc, positions, protectedBlocks, 0);
@@ -1218,6 +1220,10 @@
 
   function hasDatabaseBlock(value) {
     return databaseBlockPositions(window.MarkdownMini.structure.normalizeSource(value)).size > 0;
+  }
+
+  function databaseIds(value) {
+    return new Set(Array.from(databaseBlockPositions(window.MarkdownMini.structure.normalizeSource(value)).values(), block => block.id));
   }
 
   function isDatabaseAttachmentFile(file) {
@@ -1280,7 +1286,7 @@
             const source = databaseFenceSource(doc, node.node);
             if (source) {
               (databasePositions ||= new Set()).add(node.from);
-              push({ from: node.from, to: firstLine.from + source.length, kind: 'database', source });
+              push({ from: node.from, to: firstLine.from + source.length, kind: 'database', source, databaseId: databaseOpener.exec(source)[1] });
             }
             return false;
           }
@@ -3297,7 +3303,7 @@
     const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts, noteSourcePosition, noteSourceMap: true, noteContext: readingSyntax,
       renderFence(block) {
         if (block.language === 'database' && databasePositions?.has(block.from)) {
-          return '<div class="note-database-carrier"></div>';
+          return '<div class="note-database-carrier" data-database-id="' + databasePositions.get(block.from).id + '"></div>';
         }
         return printing && block.language === 'quiz' ? null : noteFence(block);
       },
@@ -3449,7 +3455,7 @@
     if (content.querySelector('.note-cards')) host.__relatumReadingCards = attachNoteCards(content, { isCurrent: current, onLink: safeOptions.onOpenExternal, onLayout: readingLayout });
     if (databasePositions?.size) {
       host.__relatumReadingDatabases = Array.from(content.querySelectorAll('.note-database-carrier'), element =>
-        safeOptions.database.mount(element, { path: notePath, readOnly: true, observe: true, onLayout: readingLayout }));
+        safeOptions.database.mount(element, { path: notePath, databaseId: element.dataset.databaseId, readOnly: true, observe: true, onLayout: readingLayout }));
     }
     host.__relatumReadingCode = prepareReadingCode(content, current);
     if (result.features && result.features.mermaid && mermaidEnabled()) {
@@ -4047,15 +4053,17 @@
       this.id = spec.id;
       this.path = path;
       this.database = database;
+      this.databaseId = spec.databaseId;
     }
     get estimatedHeight() { return 72; }
-    eq(other) { return this.id === other.id && this.path === other.path && this.database === other.database; }
+    eq(other) { return this.id === other.id && this.path === other.path && this.database === other.database && this.databaseId === other.databaseId; }
     toDOM(view) {
       const element = document.createElement('div');
       element.className = 'note-database-carrier';
+      element.dataset.databaseId = this.databaseId;
       element.contentEditable = 'false';
       element.__relatumDatabaseDispose = this.database.mount(element, {
-        path: this.path, readOnly: view.state.readOnly, observe: true,
+        path: this.path, databaseId: this.databaseId, readOnly: view.state.readOnly, observe: true,
         onLayout: () => { if (element.isConnected) view.requestMeasure(); },
       });
       return element;
@@ -6100,7 +6108,8 @@
     const after = doc.sliceString(at, Math.min(at + 2, doc.length));
     const leading = at === 0 || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
     const trailing = after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
-    const insert = leading + databaseMarker + trailing;
+    const identity = crypto.randomUUID();
+    const insert = leading + '```database ' + identity + '\n```' + trailing;
     view.dispatch({ changes: { from: at, insert }, userEvent: 'input.note-command',
       ...(moveSelection ? { selection: EditorSelection.cursor(Math.min(at + insert.length + Number(after.startsWith('\n')), doc.length + insert.length)), scrollIntoView: true } : {}) });
     return true;
@@ -7634,16 +7643,21 @@
       if (!attachments.length) return;
       const target = { position: view.posAtCoords({ x: event.clientX, y: event.clientY }, false) ?? view.state.selection.main.head,
         path: currentPath, sequence: documentSetSeq };
+      const hit = event.target.closest?.('.note-database-carrier')?.dataset.databaseId;
+      const distance = ([from, block]) => Math.max(0, from - target.position, target.position - block.to);
+      const blocks = Array.from(databaseBlockPositions(serializedDocument(view.state.doc)));
+      blocks.sort((a, b) => distance(a) - distance(b) || a[0] - b[0]);
+      const candidates = Array.from(new Set([...(hit ? [hit] : []), ...blocks.map(([, block]) => block.id)]));
       databaseInsertions.add(target);
       const insertAtDrop = () => {
         if (!databaseInsertions.delete(target) || destroyed || sourceMode || target.path !== currentPath || target.sequence !== documentSetSeq
-            || inputPending() || view.state.readOnly || hasDatabaseBlock(serializedDocument(view.state.doc))) return false;
+            || inputPending() || view.state.readOnly) return false;
         return insertDatabaseBlock(view, target.position, false);
       };
       Promise.resolve().then(() => {
         if (target.sequence !== documentSetSeq || target.path !== currentPath || destroyed) return;
         if (images.length) safeOptions.onImageFiles(images);
-        return options.onDatabaseFiles(attachments, insertAtDrop);
+        return options.onDatabaseFiles(attachments, insertAtDrop, candidates);
       }).finally(() => databaseInsertions.delete(target)).catch(() => {});
     }
     if (options.database && options.onDatabaseFiles) {
@@ -8375,7 +8389,7 @@
     richBlockEditPosition,
   };
   window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath };
-  Object.assign(window.RelatumNoteLiveEditor, { loadNoteMermaid, hasDatabaseBlock, isDatabaseAttachmentFile,
+  Object.assign(window.RelatumNoteLiveEditor, { loadNoteMermaid, hasDatabaseBlock, databaseIds, isDatabaseAttachmentFile,
     quizFence, renderFence: noteFence, attachCards: attachNoteCards, attachQuiz: attachNoteQuiz,
     remapQuiz(source, destination) { quizSession?.remap(source, destination); } });
   window.RelatumNoteLiveEditor.releaseReadingDocument = releaseReadingDocument;

@@ -118,6 +118,12 @@
     });
     noteDatabaseLoader = Promise.all([ready(css), ready(script)]).then(() => {
       noteDatabase = window.RelatumNoteDatabase.create({ language,
+        pending(path, databaseId) {
+          const target = state.current?.path === path ? state.current : state.documentCache.get(path);
+          if (!target || !hasPendingEdits(target)) return false;
+          target.savedDatabaseIds ??= window.RelatumNoteLiveEditor.databaseIds(target.databaseBaseline);
+          return !target.savedDatabaseIds.has(databaseId);
+        },
         onOpenNote: path => openNote(path, { reuseActiveTab: false }),
         onError: error => { if (noteWorkspaceVisible()) showToast(error.message || tr('saveFailed'), 'error'); },
         onNotice: message => { if (noteWorkspaceVisible()) showToast(message); },
@@ -2953,7 +2959,7 @@
     const entry = findEntry(data.path);
     const content = data.content || '';
     return {
-      path: data.path, content, revision: data.revision || '', outgoing: [], backlinks: [],
+      path: data.path, content, databaseBaseline: content, revision: data.revision || '', outgoing: [], backlinks: [],
       hasImageText: content.includes('<!--relatum:image-text:'),
       editGeneration: generation, persistedGeneration: generation, selectionStart: 0, selectionEnd: 0, scrollTop: 0,
       wordCount: null, characterCount: content.length, countedGeneration: 0,
@@ -4188,11 +4194,13 @@
       if (target.persistedGeneration >= generation) return true;
       state.saveRunning = true;
       try {
-        const result = await post('/api/note-save', { path, content, revision: target.revision });
+        const result = await post('/api/note-save', { path, content, revision: target.revision, language: language() });
         target.revision = result.revision || target.revision;
-        if (result.databaseCreated) noteDatabase?.noteSaved(path);
+        target.databaseBaseline = content;
+        target.savedDatabaseIds = null;
         recordRecent(path); if (noteBrowser) noteBrowser.invalidate(); noteGraph?.invalidate(notebookRootForPath(path));
         target.persistedGeneration = Math.max(target.persistedGeneration, generation);
+        noteDatabase?.noteSaved(path, result.databasesCreated, result.databaseCreateFailed);
         if (target.editGeneration <= generation) target.content = content;
         cacheDocument(target);
         if (state.current === target) {
@@ -4406,6 +4414,7 @@
     }
     const snapshot = liveEditor ? liveEditor.snapshot() : editorSnapshot();
     current.content = disk.content; current.revision = disk.revision;
+    current.databaseBaseline = disk.content; current.savedDatabaseIds = null;
     current.hasImageText = disk.content.includes('<!--relatum:image-text:');
     if (!current.hasImageText) current.characterCount = disk.content.length;
     current.selectionStart = snapshot.anchor; current.selectionEnd = snapshot.head;
@@ -4945,11 +4954,117 @@
       const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
       const cancel = contextButton(tr('cancel'), () => finish(false));
       const action = editing ? (english ? 'Delete' : '删除') : (english ? 'Move to Recycle Bin' : '移到系统回收站');
-      actions.append(cancel, contextButton(action, () => finish(true), true));
+      const confirm = contextButton(action, () => finish(true), true);
+      confirm.classList.add('note-database-confirm-primary');
+      actions.append(cancel, confirm);
       dialog.append(description, actions);
       return cancel;
-    }, { isCurrent });
+    }, { className: 'note-database-confirm', isCurrent });
   }
+
+  async function openDatabaseManager(database, path, current) {
+    let catalog = await database.list(path);
+    if (!current()) return;
+    const english = language() === 'en';
+    const caption = (zh, en) => english ? en : zh;
+    return promptNoteModal(caption('删除数据库', 'Delete databases'), false, (dialog, finish) => {
+      const note = document.createElement('p');
+      note.textContent = path;
+      const list = document.createElement('div'); list.className = 'note-database-manager-list';
+      const status = document.createElement('p'); status.setAttribute('role', 'status');
+      status.className = 'note-database-manager-status'; status.hidden = true;
+      const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
+      const selection = new Set();
+      let busy = false, purgeMode = false;
+      const message = text => { status.textContent = text; status.hidden = !text; };
+      const close = contextButton(tr('cancel'), () => finish(false));
+      close.classList.add('note-database-confirm-secondary');
+      const back = contextButton(caption('返回', 'Back'), () => { purgeMode = false; render(); all.focus(); });
+      const all = contextButton(caption('删除全部表格和共享附件…', 'Delete all tables and shared attachments…'), () => {
+        purgeMode = true; render(); back.focus();
+      }, true);
+      const remove = contextButton('', () => void submit(), true);
+      remove.classList.add('note-database-confirm-primary');
+      remove.dataset.noteAction = 'confirm-database-delete';
+      all.dataset.noteAction = 'purge-databases';
+      const alive = () => current() && dialog.isConnected;
+      function updateButtons() {
+        remove.textContent = purgeMode ? caption('永久删除全部', 'Permanently delete all')
+          : caption(`永久删除所选（${selection.size}）`, `Permanently delete selected (${selection.size})`);
+        remove.disabled = busy || (!purgeMode && !selection.size);
+        close.disabled = back.disabled = busy;
+        all.disabled = busy || catalog.cleanupPending || !(catalog.tables.length || catalog.fileCount || catalog.registeredCount);
+        list.querySelectorAll('input').forEach(input => { input.disabled = busy; });
+        dialog.setAttribute('aria-busy', String(busy));
+      }
+      function render() {
+        list.replaceChildren();
+        if (purgeMode) {
+          const warning = document.createElement('p');
+          warning.textContent = caption(`将永久删除 ${catalog.tables.length} 张表和 ${catalog.fileCount} 个共享附件文件。此操作无法撤销。`,
+            `Permanently delete ${catalog.tables.length} table(s) and ${catalog.fileCount} shared attachment file(s). This cannot be undone.`);
+          list.append(warning);
+          actions.replaceChildren(back, remove);
+        } else {
+          const summary = document.createElement('p');
+          summary.textContent = catalog.cleanupPending
+            ? caption('部分附件正在等待删除。关闭占用文件后，重新打开此窗口即可重试。', 'Some attachments are awaiting deletion. Close any open files, then reopen this window to retry.')
+            : caption(`${catalog.tables.length} 张表 · ${catalog.fileCount} 个共享附件文件`, `${catalog.tables.length} table(s) · ${catalog.fileCount} shared attachment file(s)`);
+          list.append(summary);
+          for (const table of catalog.tables) {
+            const row = document.createElement('label'); row.className = 'note-database-manager-row';
+            const input = document.createElement('input'); input.type = 'checkbox'; input.checked = selection.has(table.id);
+            const title = document.createElement('span'); title.className = 'note-database-manager-title'; title.textContent = table.name;
+            const details = document.createElement('small');
+            const views = table.viewCount ? caption(`${table.viewCount} 处正文引用`, `${table.viewCount} view(s) in note`) : caption('无正文引用', 'No views in note');
+            details.textContent = caption(`${table.rowCount} 条记录 · 引用 ${table.attachmentCount} 个附件 · ${views}`,
+              `${table.rowCount} record(s) · ${table.attachmentCount} linked attachment(s) · ${views}`);
+            input.setAttribute('aria-label', table.name);
+            input.addEventListener('change', () => {
+              if (input.checked) selection.add(table.id); else selection.delete(table.id);
+              updateButtons();
+            });
+            row.append(input, title, details); list.append(row);
+          }
+          if (catalog.tables.length) {
+            const explanation = document.createElement('p');
+            explanation.textContent = caption('删除所选表格会永久移除其记录和字段，共享附件仍保留。', 'Deleting selected tables permanently removes their records and fields. Shared attachments are kept.');
+            list.append(explanation);
+          }
+          actions.replaceChildren(all, close, remove);
+        }
+        updateButtons();
+      }
+      async function submit() {
+        if (busy || !alive() || remove.disabled) return;
+        const action = purgeMode ? { type: 'purge', token: catalog.token } : {
+          type: 'deleteTables', tables: catalog.tables.filter(table => selection.has(table.id)).map(({ id, revision }) => ({ id, revision })),
+        };
+        busy = true; message(''); updateButtons();
+        try {
+          const result = await database.deleteTables(path, action);
+          if (!alive()) return;
+          if (result.cleanupPending) showToast(caption('表格已删除，部分附件正在等待解除占用。', 'The tables were deleted. Some attachments are still awaiting release.'));
+          finish(true);
+        } catch (error) {
+          if (!alive()) return;
+          message(error.message || tr('saveFailed'));
+          if (error.code === 'revision_conflict') {
+            try { catalog = await database.list(path); } catch (_) { finish(false); return; }
+            if (!alive()) return;
+            selection.clear(); purgeMode = false; render();
+          }
+        } finally {
+          busy = false;
+          if (alive()) { updateButtons(); (purgeMode ? back : close).focus(); }
+        }
+      }
+      dialog.append(note, list, status, actions);
+      render();
+      return close;
+    }, { className: 'note-database-manager', isCurrent: current });
+  }
+
   async function manageNoteDatabase(path, action) {
     if (noteDatabaseManagement || noteMovePromise || !noteWorkspaceVisible()) return;
     noteDatabaseManagement = true;
@@ -4959,9 +5074,11 @@
     try {
       const database = await loadNoteDatabase();
       if (editorInputPending()) await whenEditorInputSettled();
+      if (!current() || !await database.whenInputSettled(path)) return;
       const target = source?.path === path ? source : state.documentCache.get(path);
       if (!current() || target && !(await flushSave(target)) || !current()) return;
-      await database[action](path, message => current() && confirmNoteDatabase(message, current));
+      if (action === 'remove') await openDatabaseManager(database, path, current);
+      else await database.cleanup(path, message => current() && confirmNoteDatabase(message, current));
     } catch (error) {
       if (current()) showToast(error.message || tr('saveFailed'), 'error');
     } finally {
@@ -5163,6 +5280,12 @@
         const rawText = clipboardText == null ? await navigator.clipboard.readText() : clipboardText;
         if (bodyMenuContext !== context) return;
         if (rawText) liveEditor.executeCommand(name, context, rawText, clipboardHtml);
+      } else if (name === 'insert:database') {
+        const target = state.current;
+        if (liveEditor.executeCommand(name, context)) {
+          closeContextMenu();
+          await flushSave(target);
+        }
       } else liveEditor.executeCommand(name, context);
       if (bodyMenuContext === context) closeContextMenu();
     } catch (error) {
@@ -5796,7 +5919,7 @@
     } finally { clearTimeout(timeout); }
   }
   let imageUploadChain = Promise.resolve();
-  async function importNoteDatabaseFiles(files, insertAtDrop) {
+  async function importNoteDatabaseFiles(files, insertAtDrop, candidates) {
     const source = state.current, path = source?.path, visibility = noteVisibilityEpoch;
     const current = () => path && state.current === source && source.path === path && visibility === noteVisibilityEpoch
       && noteWorkspaceVisible() && state.viewMode === 'live' && !state.openingPath && !noteMovePromise;
@@ -5804,8 +5927,10 @@
     try {
       const database = await loadNoteDatabase();
       if (!current()) return false;
-      const imported = await database.importFiles(path, files);
-      if (imported && current()) {
+      if (candidates.length && hasPendingEdits(source) && !await flushSave(source)) return false;
+      if (!current()) return false;
+      const { imported, databaseId } = await database.importFiles(path, files, candidates, current);
+      if (imported && !databaseId && current()) {
         if (editorInputPending()) await whenEditorInputSettled();
         if (current() && insertAtDrop()) await flushSave(source);
       }

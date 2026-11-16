@@ -1,6 +1,8 @@
 """Real isolated SQLite and note/companion transactions for database blocks."""
 
 import base64
+import io
+import json
 import shutil
 import sqlite3
 import tempfile
@@ -10,11 +12,13 @@ from pathlib import Path
 from unittest import mock
 from urllib.parse import urlencode
 
-from note_database import DATABASE_DIRECTORY, has_database_fence
+from note_database import DATABASE_DIRECTORY, PURGE_DIRECTORY, copy_attachment_to_downloads, database_fences
 from notes_library import NotesError, NotesStore
 
 
-FENCE = '```database\n```\n'
+TABLE = 'source'
+FENCE = '```database source\n```\n'
+SECOND_FENCE = '```database second\n```\n'
 
 
 class NoteDatabaseTests(unittest.TestCase):
@@ -26,17 +30,20 @@ class NoteDatabaseTests(unittest.TestCase):
         self.addCleanup(self.store.close)
         self.store.create('', 'Source.md', 'note')
         self.database = self.store.database
-        self.latest = self.database.read('Source.md')
+        self.latest = self.read()
         self.directory = self.store.root / 'Source.assets' / DATABASE_DIRECTORY
 
     def save(self, text=FENCE):
         result = self.store.save('Source.md', text, '')
-        self.latest = self.database.read('Source.md')
+        self.latest = self.read()
         return result
+
+    def read(self, query=None, identity=TABLE, path='Source.md'):
+        return self.database.read(path, identity, query)
 
     def action(self, kind, query=None, **fields):
         self.latest = self.database.action(
-            'Source.md', {'type': kind, 'revision': self.latest.get('revision'), **fields}, query,
+            'Source.md', TABLE, {'type': kind, 'revision': self.latest.get('revision'), **fields}, query,
             recycle=self.recycle,
         )
         return self.latest
@@ -48,23 +55,12 @@ class NoteDatabaseTests(unittest.TestCase):
             shutil.move(target, root / str(index))
 
     def candidates(self, text=''):
-        return self.database.action('Source.md', {'type': 'searchAttachments', 'query': text})['items']
+        return self.database.action('Source.md', TABLE, {'type': 'searchAttachments', 'query': text})['items']
 
-    def test_upgrade_layout_options_and_atomic_record_history(self):
+    def test_layout_options_and_atomic_record_history(self):
         self.save()
         title = self.latest['columns'][0]['id']
         original = self.action('addRow', values={title: 'Original'})['rows'][0]['id']
-        database = self.directory / 'database.sqlite3'
-        with closing(sqlite3.connect(database)) as connection:
-            with connection:
-                for column in ('display_order', 'width', 'hidden', 'choices'):
-                    connection.execute(f'ALTER TABLE columns DROP COLUMN {column}')
-                connection.execute('PRAGMA user_version=1')
-        self.latest = self.database.read('Source.md')
-        self.assertEqual(self.latest['rows'][0]['id'], original)
-        self.assertEqual(self.latest['rows'][0]['values'][title], 'Original')
-        with closing(sqlite3.connect(database)) as connection:
-            self.assertEqual(connection.execute('PRAGMA user_version').fetchone()[0], 2)
         state = self.action('addColumn', columnType='status', name='状态')['columns'][1]
         tags = self.action('addColumn', columnType='multiSelect', name='标签')['columns'][2]
         tags = self.action('setChoices', column=tags['id'], choices=[{'name': '重点'}])['columns'][2]
@@ -81,15 +77,15 @@ class NoteDatabaseTests(unittest.TestCase):
                 {'row': original, 'values': {state['id']: done}},
                 {'row': None, 'values': {tags['id']: ['0' * 32]}},
             ])
-        self.assertEqual(self.database.read('Source.md')['revision'], before)
+        self.assertEqual(self.read()['revision'], before)
         batch = self.action('batchCells', changes=[
             {'row': original, 'values': {state['id']: done}},
             {'row': None, 'values': {tags['id']: [key]}},
         ])
         self.assertEqual(batch['total'], 2)
-        self.assertEqual(self.database.read('Source.md', {'search': '已完成'})['total'], 1)
+        self.assertEqual(self.read({'search': '已完成'})['total'], 1)
         filters = [{'column': tags['id'], 'value': key, 'operator': 'contains'}]
-        self.assertEqual(self.database.read('Source.md', {'filters': filters})['total'], 1)
+        self.assertEqual(self.read({'filters': filters})['total'], 1)
         with self.assertRaises(NotesError):
             self.action('batchCells', query={'filters': filters}, changes=[{'row': None, 'values': {tags['id']: [key]}}])
         undo = self.action('applyRecords', changes=batch['inverse'])
@@ -98,7 +94,7 @@ class NoteDatabaseTests(unittest.TestCase):
         redo = self.action('applyRecords', changes=undo['inverse'])
         self.assertEqual([row['id'] for row in redo['rows']], [row['id'] for row in batch['rows']])
         self.action('setChoices', column=tags['id'], choices=[{'id': key, 'name': '要点'}])
-        self.assertEqual(self.database.read('Source.md', {'search': '要点'})['total'], 1)
+        self.assertEqual(self.read({'search': '要点'})['total'], 1)
         with self.assertRaises(NotesError) as err:
             self.action('setChoices', column=tags['id'], choices=[])
         self.assertEqual(err.exception.code, 'options_in_use')
@@ -110,7 +106,7 @@ class NoteDatabaseTests(unittest.TestCase):
         self.save()
         self.action('addColumn', columnType='attachment', name='附件')
         self.action('addColumn', columnType='checkbox', name='完成')
-        self.latest = self.database.import_file('Source.md', '参考.pdf', b'%PDF-1.7')
+        self.database.import_file('Source.md', '参考.pdf', b'%PDF-1.7')
         attachment = next(item for item in self.candidates('参考.pdf') if item['kind'] == 'attachment')
         _, file, check = [column['id'] for column in self.latest['columns']]
         query = {'search': 'not visible'}
@@ -124,50 +120,162 @@ class NoteDatabaseTests(unittest.TestCase):
         changed = self.action('setCell', query=query, row=row, column=check, value=True, includeRow=True)
         self.assertIs(changed['updatedRow']['values'][check], True)
 
+    def test_legacy_choices_receive_colors_without_rewriting_and_keep_them_after_edit(self):
+        self.save()
+        status = self.action('addColumn', columnType='status', name='状态')['columns'][1]
+        legacy = [{key: value for key, value in choice.items() if key != 'tone'} for choice in status['choices']]
+        legacy = [legacy[1], legacy[2], legacy[0]]
+        file = self.directory / 'database.sqlite3'
+        with closing(sqlite3.connect(file)) as connection:
+            with connection:
+                connection.execute('UPDATE columns SET choices=? WHERE id=?',
+                                   (json.dumps(legacy, ensure_ascii=False), status['id']))
+        self.latest = self.read()
+        self.assertEqual([choice['tone'] for choice in self.latest['columns'][1]['choices']], ['blue', 'green', 'neutral'])
+        with closing(sqlite3.connect(file)) as connection:
+            stored = connection.execute('SELECT choices FROM columns WHERE id=?', (status['id'],)).fetchone()[0]
+        self.assertEqual(json.loads(stored), legacy)
+        renamed = [{'id': legacy[1]['id'], 'name': '结项'}, legacy[2], {'name': '等反馈'}]
+        status = self.action('setChoices', column=status['id'], choices=renamed)['columns'][1]
+        self.assertEqual([choice['tone'] for choice in status['choices']], ['green', 'neutral', 'amber'])
+
     def test_fence_requires_visible_top_level_closed_empty_block(self):
         for text in (
             FENCE,
             FENCE.replace('\n', '\r\n'),
-            '```database \t\n\t\n``` \t',
+            '```database source \t\n\t\n``` \t',
             'a\n\n' + FENCE + '\nb',
             '---\ntags: []\n---\n' + FENCE,
         ):
             with self.subTest(text=text):
-                self.assertTrue(has_database_fence(text))
+                self.assertTrue(database_fences(text))
         for text in (
-            '```database', '```database\nxxx\n```', '```database\n```%',
+            '```database', '```database\n```', '```database source\nxxx\n```', '```database source\n```%',
             '```\n' + FENCE + '```\n', '~~~~\n' + FENCE + '~~~~\n',
             ''.join('> ' + line for line in FENCE.splitlines(keepends=True)),
             '- item\n' + ''.join('  ' + line for line in FENCE.splitlines(keepends=True)),
             '<!--\n' + FENCE + '-->\n', '---\n' + FENCE + '---\n',
         ):
             with self.subTest(text=text):
-                self.assertFalse(has_database_fence(text))
+                self.assertFalse(database_fences(text))
 
-    def test_save_and_explicit_recreate_after_delete(self):
+    def test_isolated_tables_and_permanent_deletion(self):
         self.assertFalse(self.latest['exists'])
         self.assertFalse(self.directory.exists())
-        self.assertTrue(self.save(FENCE * 2)['databaseCreated'])
-        old = self.latest['revision']
-        self.action('addRow')
+        self.assertEqual(set(self.save(FENCE * 2 + SECOND_FENCE)['databasesCreated']), {TABLE, 'second'})
+        second = self.read(identity='second')
+        selected = self.action('addRow')
+        first_row = selected['rows'][0]['id']
+        with self.assertRaises(NotesError):
+            self.database.action('Source.md', 'second', {'type': 'deleteRow', 'row': first_row, 'revision': second['revision']})
+        self.assertEqual(self.read(identity='second'), second)
         ordinary = self.store.root / 'Source.assets' / 'keep.png'
         ordinary.write_bytes(b'ordinary')
-        first_revision = self.latest['revision']
-        with self.assertRaises(NotesError) as failed:
-            self.database.action('Source.md', {'type': 'delete', 'revision': first_revision},
-                                 recycle=mock.Mock(side_effect=OSError('blocked')))
-        self.assertEqual(failed.exception.code, 'recycle_failed')
-        self.assertEqual(self.database.read('Source.md')['revision'], first_revision)
-        self.assertFalse(self.action('delete')['exists'])
-        self.assertEqual((self.store.root / 'Source.md').read_text(encoding='utf-8'), FENCE * 2)
+        attach = self.database.import_file('Source.md', 'shared.pdf', b'file', ['missing', 'second'])
+        self.assertEqual(attach['databaseId'], 'second')
+        tables = [{'id': TABLE, 'revision': selected['revision']}, {'id': 'second', 'revision': 'old'}]
+        with self.assertRaises(NotesError):
+            self.action('deleteTables', tables=tables)
+        self.assertTrue(self.read()['exists'])
+        self.assertEqual(self.action('deleteTables', tables=tables[:1])['deletedIds'], [TABLE])
+        self.assertTrue(self.read()['deleted'])
+        self.assertEqual((self.store.root / 'Source.md').read_text(encoding='utf-8'), FENCE * 2 + SECOND_FENCE)
         self.assertTrue(ordinary.exists())
-        self.assertNotIn('databaseCreated', self.save(FENCE * 2 + '\nedit'))
-        self.assertFalse(self.latest['exists'])
-        self.action('create')
-        self.assertEqual(self.latest['total'], 0)
-        self.assertNotIn(self.latest['revision'], (first_revision, old))
+        self.assertEqual(self.database.resolve_attachment('Source.md', attach['attachmentId']).read_bytes(), b'file')
         self.save('ordinary')
-        self.assertTrue(self.latest['exists'])
+        self.assertNotIn('databasesCreated', self.save(FENCE))
+        self.assertTrue(self.action('create')['deleted'])
+        catalog = self.action('list')
+        self.assertEqual([(row['id'], row['viewCount']) for row in catalog['tables']], [('second', 0)])
+        self.assertEqual(catalog['fileCount'], 1)
+        self.assertEqual(self.action('purge', token=catalog['token'])['deletedIds'], ['second'])
+        self.assertFalse((self.directory / 'files').exists())
+        self.assertTrue(self.read(identity='second')['deleted'])
+        self.assertTrue(ordinary.exists())
+
+    def test_purge_revalidates_files_and_recovers_both_commit_states(self):
+        self.save()
+        imported = self.database.import_file('Source.md', 'file.pdf', b'before')
+        attachment = self.database.resolve_attachment('Source.md', imported['attachmentId'])
+        files, stage = self.directory / 'files', self.directory / PURGE_DIRECTORY
+        catalog = self.action('list')
+        attachment.write_bytes(b'after confirmation')
+        with self.assertRaises(NotesError) as stale:
+            self.action('purge', token=catalog['token'])
+        self.assertEqual(stale.exception.code, 'revision_conflict')
+        catalog = self.action('list')
+        rename = Path.rename
+        def locked(path, target):
+            if path == files:
+                raise PermissionError('attachment is locked')
+            return rename(path, target)
+        with mock.patch.object(Path, 'rename', locked), self.assertRaises(PermissionError):
+            self.action('purge', token=catalog['token'])
+        self.assertTrue(self.read()['exists'])
+        with mock.patch.object(self.database, '_delete_tables', side_effect=sqlite3.OperationalError('injected')):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.action('purge', token=catalog['token'])
+        self.assertTrue(attachment.exists())
+        files.rename(stage)
+        self.assertTrue(self.read()['exists'])
+        self.assertTrue(attachment.exists(), 'uncommitted staging is restored')
+        with mock.patch.object(shutil, 'rmtree', side_effect=PermissionError('locked after commit')):
+            self.assertTrue(self.action('purge', token=catalog['token'])['cleanupPending'])
+            self.assertTrue(self.read()['deleted'])
+        self.assertTrue(stage.exists())
+        self.assertTrue(self.read()['deleted'])
+        self.assertFalse(stage.exists(), 'committed staging is removed on the next access')
+
+    def test_creation_failure_can_retry_only_a_saved_fence(self):
+        with mock.patch.object(self.database, '_initialize', side_effect=OSError('disk is full')):
+            result = self.save()
+        self.assertEqual(result['databaseCreateFailed'], [TABLE])
+        self.assertFalse(self.read()['exists'])
+        self.assertEqual(self.store.load('Source.md')['content'], FENCE)
+        with self.assertRaises(NotesError):
+            self.database.action('Source.md', 'other', {'type': 'create'})
+        self.assertTrue(self.action('create')['exists'])
+
+    def test_choice_creation_color_and_deletion_are_scoped_to_the_column(self):
+        self.save()
+        column = self.action('addColumn', columnType='multiSelect', name='Tags')['columns'][1]['id']
+        first = self.action('addRow')['addedRow']['id']
+        option_a = self.action('createChoiceValue', column=column, row=first, name='甲')['columns'][1]['choices'][0]
+        with self.assertRaises(NotesError):
+            self.action('createChoiceValue', column=column, row=first, name='  甲 ')
+        page = self.action('createChoiceValue', column=column, row=first, name='乙')
+        option_b = page['columns'][1]['choices'][1]
+        self.assertEqual(page['rows'][0]['values'][column], [option_a['id'], option_b['id']])
+        self.assertNotEqual(option_a['tone'], option_b['tone'])
+        for _ in range(49):
+            self.action('addRow')
+        self.action('addRow', {'page': 2}, values={column: [option_a['id'], option_b['id']]})
+        after = self.action('setChoices', {'page': 2}, column=column, clearRemoved=True,
+                            choices=[{**option_b, 'name': '新版', 'tone': 'rose'}])
+        self.assertEqual(after['columns'][1]['choices'], [{**option_b, 'name': '新版', 'tone': 'rose'}])
+        self.assertEqual(after['rows'][0]['values'][column], [option_b['id']])
+        self.assertEqual(self.read()['rows'][0]['values'][column], [option_b['id']])
+        for tone in ('default', 'brown', 'orange', 'red'):
+            page = self.action('setChoices', column=column, choices=[{**option_b, 'name': '新版', 'tone': tone}])
+            self.assertEqual(page['columns'][1]['choices'][0]['tone'], tone)
+            self.assertEqual(self.read()['rows'][0]['values'][column], [option_b['id']])
+        with self.assertRaises(NotesError):
+            self.action('setChoices', column=column, choices=[{**option_b, 'tone': 'unknown'}])
+
+    def test_shared_file_cleanup_counts_detached_tables(self):
+        self.save(FENCE + SECOND_FENCE)
+        asset = self.database.import_file('Source.md', 'shared.pdf', b'pdf')['attachmentId']
+        for table in (TABLE, 'second'):
+            page = self.read(identity=table)
+            page = self.database.action('Source.md', table, {'type': 'addColumn', 'revision': page['revision'],
+                                                              'name': 'PDF', 'columnType': 'attachment'})
+            self.database.action('Source.md', table, {'type': 'addRow', 'revision': page['revision'], 'values': {
+                page['addedColumn']: {'kind': 'attachment', 'id': asset}}})
+        self.save(FENCE)
+        table = self.latest
+        self.action('deleteTables', tables=[{'id': TABLE, 'revision': table['revision']}])
+        self.assertEqual(self.action('previewCleanup')['count'], 0)
+        self.assertTrue(self.database.resolve_attachment('Source.md', asset).is_file())
 
     def test_queries_typed_cells_paging_and_revision_conflict(self):
         self.save()
@@ -177,10 +285,10 @@ class NoteDatabaseTests(unittest.TestCase):
         number, day, done, _ = [column['id'] for column in self.latest['columns'][1:]]
         for index in range(52):
             self.action('addRow', values={name: f'Row {index}', number: index, day: '2026-11-16', done: index % 2 == 0})
-        result = self.database.read('Source.md', {'page': 2})
+        result = self.read({'page': 2})
         self.assertEqual(result['total'], 52)
         self.assertEqual(result['rows'][0]['values'][number], 50)
-        result = self.database.read('Source.md', {
+        result = self.read({
             'search': 'ROW', 'sort': {'column': number, 'direction': 'desc'},
             'filters': [{'column': done, 'operator': 'equals', 'value': True},
                         {'column': number, 'operator': 'gt', 'value': 48}],
@@ -191,7 +299,7 @@ class NoteDatabaseTests(unittest.TestCase):
         old = self.latest['revision']
         self.action('setCell', row=row, column=day, value='2026-12-01')
         with self.assertRaises(NotesError) as stale:
-            self.database.action('Source.md', {'type': 'deleteRow', 'row': row, 'revision': old})
+            self.database.action('Source.md', TABLE, {'type': 'deleteRow', 'row': row, 'revision': old})
         self.assertEqual(stale.exception.code, 'revision_conflict')
         with self.assertRaises(NotesError):
             self.action('setCell', row=row, column=number, value='bad')
@@ -206,10 +314,9 @@ class NoteDatabaseTests(unittest.TestCase):
         with self.assertRaises(NotesError):
             self.database.import_file('Source.md', 'thing.cmd', b'fake')
         self.assertFalse(self.directory.exists())
-        self.latest = self.database.import_file('Source.md', '手册.pdf', b'first')
-        stamp = self.latest['revision']
-        self.assertEqual(self.database.import_file('Source.md', '手册.pdf', b'first')['revision'], stamp)
-        self.latest = self.database.import_file('Source.md', '手册.pdf', b'second')
+        first = self.database.import_file('Source.md', '手册.pdf', b'first')
+        self.assertEqual(self.database.import_file('Source.md', '手册.pdf', b'first'), first)
+        self.database.import_file('Source.md', '手册.pdf', b'second')
         candidates = self.candidates('手册.pdf')
         self.assertEqual([file['name'] for file in candidates], ['手册.pdf', '手册 (2).pdf'])
         paths = {self.database.resolve_attachment('Source.md', file['id']).read_bytes(): file['id']
@@ -223,7 +330,7 @@ class NoteDatabaseTests(unittest.TestCase):
         self.action('addRow', {'page': 2}, values={attachment_col: {'kind': 'attachment', 'id': paths[b'first']}})
         expected = self.latest['rows'][0]['values'][attachment_col]
         self.assertEqual(expected, {'kind': 'attachment', 'name': '手册.pdf', 'exists': True, 'id': paths[b'first']})
-        cleanup = self.database.action('Source.md', {'type': 'previewCleanup'})
+        cleanup = self.action('previewCleanup')
         self.assertEqual(cleanup['count'], 1)
         unused = self.database.resolve_attachment('Source.md', paths[b'second'])
         unused.write_bytes(b'changed after preview')
@@ -231,13 +338,13 @@ class NoteDatabaseTests(unittest.TestCase):
             self.action('cleanup', candidateToken=cleanup['candidateToken'])
         self.assertEqual(stale.exception.code, 'revision_conflict')
         self.assertTrue(unused.exists())
-        cleanup = self.database.action('Source.md', {'type': 'previewCleanup'})
+        cleanup = self.action('previewCleanup')
         self.action('cleanup', candidateToken=cleanup['candidateToken'])
         self.assertEqual(self.latest['deletedCount'], 1)
         self.assertFalse(unused.exists())
         referenced = self.database.resolve_attachment('Source.md', paths[b'first'])
         referenced.unlink()
-        missing = self.database.read('Source.md', {'page': 2})['rows'][0]['values'][attachment_col]
+        missing = self.read({'page': 2})['rows'][0]['values'][attachment_col]
         self.assertEqual(missing, {**expected, 'exists': False})
 
     def test_relative_note_links_move_rollback_and_companion_moves(self):
@@ -253,11 +360,11 @@ class NoteDatabaseTests(unittest.TestCase):
         with mock.patch.object(self.store.index, 'remap', side_effect=OSError('injected')):
             with self.assertRaises(OSError):
                 self.store.move('Target.md', 'Folder/New.md')
-        after_rollback = self.database.read('Source.md')
+        after_rollback = self.read()
         self.assertEqual(after_rollback['revision'], revision)
         self.assertEqual(after_rollback['rows'][0]['values'][attachment_col]['path'], 'Target.md')
         self.store.move('Target.md', 'Folder/New.md')
-        self.assertEqual(self.database.read('Source.md')['rows'][0]['values'][attachment_col], {
+        self.assertEqual(self.read()['rows'][0]['values'][attachment_col], {
             'kind': 'note', 'path': 'Folder/New.md', 'name': 'New.md', 'exists': True,
         })
         self.database.import_file('Source.md', 'sample.pdf', b'content')
@@ -266,7 +373,7 @@ class NoteDatabaseTests(unittest.TestCase):
         self.assertFalse(self.directory.exists())
         self.assertEqual(self.database.resolve_attachment('Folder/Moved.md', attachment).read_bytes(), b'content')
         (self.store.root / 'Folder' / 'New.md').unlink()
-        self.assertFalse(self.database.read('Folder/Moved.md')['rows'][0]['values'][attachment_col]['exists'])
+        self.assertFalse(self.read(path='Folder/Moved.md')['rows'][0]['values'][attachment_col]['exists'])
 
     def test_image_cleanup_skips_database_subtree(self):
         result = self.save()
@@ -280,6 +387,53 @@ class NoteDatabaseTests(unittest.TestCase):
         self.assertTrue(preserved.exists())
         self.assertFalse(unused.exists())
 
+    def test_picker_import_keeps_cell_and_shared_store_consistent(self):
+        self.save()
+        column = self.action('addColumn', name='Files', columnType='attachment')['addedColumn']
+        row = self.action('addRow')['addedId']
+        target = {'databaseId': TABLE, 'row': row, 'column': column, 'revision': self.latest['revision'], 'includeRow': True}
+        pdf = self.database.import_file('Source.md', 'first.pdf', b'%PDF-1.7', target=target, query={'search': 'no matches'})
+        old = pdf['updatedRow']['values'][column]
+        self.assertEqual(old['name'], 'first.pdf')
+        self.assertEqual(pdf['rows'], [])
+        with self.assertRaises(NotesError) as stale:
+            self.database.import_file('Source.md', 'obsolete.pdf', b'%PDF-1.7', target=target)
+        self.assertEqual(stale.exception.code, 'revision_conflict')
+        target['revision'] = pdf['revision']
+        with self.assertRaises(NotesError):
+            self.database.import_file('Source.md', 'invalid.png', b'not an image', target=target)
+        with mock.patch.object(self.database, '_write_result', side_effect=OSError('cannot project')):
+            with self.assertRaises(OSError):
+                self.database.import_file('Source.md', 'rolled-back.pdf', b'%PDF-1.7', target=target)
+        self.assertEqual(self.read()['rows'][0]['values'][column], old)
+        self.assertEqual([item['name'] for item in self.candidates('.pdf')], ['first.pdf'])
+        self.assertEqual(len(list((self.directory / 'files').iterdir())), 1)
+        svg = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>'
+        changed = self.database.import_file('Source.md', 'picture.svg', svg, target=target)
+        current = changed['rows'][0]['values'][column]
+        self.assertEqual(self.database.resolve_attachment('Source.md', current['id']).read_bytes(), svg)
+        self.assertEqual(self.database.resolve_attachment('Source.md', old['id']).read_bytes(), b'%PDF-1.7')
+        self.assertEqual(changed['inverse'][0]['values'][column], {'kind': 'attachment', 'id': old['id']})
+        self.assertEqual(self.database.attachment_download_source('Source.md', TABLE, row, column, current).name, 'picture.svg')
+        with self.assertRaises(NotesError) as changed_link:
+            self.database.attachment_download_source('Source.md', TABLE, row, column, old)
+        self.assertEqual(changed_link.exception.code, 'revision_conflict')
+        self.database.resolve_attachment('Source.md', current['id']).unlink()
+        with self.assertRaises(NotesError) as missing:
+            self.database.attachment_download_source('Source.md', TABLE, row, column, current)
+        self.assertEqual(missing.exception.status, 404)
+
+    def test_download_copy_never_overwrites_and_cleans_up_failed_copy(self):
+        downloads = self.home / 'Redirected Downloads'
+        downloads.mkdir()
+        (downloads / '同名.pdf').write_bytes(b'original')
+        with mock.patch('note_database._downloads_directory', return_value=downloads):
+            self.assertEqual(copy_attachment_to_downloads(io.BytesIO(b'copy'), '同名.pdf'), '同名 (2).pdf')
+            with mock.patch('note_database.shutil.copyfileobj', side_effect=OSError('disk full')):
+                with self.assertRaises(OSError):
+                    copy_attachment_to_downloads(io.BytesIO(b'unused'), 'new.pdf')
+        self.assertEqual({p.name: p.read_bytes() for p in downloads.iterdir()}, {'同名.pdf': b'original', '同名 (2).pdf': b'copy'})
+
 
 class NoteDatabaseHttpTests(unittest.TestCase):
     def test_query_action_import_external_open_and_disabled_profile(self):
@@ -292,7 +446,8 @@ class NoteDatabaseHttpTests(unittest.TestCase):
             (fixture.notes / note).write_text(FENCE, encoding='utf-8')
             action = '/api/note-database/action'
             upload = '/api/note-database/attachment/import'
-            snapshot = '/api/note-database?' + urlencode({'path': note})
+            download = '/api/note-database/attachment/download'
+            snapshot = '/api/note-database?' + urlencode({'path': note, 'databaseId': TABLE})
             opener_route = '/api/open-external'
             payload = {'kind': 'note-database-attachment', 'note': note}
             self.assertEqual(fixture.request(snapshot)[1]['exists'], False)
@@ -300,13 +455,30 @@ class NoteDatabaseHttpTests(unittest.TestCase):
             self.assertEqual(fixture.request(action, {'path': note, 'action': []})[0], 400)
             self.assertEqual(fixture.request(upload, {'path': note, 'name': 'test.pdf', 'data': '$!$'})[0], 400)
             self.assertEqual(fixture.request(snapshot)[1]['exists'], False)
-            status, created = fixture.request(action, {'path': note, 'action': {'type': 'create'}})
+            status, created = fixture.request(action, {'path': note, 'databaseId': TABLE, 'action': {'type': 'create'}})
             self.assertEqual((status, created['total']), (200, 0))
+            def modify(page, kind, **fields):
+                response, result = fixture.request(action, {'path': note, 'databaseId': TABLE,
+                    'action': {'type': kind, 'revision': page['revision'], **fields}})
+                self.assertEqual(response, 200)
+                return result
+            raw_markdown = b'# Linked note\r\n'
+            (fixture.notes / 'Linked.md').write_bytes(raw_markdown)
+            with_column = modify(created, 'addColumn', name='File', columnType='attachment')
+            column = with_column['addedColumn']
+            with_row = modify(with_column, 'addRow', values={column: {'kind': 'note', 'path': 'Linked.md'}})
+            cell = {'path': note, 'databaseId': TABLE, 'row': with_row['addedId'], 'column': column,
+                    'value': {'kind': 'note', 'path': 'Linked.md'}}
+            with tempfile.TemporaryDirectory() as folder, mock.patch('note_database._downloads_directory', return_value=Path(folder)):
+                self.assertEqual(fixture.request(download, cell), (200, {'name': 'Linked.md'}))
+                self.assertEqual((Path(folder) / 'Linked.md').read_bytes(), raw_markdown)
+                self.assertEqual(fixture.request(download, {**cell, 'value': {'kind': 'note', 'path': note}})[0], 409)
             status, imported = fixture.request(upload, {
                 'path': note, 'name': '含 空格.pdf', 'data': base64.b64encode(b'example').decode('ascii'),
             })
-            self.assertEqual((status, imported['total']), (200, 0))
-            status, candidates = fixture.request(action, {'path': note, 'action': {'type': 'searchAttachments', 'query': '.pdf'}})
+            self.assertEqual(status, 200)
+            self.assertIsNone(imported['databaseId'])
+            status, candidates = fixture.request(action, {'path': note, 'databaseId': TABLE, 'action': {'type': 'searchAttachments', 'query': '.pdf'}})
             self.assertEqual(status, 200)
             payload['target'] = candidates['items'][0]['id']
             authority = app.NOTES_STORE.database.resolve_attachment(note, payload['target'])
@@ -318,7 +490,7 @@ class NoteDatabaseHttpTests(unittest.TestCase):
                 authority.unlink()
                 self.assertEqual(fixture.request(opener_route, payload)[0], 404)
             fixture.server.launch_profile = LaunchProfile({key: key == 'canvas' for key in FEATURES}, restricted=True)
-            for route in (snapshot, action, upload):
+            for route in (snapshot, action, upload, download):
                 self.assertEqual(fixture.request(route)[0], 403, route)
             with mock.patch.object(app.os, 'startfile', create=True) as opener:
                 self.assertEqual(fixture.request(opener_route, payload)[0], 403)

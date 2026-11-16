@@ -95,9 +95,13 @@
   }
 
   async function renderDatabases(content, path, language) {
-    const [first, ...duplicates] = content.querySelectorAll('.note-database-carrier');
-    if (!first) return 0;
-    let warnings;
+    const groups = new Map();
+    for (const element of content.querySelectorAll('.note-database-carrier')) {
+      const id = element.dataset.databaseId;
+      if (!groups.has(id)) groups.set(id, []);
+      groups.get(id).push(element);
+    }
+    if (!groups.size) return 0;
     try {
       if (!window.RelatumNoteDatabase) {
         await new Promise((resolve, reject) => {
@@ -109,12 +113,21 @@
           document.head.append(script);
         });
       }
-      warnings = await window.RelatumNoteDatabase.renderPrint(first, path, language);
     } catch (_) {
-      first.textContent = language === 'en' ? 'Database unavailable' : '数据库无法读取';
-      warnings = 1;
+      for (const elements of groups.values()) for (const element of elements)
+        element.textContent = language === 'en' ? 'Database unavailable' : '数据库无法读取';
+      return groups.size;
     }
-    for (const element of duplicates) element.replaceChildren(...Array.from(first.childNodes, node => node.cloneNode(true)));
+    const jobs = Array.from(groups);
+    let warnings = 0;
+    for (let i = 0; i < jobs.length; i += 4) {
+      const results = await Promise.all(jobs.slice(i, i + 4).map(async ([id, [first, ...duplicates]]) => {
+        const result = await window.RelatumNoteDatabase.renderPrint(first, path, id, language);
+        for (const element of duplicates) element.replaceChildren(...Array.from(first.childNodes, node => node.cloneNode(true)));
+        return result;
+      }));
+      warnings += results.reduce((total, result) => total + result, 0);
+    }
     return warnings;
   }
 

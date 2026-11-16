@@ -9935,6 +9935,7 @@ POST_WITHOUT_DATA_LOCK = {
     "/api/note-reveal-assets",
     "/api/note-query",
     "/api/note-index-activity",
+    "/api/note-database/attachment/download",
 }
 
 # File lifecycle operations serialize with each other, but not with unrelated
@@ -10428,7 +10429,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             try:
                 query = json.loads(params.get('query', ['{}'])[0])
                 with _cross_process_mutation_lock(), NOTES_MUTATION_LOCK:
-                    result = NOTES_STORE.database.read(params.get('path', [''])[0], query)
+                    result = NOTES_STORE.database.read(params.get('path', [''])[0], params.get('databaseId', [''])[0], query)
                 return self._send_json(200, result)
             except NotesError as err:
                 return self._send_notes_error(err)
@@ -10646,6 +10647,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not self.launch_profile.write_allowed(path):
             self.close_connection = True
             return self._send_json(403, {"error": "本次启动未启用此功能", "code": "feature-disabled"})
+        if path == "/api/note-database/attachment/download" and self.headers.get_content_type() != "application/json":
+            self.close_connection = True
+            return self._send_json(415, {"error": "附件下载请求必须为 JSON", "code": "invalid_content_type"})
         raw_length = str(self.headers.get("Content-Length") or "").strip()
         if path == "/api/note-ai/chat" and raw_length.isdigit() and int(raw_length) > 8 * 1024 * 1024:
             self.close_connection = True
@@ -10855,6 +10859,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_note_upload_image(body)
         if path in {"/api/note-database/action", "/api/note-database/attachment/import"}:
             return self._api_note_database(body, upload=path.endswith('/import'))
+        if path == "/api/note-database/attachment/download":
+            return self._api_note_database_download(body)
         if path in {"/api/note-image-text-merge", "/api/note-image-text-cleanup"}:
             return self._api_note_image_text(body, merge=path.endswith("-merge"))
         if path == "/api/note-cleanup-unused-images":
@@ -11135,14 +11141,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     content = base64.b64decode(encoded, validate=True)
                 except (ValueError, binascii.Error) as err:
                     raise NotesError('附件数据无效') from err
-                result = NOTES_STORE.database.import_file(note, body.get('name'), content, query)
+                result = NOTES_STORE.database.import_file(note, body.get('name'), content, body.get('candidates'),
+                                                          target=body.get('target'), query=query)
             else:
-                result = NOTES_STORE.database.action(note, body.get('action'), query, recycle=_move_paths_to_recycle_bin)
+                result = NOTES_STORE.database.action(note, body.get('databaseId'), body.get('action'), query, recycle=_move_paths_to_recycle_bin)
             return self._send_json(200, result)
         except NotesError as err:
             return self._send_notes_error(err)
         except (OSError, sqlite3.Error):
             return self._send_json(500, {'error': '笔记数据库操作失败', 'code': 'database_failed'})
+
+    def _api_note_database_download(self, body: dict):
+        from note_database import copy_attachment_to_downloads
+
+        try:
+            with _cross_process_mutation_lock(), NOTES_MUTATION_LOCK:
+                path = NOTES_STORE.database.attachment_download_source(body.get('path'), body.get('databaseId'),
+                                                                      body.get('row'), body.get('column'), body.get('value'))
+                source = path.open('rb')
+            with source:
+                name = copy_attachment_to_downloads(source, path.name)
+            return self._send_json(200, {'name': name})
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except (OSError, sqlite3.Error):
+            return self._send_json(500, {'error': '无法将附件保存到下载文件夹', 'code': 'download_failed'})
 
     def _api_note_create(self, body: dict):
         try:
@@ -11186,6 +11209,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 body.get("path", ""),
                 body.get("content"),
                 body.get("revision"),
+                database_language=body.get('language'),
             )
         except NotesError as err:
             return self._send_notes_error(err)

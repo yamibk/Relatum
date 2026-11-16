@@ -5,29 +5,48 @@
   const snapshotRoute = '/api/note-database';
   const actionRoute = snapshotRoute + '/action';
   const importRoute = snapshotRoute + '/attachment/import';
-  const fileExtensions = /\.(?:pdf|md|markdown|csv|tsv|docx?|xlsx?|pptx?|odt|ods|odp|txt|rtf)$/i;
+  const downloadRoute = snapshotRoute + '/attachment/download';
+  const documentExtensions = ['.pdf', '.md', '.markdown', '.csv', '.tsv', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp', '.txt', '.rtf'];
+  const imageExtensions = ['.png', '.jpeg', '.jpg', '.webp', '.gif', '.bmp', '.svg'];
+  const attachmentPickerAccept = [...documentExtensions, ...imageExtensions].join(',');
   const maxFileSize = 100 * 1024 * 1024;
   const columnTypes = {
     text: ['文本', 'Text'], number: ['数字', 'Number'], date: ['日期', 'Date'],
     checkbox: ['勾选', 'Checkbox'], attachment: ['附件', 'Attachment'],
-    select: ['单选', 'Select'], multiSelect: ['多选', 'Multi-select'], status: ['状态', 'Status'],
+    select: ['单标签', 'Single tag'], multiSelect: ['多标签', 'Multiple tags'], status: ['状态', 'Status'],
   };
-  const typeSymbols = { text: 'Aa', number: '#', date: '▦', checkbox: '☑', attachment: '↗',
-    select: '◉', multiSelect: '≡', status: '◐' };
+  const typeSymbols = { text: 'Aa', number: '#' };
+  const choiceTones = { default: ['默认', 'Default'], neutral: ['灰色', 'Gray'], brown: ['棕色', 'Brown'],
+    orange: ['橙色', 'Orange'], amber: ['黄色', 'Yellow'], green: ['绿色', 'Green'], blue: ['蓝色', 'Blue'],
+    violet: ['紫色', 'Purple'], rose: ['粉色', 'Pink'], red: ['红色', 'Red'] };
   const choiceType = type => ['select', 'multiSelect', 'status'].includes(type);
   const shownColumns = page => page.columns.filter(column => !column.hidden);
   const clampWidth = width => Math.round(Math.min(640, Math.max(96, width)));
   const sameCell = (a, b) => a?.[0] === b?.[0] && a?.[1] === b?.[1];
   const iconPaths = { plus: 'M8 3.5v9M3.5 8h9', search: 'M10.3 10.3l3.1 3.1M11.5 7a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Z',
     view: 'M2.5 4h11m-9 4h7m-5 4h3', more: 'M3.5 8h.2M7.9 8h.2M12.3 8h.2', prev: 'm10 4-4 4 4 4',
-    next: 'm6 4 4 4-4 4', '×': 'm5 5 6 6m0-6-6 6' };
+    next: 'm6 4 4 4-4 4', '×': 'm5 5 6 6m0-6-6 6', check: 'm3.5 8 3 3 6-6',
+    date: 'M3 4h10a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1ZM2 7h12M5 2v3m6-3v3',
+    file: 'M4 2h5l4 4v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1ZM9 2v4h4',
+    checkbox: 'M4 2.5h8A1.5 1.5 0 0 1 13.5 4v8a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 12V4A1.5 1.5 0 0 1 4 2.5Zm1 5.5 2 2 4-4',
+    attachment: 'm11 5-5.2 5.2a1.4 1.4 0 0 0 2 2l5.6-5.6a2.8 2.8 0 0 0-4-4L3.8 8.2a4.2 4.2 0 0 0 5.9 5.9l4-4',
+    select: 'M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0ZM5.5 7l2.5 2.5L10.5 7',
+    multiSelect: 'M6 4h7M6 8h7m-7 4h7M3 4h.1M3 8h.1M3 12h.1',
+    status: 'M14 8a6 6 0 1 1-12 0 6 6 0 0 1 12 0ZM8 4.5v4l2.5 1.5',
+    trash: 'M2.5 4.5h11M6 4.5V3a.8.8 0 0 1 .8-.8h2.4a.8.8 0 0 1 .8.8v1.5m2 0-.6 8a1.3 1.3 0 0 1-1.3 1.3H5.9a1.3 1.3 0 0 1-1.3-1.3l-.6-8m2.7 2.2v4.8m2.6-4.8v4.8',
+    download: 'M8 2.5v7m-3-3 3 3 3-3M3 11v2.5h10V11' };
   let listSequence = 0;
 
   const translate = (language, pair) => pair[language === 'en' ? 1 : 0];
   const label = (zh, en) => [zh, en];
   const makeQuery = () => ({ page: 1, search: '', sort: null, filters: [] });
-  const acceptsFile = file => fileExtensions.test(file?.name || '');
+  const acceptsFile = file => documentExtensions.includes(fileSuffix(file?.name || ''));
   const composing = event => event.isComposing || event.keyCode === 229;
+
+  function fileSuffix(name) {
+    const separator = name.lastIndexOf('.');
+    return separator < 0 ? '' : name.slice(separator).toLowerCase();
+  }
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -44,6 +63,29 @@
     return node;
   }
 
+  function icon(symbol) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const path = document.createElementNS(svg.namespaceURI, 'path');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.5');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    path.setAttribute('d', iconPaths[symbol]);
+    svg.append(path);
+    return svg;
+  }
+
+  function typeIcon(type, name) {
+    const glyph = element('span', 'note-database-type', typeSymbols[type]);
+    glyph.setAttribute('aria-hidden', 'true');
+    if (name) glyph.title = name;
+    if (!typeSymbols[type]) glyph.append(icon(type));
+    return glyph;
+  }
+
   async function request(url, body, signal) {
     const response = await fetch(url, body === undefined ? { signal, cache: 'no-store' } : {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
@@ -58,8 +100,8 @@
     return result;
   }
 
-  function loadPage(path, query, signal) {
-    const parameters = new URLSearchParams({ path, query: JSON.stringify(query) });
+  function loadPage(path, databaseId, query, signal) {
+    const parameters = new URLSearchParams({ path, databaseId, query: JSON.stringify(query) });
     return request(snapshotRoute + '?' + parameters, undefined, signal);
   }
 
@@ -94,10 +136,36 @@
     if (column.type === 'attachment') return value.name || '';
     if (column.type === 'checkbox') return tr(value ? label('已勾选', 'Checked') : label('未勾选', 'Unchecked'));
     if (choiceType(column.type)) {
-      const ids = Array.isArray(value) ? value : [value];
-      return ids.map(id => column.choices?.find(option => option.id === id)?.name || '').filter(Boolean).join('、');
+      return selectedChoices(value, column).map(option => option.name).join('、');
     }
     return String(value);
+  }
+
+  function selectedChoices(value, column) {
+    const ids = Array.isArray(value) ? value : value == null ? [] : [value];
+    return ids.map(id => column.choices?.find(option => option.id === id)).filter(Boolean);
+  }
+
+  function choiceChip(option, type) {
+    const chip = element('span', 'note-database-choice', option.name);
+    chip.dataset.dbTone = option.tone || 'neutral';
+    chip.classList.toggle('is-status', type === 'status');
+    return chip;
+  }
+
+  function clickedTextOffset(control, event) {
+    const position = document.caretPositionFromPoint?.(event.clientX, event.clientY);
+    const range = position ? null : document.caretRangeFromPoint?.(event.clientX, event.clientY);
+    const node = position?.offsetNode || range?.startContainer;
+    return node?.nodeType === Node.TEXT_NODE && node.parentNode === control
+      ? position?.offset ?? range.startOffset : null;
+  }
+
+  function anchorMoved(anchor, position, scrollTarget) {
+    if (!anchor.isConnected) return true;
+    if (!scrollTarget.contains(anchor)) return false;
+    const rect = anchor.getBoundingClientRect();
+    return Math.abs(rect.left - position.left) > .5 || Math.abs(rect.top - position.top) > .5;
   }
 
   function parseClipboard(text) {
@@ -170,15 +238,16 @@
     if (keep) stack.splice(0, keep);
   }
 
-  async function renderPrint(host, path, language) {
+  async function renderPrint(host, path, databaseId, language) {
     const tr = pair => translate(language, pair);
     try {
-      const page = await loadPage(path, makeQuery(), AbortSignal.timeout(10000));
+      const page = await loadPage(path, databaseId, makeQuery(), AbortSignal.timeout(10000));
       if (!page.exists) {
-        host.textContent = tr(label('数据库尚未创建', 'Database not created'));
+        host.textContent = page.deleted ? tr(label('数据库已删除', 'Database deleted')) : tr(label('数据库尚未创建', 'Database not created'));
         return 0;
       }
       const table = element('table', 'md-table note-database-print-table');
+      if (page.name) table.createCaption().textContent = page.name;
       const header = table.createTHead().insertRow();
       const columns = shownColumns(page);
       for (const column of columns) header.append(element('th', '', column.name));
@@ -207,10 +276,13 @@
     let destroyed = false;
     let channel = null;
     let lastDirty = false;
-    try { channel = new BroadcastChannel('relatum:note-database:v1'); } catch (_) {}
+    try { channel = new BroadcastChannel('relatum:note-database:v2'); } catch (_) {}
+    const sessionKey = (path, databaseId) => path + '\0' + databaseId;
+    const sessionsFor = path => Array.from(sessions.values()).filter(session => session.path === path);
+    const present = session => !destroyed && sessions.get(sessionKey(session.path, session.databaseId)) === session;
 
     function dirty() {
-      return Array.from(sessions.values()).some(session => session.draft?.changed || session.draft?.composition || session.write);
+      return Array.from(sessions.values()).some(session => session.draft?.changed || session.draft?.composition || session.draft?.uploading || session.write);
     }
 
     function notifyDirty() {
@@ -220,12 +292,13 @@
       options.onDirtyChange?.(value);
     }
 
-    function getSession(path) {
-      if (!sessions.has(path)) sessions.set(path, {
-        path, page: null, query: makeQuery(), views: new Set(), draft: null, status: '', stale: true,
+    function getSession(path, databaseId) {
+      const key = sessionKey(path, databaseId);
+      if (!sessions.has(key)) sessions.set(key, {
+        path, databaseId, page: null, query: makeQuery(), views: new Set(), draft: null, status: '', stale: true,
         read: null, write: null, timer: 0, undo: [], redo: [],
       });
-      return sessions.get(path);
+      return sessions.get(key);
     }
 
     function isVisible(session) {
@@ -269,16 +342,17 @@
       for (const view of session.views) if (view.visible) draw(view);
     }
 
-    function markChanged(session) {
-      try { channel?.postMessage({ path: session.path }); } catch (_) {}
+    function markChanged(path, databaseId) {
+      try { channel?.postMessage({ path, databaseId }); } catch (_) {}
     }
 
-    async function refresh(path = activePath, followRead = false) {
-      const session = sessions.get(path);
-      if (!session) return;
-      if (session.read && !followRead) return;
-      session.stale = true;
-      return read(session);
+    async function refresh(path = activePath, followRead = false, databaseId) {
+      const targets = databaseId ? [sessions.get(sessionKey(path, databaseId))] : sessionsFor(path);
+      return Promise.all(targets.map(session => {
+        if (!session || session.read && !followRead) return;
+        session.stale = true;
+        return read(session);
+      }));
     }
 
     function stopRead(session) {
@@ -290,15 +364,16 @@
 
     function read(session) {
       if (session.read) return session.readDone;
-      if (!session.stale || !canRead(session) || session.write) return;
+      if (!session.stale || !canRead(session) || session.write || options.pending?.(session.path, session.databaseId)) return;
       session.stale = false;
       const controller = new AbortController();
       session.read = controller;
       const task = async () => {
         try {
-          const page = await loadPage(session.path, session.query, controller.signal);
+          const page = await loadPage(session.path, session.databaseId, session.query, controller.signal);
           if (!controller.signal.aborted && canRead(session)) {
-            if (!session.draft?.error) announce(session, '');
+            if (page.exists || page.deleted) session.creationFailed = false;
+            if (!session.draft?.error && !session.creationFailed) announce(session, '');
             if (session.renderedQuery !== JSON.stringify(session.query) || JSON.stringify(session.page) !== JSON.stringify(page)) applyPage(session, page);
           } else if (!controller.signal.aborted) session.stale = true;
         } catch (error) {
@@ -317,23 +392,25 @@
       return (session.readDone = task());
     }
 
-    async function write(session, action, replay = '') {
+    async function write(session, action, replay = '', file) {
       if (session.write) {
         try { await session.write; } catch (_) { return false; }
         if (session.write) return false;
       }
-      if (destroyed || sessions.get(session.path) !== session) return false;
+      if (!present(session)) return false;
       stopRead(session);
       session.stale = false;
       const requestedQuery = JSON.stringify(session.query);
-      const task = request(actionRoute, {
-        path: session.path, query: session.query, action: { revision: session.page?.revision, ...action },
-      });
+      const { path, databaseId, query } = session;
+      const operation = { revision: session.page?.revision, ...action };
+      const task = file ? request(importRoute, { path, query, ...file, target: { databaseId, ...operation } })
+        : request(actionRoute, { path, databaseId, query, action: operation });
       session.write = task;
       notifyDirty();
       try {
         const page = await task;
-        if (!destroyed && sessions.get(session.path) === session) {
+        if (present(session)) {
+          if (page.exists || page.deleted) session.creationFailed = false;
           announce(session, '');
           if (page.inverse?.length) {
             if (replay) {
@@ -357,11 +434,11 @@
             if (session.page) session.page = { ...session.page, revision: page.revision };
             session.stale = true;
           }
-          markChanged(session);
+          markChanged(session.path, session.databaseId);
         }
         return page;
       } catch (error) {
-        if (destroyed || sessions.get(session.path) !== session) return false;
+        if (!present(session)) return false;
         if (session.draft) session.draft.error = true;
         announce(session, error.code === 'options_in_use' ? error.message : error.status === 409
           ? tr(label('数据库已修改，已保留当前输入。请确认后重试。', 'The database changed. Your edit is kept. Review it and retry.'))
@@ -379,7 +456,7 @@
     }
 
     async function commitDraft(draft, nextCell, restoreFocus = false) {
-      if (draft.composition || draft.session.draft !== draft) return false;
+      if (draft.composition || draft.picker || draft.session.draft !== draft) return false;
       if (draft.saving) return draft.saving;
       const { session } = draft;
       dismissSuggestions(draft);
@@ -398,19 +475,25 @@
       };
       draft.saving = job().then(ok => {
         draft.saving = null;
-        if (!ok || session.draft !== draft) return ok;
-        session.draft = null;
-        notifyDirty();
-        if (draft.view.visible) draw(draft.view);
-        if (restoreFocus && draft.view.visible && isVisible(session)) focusCell(draft.view, nextCell || [draft.row.id, draft.column.id]);
-        else if (!draft.view.root.contains(document.activeElement)) releasePinned(draft.view);
-        return true;
+        if (ok) finishDraft(draft, nextCell, restoreFocus);
+        return ok;
       });
       return draft.saving;
     }
 
+    function finishDraft(draft, nextCell, restoreFocus) {
+      const { session, view, row, column } = draft;
+      if (session.draft !== draft) return;
+      session.draft = null;
+      notifyDirty();
+      if (view.visible) draw(view);
+      if (restoreFocus && view.visible && isVisible(session)) focusCell(view, nextCell || [row.id, column.id]);
+      else if (!view.root.contains(document.activeElement)) releasePinned(view);
+    }
+
     function abandonDraft(draft) {
       if (draft.saving) return;
+      removeAttachmentPicker(draft);
       dismissSuggestions(draft);
       const { session, row, column, view } = draft;
       if (session.draft !== draft) return;
@@ -591,8 +674,9 @@
       draft.suggestionFetch = null;
       draft.removePopupListeners?.();
       draft.removePopupListeners = null;
-      draft.popup?.remove();
+      const popup = draft.popup;
       draft.popup = null;
+      popup?.remove();
       draft.input?.setAttribute('aria-expanded', 'false');
       draft.input?.removeAttribute('aria-activedescendant');
     }
@@ -607,33 +691,193 @@
     }
 
     function selectSuggestion(draft, index) {
-      const items = draft.popup?.querySelectorAll('[role="option"]');
+      const list = draft.popup?.firstElementChild;
+      const items = list?.querySelectorAll('[role="option"]');
       if (!items?.length) return;
       draft.suggestionIndex = (index + items.length) % items.length;
       items.forEach((item, index) => item.setAttribute('aria-selected', String(index === draft.suggestionIndex)));
       const active = items[draft.suggestionIndex];
       draft.input.setAttribute('aria-activedescendant', active.id);
-      const bounds = active.getBoundingClientRect(), viewport = draft.popup.getBoundingClientRect();
-      if (bounds.top < viewport.top) draft.popup.scrollTop -= viewport.top - bounds.top;
-      else if (bounds.bottom > viewport.bottom) draft.popup.scrollTop += bounds.bottom - viewport.bottom;
+      const bounds = active.getBoundingClientRect(), viewport = list.getBoundingClientRect();
+      if (bounds.top < viewport.top) list.scrollTop -= viewport.top - bounds.top;
+      else if (bounds.bottom > viewport.bottom) list.scrollTop += bounds.bottom - viewport.bottom;
+    }
+
+    function attachmentDraftCurrent(draft) {
+      return draft.session.draft === draft && draft.input?.isConnected && draft.view.visible && isVisible(draft.session);
+    }
+
+    function restoreAttachmentPicker(draft) {
+      if (!attachmentDraftCurrent(draft)) return;
+      draft.input.focus({ preventScroll: true });
+      if (!draft.popup) suggestions(draft);
+    }
+
+    async function uploadAttachment(draft, file, revision) {
+      const { session, row, column, view } = draft;
+      const image = imageExtensions.includes(fileSuffix(file.name));
+      const limit = image ? 40 : 100;
+      if (!image && !acceptsFile(file)) {
+        announce(session, tr(label('不支持此附件格式。', 'This attachment format is not supported.')));
+        restoreAttachmentPicker(draft);
+        return;
+      }
+      if (!file.size || file.size > limit * 1024 * 1024) {
+        announce(session, tr(file.size ? label(`文件不能超过 ${limit} MiB。`, `The file cannot exceed ${limit} MiB.`) : label('文件为空。', 'The file is empty.')));
+        restoreAttachmentPicker(draft);
+        return;
+      }
+      const path = session.path;
+      dismissSuggestions(draft);
+      draft.uploading = true;
+      notifyDirty();
+      draft.input.setAttribute('aria-busy', 'true');
+      const task = (async () => {
+        try {
+          const data = await readFile(file);
+          if (!attachmentDraftCurrent(draft) || session.path !== path) return false;
+          return await write(session, { type: 'setCell', revision, row: row.id, column: column.id,
+            includeRow: view.pinned?.id === row.id }, '', { name: file.name, data });
+        } catch (error) {
+          if (attachmentDraftCurrent(draft)) announce(session, error.message || tr(label('读取文件失败。', 'Could not read the file.')));
+          return false;
+        }
+      })();
+      draft.saving = task;
+      const saved = await task;
+      if (!saved && session.draft === draft && draft.error && !draft.changed) {
+        const error = session.status;
+        await session.readDone;
+        if (session.draft === draft) {
+          draft.error = false;
+          if (attachmentDraftCurrent(draft)) announce(session, error);
+        }
+      }
+      draft.saving = null;
+      draft.uploading = false;
+      draft.input?.removeAttribute('aria-busy');
+      if (saved) finishDraft(draft, null, true);
+      notifyDirty();
+      if (!saved) restoreAttachmentPicker(draft);
+    }
+
+    function chooseAttachmentFile(draft) {
+      if (!attachmentDraftCurrent(draft) || draft.composition || draft.saving || draft.picker) return;
+      const revision = draft.session.page.revision;
+      const picker = element('input');
+      picker.type = 'file';
+      picker.accept = attachmentPickerAccept;
+      picker.hidden = true;
+      draft.picker = picker;
+      draft.view.root.append(picker);
+      const complete = file => {
+        if (draft.picker !== picker) return;
+        removeAttachmentPicker(draft);
+        if (!attachmentDraftCurrent(draft)) return;
+        if (file) void uploadAttachment(draft, file, revision);
+        else restoreAttachmentPicker(draft);
+      };
+      picker.addEventListener('change', () => complete(picker.files?.[0]), { once: true });
+      picker.addEventListener('cancel', () => complete(), { once: true });
+      picker.click();
+    }
+
+    function removeAttachmentPicker(draft) {
+      draft.picker?.remove();
+      draft.picker = null;
+    }
+
+    async function downloadAttachment(draft, control) {
+      if (!attachmentDraftCurrent(draft) || !draft.value?.exists || draft.downloading || draft.saving) return;
+      const { session, row, column, value } = draft;
+      const { path, databaseId } = session;
+      draft.downloading = true;
+      if (document.activeElement === control) draft.input.focus({ preventScroll: true });
+      control.disabled = true;
+      try {
+        const result = await request(downloadRoute, { path, databaseId, row: row.id, column: column.id, value });
+        if (isVisible(session) && session.path === path) options.onNotice?.(tr(label(`已保存到下载文件夹 · ${result.name}`, `Saved to Downloads · ${result.name}`)));
+      } catch (error) {
+        if (!isVisible(session) || session.path !== path) return;
+        if (error.status === 404 || error.status === 409) {
+          if (session.draft === draft) abandonDraft(draft);
+          void refresh(path, true, databaseId);
+        }
+        options.onError?.(error);
+      } finally {
+        draft.downloading = false;
+        control.disabled = false;
+      }
     }
 
     function suggestions(draft) {
       dismissSuggestions(draft);
-      if (draft.composition || !draft.input || !isVisible(draft.session)) return;
+      if (draft.composition || draft.saving || draft.picker || !attachmentDraftCurrent(draft)) return;
+      const popup = element('div', 'note-database-suggestions');
+      const list = element('div', 'note-database-suggestion-list');
+      list.id = draft.input.getAttribute('aria-controls');
+      list.setAttribute('role', 'listbox');
+      list.setAttribute('aria-label', tr(label('匹配的附件', 'Matching attachments')));
+      const actions = element('div', 'note-database-attachment-actions');
+      if (draft.value?.exists) {
+        const download = button(tr(label('下载文件', 'Download file')), () => void downloadAttachment(draft, download), 'download-attachment');
+        download.prepend(icon('download'));
+        download.disabled = Boolean(draft.downloading);
+        actions.append(download);
+      }
+      actions.append(button(tr(label('上传文件', 'Upload file')), () => chooseAttachmentFile(draft), 'upload-attachment'));
+      popup.append(list, actions);
+      popup.addEventListener('focusout', event => {
+        if (draft.popup === popup) leaveAttachmentEditor(draft, event.relatedTarget);
+      });
+      popup.addEventListener('keydown', event => {
+        event.stopPropagation();
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          draft.input.focus({ preventScroll: true });
+          dismissSuggestions(draft);
+        }
+        if (event.key === 'Tab' && event.shiftKey && event.target === actions.querySelector('button:not(:disabled)')) {
+          event.preventDefault();
+          draft.input.focus({ preventScroll: true });
+        }
+      });
+      // Use the top layer when available so a scrolling table never clips the list.
+      if (popup.showPopover) popup.setAttribute('popover', 'manual');
+      draft.view.root.append(popup);
+      draft.popup = popup;
+      if (popup.showPopover) popup.showPopover();
+      const rect = draft.input.getBoundingClientRect();
+      const viewportWidth = document.documentElement.clientWidth;
+      const viewportHeight = document.documentElement.clientHeight;
+      const width = Math.min(Math.max(rect.width, 224), viewportWidth - 16);
+      const below = viewportHeight - rect.bottom - 8, above = rect.top - 8;
+      const openAbove = below < 180 && above > below;
+      popup.style.width = width + 'px';
+      popup.style.left = Math.max(8, Math.min(rect.left, viewportWidth - width - 8)) + 'px';
+      popup.style.maxHeight = Math.max(72, Math.min(256, openAbove ? above : below)) + 'px';
+      if (openAbove) popup.style.bottom = viewportHeight - rect.top + 'px';
+      else popup.style.top = rect.bottom + 'px';
+      draft.input.setAttribute('aria-expanded', 'true');
+      const onScroll = event => { if (!draft.picker && anchorMoved(draft.input, rect, event.target)) dismissSuggestions(draft); };
+      const onResize = () => { if (!draft.picker) dismissSuggestions(draft); };
+      document.addEventListener('scroll', onScroll, { capture: true, passive: true });
+      window.addEventListener('resize', onResize);
+      draft.removePopupListeners = () => {
+        document.removeEventListener('scroll', onScroll, true);
+        window.removeEventListener('resize', onResize);
+      };
+      draft.suggestionItems = [];
+      draft.suggestionIndex = -1;
       const query = draft.input.value.trim();
       const load = async () => {
         const controller = new AbortController();
         draft.suggestionFetch = controller;
         try {
           const result = await request(actionRoute, {
-            path: draft.session.path, action: { type: 'searchAttachments', query },
+            path: draft.session.path, databaseId: draft.session.databaseId, action: { type: 'searchAttachments', query },
           }, controller.signal);
-          if (controller.signal.aborted || draft.session.draft !== draft || draft.composition
-              || document.activeElement !== draft.input || !isVisible(draft.session)) return;
-          const popup = element('div', 'note-database-suggestions');
-          popup.id = draft.input.getAttribute('aria-controls');
-          popup.setAttribute('role', 'listbox');
+          if (controller.signal.aborted || draft.popup !== popup || !attachmentDraftCurrent(draft) || draft.composition) return;
           const items = result.items.filter(item => item.exists !== false);
           if (draft.value) items.push(null);
           draft.suggestionItems = items;
@@ -641,44 +885,26 @@
           items.forEach((item, index) => {
             const option = button(item?.name || tr(label('清除链接', 'Clear link')), () => pickAttachment(draft, item));
             option.tabIndex = -1;
-            option.id = popup.id + '-' + index;
+            option.id = list.id + '-' + index;
             option.setAttribute('role', 'option');
             option.setAttribute('aria-selected', 'false');
             option.addEventListener('pointerdown', event => event.preventDefault());
             if (item) option.append(element('small', '', item.kind === 'note' ? item.path : tr(label('已导入附件', 'Imported attachment'))));
-            popup.append(option);
+            list.append(option);
           });
-          if (!items.length) popup.append(element('div', 'note-database-suggestion-empty', tr(label('没有匹配文件', 'No matching files'))));
-          // Use the top layer when available so a scrolling table never clips the list.
-          if (popup.showPopover) popup.setAttribute('popover', 'manual');
-          draft.view.root.append(popup);
-          draft.popup = popup;
-          if (popup.showPopover) popup.showPopover();
-          const rect = draft.input.getBoundingClientRect();
-          const viewportWidth = document.documentElement.clientWidth;
-          const viewportHeight = document.documentElement.clientHeight;
-          const width = Math.min(Math.max(rect.width, 224), viewportWidth - 16);
-          const below = viewportHeight - rect.bottom - 8;
-          popup.style.width = width + 'px';
-          popup.style.left = Math.max(8, Math.min(rect.left, viewportWidth - width - 8)) + 'px';
-          popup.style.maxHeight = Math.max(70, Math.min(240, below < 140 ? rect.top - 8 : below)) + 'px';
-          if (below < 140) popup.style.bottom = viewportHeight - rect.top + 'px';
-          else popup.style.top = rect.bottom + 'px';
-          draft.input.setAttribute('aria-expanded', 'true');
-          const onScroll = event => { if (!popup.contains(event.target)) dismissSuggestions(draft); };
-          const onResize = () => dismissSuggestions(draft);
-          document.addEventListener('scroll', onScroll, { capture: true, passive: true });
-          window.addEventListener('resize', onResize);
-          draft.removePopupListeners = () => {
-            document.removeEventListener('scroll', onScroll, true);
-            window.removeEventListener('resize', onResize);
-          };
+          if (!items.length) list.append(element('div', 'note-database-suggestion-empty', tr(label('没有匹配文件', 'No matching files'))));
         } catch (error) {
-          if (!controller.signal.aborted && isVisible(draft.session) && document.activeElement === draft.input)
+          if (!controller.signal.aborted && draft.popup === popup && attachmentDraftCurrent(draft))
             announce(draft.session, tr(label('文件搜索失败，请重试。', 'Could not find files. Please try again.')));
         }
       };
       draft.suggestionTimer = setTimeout(load, query ? 150 : 0);
+    }
+
+    function leaveAttachmentEditor(draft, next) {
+      if (draft.picker || draft.uploading || next === draft.input || draft.popup?.contains(next)) return;
+      dismissSuggestions(draft);
+      if (!draft.composition && !draft.error) void commitDraft(draft);
     }
 
     function editorFor(draft) {
@@ -690,6 +916,7 @@
       field.value = attachment ? draft.term ?? draft.value?.name ?? '' : draft.value ?? '';
       if (field instanceof HTMLTextAreaElement) field.rows = 1;
       field.className = 'note-database-cell-input';
+      field.dataset.dbType = column.type;
       if (type === 'number') field.step = 'any';
       draft.input = field;
       if (attachment) {
@@ -713,6 +940,11 @@
         }
       };
       field.addEventListener('input', event => { if (!draft.composition && !composing(event)) update(); });
+      if (type === 'date') field.addEventListener('change', () => {
+        if (!draft.datePickerOpen) return;
+        draft.datePickerOpen = false;
+        if (draft.changed) void commitDraft(draft, null, true);
+      });
       field.addEventListener('compositionstart', () => {
         dismissSuggestions(draft);
         draft.composition = new Promise(resolve => { draft.endComposition = resolve; });
@@ -725,17 +957,21 @@
           if (session.draft === draft && draft.input === field) update();
           draft.endComposition?.();
           notifyDirty();
-          if (!draft.error && session.draft === draft && document.activeElement !== field) void commitDraft(draft);
+          if (!draft.error && session.draft === draft && document.activeElement !== field) {
+            if (attachment) leaveAttachmentEditor(draft, document.activeElement);
+            else void commitDraft(draft);
+          }
         }, 0);
       });
-      field.addEventListener('focus', () => { if (attachment) suggestions(draft); });
-      field.addEventListener('blur', () => {
-        dismissSuggestions(draft);
-        if (!draft.composition && !draft.error) void commitDraft(draft);
+      field.addEventListener('focus', () => { if (attachment && !draft.popup) suggestions(draft); });
+      field.addEventListener('blur', event => {
+        if (attachment) leaveAttachmentEditor(draft, event.relatedTarget);
+        else if (!draft.composition && !draft.error) void commitDraft(draft);
       });
       field.addEventListener('keydown', event => {
         event.stopPropagation();
-        if (draft.composition || composing(event)) return;
+        if (type === 'date') draft.datePickerOpen = false;
+        if (draft.composition || draft.uploading || draft.picker || composing(event)) return;
         if (attachment && draft.popup && ['ArrowUp', 'ArrowDown'].includes(event.key)) {
           event.preventDefault();
           selectSuggestion(draft, draft.suggestionIndex < 0 ? event.key === 'ArrowDown' ? 0 : -1
@@ -751,6 +987,14 @@
             pickAttachment(draft, draft.suggestionItems[draft.suggestionIndex]);
             return;
           }
+          if (attachment && draft.popup && event.key === 'Tab' && !event.shiftKey) {
+            const action = draft.popup.querySelector('.note-database-attachment-actions button:not(:disabled)');
+            if (action) {
+              event.preventDefault();
+              action.focus({ preventScroll: true });
+              return;
+            }
+          }
           const next = event.key === 'Tab' && adjacentCell(view, row, column, 'Tab', event.shiftKey);
           if (event.key === 'Enter' || next) event.preventDefault();
           void commitDraft(draft, next, event.key === 'Enter' || Boolean(next));
@@ -759,7 +1003,7 @@
       return field;
     }
 
-    function beginEdit(view, row, column, value) {
+    function beginEdit(view, row, column, value, pointer) {
       const { session } = view;
       if (session.write || session.draft || !isVisible(session)) return;
       if (column.type === 'checkbox') {
@@ -779,9 +1023,18 @@
       const field = editorFor(draft);
       cell.replaceChildren(field);
       view.cells.get(row.id).set(column.id, field);
-      field.focus();
+      field.focus({ preventScroll: true });
       if (draft.changed) notifyDirty();
-      else if ('select' in field && ['textarea', 'text'].includes(field.type)) field.select();
+      else if (field instanceof HTMLTextAreaElement && pointer) {
+        const offset = pointer.offset ?? field.value.length;
+        field.setSelectionRange(offset, offset);
+      } else if ('select' in field && ['textarea', 'text'].includes(field.type)) field.select();
+      if (column.type === 'date' && pointer && field.showPicker) {
+        try {
+          field.showPicker();
+          draft.datePickerOpen = true;
+        } catch (_) { /* The focused native input still accepts dates. */ }
+      }
     }
 
     function saveCell(view, row, column, value) {
@@ -796,7 +1049,7 @@
         if (value.kind === 'note') {
           const originalPage = session.page;
           const originalQuery = JSON.stringify(session.query);
-          const page = await loadPage(session.path, session.query, AbortSignal.timeout(10000));
+          const page = await loadPage(session.path, session.databaseId, session.query, AbortSignal.timeout(10000));
           if (!visiblyCurrent() || session.write || session.page !== originalPage || JSON.stringify(session.query) !== originalQuery) return;
           const current = page.rows.find(item => item.id === row.id)?.values[column.id];
           if (JSON.stringify(originalPage) !== JSON.stringify(page)) applyPage(session, page);
@@ -806,36 +1059,54 @@
         }
       } catch (error) {
         if (!visiblyCurrent()) return;
-        if (error.status === 404) void refresh(session.path);
+        if (error.status === 404) void refresh(session.path, false, session.databaseId);
         else options.onError?.(error);
       }
     }
 
     function cellControl(view, row, column) {
       const value = row.values[column.id];
-      const name = display(value, column, tr);
+      const choices = choiceType(column.type) ? selectedChoices(value, column) : null;
+      const name = choices ? choices.map(option => option.name).join('、') : display(value, column, tr);
       const liveLink = column.type === 'attachment' && value?.exists;
-      if (view.readOnly && !liveLink) return element('span', 'note-database-cell-value', name);
-      const control = button(name, event => {
+      const interactive = !view.readOnly || liveLink;
+      const control = interactive ? button(name, event => {
+        const gesture = view.cellGesture;
+        view.cellGesture = null;
+        if (event.detail && gesture?.extended) return;
         const open = liveLink && (view.readOnly || event.ctrlKey || event.metaKey);
+        const pointer = event.detail ? { offset: column.type === 'text' ? clickedTextOffset(control, event) : null } : null;
         void afterCellSave(view, () => {
           if (open) return openLink(view, row, column, value);
           if (!view.readOnly) {
             selectCell(view, [row.id, column.id], event.shiftKey, true);
-            if (column.type === 'checkbox') beginEdit(view, row, column);
+            if (!(event.shiftKey || event.ctrlKey || event.metaKey || event.altKey)) beginEdit(view, row, column, undefined, pointer);
           }
         });
-      });
+      }) : element('span', '', name);
       control.className = 'note-database-cell-value' + (liveLink ? ' is-link' : '');
+      control.dataset.dbType = column.type;
       control.setAttribute('aria-label', name ? column.name + ' · ' + name : column.name);
       if (name) control.title = name;
       if (!view.readOnly) control.tabIndex = -1;
-      if (choiceType(column.type) && name) control.replaceChildren(element('span', 'note-database-choice', name));
-      if (column.type === 'checkbox') {
+      if (choices?.length) {
+        const chips = element('span', 'note-database-choices');
+        for (const option of choices) chips.append(choiceChip(option, column.type));
+        control.replaceChildren(chips);
+      } else if (column.type === 'checkbox') {
         control.setAttribute('role', 'checkbox');
         control.setAttribute('aria-checked', String(Boolean(value)));
-        control.textContent = value ? '☑' : '☐';
+        if (view.readOnly) control.setAttribute('aria-readonly', 'true');
+        const mark = element('span', 'note-database-checkbox');
+        mark.setAttribute('aria-hidden', 'true');
+        if (value) mark.append(icon('check'));
+        control.replaceChildren(mark);
+      } else if (name && (column.type === 'date' || liveLink)) {
+        const content = element('span', 'note-database-icon-value');
+        content.append(icon(column.type === 'date' ? 'date' : 'file'), element('span', '', name));
+        control.replaceChildren(content);
       }
+      if (!interactive) return control;
       control.addEventListener('keydown', event => {
         if (view.readOnly || composing(event)) return;
         const mod = event.ctrlKey || event.metaKey;
@@ -866,19 +1137,21 @@
         }
       });
       if (!view.readOnly) {
-        control.addEventListener('dblclick', event => {
-          if (column.type !== 'checkbox' && !event.ctrlKey && !event.metaKey) beginEdit(view, row, column);
-        });
         control.addEventListener('focus', () => {
           if (!sameCell(view.selection?.head, [row.id, column.id])) selectCell(view, [row.id, column.id], false, false);
         });
         control.addEventListener('pointerdown', event => {
-          if (event.button !== 0 || event.ctrlKey || event.metaKey) return;
-          view.dragCell = true;
+          if (event.button !== 0) return;
+          view.cellGesture = null;
+          if (event.ctrlKey || event.metaKey) return;
+          view.cellGesture = { id: event.pointerId, start: [row.id, column.id] };
           selectCell(view, [row.id, column.id], event.shiftKey, false);
         });
         control.addEventListener('pointerenter', event => {
-          if (view.dragCell && event.buttons === 1) selectCell(view, [row.id, column.id], true, true);
+          const gesture = view.cellGesture, target = [row.id, column.id];
+          if (!gesture || gesture.ended || gesture.id !== event.pointerId || event.pointerType === 'touch' || event.buttons !== 1) return;
+          if (!sameCell(gesture.start, target)) gesture.extended = true;
+          if (gesture.extended) selectCell(view, target, true, true);
         });
       }
       return control;
@@ -893,7 +1166,7 @@
       else void read(session);
     }
 
-    function panelAt(view, anchor, kind, content) {
+    function panelAt(view, anchor, kind, content, { name, returnFocus } = {}) {
       const same = view.panel?.kind === kind && view.panel.anchor === anchor;
       view.panel?.close();
       if (same || !anchor?.isConnected) return;
@@ -902,7 +1175,7 @@
       const choicesPortal = element('div', 'note-database-choice-portal');
       panel.append(surface, choicesPortal);
       panel.setAttribute('role', 'dialog');
-      panel.setAttribute('aria-label', anchor.getAttribute('aria-label') || anchor.textContent);
+      panel.setAttribute('aria-label', name || anchor.getAttribute('aria-label') || anchor.textContent);
       if (panel.showPopover) panel.setAttribute('popover', 'manual');
       const controller = new AbortController();
       const choices = window.RelatumReviewControls?.createManager(surface, choicesPortal);
@@ -911,10 +1184,10 @@
         choices?.dispose();
         panel.remove();
         if (view.panel?.close === close) view.panel = null;
-        if (restore && anchor.isConnected) anchor.focus({ preventScroll: true });
+        if (restore && anchor.isConnected) (returnFocus?.() || anchor).focus({ preventScroll: true });
       };
       view.panel = { anchor, kind, close, choices };
-      const initial = content(surface, close);
+      const initial = content(surface, close, { popup: panel, portal: choicesPortal, signal: controller.signal });
       view.root.append(panel);
       panel.showPopover?.();
       const rect = anchor.getBoundingClientRect(), width = document.documentElement.clientWidth;
@@ -929,7 +1202,7 @@
         if (!panel.contains(event.target) && !anchor.contains(event.target)) close();
       }, { signal });
       document.addEventListener('scroll', event => {
-        if (!panel.contains(event.target)) close();
+        if (anchorMoved(anchor, rect, event.target)) close();
       }, { signal, capture: true, passive: true });
       window.addEventListener('resize', close.bind(null, false), { signal });
       panel.addEventListener('keydown', event => {
@@ -937,9 +1210,11 @@
         if (event.key === 'Escape') { event.stopPropagation(); close(true); return; }
         if (event.target.closest('.review-choice-trigger') || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
         if (event.target.closest('input,textarea,select') && (kind !== 'addColumn' || event.key !== 'ArrowDown')) return;
-        const buttons = Array.from(surface.querySelectorAll('button:not(:disabled):not(.review-choice-trigger)'));
+        const buttons = Array.from(surface.querySelectorAll('button:not(:disabled):not(.review-choice-trigger):not(.note-database-choice-more)'));
         if (!buttons.length) return;
-        const index = buttons.indexOf(document.activeElement);
+        const current = document.activeElement.classList.contains('note-database-choice-more')
+          ? document.activeElement.parentElement.querySelector('[data-choice]') : document.activeElement;
+        const index = buttons.indexOf(current);
         const next = index < 0 ? 0 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
         event.preventDefault(); event.stopPropagation(); buttons[next].focus();
       });
@@ -964,7 +1239,7 @@
             void write(view.session, { type: 'addColumn', name: name.value.trim() || generated,
               columnType: type, language: options.language?.() });
           }, 'type-' + type);
-          option.prepend(element('span', 'note-database-type', typeSymbols[type]));
+          option.prepend(typeIcon(type));
           types.append(option);
         }
         panel.append(name, types);
@@ -972,41 +1247,294 @@
       });
     }
 
-    function moveColumn(view, source, target) {
-      const order = view.session.page.columns.map(column => column.id);
-      const from = order.indexOf(source), to = order.indexOf(target);
-      if (from < 0 || to < 0 || from === to) return;
-      order.splice(from, 1);
-      order.splice(to, 0, source);
+    function moveColumn(view, source, target, side) {
+      const columns = view.session.page.columns;
+      const visible = shownColumns(view.session.page).map(column => column.id);
+      if (source === target || !visible.includes(source) || !visible.includes(target)) return;
+      const moved = visible.filter(id => id !== source);
+      moved.splice(moved.indexOf(target) + Number(side === 'after'), 0, source);
+      if (moved.every((id, index) => id === visible[index])) return;
+      let next = 0;
+      const order = columns.map(column => column.hidden ? column.id : moved[next++]);
       return write(view.session, { type: 'columnLayout', column: source, order });
     }
 
     function choiceEditor(view, anchor, row, column) {
-      panelAt(view, anchor, 'cellChoices', (panel, close) => {
-        const current = row.values[column.id];
+      const cell = anchor.parentElement;
+      const { session } = view;
+      panelAt(view, cell, 'cellChoices', (panel, close, parent) => {
         const multi = column.type === 'multiSelect';
-        const choices = new Set(multi ? current || [] : current ? [current] : []);
-        const save = async value => {
-          close(true);
-          await saveCell(view, row, column, value);
+        const configurable = column.type !== 'status';
+        const search = input('text', tr(label('搜索选项', 'Search options')));
+        search.placeholder = tr(label('搜索或创建选项', 'Search or create an option'));
+        search.maxLength = 120;
+        const list = element('div', 'note-database-choice-list');
+        const latest = () => session.page.columns.find(field => field.id === column.id);
+        const alive = () => panel.isConnected && isVisible(session);
+        const selection = () => {
+          const value = visibleRows(view).find(record => record.id === row.id)?.values[column.id];
+          return new Set(multi ? value || [] : value ? [value] : []);
         };
-        for (const option of column.choices || []) {
-          const item = button(option.name, () => {
-            if (!multi) { void save(option.id); return; }
-            if (!choices.delete(option.id)) choices.add(option.id);
-            item.setAttribute('aria-pressed', String(choices.has(option.id)));
-          });
-          item.className = 'note-database-menu-option';
-          item.setAttribute('aria-pressed', String(choices.has(option.id)));
-          panel.append(item);
+        let busy = false, optionMenu = null;
+        parent.signal.addEventListener('abort', () => optionMenu?.close(), { once: true });
+        const save = async (action, focusId) => {
+          if (busy || session.write || !alive()) return;
+          busy = true;
+          panel.setAttribute('aria-busy', 'true');
+          for (const item of panel.querySelectorAll('button')) item.disabled = true;
+          const page = await write(session, action);
+          busy = false;
+          if (!alive()) return;
+          panel.removeAttribute('aria-busy');
+          if (!page) {
+            for (const item of panel.querySelectorAll('button')) item.disabled = false;
+            if (list.isConnected) listView();
+            else panel.querySelector('input')?.focus();
+            return;
+          }
+          if (!multi && ['setCell', 'createChoiceValue'].includes(action.type)) { close(true); return; }
+          listView(focusId);
+        };
+        const setValue = (value, focusId) => save({ type: 'setCell', row: row.id, column: column.id, value,
+          includeRow: view.pinned?.id === row.id }, focusId);
+        const updateChoices = (choices, clearRemoved = false) => ({ type: 'setChoices', column: column.id, choices, clearRemoved });
+        const fold = text => text.trim().normalize('NFC').toLowerCase();
+        function listView(focusId, focusMore = false) {
+          optionMenu?.close();
+          if (search.parentNode !== panel && configurable) panel.replaceChildren(search, list);
+          else if (list.parentNode !== panel) panel.replaceChildren(list);
+          const options = latest()?.choices || [];
+          const selected = selection();
+          const term = configurable ? fold(search.value) : '';
+          const entries = [];
+          let target;
+          for (const option of options) {
+            if (!fold(option.name).includes(term)) continue;
+            const entry = element('div', 'note-database-choice-row');
+            const item = button('', () => {
+              if (!multi) { void setValue(option.id, option.id); return; }
+              const next = selection();
+              if (!next.delete(option.id)) next.add(option.id);
+              void setValue(Array.from(next), option.id);
+            });
+            item.className = 'note-database-menu-option';
+            item.dataset.choice = option.id;
+            item.append(choiceChip(option, column.type), icon('check'));
+            item.setAttribute('aria-pressed', String(selected.has(option.id)));
+            entry.append(item);
+            let more;
+            if (configurable) {
+              more = iconButton('more', tr(label('编辑选项', 'Edit option')) + ' · ' + option.name, () => editOption(option, more));
+              more.classList.add('note-database-choice-more');
+              more.setAttribute('aria-haspopup', 'dialog');
+              more.setAttribute('aria-expanded', 'false');
+              entry.append(more);
+            }
+            entries.push(entry);
+            if (option.id === focusId) target = focusMore ? more : item;
+          }
+          if (term && !options.some(option => fold(option.name) === term)) {
+            const create = button(tr(label(`创建「${search.value.trim()}」`, `Create “${search.value.trim()}”`)), () => {
+              void save({ type: 'createChoiceValue', row: row.id, column: column.id, name: search.value.trim(),
+                includeRow: view.pinned?.id === row.id });
+            }, 'create-choice');
+            entries.push(create);
+          }
+          if (!entries.length && configurable) entries.push(element('div', 'note-database-choice-empty', tr(label('输入名称以创建选项', 'Type a name to create an option'))));
+          if (selected.size) entries.push(button(tr(label('清空', 'Clear')), () => setValue(null)));
+          list.replaceChildren(...entries);
+          if (busy) for (const item of list.querySelectorAll('button')) item.disabled = true;
+          if (focusId || !panel.contains(document.activeElement)) (target || (configurable ? search : list.querySelector('button')))?.focus({ preventScroll: true });
         }
-        if (multi) panel.append(button(tr(label('完成', 'Done')), () => save(Array.from(choices))));
-        panel.append(button(tr(label('清空', 'Clear')), () => save(null)));
-        if (!column.choices?.length) panel.append(button(tr(label('管理选项', 'Manage options')), () => {
-          close();
-          editChoices(view, anchor, column);
-        }));
-      });
+
+        function editOption(option, trigger) {
+          if (optionMenu?.trigger === trigger) { optionMenu.close(true); return; }
+          optionMenu?.close();
+          const submenu = element('div', 'note-database-panel note-database-option-menu');
+          submenu.setAttribute('role', 'dialog');
+          submenu.setAttribute('aria-label', tr(label('编辑选项', 'Edit option')));
+          const content = element('div', 'note-database-panel-content');
+          submenu.append(content);
+          const events = new AbortController();
+          const { signal } = events;
+          let committed = latest()?.choices.find(item => item.id === option.id);
+          if (!committed) { listView(); return; }
+          const name = input('text', tr(label('选项名称', 'Option name')), committed.name);
+          name.maxLength = 120;
+          const header = element('div', 'note-database-option-heading');
+          const tones = element('div', 'note-database-choice-tones');
+          tones.setAttribute('role', 'group');
+          tones.setAttribute('aria-label', tr(label('颜色', 'Colors')));
+          const message = element('div', 'note-database-option-error');
+          message.hidden = true;
+          const topLayer = typeof submenu.showPopover === 'function';
+          let compact = false;
+          const closeMenu = (restore = false) => {
+            events.abort();
+            submenu.remove();
+            panel.inert = false;
+            panel.classList.remove('note-database-options-covered');
+            trigger.setAttribute('aria-expanded', 'false');
+            if (optionMenu?.trigger === trigger) optionMenu = null;
+            if (restore && alive()) listView(option.id, true);
+          };
+          optionMenu = { trigger, close: closeMenu };
+          trigger.setAttribute('aria-expanded', 'true');
+
+          function place() {
+            const bounds = parent.popup.getBoundingClientRect();
+            const anchor = trigger.getBoundingClientRect();
+            const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
+            const edge = 8, gap = 5;
+            submenu.style.width = '';
+            const sideWidth = submenu.offsetWidth;
+            const fitsRight = bounds.right + gap + sideWidth <= width - edge;
+            const fitsLeft = bounds.left - gap - sideWidth >= edge;
+            compact = !fitsRight && !fitsLeft;
+            panel.inert = compact;
+            panel.classList.toggle('note-database-options-covered', compact);
+            submenu.dataset.placement = compact ? 'over' : fitsRight ? 'right' : 'left';
+            if (compact) submenu.style.width = Math.min(parent.popup.offsetWidth, width - 2 * edge) + 'px';
+            content.style.maxHeight = Math.max(0, height - 2 * edge - 2) + 'px';
+            const left = compact ? Math.max(edge, Math.min(bounds.left, width - submenu.offsetWidth - edge))
+              : fitsRight ? bounds.right + gap : bounds.left - gap - sideWidth;
+            const top = Math.max(edge, Math.min(compact ? bounds.top : anchor.top - gap, height - submenu.offsetHeight - edge));
+            const base = topLayer ? { left: 0, top: 0 } : bounds;
+            submenu.style.left = left - base.left + 'px';
+            submenu.style.top = top - base.top + 'px';
+          }
+
+          const showColors = () => {
+            for (const swatch of tones.children) swatch.setAttribute('aria-pressed', String(swatch.dataset.color === committed.tone));
+            const chip = trigger.parentElement.querySelector('.note-database-choice');
+            if (chip) { chip.dataset.dbTone = committed.tone; chip.textContent = committed.name; }
+          };
+          async function writeOption(patch) {
+            if (busy || session.write || signal.aborted || !alive()) return;
+            const choices = latest()?.choices;
+            const current = choices?.find(item => item.id === option.id);
+            if (!current) { closeMenu(true); return; }
+            if (Object.keys(patch).every(key => patch[key] === current[key])) {
+              if (name.value.trim() === committed.name) closeMenu(true);
+              return;
+            }
+            const active = document.activeElement;
+            busy = true;
+            submenu.setAttribute('aria-busy', 'true');
+            message.hidden = true;
+            for (const item of submenu.querySelectorAll('button')) item.disabled = true;
+            const beforeName = committed.name;
+            const page = await write(session, updateChoices(choices.map(item => item.id === option.id ? { ...item, ...patch } : item)));
+            const error = session.status;
+            if (!page && !signal.aborted) await session.readDone;
+            busy = false;
+            if (signal.aborted || !alive()) {
+              if (page && alive() && !optionMenu) listView();
+              return;
+            }
+            submenu.removeAttribute('aria-busy');
+            for (const item of submenu.querySelectorAll('button')) item.disabled = false;
+            const saved = (page?.columns?.find(field => field.id === column.id) || latest())?.choices.find(item => item.id === option.id);
+            if (!saved) { closeMenu(true); return; }
+            committed = saved;
+            showColors();
+            const draft = name.value.trim();
+            if (!page) {
+              if (draft === beforeName) name.value = committed.name;
+              message.textContent = error || tr(label('操作失败，请重试。', 'Could not save. Please try again.'));
+              message.hidden = false;
+              place();
+              active?.focus({ preventScroll: true });
+            } else if (draft === (patch.name ?? beforeName)) closeMenu(true);
+            else active?.focus({ preventScroll: true });
+          }
+          const rename = () => {
+            const value = name.value.trim();
+            if (!value) { name.focus(); return; }
+            void writeOption({ name: value });
+          };
+          for (const [color, names] of Object.entries(choiceTones)) {
+            const swatch = button('', () => void writeOption({ tone: color }));
+            const square = element('span', 'note-database-color-square');
+            square.dataset.dbTone = color;
+            square.setAttribute('aria-hidden', 'true');
+            swatch.dataset.color = color;
+            swatch.append(square, element('span', '', tr(names)), icon('check'));
+            tones.append(swatch);
+          }
+          const remove = button(tr(label('删除选项', 'Delete option')), async () => {
+            const revision = session.page.revision;
+            close(true);
+            if (!await confirmEdit(view, label('删除此选项会清除整列对它的引用。继续？', 'Delete this option and clear all its references in this field?'))) return;
+            if (session.page.revision !== revision) {
+              announce(session, tr(label('选项已变化，请重新打开菜单确认。', 'Options changed. Reopen the menu to confirm.')));
+              return;
+            }
+            await write(session, updateChoices(latest().choices.filter(item => item.id !== option.id), true));
+          });
+          remove.className = 'note-database-option-delete';
+          remove.prepend(icon('trash'));
+          header.append(iconButton('prev', tr(label('返回选项', 'Back to options')), () => closeMenu(true)),
+            name, iconButton('check', tr(label('保存名称', 'Save name')), rename));
+          content.append(header, remove, element('div', 'note-database-option-color-heading', tr(label('颜色', 'Colors'))), tones, message);
+          showColors();
+          if (topLayer) submenu.setAttribute('popover', 'manual');
+          else submenu.classList.add('note-database-option-menu-fallback');
+          parent.portal.append(submenu);
+          submenu.showPopover?.();
+          place();
+          document.addEventListener('pointerdown', event => {
+            if (!submenu.contains(event.target) && !trigger.contains(event.target)) closeMenu();
+          }, { signal });
+          panel.addEventListener('scroll', () => {
+            if (compact) return;
+            const anchor = trigger.getBoundingClientRect(), bounds = panel.getBoundingClientRect();
+            if (anchor.bottom <= bounds.top || anchor.top >= bounds.bottom) closeMenu();
+            else place();
+          }, { signal, passive: true });
+          submenu.addEventListener('keydown', event => {
+            if (composing(event)) return;
+            if (event.key === 'Escape') {
+              event.preventDefault(); event.stopPropagation(); closeMenu(true);
+            } else if (event.key === 'Enter' && event.target === name) {
+              event.preventDefault(); event.stopPropagation(); rename();
+            } else if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+              if (event.target === name && event.key !== 'ArrowDown') return;
+              const buttons = Array.from(tones.children);
+              if (!tones.contains(event.target) && event.target !== name) return;
+              const index = buttons.indexOf(event.target);
+              const next = event.key === 'Home' || index < 0 ? 0 : event.key === 'End' ? buttons.length - 1
+                : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+              event.preventDefault(); event.stopPropagation(); buttons[next].focus();
+            } else if (event.key === 'Tab') {
+              const controls = Array.from(submenu.querySelectorAll('input:not(:disabled),button:not(:disabled)'));
+              const edge = event.shiftKey ? controls[0] : controls.at(-1);
+              if (event.target === edge) {
+                event.preventDefault(); (event.shiftKey ? controls.at(-1) : controls[0]).focus();
+              }
+            }
+          }, { signal });
+          name.focus({ preventScroll: true });
+          name.select();
+        }
+
+        search.addEventListener('input', event => { if (!composing(event)) listView(); });
+        search.addEventListener('compositionend', () => listView());
+        search.addEventListener('keydown', event => {
+          if (composing(event) || !['Enter', 'ArrowDown'].includes(event.key)) return;
+          event.preventDefault(); event.stopPropagation();
+          const first = list.querySelector('button');
+          if (event.key === 'ArrowDown') first?.focus();
+          else {
+            const exact = latest().choices.find(option => fold(option.name) === fold(search.value));
+            const target = exact ? list.querySelector('[data-choice="' + exact.id + '"]')
+              : search.value.trim() ? list.querySelector('[data-db-role="create-choice"]') : first;
+            target?.click();
+          }
+        });
+        listView();
+        return configurable ? search : list.querySelector('button');
+      }, { name: column.name, returnFocus: () => view.cells.get(row.id)?.get(column.id) });
     }
 
     function editChoices(view, anchor, column) {
@@ -1045,19 +1573,7 @@
       node.dataset.glyph = symbol;
       node.title = name;
       node.setAttribute('aria-label', name);
-      if (iconPaths[symbol]) {
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        const path = document.createElementNS(svg.namespaceURI, 'path');
-        svg.setAttribute('viewBox', '0 0 16 16');
-        svg.setAttribute('aria-hidden', 'true');
-        svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor');
-        svg.setAttribute('stroke-width', '1.5');
-        svg.setAttribute('stroke-linecap', 'round');
-        svg.setAttribute('stroke-linejoin', 'round');
-        path.setAttribute('d', iconPaths[symbol]);
-        svg.append(path); node.append(svg);
-      }
+      if (iconPaths[symbol]) node.append(icon(symbol));
       return node;
     }
 
@@ -1075,7 +1591,7 @@
         panel.append(name, button(tr(label('重命名', 'Rename')), rename));
         if (choiceType(column.type)) panel.append(button(tr(label('管理选项', 'Manage options')), () => { close(); editChoices(view, anchor, column); }));
         for (const [offset, msg] of [[-1, label('左移', 'Move left')], [1, label('右移', 'Move right')]]) {
-          const item = button(tr(msg), () => { close(true); void moveColumn(view, column.id, columns[index + offset]?.id); });
+          const item = button(tr(msg), () => { close(true); void moveColumn(view, column.id, columns[index + offset]?.id, offset < 0 ? 'before' : 'after'); });
           item.disabled = !columns[index + offset];
           panel.append(item);
         }
@@ -1164,9 +1680,51 @@
       (view.panel?.choices?.enhance(column).anchor || column).focus();
     }
 
+    function renameDatabase(view, anchor) {
+      panelAt(view, anchor, 'renameDatabase', (panel, close) => {
+        const { session } = view;
+        const field = input('text', tr(label('数据库名称', 'Database name')), session.page.name);
+        field.maxLength = 120;
+        const save = async () => {
+          const name = field.value.trim();
+          if (session.write || !name) return;
+          if (name === session.page.name || await write(session, { type: 'renameDatabase', name })) close(true);
+        };
+        field.addEventListener('keydown', event => {
+          if (event.key === 'Enter' && !composing(event)) { event.preventDefault(); void save(); }
+        });
+        panel.append(field, button(tr(label('保存名称', 'Save name')), save));
+        return field;
+      }, { name: tr(label('重命名数据库', 'Rename database')) });
+    }
+
+    async function deleteCurrentTable(view) {
+      const { session } = view;
+      if (session.deleting || session.draft || session.write || !session.page?.exists || !isVisible(session)) return;
+      const { path, databaseId } = session;
+      const { name, revision } = session.page;
+      session.deleting = true;
+      try {
+        if (!await confirmEdit(view, label(`永久删除「${name}」及其字段和记录？`, `Permanently delete “${name}” and its fields and records?`))) return;
+        if (!isVisible(session) || !view.host.isConnected || session.path !== path) return;
+        await deleteTables(path, { type: 'deleteTables', tables: [{ id: databaseId, revision }] });
+      } catch (error) {
+        if (session.path === path && isVisible(session)) {
+          if (error.status === 409) void refresh(path, true, databaseId);
+          options.onError?.(error);
+        }
+      } finally {
+        session.deleting = false;
+      }
+    }
+
     function viewMenu(view, anchor) {
       panelAt(view, anchor, 'view', (panel, close) => {
         const { page, query } = view.session;
+        if (!view.readOnly) panel.append(button(tr(label('重命名数据库', 'Rename database')), () => {
+          close();
+          renameDatabase(view, anchor);
+        }));
         const sortValues = [['', tr(label('默认顺序', 'Default order'))]];
         for (const column of page.columns) {
           sortValues.push([column.id + ':asc', column.name + ' ↑'], [column.id + ':desc', column.name + ' ↓']);
@@ -1305,12 +1863,13 @@
       const track = element('col'), cell = element('th', 'note-database-field');
       cell.scope = 'col';
       const shell = element('div', 'note-database-field-inner');
-      if (view.readOnly) shell.append(element('span', 'note-database-type', typeSymbols[column.type]), element('span', '', column.name));
+      const typeName = tr(columnTypes[column.type]);
+      if (view.readOnly) shell.append(typeIcon(column.type, typeName), element('span', '', column.name));
       else {
         const title = button(column.name, event => afterCellSave(view, () => columnMenu(view, event.currentTarget || title, column)), 'edit-' + column.id);
         title.className = 'note-database-field-title';
         title.title = column.name;
-        title.prepend(element('span', 'note-database-type', typeSymbols[column.type]));
+        title.prepend(typeIcon(column.type, typeName));
         const handle = iconButton('', tr(label('调整列宽', 'Resize field')), () => {}, 'size-' + column.id);
         handle.className = 'note-database-resize';
         handle.addEventListener('pointerdown', event => resizeColumn(view, column, handle, event));
@@ -1326,20 +1885,32 @@
           event.dataTransfer?.setData('application/x-relatum-database-field', column.id);
           if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
         });
-        title.addEventListener('dragend', () => { view.dragColumn = null; cell.classList.remove('is-drop-target'); });
+        const clearDrop = () => {
+          if (view.dropField) delete view.dropField.dataset.dbDrop;
+          view.dropField = null;
+        };
+        const dropSide = event => {
+          const rect = cell.getBoundingClientRect();
+          return event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+        };
+        title.addEventListener('dragend', () => { view.dragColumn = null; clearDrop(); });
         cell.addEventListener('dragover', event => {
-          if (!view.dragColumn || view.dragColumn === column.id) return;
+          if (!view.dragColumn || view.dragColumn === column.id) { clearDrop(); return; }
           event.preventDefault(); event.stopPropagation();
-          cell.classList.add('is-drop-target');
+          if (view.dropField !== cell) clearDrop();
+          view.dropField = cell;
+          const side = dropSide(event);
+          if (cell.dataset.dbDrop !== side) cell.dataset.dbDrop = side;
         });
-        cell.addEventListener('dragleave', event => { if (!cell.contains(event.relatedTarget)) cell.classList.remove('is-drop-target'); });
+        cell.addEventListener('dragleave', event => { if (view.dropField === cell && !cell.contains(event.relatedTarget)) clearDrop(); });
         cell.addEventListener('drop', event => {
           const dragged = view.dragColumn;
           if (!dragged) return;
           event.preventDefault(); event.stopPropagation();
+          const side = dropSide(event);
           view.dragColumn = null;
-          cell.classList.remove('is-drop-target');
-          void moveColumn(view, dragged, column.id);
+          clearDrop();
+          void moveColumn(view, dragged, column.id, side);
         });
         shell.append(title, handle);
       }
@@ -1368,6 +1939,15 @@
       const { session, body } = view;
       body.replaceChildren();
       view.bar = element('div', 'note-database-toolbar');
+      const nameSlot = element('div', 'note-database-name-slot');
+      if (view.readOnly) view.name = element('span');
+      else {
+        const rename = () => afterCellSave(view, () => renameDatabase(view, view.name));
+        view.name = button('', event => { if (!event.detail) void rename(); }, 'rename-database');
+        view.name.addEventListener('dblclick', () => void rename());
+      }
+      view.name.className = 'note-database-name';
+      nameSlot.append(view.name);
       view.search = input('search', tr(label('搜索数据库', 'Search database')), session.query.search);
       view.search.dataset.dbRole = 'search';
       view.search.placeholder = tr(label('搜索', 'Search'));
@@ -1397,7 +1977,13 @@
       }, 'search-toggle');
       view.viewToggle = iconButton('view', tr(label('视图选项', 'View options')), () =>
         afterCellSave(view, () => viewMenu(view, view.viewToggle)), 'view');
-      view.bar.append(view.search, view.searchToggle, view.viewToggle);
+      view.bar.append(nameSlot, view.search, view.searchToggle);
+      if (!view.readOnly) {
+        view.deleteTable = iconButton('trash', tr(label('删除数据库', 'Delete database')), () =>
+          afterCellSave(view, () => deleteCurrentTable(view)), 'delete-database');
+        view.bar.append(view.deleteTable);
+      }
+      view.bar.append(view.viewToggle);
 
       view.overflow = element('div', 'note-database-overflow');
       view.grid = element('table', 'note-database-grid');
@@ -1436,12 +2022,17 @@
         view.panel?.close();
         view.grid = null;
         body.replaceChildren();
-        if (!page && session.status) body.append(button(tr(label('重试', 'Retry')), () => refresh(session.path)));
-        if (page && view.readOnly) body.append(element('span', 'note-database-placeholder', tr(label('数据库尚未创建', 'Database not created'))));
-        if (page && !view.readOnly) body.append(button(tr(label('创建数据库', 'Create database')), () => write(session, { type: 'create' }), 'create'));
+        if (!page && session.status) body.append(button(tr(label('重试', 'Retry')), () => refresh(session.path, false, session.databaseId)));
+        if (page?.deleted) body.append(element('span', 'note-database-placeholder', tr(label('数据库已删除', 'Database deleted'))));
+        if (page && !page.deleted && !options.pending?.(session.path, session.databaseId)) {
+          if (view.readOnly) body.append(element('span', 'note-database-placeholder', tr(label('数据库尚未创建', 'Database not created'))));
+          else body.append(element('span', 'note-database-placeholder', tr(label('数据库尚未创建', 'Database not created'))),
+            button(tr(label('重试', 'Retry')), () => write(session, { type: 'create', language: options.language?.() }), 'retry-create'));
+        }
         return;
       }
       if (!view.grid) buildGrid(view);
+      if (view.name.textContent !== (page.name || '')) view.name.textContent = page.name || '';
       const { query } = session;
       const columns = shownColumns(page);
       const language = options.language?.() || 'zh';
@@ -1453,6 +2044,10 @@
         const controls = [[view.searchToggle, label('搜索', 'Search')], [view.viewToggle, label('视图选项', 'View options')],
           [view.addColumn, label('添加字段', 'Add field')], [view.addRow, label('添加记录', 'Add row')],
           [view.prev, label('上一页', 'Previous')], [view.next, label('下一页', 'Next')]];
+        if (view.deleteTable) {
+          controls.push([view.deleteTable, label('删除数据库', 'Delete database')]);
+          view.name.title = tr(label('双击重命名数据库', 'Double-click to rename database'));
+        }
         for (const [control, names] of controls) {
           control.title = tr(names);
           control.setAttribute('aria-label', control.title);
@@ -1578,9 +2173,9 @@
       observer.observe(view.root);
     }
 
-    function mount(host, { path, readOnly = false, observe = false, onLayout } = {}) {
-      if (destroyed || !path) return () => {};
-      const session = getSession(path);
+    function mount(host, { path, databaseId, readOnly = false, observe = false, onLayout } = {}) {
+      if (destroyed || !path || !databaseId) return () => {};
+      const session = getSession(path, databaseId);
       const root = element('section', 'note-database');
       root.contentEditable = 'false';
       root.setAttribute('aria-label', tr(label('数据库', 'Database')));
@@ -1603,8 +2198,13 @@
         const changes = session[replay].at(-1)?.changes;
         if (changes && !session.write) void write(session, { type: 'applyRecords', changes }, replay);
       });
-      root.addEventListener('pointerup', () => { view.dragCell = false; });
-      root.addEventListener('pointercancel', () => { view.dragCell = false; });
+      root.addEventListener('pointerup', event => {
+        if (view.cellGesture?.id === event.pointerId) view.cellGesture.ended = true;
+      });
+      root.addEventListener('pointerleave', event => {
+        if (view.cellGesture?.id === event.pointerId) view.cellGesture.ended = true;
+      });
+      root.addEventListener('pointercancel', () => { view.cellGesture = null; });
       root.addEventListener('focusout', () => queueMicrotask(() => {
         if (!view.visible || !root.isConnected) return;
         const next = document.activeElement?.closest('[data-record]')?.dataset.record;
@@ -1621,6 +2221,7 @@
         session.views.delete(view);
         const draft = session.draft;
         if (draft?.view === view) {
+          removeAttachmentPicker(draft);
           dismissSuggestions(draft);
           draft.detached = true;
           if (!draft.composition && !draft.error && !destroyed && isVisible(session)) void commitDraft(draft);
@@ -1633,81 +2234,73 @@
       return callback ? await callback(message) : window.confirm(tr(message));
     }
 
-    async function actionFromTree(path, kind, callback) {
-      const session = getSession(path);
+    const noteAction = (path, action) => request(actionRoute, { path, action });
+
+    async function deleteTables(path, action) {
+      const result = await noteAction(path, action);
+      for (const databaseId of result.deletedIds) {
+        const session = sessions.get(sessionKey(path, databaseId));
+        if (session) {
+          stopRead(session);
+          session.stale = false;
+          session.undo.length = session.redo.length = 0;
+          applyPage(session, { exists: false, deleted: true, revision: null });
+        }
+        markChanged(path, databaseId);
+      }
+      return result;
+    }
+
+    async function cleanup(path, callback) {
       try {
-        const page = await loadPage(path, session.query, AbortSignal.timeout(10000));
-        if (destroyed || sessions.get(path) !== session) return false;
-        applyPage(session, page);
-        if (!page.exists) {
-          options.onNotice?.(tr(label('这篇笔记没有数据库。', 'This note has no database.')));
+        const preview = await noteAction(path, { type: 'previewCleanup' });
+        if (destroyed) return false;
+        if (!preview.count) {
+          options.onNotice?.(tr(label('没有可清理的附件。', 'There are no unused attachments.')));
           return false;
         }
-        let action = { type: 'delete', revision: page.revision };
-        let count = 0;
-        let message = label('将数据库和其中的附件移到系统回收站？正文中的占位会保留。',
-          'Move this database and its attachments to the Recycle Bin? Its placeholders stay in the note.');
-        if (kind === 'cleanup') {
-          const preview = await request(actionRoute, { path, action: { type: 'previewCleanup', revision: page.revision } });
-          if (!preview.count) {
-            options.onNotice?.(tr(label('没有可清理的附件。', 'There are no unused attachments.')));
-            return false;
-          }
-          count = preview.count;
-          action = { type: 'cleanup', revision: preview.revision, candidateToken: preview.candidateToken };
-          message = label(`将 ${preview.count} 个未使用附件移到系统回收站？`, `Move ${preview.count} unused attachment(s) to the Recycle Bin?`);
-        }
-        if (destroyed || !await confirm(message, callback) || sessions.get(path) !== session) return false;
-        const written = await write(session, action);
-        if (written && kind === 'cleanup') options.onNotice?.(tr(label(`已回收 ${count} 个未使用附件。`, `Moved ${count} unused attachment(s) to the Recycle Bin.`)));
-        return written;
+        const message = label(`将 ${preview.count} 个未使用附件移到系统回收站？`, `Move ${preview.count} unused attachment(s) to the Recycle Bin?`);
+        if (!await confirm(message, callback) || destroyed) return false;
+        const { deletedCount } = await noteAction(path, { type: 'cleanup', candidateToken: preview.candidateToken });
+        if (!destroyed) options.onNotice?.(tr(label(`已回收 ${deletedCount} 个未使用附件。`, `Moved ${deletedCount} unused attachment(s) to the Recycle Bin.`)));
+        return true;
       } catch (error) {
         if (!destroyed) options.onError?.(error);
         return false;
       }
     }
 
-    async function importFiles(path, files) {
-      if (destroyed) return 0;
-      const session = getSession(path);
+    async function importFiles(path, files, candidates, current) {
       let imported = 0;
       let error = null;
-      let lastResponse = null;
+      let databaseId = null;
       for (const file of files) {
-        if (destroyed || sessions.get(path) !== session) break;
+        if (destroyed || !current()) break;
         if (!acceptsFile(file)) continue;
         if (file.size > maxFileSize) { error = new Error(tr(label('单个附件不能超过 100 MiB。', 'An attachment cannot exceed 100 MiB.'))); continue; }
         try {
           const data = await readFile(file);
-          if (destroyed || sessions.get(path) !== session) break;
-          const currentPage = session.page;
-          const query = JSON.stringify(session.query);
-          const page = await request(importRoute, { path, name: file.name, data, query: session.query });
-          lastResponse = { currentPage, page, query };
+          if (destroyed || !current()) break;
+          ({ databaseId } = await request(importRoute, { path, name: file.name, data, candidates }));
           imported++;
         } catch (failure) { error = failure; }
       }
-      if (imported && !destroyed && sessions.get(path) === session) {
-        markChanged(session);
-        if (!session.read && !session.write && session.page === lastResponse.currentPage && JSON.stringify(session.query) === lastResponse.query) {
-          session.stale = false;
-          applyPage(session, lastResponse.page);
-        } else {
-          void refresh(path, true);
-        }
-        if (isVisible(session)) options.onNotice?.(tr(label(`已导入 ${imported} 个附件。`, `Imported ${imported} attachment(s).`)));
+      if (!destroyed && current()) {
+        if (imported) options.onNotice?.(tr(label(`已导入 ${imported} 个附件。`, `Imported ${imported} attachment(s).`)));
+        if (error) options.onError?.(error);
       }
-      if (error && isVisible(session)) options.onError?.(error);
-      return imported;
+      return { imported, databaseId };
     }
 
     function setActive(path, visible = true) {
       if (activePath === path && activeVisible === visible) return;
-      const previous = sessions.get(activePath);
-      if (previous) {
+      for (const previous of sessionsFor(activePath)) {
         stopRead(previous);
         previous.stale = true;
-        if (previous.draft) dismissSuggestions(previous.draft);
+        if (previous.draft) {
+          removeAttachmentPicker(previous.draft);
+          dismissSuggestions(previous.draft);
+        }
         for (const view of previous.views) {
           view.panel?.close();
           view.stopResize?.(false);
@@ -1719,11 +2312,12 @@
       if (visible) void refresh(path);
     }
 
-    function clear(path, force = false) {
-      const session = sessions.get(path);
-      if (!session) return;
+    function clearSession(session, force) {
       stopRead(session);
-      if (session.draft) dismissSuggestions(session.draft);
+      if (session.draft) {
+        removeAttachmentPicker(session.draft);
+        dismissSuggestions(session.draft);
+      }
       for (const view of session.views) {
         view.panel?.close();
         view.stopResize?.(false);
@@ -1732,27 +2326,35 @@
         view.root.remove();
       }
       session.views.clear();
-      if (!force && (session.draft?.changed || session.draft?.composition || session.write)) {
+      if (!force && (session.draft?.changed || session.draft?.composition || session.draft?.uploading || session.write)) {
         if (session.draft) session.draft.detached = true;
         session.stale = true;
         return;
       }
-      sessions.delete(path);
+      sessions.delete(sessionKey(session.path, session.databaseId));
       notifyDirty();
+    }
+
+    function clear(path, force = false) {
+      for (const session of sessionsFor(path)) clearSession(session, force);
     }
 
     function remap(source, destination) {
       if (!source || !destination || source === destination) return;
       const movedPath = path => path === source || path?.startsWith(source + '/') ? destination + path.slice(source.length) : path;
-      for (const [path, session] of Array.from(sessions)) {
+      for (const [key, session] of Array.from(sessions)) {
+        const { path, databaseId } = session;
         const moved = movedPath(path);
         if (moved === path) continue;
         stopRead(session);
-        if (session.draft) dismissSuggestions(session.draft);
-        sessions.delete(path);
+        if (session.draft) {
+          removeAttachmentPicker(session.draft);
+          dismissSuggestions(session.draft);
+        }
+        sessions.delete(key);
         session.path = moved;
         session.stale = true;
-        sessions.set(moved, session);
+        sessions.set(sessionKey(moved, databaseId), session);
       }
       activePath = movedPath(activePath);
       void refresh();
@@ -1760,27 +2362,44 @@
 
     const focus = () => { if (activeVisible) void refresh(); };
     const dismiss = () => {
-      const session = sessions.get(activePath);
-      if (session?.draft) dismissSuggestions(session.draft);
+      for (const session of sessionsFor(activePath)) if (session.draft && !session.draft.picker) dismissSuggestions(session.draft);
     };
     const languageChange = () => {
-      const session = sessions.get(activePath);
-      if (session) for (const view of session.views) if (view.visible) { view.panel?.close(); draw(view); }
+      for (const session of sessionsFor(activePath)) {
+        for (const view of session.views) if (view.visible) { view.panel?.close(); draw(view); }
+      }
     };
     window.addEventListener('focus', focus);
     window.addEventListener('blur', dismiss);
     document.addEventListener('relatum:languagechange', languageChange);
-    if (channel) channel.onmessage = event => { if (event.data?.path === activePath) void refresh(activePath, true); };
+    if (channel) channel.onmessage = event => {
+      if (event.data?.path === activePath) void refresh(activePath, true, event.data.databaseId);
+    };
 
     return {
       mount, setActive, refresh, clear, remap, acceptsFile, importFiles,
-      noteSaved: path => { const session = sessions.get(path); if (session) markChanged(session); void refresh(path, true); },
-      cleanup: (path, callback) => actionFromTree(path, 'cleanup', callback),
-      remove: (path, callback) => actionFromTree(path, 'delete', callback),
-      inputPending: () => Boolean(sessions.get(activePath)?.draft || sessions.get(activePath)?.write),
+      noteSaved(path, created = {}, failed = []) {
+        for (const [id, page] of Object.entries(created)) {
+          const session = getSession(path, id);
+          stopRead(session);
+          session.stale = false;
+          applyPage(session, page);
+          markChanged(path, id);
+        }
+        for (const session of sessionsFor(path)) {
+          if (failed.includes(session.databaseId)) {
+            session.creationFailed = true;
+            announce(session, tr(label('建库失败，请重试。', 'Could not create the database. Try again.')));
+          }
+          if (session.stale) void read(session);
+        }
+      },
+      cleanup, deleteTables,
+      list: path => noteAction(path, { type: 'list' }),
+      inputPending: () => sessionsFor(activePath).some(session => session.draft || session.write),
       get dirty() { return dirty(); },
       async whenInputSettled(path) {
-        const targets = path ? [sessions.get(path)] : sessions.values();
+        const targets = path ? sessionsFor(path) : sessions.values();
         for (const session of targets) {
           if (session?.write) {
             try { await session.write; } catch (_) { return false; }
@@ -1795,7 +2414,7 @@
       },
       destroy() {
         destroyed = true;
-        for (const path of sessions.keys()) clear(path, true);
+        for (const session of sessions.values()) clearSession(session, true);
         channel?.close();
         window.removeEventListener('focus', focus);
         window.removeEventListener('blur', dismiss);

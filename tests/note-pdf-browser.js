@@ -23,12 +23,12 @@ const source = [
   '', '## 屏外内容', '', '![Local image](研究笔记.assets/local.png)', '',
   '![Missing image](研究笔记.assets/missing.png)', '', '![Remote image](https://example.com/image.png)', '',
   '![Shared.canvas|640x360](canvases/Shared.canvas)', '',
-  fence + 'database', fence, '',
+  fence + 'database records', fence, '',
   '$$x^2+1$$', '', fence + 'mermaid', 'flowchart LR', 'A[MermaidStart] --> B[MermaidEnd]', fence, '',
   '$$\\notARealMathCommand$$', '', fence + 'mermaid', 'flowchart LR', 'A[', fence, '',
   '![Tall|100x1500](研究笔记.assets/tall.svg)', '',
   fence + 'quiz', 'Quiz question', '- [x] Answer', '- [ ] Distractor', fence, '',
-  '[^a]: Footnote content', '', '## Tail marker', '', fence + 'database', fence, '',
+  '[^a]: Footnote content', '', '## Tail marker', '', fence + 'database records', fence, '',
 ].join('\n');
 fs.writeFileSync(path.join(notes, note), source);
 fs.writeFileSync(path.join(notes, other), '# Other note');
@@ -50,7 +50,7 @@ async function seedDatabase(page) {
   await page.evaluate(async path => {
     async function post(suffix, body) {
       const response = await fetch('/api/note-database/' + suffix, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, ...body }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, databaseId: 'records', ...body }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || response.statusText);
@@ -60,9 +60,8 @@ async function seedDatabase(page) {
     let snapshot = await perform({ type: 'create' });
     snapshot = await perform({ type: 'renameColumn', revision: snapshot.revision, name: 'Database record', column: snapshot.columns[0].id });
     snapshot = await perform({ type: 'addColumn', revision: snapshot.revision, name: 'Attachments', columnType: 'attachment' });
-    const imported = await post('attachment/import', { name: 'Source document.txt', data: btoa('private-file-contents') });
+    await post('attachment/import', { name: 'Source document.txt', data: btoa('private-file-contents') });
     const { items } = await perform({ type: 'searchAttachments', query: 'Source document' });
-    snapshot = imported;
     for (let number = 1; number <= 51; number++) {
       const values = { [snapshot.columns[0].id]: 'Database row ' + number };
       if (number === 1) values[snapshot.columns[1].id] = { kind: 'attachment', id: items[0].id };
