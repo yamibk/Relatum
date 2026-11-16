@@ -149,6 +149,8 @@ body[data-start-theme="dark"] .note-database {
 .note-database .note-database-cell-input { display: block; width: 100%; height: 31px; min-height: 31px; padding: 4px 8px; border: 0; border-radius: 0; resize: none; }
 .note-database:where(:focus-within) .note-database-cell-input { outline: 1px solid var(--db-focus); outline-offset: -1px; }
 .note-database .note-database-cell-input:focus-visible { outline-width: 1px; outline-offset: -1px; }
+.note-database textarea.note-database-cell-input { scrollbar-width: none; }
+.note-database textarea.note-database-cell-input::-webkit-scrollbar { display: none; }
 .note-database button.note-database-cell-value:is([data-db-type="text"], [data-db-type="number"]) { cursor: text; }
 .note-database :is(.note-database-cell-value, .note-database-cell-input)[data-db-type="number"] { text-align: end; font-variant-numeric: tabular-nums; }
 .note-database input[data-db-type="number"]::-webkit-inner-spin-button { appearance: none; }
