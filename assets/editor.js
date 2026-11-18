@@ -546,7 +546,7 @@
       codeLangLabel: '代码语言',
       bodyNoteCode: '整块只按代码渲染', bodyNoteSticky: '整块即正文，常驻显示',
       bodyNoteCard: '常驻显示在卡片上', bodyNotePreview: '悬停节点时展开',
-      bodyNoteIndex: '自动读取相连节点生成目录', bodyNoteNone: '正文仅对卡片/便签/预览/代码/索引节点可用',
+      bodyNoteIndex: '首层收录直接相连的节点，后续层级沿箭头展开', bodyNoteNone: '正文仅对卡片/便签/预览/代码/索引节点可用',
       codeLangHint: '只影响当前代码节点的着色；代码不会执行。',
       // 属性检查器（edit panel）动态文本
       epEmpty: '选中一个或多个节点 / 连线来精修样式；多选会批量应用。\n仍可双击新建、粘贴、复制或 Alt 拖出连线；在线身上拖动可加拐点。',
@@ -863,7 +863,7 @@
       codeLangLabel: 'Code Language',
       bodyNoteCode: 'Code block only — no Markdown', bodyNoteSticky: 'Full body shown on canvas',
       bodyNoteCard: 'Body shown inline on card', bodyNotePreview: 'Body shown on hover',
-      bodyNoteIndex: 'Auto-generated from linked nodes', bodyNoteNone: 'Body only available for Card / Sticky / Preview / Code / Index nodes',
+      bodyNoteIndex: 'Direct links form the first level. Deeper levels follow the arrows.', bodyNoteNone: 'Body only available for Card / Sticky / Preview / Code / Index nodes',
       codeLangHint: 'Affects syntax highlighting only; code is not executed.',
       // Inspector (edit panel) dynamic text
       epEmpty: 'Select one or more nodes / edges to refine their style; multi-select applies changes to all.\nDouble-click, paste, copy and Alt-drag connections still work; drag on a line to add waypoints.',
@@ -7938,7 +7938,11 @@
     const EKEY = 'canvas:proEdgeDefaults';
 
     function read(key) {
-      try { return JSON.parse(localStorage.getItem(key) || '{}') || {}; }
+      try {
+        const defaults = JSON.parse(localStorage.getItem(key) || '{}') || {};
+        if (key === EKEY && defaults.arrow === 'one') defaults.arrow = 'end';
+        return defaults;
+      }
       catch (e) { return {}; }
     }
     function writeNode() { try { localStorage.setItem(NKEY, JSON.stringify(n)); } catch (e) {} }
@@ -8274,7 +8278,7 @@
       setActive(curveBtns, 'curve', g.curve || 'bezier');
       setActive(lineStyleBtns, 'lineStyle', g.lineStyle || 'solid');
       if (colorInput) colorInput.value = g.color || '#000000';
-      setActive(arrowBtns, 'arrow', g.arrow || 'none');
+      setActive(arrowBtns, 'arrow', g.arrow === 'start' ? 'end' : g.arrow || 'none');
       var w = (g.width == null) ? 1.5 : g.width;
       widthInput.value = w;
       widthVal.textContent = String(w);
@@ -8844,7 +8848,11 @@
     const NKEY = 'canvas:cleanNodeDefaults';
     const EKEY = 'canvas:cleanEdgeDefaults';
     function read(key) {
-      try { return JSON.parse(localStorage.getItem(key) || '{}') || {}; }
+      try {
+        const defaults = JSON.parse(localStorage.getItem(key) || '{}') || {};
+        if (key === EKEY && defaults.arrow === 'one') defaults.arrow = 'end';
+        return defaults;
+      }
       catch (e) { return {}; }
     }
     let n = read(NKEY);
@@ -8923,7 +8931,7 @@
       const width = g.width == null ? 1.5 : Number(g.width);
       widthInput.value = width;
       widthVal.textContent = String(width);
-      setActive(arrowBtns, 'arrow', g.arrow || 'none');
+      setActive(arrowBtns, 'arrow', g.arrow === 'start' ? 'end' : g.arrow || 'none');
       panel.dataset.target = node ? 'node' : 'defaults';
       if (scopeLabel) scopeLabel.textContent = toolbarCopy(node ? 'editingSelection' : 'newDefaults');
       if (resetBtn) resetBtn.textContent = toolbarCopy(node ? 'resetAppearance' : 'cleanResetDefaults');

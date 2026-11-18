@@ -795,6 +795,8 @@ Cards 快捷键 `cards` 使用 `Mod-f`，通过 `insert:cards-template` 插入�
 | `pdf` | PDF 附件节点，可连线，可放大阅读和批注。 |
 | `md` | Markdown 附件节点，可连线，可阅读和批注。 |
 
+索引是当前画布的阅读目录。与索引直接相连的合格节点全列在首层，沿用位置排序，并优先于经其他目录项到达的间接路径。下层沿箭头展开，无箭头和双箭头双向遍历，全树按节点 ID 去重。摘要、悬停预览和 `F` 双栏阅读共用深度设置，默认 4 层，最高 6 层。旧 `one` 箭头按末端箭头 `end` 读取，新建和属性面板写入 `end`。连线变化及撤销重做即时更新目录。阅读项单击显示正文，双击定位节点，悬停只更新路径高亮差集，Canvas 和 SVG 回退均显示高亮。
+
 关键判断函数在 `canvas.js` 中：`isIndexNode`、`isBodyNode`、`isReadableNode`、`isTableNode`、`isDecorationNode`、`isEdgeAnchorNode`、`isLinkable`。当前规则是：普通 `shape`、`image`、`textBox` 不可连线；独立表格与 PDF/MD 附件可连线并进入图谱；表格明确退出脑图子树、邻居生成与自动布局；`shapeType:"edge-anchor"` 只作为画布连线端点例外可连，但仍按装饰对象退出图谱、AI、Markdown、任务和模板语义。
 左侧“连接锚点”工具只在画布/导图模式可用：双击空白放置，拖动空白执行框选，普通拖动锚点移动，按住 `Alt` 从锚点或其他可连线节点拖出连线；同一锚点可连接多个不同目标。工具激活时显示全部锚点，并允许框选同时纳入普通节点和当前可见锚点；在“选择”工具中对已选锚点按 `Ctrl/Cmd+D` 复制时自动切回“连接锚点”工具。连接锚点的连线几何端点始终落在锚点正中心；显形时由锚点图标覆盖中心段，离开工具后锚点隐藏、不参与命中且退出框选范围，相邻连线不留下图标外框造成的断口。选中相邻连线时只临时显示它的锚点端点，端点本体可直接拖动，但不套用锚点自身的选中反馈。直接选中锚点时显示双环与一次性弹跳，视觉反馈不得修改节点尺寸或连线几何；放置、框选、连线和删除说明统一收在右下角“？”快捷键速查中，不在画布旁常驻文字。删除锚点必须连带删除相邻连线并作为一次历史操作；缩略图和 PNG 不显示锚点本体，PNG 仍保留有效连线。
 左侧“重点便签”是非模态拖放入口，不属于 `drawTool`，也没有持续选中态：从图标拖到画布后，在落点中心创建固定 `290 × 200` 的 `textBox / emphasis-card` 并直接进入文字编辑；拖出画布或取消不会写入数据，过程中左栏保持展开。普通点击图标只开关紧邻工具栏的轻量设置窗，提供与图案模式共用的 8 套便签纸外观和暖金纸恢复入口；改的是 `canvas:decorTextPresetDefaults` 中的后续新建外观，不切换顶部模式、不新增节点字段，也不修改已经存在的便签。图案模式原有“重点便签”入口继续保留。
@@ -806,6 +808,7 @@ Cards 快捷键 `cards` 使用 `Mod-f`，通过 `insert:cards-template` 插入�
 
 ### 渲染和编辑
 
+- 属性检查器和单节点面板的正文输入按实际单节点变更更新搜索、目录、小地图及保存，并保留已排队的历史变更。局部内容修改跳过文字绑定、连线索引与折叠结构的全量重建。节点透明度、边框色和背景色只更新本身的外观，缩放和宽度同步更新相邻线及小地图一次。
 - 手写数据在初始化、导入与历史恢复边界规范化，`ensureInkData()` 对有效的 `version:1` / `strokes[]` / `arrows[]` 直接返回活体，不因普通节点编辑、空画布提示或橡皮移动重新深拷全部点。完整历史快照仍深拷压力、倾斜与箭头几何；箭头事件继续按 ID 查找当前对象，以适应撤销/导入替换。`tests/canvas-ink-regression.js` 验证访问、快照和真实手写操作链。
 
 - 画布节点、笔记坞、附件阅读、AI、日历和复习的 Markdown 显示都走 `MarkdownMini` 的同一套结构规则；块解析的读取位置必须前进，无法识别或不完整的 `- `、`1)`、未闭合围栏等语法安全降级为普通文字，禁止再次引入可停滞循环。标题保留真实 `h1`–`h6` 语义，文档容器使用完整六级比例，紧凑节点通过 CSS 变量收敛尺寸。原始 HTML 始终转义，图片与远程资源不自动加载；公式和 Mermaid 通过 `renderResult()` 的一次扫描特征按需调度。局部字号/字色/高光/粗体的真实数据是 `textMarks` / `bodyMarks`，`assets/richtext.js` 只在显示与 Markdown 导出边界把它序列化成 `==...==`、`{hl:...}`、`{tc:...}`、`{fs:...}` 与 `**...**`。编辑 DOM 始终是纯文字 + 格式 span，用户不会看到这些定界符；旧画布加载时自动解析为新结构并通过自动保存落盘。
@@ -1533,6 +1536,8 @@ node .\tests\editor-opening-performance-contract.js
 性能夹具只能写入一次性隔离运行目录，禁止指向仓库真实 `canvases/` 或 `data/`。生成器提供 1200/2359、3000/2970 节点/连线夹具，以及连线交互、折叠、图片、Markdown、PDF 夹具。真实浏览器验收使用测试主机已有的 Playwright 与 Edge，无应用依赖或构建链变化：设置 `RELATUM_PLAYWRIGHT` 为模块绝对路径、`RELATUM_EDGE_PATH` 为浏览器路径，再对以该隔离目录为 `RELATUM_DATA_ROOT` 的测试服务运行 `node tests/canvas-browser-performance.js <本地服务 URL> <隔离目录> <report.json> [all|regression|benchmark]`。默认每种规模各 5 次新浏览器冷启动及同页热启动，固定 1440×900、DPR 1、相机 100% 与中心 (330,280)；操作覆盖局部/25% 总览缩放、平移、拖动收尾和撤销。回归另覆盖 DPR 2、减少动态效果、深浅语义、SVG 回退、中文合成、导图/分组、任务簿、附件、双屏、导出与起步页反向切页；功能夹具的保存请求由浏览器替身接收，基准场景保留正常 HTTP 缓存和真实隔离服务。
 
 分组和节点文字专项运行 `node tests/canvas-resource-performance-browser.js --group-text`，沿用 `RELATUM_PLAYWRIGHT`、`RELATUM_EDGE_PATH` 和 `RELATUM_PYTHON`。该入口自建隔离画布和服务，覆盖实际鼠标及按键、几何、撤销、磁盘保存与重开，另有 `node tests/markdown-regression.js` 验证渲染规则。
+
+索引目录与连线方向运行 `node tests/canvas-index-browser.js`，使用 `--webview2` 和 `RELATUM_WEBVIEW_PYTHON` 复查桌面目录及路径高亮。正文与样式输入的工作量探针运行 `node tests/canvas-local-edits-browser.js`，覆盖 600／3000 节点、两个正文入口、富文本、撤销及小地图，可加 `--compare` 与 `RELATUM_CANVAS_BASELINE_REF` 对照旧源码。两项均使用隔离数据根。
 
 `?perf=1` 才会创建 `window.__relatumOpeningPerf`、`window.__relatumPerfSnapshot()`、帧采样和隐藏 `#relatum-perf-snapshot`。`opening.dataReadyMs/domReadyMs/firstVisibleFrameMs/interactiveMs` 均相对导航起点，分别记录数据解码就绪、核心 DOM 绑定结束、揭幕后帧回调与其后的事件循环机会；不等同于 GPU 硬件呈现时间。`loadMs` 是可交互时间，未就绪为 null，不能用初始化结束代替；`initMs` 只表示核心初始化。`operations` 记录撤销、重做和鼠标收尾的同步 `jsMs` 与经过帧/布局后的 `settledMs`。正常页面不得创建这些调试全局、采样循环或输出节点。
 

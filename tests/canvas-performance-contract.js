@@ -62,7 +62,7 @@ assert(
   /materializeExportImages\(clone\)/.test(canvas)
     && /img\.dataset\.exportSrc = decorationAssetUrl\(node\)/.test(canvas)
     && /const workerCount = Math\.min\(4, imgs\.length\)/.test(canvas)
-    && /classList\.remove\('selected', 'is-selected', 'editing', 'dragging', 'culled'\)/.test(canvas),
+    && /classList\.remove\('selected', 'is-selected', 'editing', 'dragging', 'culled'(?:, '[^']+')*\)/.test(canvas),
   'PNG export must materialize virtualized images without restoring culled state or unbounded fetch concurrency',
 );
 assert(

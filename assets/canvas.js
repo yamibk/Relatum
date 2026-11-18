@@ -536,6 +536,11 @@
   const EDGE_CURVES = ['bezier', 'straight', 'elbow', 'rounded-elbow', 's-curve', 'smooth', 'branch', 'arc', 'organic'];
   const EDGE_LINE_STYLES = ['solid', 'dashed', 'dotted', 'soft', 'glow'];
 
+  function normalizeEdgeArrow(arrow) {
+    if (arrow === 'one') return 'end';
+    return arrow === 'start' || arrow === 'end' || arrow === 'both' ? arrow : 'none';
+  }
+
   function edgeCurveType(edge) {
     const curve = edge && edge.curve;
     return EDGE_CURVES.indexOf(curve) >= 0 ? curve : 'bezier';
@@ -1442,6 +1447,7 @@
     let frameTemplateNameBox = null;     // 点「保存到模板？」后就地起名的小输入条
     let indexHoverEl = null;             // 悬停索引节点时左侧渐显的目录预览浮层
     let indexHoverNodeId = null;         // 当前正在预览的索引节点 id
+    let indexHoverItems = null;
     let indexHoverHideTimer = null;      // 预览浮层淡出后移除计时器
     let indexHoverOpenTimer = null;      // 悬停后延迟弹目录的计时器
     let indexHoverPendingId = null;      // 延迟排队中的索引节点 id（防同节点内移动反复重排）
@@ -1568,6 +1574,10 @@
     let textReaderOriginalBody = '';    // 进入阅读编辑时的正文，用于一次性入历史
     let textReaderOriginalMarks = [];
     let indexReaderTargetId = null;     // 索引阅读双栏：右栏当前正在读的目录项 id（null=看索引节点自身正文/提示）
+    let indexReaderItems = null;
+    let indexReaderLitPath = '';
+    let indexReaderLitNodeIds = new Set();
+    let indexReaderLitEdgeIds = new Set();
     let indexPaneMdToken = 0;           // 索引右栏 MD 异步加载防竞态：快速连点不同项时只认最后一次
     // 索引右栏内嵌 PDF：独立一份 PDF.js 文档 + 懒渲染监听，与画布卡片/批注浮层的 attachPdfState 互不影响，切项/关闭即销毁
     let indexPanePdfDoc = null;
@@ -4083,18 +4093,23 @@
     function isIndexableNode(node) {
       return !!node && !isShapeNode(node) && !isImageNode(node);
     }
-    function edgeNeighborsFrom(nodeId) {
-      const out = [];
-      edgesIncidentTo(new Set([nodeId])).forEach(function (edge) {
-        const arrow = edge.arrow || 'none';
-        let next = null;
-        if (edge.from === nodeId && (arrow === 'none' || arrow === 'end' || arrow === 'both')) next = edge.to;
-        else if (edge.to === nodeId && (arrow === 'none' || arrow === 'start' || arrow === 'both')) next = edge.from;
-        if (!next || next === nodeId) return;
+    function indexNeighborId(edge, nodeId, eitherDirection) {
+      const arrow = normalizeEdgeArrow(edge.arrow);
+      if (edge.from === nodeId && (eitherDirection || arrow !== 'start')) return edge.to;
+      if (edge.to === nodeId && (eitherDirection || arrow !== 'end')) return edge.from;
+      return null;
+    }
+    function edgeNeighborsFrom(nodeId, eitherDirection) {
+      const ids = incidentEdgeIds.get(nodeId);
+      if (!ids) return [];
+      const neighbors = new Map();
+      ids.forEach(function (id) {
+        const next = indexNeighborId(edgeById.get(id), nodeId, eitherDirection);
+        if (!next || next === nodeId || neighbors.has(next)) return;
         const node = findNode(next);
-        if (!isIndexableNode(node)) return;
-        out.push(node);
+        if (isIndexableNode(node)) neighbors.set(next, node);
       });
+      const out = Array.from(neighbors.values());
       out.sort(function (a, b) {
         const ay = Number(a.y) || 0, by = Number(b.y) || 0;
         if (Math.abs(ay - by) > 24) return ay - by;
@@ -4102,31 +4117,39 @@
       });
       return out;
     }
-    function buildIndexTree(root, maxDepth) {
-      const limit = Math.max(1, Math.min(6, Math.round(Number(root.indexDepth) || maxDepth || 4)));
+    function indexDepthLimit(node) {
+      return Math.max(1, Math.min(6, Math.round(Number(node.indexDepth) || 4)));
+    }
+    function buildIndexTree(root) {
+      ensureEdgeIndex();
+      const limit = indexDepthLimit(root);
       const seen = new Set([root.id]);
+      const direct = edgeNeighborsFrom(root.id, true);
+      // 直接相连的条目一律留在首层，即使另一条分支也可以到达它们。
+      direct.forEach(function (node) { seen.add(node.id); });
       let count = 0;
       let deepest = 0;
-      function walk(nodeId, depth) {
-        if (depth > limit) return [];
+      function item(child, depth) {
+        count += 1;
+        deepest = Math.max(deepest, depth);
         const children = [];
-        edgeNeighborsFrom(nodeId).forEach(function (child) {
-          if (seen.has(child.id)) return;
-          seen.add(child.id);
-          count += 1;
-          deepest = Math.max(deepest, depth);
-          children.push({
-            id: child.id,
-            depth: depth,
-            title: indexNodeTitle(child),
-            kind: child.kind || 'normal',
-            summary: indexNodeSummary(child),
-            children: walk(child.id, depth + 1),
+        if (depth < limit) {
+          edgeNeighborsFrom(child.id, false).forEach(function (next) {
+            if (seen.has(next.id)) return;
+            seen.add(next.id);
+            children.push(item(next, depth + 1));
           });
-        });
-        return children;
+        }
+        return {
+          id: child.id,
+          depth: depth,
+          title: indexNodeTitle(child),
+          summary: indexNodeSummary(child),
+          children: children,
+        };
       }
-      return { children: walk(root.id, 1), count: count, depth: deepest };
+      const children = direct.map(function (child) { return item(child, 1); });
+      return { children: children, count: count, depth: deepest, ids: seen };
     }
     function indexNodeSummary(node) {
       if (isCodeNode(node)) return codeLanguageLabel(node.language) + ' 代码';
@@ -4140,56 +4163,101 @@
     }
     function refreshAllIndexNodes(changes) {
       if (changes && !changes.topology && !changes.nodeIds.size) return;
+      const openIndexId = textReaderOpen ? readingNodeId : indexHoverNodeId;
+      let openIndexTree = null;
       let affected = null;
       if (changes && !changes.topology) {
-        // 目录包含多层后代，位置变化也可能改变目录排序；向入边追溯所有祖先。
-        affected = new Set(changes.nodeIds);
-        const pending = Array.from(affected);
-        for (let i = 0; i < pending.length; i++) {
-          edgesIncidentTo(new Set([pending[i]])).forEach(function (edge) {
-            const arrow = edge.arrow || 'none';
-            const ancestor = edge.to === pending[i] && arrow !== 'start' ? edge.from
-              : edge.from === pending[i] && arrow !== 'end' ? edge.to : null;
-            if (ancestor && !affected.has(ancestor)) {
-              affected.add(ancestor); pending.push(ancestor);
-            }
+        ensureEdgeIndex();
+        affected = new Set();
+        const visited = new Set(changes.nodeIds);
+        let level = Array.from(visited);
+        // 从后代逆向查找最多五层祖先，最后一步允许任一方向连接根索引。
+        for (let depth = 0; depth < 6 && level.length; depth++) {
+          const nextLevel = [];
+          level.forEach(function (id) {
+            const node = findNode(id);
+            if (depth === 0 && isIndexNode(node)) affected.add(id);
+            if (!isIndexableNode(node)) return;
+            const edges = incidentEdgeIds.get(id);
+            if (!edges) return;
+            edges.forEach(function (edgeId) {
+              const edge = edgeById.get(edgeId);
+              const ancestor = indexNeighborId(edge, id, true);
+              const parent = findNode(ancestor);
+              if (isIndexNode(parent) && depth < indexDepthLimit(parent)) affected.add(ancestor);
+              if (depth === 5 || !isIndexableNode(parent) || visited.has(ancestor)
+                  || indexNeighborId(edge, ancestor, false) !== id) return;
+              visited.add(ancestor);
+              nextLevel.push(ancestor);
+            });
           });
+          level = nextLevel;
         }
       }
-      data.nodes.forEach(function (node) {
+      function refresh(node) {
         if (!isIndexNode(node)) return;
-        if (affected && !affected.has(node.id)) return;
         const el = nodeMap.get(node.id);
-        if (el) renderTextNodeMeta(el, node);
-      });
-      if (textReaderOpen && readingNodeId) {
+        if (!el) return;
+        const info = renderTextNodeMeta(el, node);
+        if (node.id === openIndexId) openIndexTree = info;
+      }
+      if (affected) affected.forEach(function (id) { refresh(findNode(id)); });
+      else data.nodes.forEach(refresh);
+      if (textReaderOpen && readingNodeId && (!affected || affected.has(readingNodeId))) {
         const node = findNode(readingNodeId);
-        if (isIndexNode(node)) renderTextReader(node);
+        if (isIndexNode(node)) refreshIndexReader(node, openIndexTree, changes);
+        else if (indexReaderItems) closeTextReader();
+      }
+      if (indexHoverNodeId && (!affected || affected.has(indexHoverNodeId))) {
+        const el = nodeMap.get(indexHoverNodeId);
+        if (el && el.isConnected && el.matches(':hover') && isIndexNode(findNode(indexHoverNodeId))) {
+          showIndexHoverPreview(el, openIndexTree);
+        } else hideIndexHoverPreview();
       }
     }
-    function clearIndexReaderTarget() {
-      nodeMap.forEach(function (el) { el.classList.remove('index-reader-target'); });
-      edgeMap.forEach(function (refs) { if (refs && refs.path) refs.path.classList.remove('edge-path-lit'); });
+    function setIndexReaderHighlights(nodes, edges) {
+      indexReaderLitNodeIds.forEach(function (id) {
+        if (!nodes.has(id)) nodeMap.get(id)?.classList.remove('index-reader-target');
+      });
+      nodes.forEach(function (id) {
+        const el = nodeMap.get(id);
+        if (el && !el.classList.contains('index-reader-target')) el.classList.add('index-reader-target');
+      });
+      let redraw = false;
+      indexReaderLitEdgeIds.forEach(function (id) {
+        if (edges.has(id)) return;
+        edgeMap.get(id)?.path.classList.remove('edge-path-lit');
+        redraw = true;
+      });
+      edges.forEach(function (id) {
+        const path = edgeMap.get(id)?.path;
+        if (path && !path.classList.contains('edge-path-lit')) path.classList.add('edge-path-lit');
+        if (indexReaderLitEdgeIds.has(id)) return;
+        redraw = true;
+      });
+      indexReaderLitNodeIds = nodes;
+      indexReaderLitEdgeIds = edges;
+      if (redraw) requestEdgesCanvasRender();
     }
-    function setIndexReaderTarget(nodeId) {
-      clearIndexReaderTarget();
-      const el = nodeMap.get(nodeId);
-      if (el) el.classList.add('index-reader-target');
+    function clearIndexReaderTarget() {
+      indexReaderLitPath = '';
+      if (indexReaderLitNodeIds.size || indexReaderLitEdgeIds.size) {
+        setIndexReaderHighlights(new Set(), new Set());
+      }
     }
     // 悬停目录项：高亮从索引根到该条目沿途的所有节点 + 点亮中间的连线（整条路径）
     function setIndexReaderPath(pathStr) {
-      clearIndexReaderTarget();
-      const ids = String(pathStr || '').split(',').filter(Boolean);
-      ids.forEach(function (id) { const el = nodeMap.get(id); if (el) el.classList.add('index-reader-target'); });
+      indexReaderLitPath = String(pathStr || '');
+      const ids = indexReaderLitPath.split(',').filter(Boolean);
+      const edges = new Set();
+      ensureEdgeIndex();
       for (let i = 0; i < ids.length - 1; i++) {
         const a = ids[i], b = ids[i + 1];
-        data.edges.forEach(function (edge) {
-          if ((edge.from === a && edge.to === b) || (edge.from === b && edge.to === a)) {
-            const refs = edgeMap.get(edge.id);
-            if (refs && refs.path) refs.path.classList.add('edge-path-lit');
-          }
+        incidentEdgeIds.get(a)?.forEach(function (id) {
+          if (indexNeighborId(edgeById.get(id), a, i === 0) === b) edges.add(id);
         });
       }
+      setIndexReaderHighlights(new Set(ids), edges);
     }
     // Extra B：悬停画布上的索引节点，目录条目不多时，在其左侧渐显一份只读目录预览（不打扰）
     function setupIndexHoverPreview() {
@@ -4246,6 +4314,7 @@
     }
     function hideIndexHoverPreview() {
       indexHoverNodeId = null;
+      indexHoverItems = null;
       if (indexHoverOpenTimer) { clearTimeout(indexHoverOpenTimer); indexHoverOpenTimer = null; }
       indexHoverPendingId = null;
       if (!indexHoverEl) return;
@@ -4256,14 +4325,19 @@
         indexHoverHideTimer = null;
       }, 240);
     }
-    function showIndexHoverPreview(nodeEl) {
+    function showIndexHoverPreview(nodeEl, menuTree) {
       const node = findNode(nodeEl.dataset.id);
       if (!node || !isIndexNode(node)) return;
       if (textReaderOpen || pdfReaderOpen || drag || editingNodeId) { hideIndexHoverPreview(); return; }
-      const info = buildIndexTree(node, 6);
+      const info = menuTree || buildIndexTree(node);
       const THRESHOLD = 16;                // 目录条目不太多才展示，避免遮挡画布（超过则用 F 看完整目录）
       if (!info.count || info.count > THRESHOLD) { hideIndexHoverPreview(); return; }
+      if (indexHoverNodeId === node.id && indexHoverItems && sameIndexItems(indexHoverItems, info.children)) {
+        positionIndexHoverPreview(nodeEl);
+        return;
+      }
       indexHoverNodeId = nodeEl.dataset.id;
+      indexHoverItems = info.children;
       if (indexHoverHideTimer) { clearTimeout(indexHoverHideTimer); indexHoverHideTimer = null; }
       if (!indexHoverEl) {
         indexHoverEl = document.createElement('div');
@@ -4291,7 +4365,11 @@
       indexHoverEl.appendChild(list);
       positionIndexHoverPreview(nodeEl);
       // 逐条渐显：下一帧加 show，触发带 stagger 的过渡
-      requestAnimationFrame(function () { if (indexHoverEl) indexHoverEl.classList.add('show'); });
+      const overlay = indexHoverEl;
+      const id = node.id;
+      requestAnimationFrame(function () {
+        if (indexHoverEl === overlay && indexHoverNodeId === id) overlay.classList.add('show');
+      });
     }
     function positionIndexHoverPreview(nodeEl) {
       if (!indexHoverEl) return;
@@ -8531,10 +8609,12 @@
           meta.className = 'text-node-meta';
           el.appendChild(meta);
         }
-        meta.textContent = indexNodeMetaText(node);
-        meta.classList.toggle('empty', buildIndexTree(node, 4).count === 0);
+        const info = buildIndexTree(node);
+        const label = indexNodeMetaText(info);
+        if (meta.textContent !== label) meta.textContent = label;
+        meta.classList.toggle('empty', info.count === 0);
         if (previewBody) previewBody.remove();
-        return;
+        return info;
       }
       if (isCardNode(node)) {
         // 卡片：不要 caption，标题加粗 + 分隔线 + 正文常驻显示（复用 .preview-node-body，
@@ -8582,8 +8662,7 @@
       meta.classList.toggle('empty', !String(node.body || '').trim());
     }
 
-    function indexNodeMetaText(node) {
-      const info = buildIndexTree(node, 4);
+    function indexNodeMetaText(info) {
       const englishUi = document.documentElement.dataset.uiLanguage === 'en'
         || document.body.dataset.toolbarLanguage === 'en';
       if (!info.count) return englishUi ? 'Not connected yet' : '尚未连接';
@@ -9446,24 +9525,24 @@
     function applyEdgeArrows(refs, edge) {
       if (EDGE_GEOMETRY_HIT && !refs.path.isConnected) return;
       removeEdgeMarkers(edge.id);
-      const arrow = edge.arrow || 'none';
+      const arrow = normalizeEdgeArrow(edge.arrow);
+      refs.path.removeAttribute('marker-end');
+      refs.path.removeAttribute('marker-start');
       if (arrow === 'none') {
-        refs.path.removeAttribute('marker-end');
-        refs.path.removeAttribute('marker-start');
         return;
       }
       const size = edge.arrowSize || 12;
       const color = edgeStrokeColor(edge);
       const defs = ensureDefs();
-      const endId = 'mk-' + edge.id + '-e';
-      defs.appendChild(buildArrowMarker(endId, size, 'auto', color));
-      refs.path.setAttribute('marker-end', 'url(#' + endId + ')');
-      if (arrow === 'both') {
+      if (arrow !== 'start') {
+        const endId = 'mk-' + edge.id + '-e';
+        defs.appendChild(buildArrowMarker(endId, size, 'auto', color));
+        refs.path.setAttribute('marker-end', 'url(#' + endId + ')');
+      }
+      if (arrow !== 'end') {
         const startId = 'mk-' + edge.id + '-s';
         defs.appendChild(buildArrowMarker(startId, size, 'auto-start-reverse', color));
         refs.path.setAttribute('marker-start', 'url(#' + startId + ')');
-      } else {
-        refs.path.removeAttribute('marker-start');
       }
     }
     function applyEdgeStyle(refs, edge) {
@@ -9482,13 +9561,18 @@
     // 新建默认：普通模式按当前 clean/full 子模式读取各自样式，只对"新建"生效。
     function readEdgeDefaults() {
       const key = normalDefaultsKey('canvas:proEdgeDefaults', 'canvas:cleanEdgeDefaults');
-      try { return JSON.parse(localStorage.getItem(key) || '{}') || {}; }
+      try {
+        const defaults = JSON.parse(localStorage.getItem(key) || '{}') || {};
+        if (defaults.arrow === 'one') defaults.arrow = 'end';
+        return defaults;
+      }
       catch (e) { return {}; }
     }
     function applyProEdgeDefaults(edge) {
       if (currentMode() !== 'normal') return;
       const d = readEdgeDefaults();
-      if (d.arrow && d.arrow !== 'none') edge.arrow = d.arrow;
+      const arrow = normalizeEdgeArrow(d.arrow);
+      if (arrow !== 'none') edge.arrow = arrow;
       if (d.curve && d.curve !== 'bezier') edge.curve = d.curve;
       if (d.lineStyle && d.lineStyle !== 'solid') edge.lineStyle = d.lineStyle;
       if (d.color && d.color.toLowerCase() !== '#000000') edge.color = d.color;
@@ -9903,7 +9987,10 @@
         const lineState = editSharedState(edgeTargets, edgeLineStyle);
         setActiveBtns(eeLineStyleBtns, 'lineStyle', lineState.mixed ? '' : lineState.value);
         if (eeLineStyleState) eeLineStyleState.textContent = lineState.mixed ? '混合' : '';
-        const arrowState = editSharedState(edgeTargets, (item) => item.arrow || 'none');
+        const arrowState = editSharedState(edgeTargets, (item) => {
+          const arrow = normalizeEdgeArrow(item.arrow);
+          return arrow === 'start' ? 'end' : arrow;
+        });
         setActiveBtns(eeArrowBtns, 'arrow', arrowState.mixed ? '' : arrowState.value);
         if (eeArrowState) eeArrowState.textContent = arrowState.mixed ? '混合' : '';
         const widthState = editSharedState(edgeTargets, (item) => item.width == null ? 1.5 : Number(item.width));
@@ -9934,8 +10021,9 @@
     }
     // 改当前选中节点/连线的某属性（批量：作用于全部选中目标）。
     // isDefault=true → 删字段回默认，保 .canvas 干净。
-    function notifyEditStyleChange() {
-      redrawMinimap();
+    function notifyEditStyleChange(nodeField) {
+      // 小地图只使用节点几何和 node.color。
+      if (nodeField !== 'bgColor' && nodeField !== 'borderColor' && nodeField !== 'opacity') redrawMinimap();
       onChange();
     }
     function editNodeField(prop, value, isDefault) {
@@ -9960,20 +10048,28 @@
       });
       if (changedIds.size) {
         edgesIncidentTo(changedIds).forEach(updateEdgePath);
-        redrawMinimap();
       }
-      notifyEditStyleChange();
+      notifyEditStyleChange(prop);
     }
     function editEdgeField(prop, value, isDefault) {
       const targets = editEdgeTargets();
       if (!targets.length) return;
+      const directionIds = prop === 'arrow' ? new Set() : null;
       targets.forEach((ed) => {
+        const before = directionIds && normalizeEdgeArrow(ed.arrow);
         if (isDefault) delete ed[prop]; else ed[prop] = value;
+        if (directionIds) collectIndexDirectionChange(directionIds, ed, before);
         if (prop === 'curve' && value !== 'rounded-elbow') delete ed.cornerRadius;
         const refs = edgeMap.get(ed.id); if (refs) applyEdgeStyle(refs, ed);
         updateEdgePath(ed);
       });
+      if (directionIds?.size) refreshAllIndexNodes({ nodeIds: directionIds });
       notifyEditStyleChange();
+    }
+    function collectIndexDirectionChange(ids, edge, before) {
+      if (before === normalizeEdgeArrow(edge.arrow)) return;
+      ids.add(edge.from);
+      ids.add(edge.to);
     }
     function editNodeContextField(kind, value) {
       const targets = editNodeTargets();
@@ -10175,14 +10271,17 @@
         return false;
       }
       const d = readEdgeDefaults();
+      const directionIds = new Set();
       ordinary.forEach((edge) => {
         const curve = d.curve && d.curve !== 'bezier' ? d.curve : '';
         if (curve) edge.curve = curve; else delete edge.curve;
         delete edge.cornerRadius;
         const lineStyle = d.lineStyle && d.lineStyle !== 'solid' ? d.lineStyle : '';
         if (lineStyle) edge.lineStyle = lineStyle; else delete edge.lineStyle;
-        const arrow = d.arrow && d.arrow !== 'none' ? d.arrow : '';
-        if (arrow) edge.arrow = arrow; else delete edge.arrow;
+        const before = normalizeEdgeArrow(edge.arrow);
+        const arrow = normalizeEdgeArrow(d.arrow);
+        if (arrow !== 'none') edge.arrow = arrow; else delete edge.arrow;
+        collectIndexDirectionChange(directionIds, edge, before);
         const color = typeof d.color === 'string' ? d.color.toLowerCase() : '#000000';
         if (color === '#000000') delete edge.color; else edge.color = color;
         const width = Number(d.width);
@@ -10193,6 +10292,7 @@
         if (refs) applyEdgeStyle(refs, edge);
         updateEdgePath(edge);
       });
+      if (directionIds.size) refreshAllIndexNodes({ nodeIds: directionIds });
       notifyEditStyleChange();
       refreshEditPanel();
       pushHistory();
@@ -10301,14 +10401,19 @@
     function resetSelectedEdgeAppearance() {
       const targets = editEdgeTargets();
       if (!targets.length) return;
+      const directionIds = new Set();
       targets.forEach((edge) => {
-        if (restoreEditMindmapEdgeForPreset(edge)) return;
-        ['curve', 'lineStyle', 'arrow', 'width', 'arrowSize', 'color', 'cornerRadius'].forEach((prop) => { delete edge[prop]; });
-        const refs = edgeMap.get(edge.id);
-        if (refs) applyEdgeStyle(refs, edge);
-        updateEdgePath(edge);
+        const before = normalizeEdgeArrow(edge.arrow);
+        if (!restoreEditMindmapEdgeForPreset(edge)) {
+          ['curve', 'lineStyle', 'arrow', 'width', 'arrowSize', 'color', 'cornerRadius'].forEach((prop) => { delete edge[prop]; });
+          const refs = edgeMap.get(edge.id);
+          if (refs) applyEdgeStyle(refs, edge);
+          updateEdgePath(edge);
+        }
+        collectIndexDirectionChange(directionIds, edge, before);
       });
       pushHistory();
+      if (directionIds.size) refreshAllIndexNodes({ nodeIds: directionIds });
       notifyEditStyleChange();
       refreshEditPanel();
       showCanvasToast(((typeof window.__tc === 'function') ? window.__tc('epRestoredBuiltInLine') : '') || '已恢复内置朴素连线');
@@ -10549,8 +10654,9 @@
         refreshEditPanel();
       });
     }
-    function applyTextNodeBody(node, value, marks) {
+    function applyTextNodeBody(node, value, marks, syncLegacyPanel = true) {
       if (!node || !isBodyNode(node)) return;
+      const before = Changes ? { ...node } : null;
       if (!isCodeNode(node) && marks != null) {
         const draft = canonicalRichDraft({ text: value, marks: marks });
         value = draft.text;
@@ -10570,13 +10676,14 @@
         renderTextNodeMeta(el, node);
         if (isPreviewNode(node) || isCardNode(node) || isStickyNode(node)) animatePreviewNodeGeometry(node.id);
       }
-      if (enBody && editGetNode() === node && document.activeElement !== enBody) {
-        enBody.value = value;
+      if (syncLegacyPanel && editGetNode() === node) {
+        if (enBody && document.activeElement !== enBody) enBody.value = value;
+        if (enBodyRich && document.activeElement !== enBodyRich && !isCodeNode(node)) {
+          setRichEditable(enBodyRich, value, richMarks(node, 'body'));
+        }
       }
-      if (enBodyRich && editGetNode() === node && document.activeElement !== enBodyRich && !isCodeNode(node)) {
-        setRichEditable(enBodyRich, value, richMarks(node, 'body'));
-      }
-      notify();
+      const changes = before && Changes.diff({ nodes: [before] }, { nodes: [node] });
+      notify(changes ? Changes.merge(pendingHistoryChanges, changes) : null);
     }
     function updateTextNodeBody() {
       const n = editGetNode();
@@ -12107,6 +12214,7 @@
           d = 'M' + start.x + ' ' + start.y
             + ' C' + midX + ' ' + start.y + ' ' + midX + ' ' + end.y + ' ' + end.x + ' ' + end.y;
         }
+        const arrow = normalizeEdgeArrow(edge.arrow);
         svg.appendChild(structureSvgElement('path', {
           d: d,
           fill: 'none',
@@ -12114,8 +12222,8 @@
           'stroke-width': edge.width || 1.8,
           'stroke-dasharray': edge.lineStyle === 'dashed'
             ? '10 7' : (edge.lineStyle === 'dotted' ? '2 7' : 'none'),
-          'marker-start': edge.arrow === 'both' ? 'url(#' + markerId + ')' : '',
-          'marker-end': edge.arrow === 'end' || edge.arrow === 'both' ? 'url(#' + markerId + ')' : '',
+          'marker-start': arrow === 'start' || arrow === 'both' ? 'url(#' + markerId + ')' : '',
+          'marker-end': arrow === 'end' || arrow === 'both' ? 'url(#' + markerId + ')' : '',
           class: 'decor-structure-edge',
         }));
       });
@@ -14991,7 +15099,7 @@
     }
 
     function drawCanvasEdgeArrows(edge, points, selected) {
-      const arrow = edge.arrow || 'none';
+      const arrow = normalizeEdgeArrow(edge.arrow);
       if (arrow === 'none' || !points || points.length < 2) return;
       const style = edgeVisualLineStyle(edge);
       const color = edgeStrokeColor(edge);
@@ -15055,6 +15163,8 @@
       const x0 = (-curPanX) / curScale - pad, y0 = (-curPanY) / curScale - pad;
       const x1 = (vw - curPanX) / curScale + pad, y1 = (vh - curPanY) / curScale + pad;
       const visibleItems = queryEdgeGeometry({ minX: x0, minY: y0, maxX: x1, maxY: y1 });
+      const accent = indexReaderLitEdgeIds.size
+        ? getComputedStyle(viewport).getPropertyValue('--accent').trim() || '#1a1a1a' : '';
       for (let i = 0; i < visibleItems.length; i++) {
         const item = visibleItems[i];
         const edge = item.edge;
@@ -15065,6 +15175,12 @@
         const selected = selectedEdgeIds.has(edge.id);
         edgesCtx.save();
         applyCanvasEdgeStroke(edge, selected);
+        if (accent && indexReaderLitEdgeIds.has(edge.id)) {
+          edgesCtx.strokeStyle = accent;
+          edgesCtx.globalAlpha = 1;
+          edgesCtx.shadowBlur = 3;
+          edgesCtx.shadowColor = 'rgba(26, 26, 26, 0.35)';
+        }
         edgesCtx.stroke(item.path);
         edgesCtx.restore();
         drawCanvasEdgeArrows(edge, item.points, selected);
@@ -20151,9 +20267,35 @@
     // 右栏（renderIndexReaderPane）：按 indexReaderTargetId 渲染该项内容（正文 / 代码 / MD），
     //   未选或目标失效时回落到索引节点自身正文当“总览”，再没有就给一句提示。
     //   纯只读：右栏不编辑、不批注（批注 / 编辑仍走各自的 F 浮层），PDF 第二轮再内嵌。
-    function renderIndexReaderNav(nav, node) {
-      const info = buildIndexTree(node, 4);
-      if (!nav) return info;
+    function sameIndexItems(previous, current) {
+      return previous.length === current.length && previous.every(function (item, i) {
+        const other = current[i];
+        return item.id === other.id && item.title === other.title && item.summary === other.summary
+          && sameIndexItems(item.children, other.children);
+      });
+    }
+    function refreshIndexReader(node, menuTree, changes) {
+      if (!changes || changes.contentNodeIds?.has(node.id)) {
+        renderTextReader(node, menuTree);
+        return;
+      }
+      const previousTarget = indexReaderTargetId;
+      const nav = textReader.querySelector('[data-role="index-reader-nav"]');
+      renderIndexReaderNav(nav, node, menuTree);
+      if (previousTarget !== indexReaderTargetId || changes.contentNodeIds?.has(indexReaderTargetId)) {
+        renderIndexReaderPane(node);
+      }
+    }
+    function renderIndexReaderNav(nav, node, menuTree) {
+      const info = menuTree || buildIndexTree(node);
+      if (!info.ids.has(indexReaderTargetId)) indexReaderTargetId = null;
+      if (!nav) return;
+      if (indexReaderItems && sameIndexItems(indexReaderItems, info.children)) {
+        if (indexReaderLitPath) setIndexReaderPath(indexReaderLitPath);
+        return;
+      }
+      indexReaderItems = info.children;
+      clearIndexReaderTarget();
       nav.innerHTML = '';
       const label = document.createElement('div');
       label.className = 'index-reader-nav-label';
@@ -20162,9 +20304,9 @@
       if (!info.count) {
         const hint = document.createElement('div');
         hint.className = 'index-reader-nav-empty';
-        hint.textContent = '把索引节点连到其它节点，这里会自动生成目录。';
+        hint.textContent = '把索引节点与其他内容节点连起来，目录会自动生成。';
         nav.appendChild(hint);
-        return info;
+        return;
       }
       function appendItems(items, prefix, idPath) {
         items.forEach(function (item, idx) {
@@ -20197,7 +20339,6 @@
         });
       }
       appendItems(info.children, [], [node.id]);
-      return info;
     }
     function renderIndexReaderPane(indexNode) {
       if (!textReader) return;
@@ -20222,7 +20363,7 @@
       delete content.dataset.source;
       delete content.dataset.codeLanguage;
       delete content.dataset.indexReader;
-      indexPaneMdToken += 1;   // 作废任何在途的右栏 MD 加载（防快速连点时旧请求覆盖新内容）
+      if (!keepMd) indexPaneMdToken += 1;   // 切换条目才作废在途的 MD 加载。
       // 未选 / 目标已删 → 看索引节点自身正文当“总览”，再没有就提示
       if (!target) {
         if (paneHead) paneHead.hidden = true;
@@ -20638,12 +20779,12 @@
     function syncIndexDepthSwitch(node) {
       const sw = textReader && textReader.querySelector('[data-role="index-depth-switch"]');
       if (!sw) return;
-      const cur = Math.max(1, Math.min(6, Math.round(Number(node && node.indexDepth) || 4)));
+      const cur = indexDepthLimit(node);
       sw.querySelectorAll('.index-depth-opt').forEach(function (b) {
         b.classList.toggle('active', Number(b.dataset.depth) === cur);
       });
     }
-    function renderTextReader(node) {
+    function renderTextReader(node, menuTree) {
       if (!textReader || !node || !isReadableNode(node)) return;
       const title = textReader.querySelector('[data-role="text-reader-title"]');
       const kicker = textReader.querySelector('[data-role="text-reader-kicker"]');
@@ -20675,10 +20816,12 @@
       if (indexNode) {
         // 双栏：左栏目录树 + 右栏只读阅读区（右栏内容、空态、小标题都交给 pane 管）
         if (nav) nav.hidden = false;
-        renderIndexReaderNav(nav, node);
+        renderIndexReaderNav(nav, node, menuTree);
         renderIndexReaderPane(node);
         buildReaderToc(toc, content, scroll, false);
       } else {
+        indexReaderItems = null;
+        clearIndexReaderTarget();
         if (nav) { nav.hidden = true; nav.innerHTML = ''; }
         if (paneHead) paneHead.hidden = true;
         if (content) {
@@ -20968,11 +21111,13 @@
       if (editingNodeId !== null) commitNodeEdit();
       if (editingEdgeId !== null) commitEdgeEdit();
       if (searchOpen) closeSearch();
+      hideIndexHoverPreview();
       readingNodeId = node.id;
       textReaderOpen = true;
       textReaderEditing = false;
       textReaderOriginalBody = '';
       indexReaderTargetId = null;   // 每次打开索引节点都从“总览”起读，不串上次选中项
+      indexReaderItems = null;
       disposeIndexPanePdf();        // 防御：清掉上次遗留的右栏内嵌 PDF 文档/监听
       indexPanePdfNodeId = null;
       indexPaneMdNodeId = null; indexPaneMdBase = null;
@@ -21003,6 +21148,8 @@
       textReaderOpen = false;
       readingNodeId = null;
       indexReaderTargetId = null;
+      indexReaderItems = null;
+      indexPaneMdToken += 1;
       disposeIndexPanePdf();        // 关闭浮层即销毁右栏内嵌 PDF 文档与懒渲染监听，防内存堆积
       indexPanePdfNodeId = null;
       indexPaneMdNodeId = null; indexPaneMdBase = null;
@@ -26975,13 +27122,16 @@
         });
         indexNav.addEventListener('mouseover', function (e) {
           const item = e.target.closest ? e.target.closest('[data-index-node-id]') : null;
-          if (item && indexNav.contains(item)) setIndexReaderPath(item.dataset.indexPath || item.dataset.indexNodeId);
+          const previous = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest('[data-index-node-id]') : null;
+          if (item && item !== previous && indexNav.contains(item)) {
+            setIndexReaderPath(item.dataset.indexPath || item.dataset.indexNodeId);
+          }
         });
         indexNav.addEventListener('mouseout', function (e) {
           const item = e.target.closest ? e.target.closest('[data-index-node-id]') : null;
           if (!item || !indexNav.contains(item)) return;
           const next = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest('[data-index-node-id]') : null;
-          if (!next || next !== item) clearIndexReaderTarget();
+          if (!next || !indexNav.contains(next)) clearIndexReaderTarget();
         });
       }
       // ③ 目录最大层级选择器：点 2/3/4/全部 改 node.indexDepth，即时重算目录与画布 meta
@@ -26992,10 +27142,8 @@
         const node = findNode(readingNodeId);
         if (!node || !isIndexNode(node)) return;
         const d = Math.max(1, Math.min(6, Number(btn.dataset.depth) || 4));
-        if (Math.round(Number(node.indexDepth) || 4) === d) return;
+        if (indexDepthLimit(node) === d) return;
         node.indexDepth = d;
-        renderTextReader(node);
-        refreshAllIndexNodes();
         pushHistory();
         notify();
       });
@@ -27597,8 +27745,7 @@
       const normalEdgeDefaults = readJSONPreference(
         normalSubmode === 'full' ? 'canvas:proEdgeDefaults' : 'canvas:cleanEdgeDefaults',
       );
-      const arrow = ['none', 'start', 'end', 'both'].indexOf(normalEdgeDefaults.arrow) >= 0
-        ? normalEdgeDefaults.arrow : 'none';
+      const arrow = normalizeEdgeArrow(normalEdgeDefaults.arrow);
       const normalResolvedEdge = {
         curve: EDGE_CURVES.indexOf(normalEdgeDefaults.curve) >= 0 ? normalEdgeDefaults.curve : 'branch',
         lineStyle: EDGE_LINE_STYLES.indexOf(normalEdgeDefaults.lineStyle) >= 0
@@ -27890,7 +28037,7 @@
       const style = {
         curve: EDGE_CURVES.indexOf(source.curve) >= 0 ? source.curve : 'branch',
         lineStyle: EDGE_LINE_STYLES.indexOf(source.lineStyle) >= 0 ? source.lineStyle : 'solid',
-        arrow: ['none', 'start', 'end', 'both'].indexOf(source.arrow) >= 0 ? source.arrow : 'none',
+        arrow: normalizeEdgeArrow(source.arrow),
       };
       const color = normalizeHexColor(source.color);
       if (color && color.toLowerCase() !== '#000000') style.color = color;
@@ -28524,11 +28671,13 @@
           path.style.setProperty('--edge-color', color);
           path.removeAttribute('marker-start');
           path.removeAttribute('marker-end');
-          const arrow = edge.arrow || 'none';
+          const arrow = normalizeEdgeArrow(edge.arrow);
           if (arrow !== 'none') {
             const size = Number(edge.arrowSize) || 12;
-            path.setAttribute('marker-end', 'url(#' + exportMarker(layer, index, 'e', size, 'auto', color) + ')');
-            if (arrow === 'both') {
+            if (arrow !== 'start') {
+              path.setAttribute('marker-end', 'url(#' + exportMarker(layer, index, 'e', size, 'auto', color) + ')');
+            }
+            if (arrow !== 'end') {
               path.setAttribute('marker-start', 'url(#' + exportMarker(layer, index, 's', size, 'auto-start-reverse', color) + ')');
             }
           }
@@ -30190,7 +30339,7 @@
         nodeSizeCache.delete(nodeId);
         edgesIncidentTo(new Set([nodeId])).forEach(updateEdgePath);
       }
-      notifyEditStyleChange();
+      notifyEditStyleChange(prop);
     };
 
     global.CanvasModule.editSingleNodeContextField = function (nodeId, kind, value) {
@@ -30218,26 +30367,7 @@
     };
 
     global.CanvasModule.applySingleNodeBody = function (nodeId, value, marks) {
-      const node = findNode(nodeId);
-      if (!node || !isBodyNode(node)) return;
-      if (!isCodeNode(node) && marks != null) {
-        const draft = canonicalRichDraft({ text: value, marks: marks });
-        value = draft.text;
-        marks = draft.marks;
-      }
-      if (value) node.body = value; else delete node.body;
-      if (isCodeNode(node)) {
-        delete node.bodyMarks;
-        node.text = codeTitleFromBody(value, node.language);
-        delete node.textMarks;
-      } else if (marks != null) storeRichMarks(node, 'body', marks);
-      if (!isCodeNode(node) && isStickyNode(node)) syncStickyTitleFromBody(node, value);
-      const el = nodeMap.get(nodeId);
-      if (el) {
-        renderTextNodeMeta(el, node);
-        if (isPreviewNode(node) || isCardNode(node) || isStickyNode(node)) animatePreviewNodeGeometry(nodeId);
-      }
-      notify();
+      applyTextNodeBody(findNode(nodeId), value, marks, false);
     };
 
     global.CanvasModule.switchSingleNodeKind = function (nodeId, kind) {
