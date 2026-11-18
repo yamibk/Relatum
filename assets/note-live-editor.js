@@ -94,19 +94,20 @@
   let databaseBlocksEnabled;
   let htmlEmbedsEnabled;
   const databaseOpener = /^```database[\t ]+([a-z0-9][a-z0-9-]{0,47})[\t ]*$/m;
-  const htmlEmbedOpener = /^```html-embed[\t ]+([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})(?:[\t ]+(auto|[1-9][0-9]{2,3})x([1-9][0-9]{2,3}))?[\t ]*$/m;
-  const htmlEmbedLimits = { minWidth: 240, maxWidth: 1600, minHeight: 160, maxHeight: 1200 };
+  const htmlEmbedOpener = /^```html-embed[\t ]+([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})(?:[\t ]+(auto|[1-9][0-9]{2,3})x([1-9][0-9]{2,3}))?(?:[\t ]+zoom=([1-9][0-9]{1,2})%)?[\t ]*$/m;
+  const htmlEmbedLimits = { minWidth: 240, maxWidth: 1600, minHeight: 160, maxHeight: 1200, minZoom: 50, maxZoom: 100 };
 
   function htmlEmbedSize(match) {
     const width = !match[2] || match[2] === 'auto' ? null : Number(match[2]);
     const height = match[3] ? Number(match[3]) : 480;
-    const { minWidth, maxWidth, minHeight, maxHeight } = htmlEmbedLimits;
+    const zoom = match[4] ? Number(match[4]) : 100;
+    const { minWidth, maxWidth, minHeight, maxHeight, minZoom, maxZoom } = htmlEmbedLimits;
     return (width === null || width >= minWidth && width <= maxWidth) && height >= minHeight && height <= maxHeight
-      ? { width, height } : null;
+      && zoom >= minZoom && zoom <= maxZoom ? { width, height, zoom } : null;
   }
 
-  function htmlEmbedStyle({ width, height }) {
-    return '--note-html-width:' + (width ? width + 'px' : '100%') + ';--note-html-height:' + height + 'px';
+  function htmlEmbedStyle({ width, height, zoom }) {
+    return '--note-html-width:' + (width ? width + 'px' : '100%') + ';--note-html-height:' + height + 'px;--note-html-scale:' + (zoom / 100);
   }
   const databaseAttachmentExtension = /\.(?:pdf|md|markdown|csv|tsv|txt|doc|docx|xls|xlsx|ppt|pptx|rtf|odt|ods|odp)$/i;
   let nextBlockSpecId = 1;
@@ -4118,9 +4119,14 @@
     matches(other) { return other && this.spec.id === other.spec.id && this.spec.htmlEmbedId === other.spec.htmlEmbedId && this.path === other.path && this.options === other.options; }
     eq(other) {
       return this.matches(other) && this.spec.htmlEmbedSize.width === other.spec.htmlEmbedSize.width
-        && this.spec.htmlEmbedSize.height === other.spec.htmlEmbedSize.height;
+        && this.spec.htmlEmbedSize.height === other.spec.htmlEmbedSize.height
+        && this.spec.htmlEmbedSize.zoom === other.spec.htmlEmbedSize.zoom;
     }
-    applySize(element) { element.style.cssText = htmlEmbedStyle(this.spec.htmlEmbedSize); }
+    applySize(element) {
+      const size = this.spec.htmlEmbedSize;
+      element.style.cssText = htmlEmbedStyle(size);
+      element.querySelector('.note-html-zoom')?.setAttribute('aria-valuenow', String(size.zoom));
+    }
     toDOM(view) {
       const element = document.createElement('div');
       element.className = 'note-html-embed'; element.contentEditable = 'false';
@@ -4141,12 +4147,16 @@
     updateDOM(element, view) {
       const holder = element.__relatumHtmlEmbed;
       if (!this.matches(holder?.widget)) return false;
+      const previous = holder.widget.spec.htmlEmbedSize;
       holder.widget = this;
       this.applySize(element);
-      view.requestMeasure();
+      if (previous.width !== this.spec.htmlEmbedSize.width || previous.height !== this.spec.htmlEmbedSize.height) view.requestMeasure();
       return true;
     }
-    ignoreEvent() { return true; }
+    ignoreEvent(event) {
+      return !(event.type === 'keydown' && event.target.classList?.contains('note-html-zoom')
+        && (event.ctrlKey || event.metaKey) && !event.altKey && /^[zy]$/i.test(event.key));
+    }
     destroy(element) { element.__relatumHtmlEmbed?.dispose(); }
   }
 
@@ -7786,16 +7796,18 @@
       const spec = editableHtmlEmbed(id, path);
       if (!spec) return null;
       const { doc } = view.state;
-      return ({ width, height }) => {
+      return ({ width, height, zoom }, keepFocus = false) => {
         if (doc !== view.state.doc || !editableHtmlEmbed(id, path)) return false;
         const line = doc.lineAt(spec.from);
-        const opener = '```html-embed ' + spec.htmlEmbedId + (width === null && height === 480 ? '' : ' ' + (width ?? 'auto') + 'x' + height);
+        const opener = '```html-embed ' + spec.htmlEmbedId
+          + (width === null && height === 480 ? '' : ' ' + (width ?? 'auto') + 'x' + height)
+          + (zoom === 100 ? '' : ' zoom=' + zoom + '%');
         const match = htmlEmbedOpener.exec(opener);
         if (!match || !htmlEmbedSize(match)) return false;
-        if (width === spec.htmlEmbedSize.width && height === spec.htmlEmbedSize.height) return false;
+        if (width === spec.htmlEmbedSize.width && height === spec.htmlEmbedSize.height && zoom === spec.htmlEmbedSize.zoom) return false;
         view.dispatch({ changes: { from: line.from, to: line.to, insert: opener },
           userEvent: 'input.html-embed-size', annotations: CM.isolateHistory.of('full') });
-        view.focus();
+        if (!keepFocus) view.focus();
         return true;
       };
     }

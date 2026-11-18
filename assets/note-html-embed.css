@@ -1,7 +1,7 @@
 .note-html-embed {
   box-sizing: border-box;
-  width: var(--note-html-width, 100%);
-  max-width: 100%;
+  width: 100%;
+  max-width: var(--note-html-width, 100%);
   min-width: 0;
   margin-block: .5em;
   border: 1px solid var(--note-theme-border, rgba(125, 125, 125, .28));
@@ -69,6 +69,39 @@
 }
 .note-html-embed:has(.note-html-embed-footer:not([hidden])) .note-html-embed-stage { border-radius: 0; }
 .note-html-embed-footer { position: relative; height: 12px; }
+.note-html-zoom {
+  position: absolute;
+  inset: 0 auto 0 50%;
+  width: 48px;
+  transform: translateX(-50%);
+  color: var(--note-theme-text-muted, var(--text-secondary));
+  cursor: ew-resize;
+  touch-action: none;
+  border-radius: 4px;
+}
+.note-html-zoom::before {
+  content: '';
+  position: absolute;
+  inset: 5px 9px auto;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: .55;
+}
+.note-html-zoom:focus-visible { outline: 2px solid var(--note-control-focus, currentColor); outline-offset: -2px; }
+:is(.note-html-zoom:hover, .note-html-zoom:focus-visible, .is-zooming .note-html-zoom)::after {
+  content: attr(aria-valuenow) '%';
+  position: absolute;
+  bottom: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--note-theme-text, var(--text));
+  color: var(--note-theme-paper, var(--bg));
+  font: 500 12px/1.5 var(--font-ui, sans-serif);
+  pointer-events: none;
+}
 .note-html-resize {
   position: absolute;
   inset: 0 0 0 auto;
@@ -89,8 +122,15 @@
   border-bottom-right-radius: 2px;
 }
 .note-html-embed.is-resizing { cursor: nwse-resize; }
-.note-html-embed.is-resizing iframe { pointer-events: none; }
+.note-html-embed.is-zooming { cursor: ew-resize; }
+.note-html-embed:is(.is-resizing, .is-zooming) iframe { pointer-events: none; }
 
 .note-html-tab-stage { position: absolute; inset: 0; }
 :is(.note-html-embed-stage, .note-html-tab-stage) iframe { display: block; width: 100%; height: 100%; border: 0; background: white; }
+.note-html-embed-stage > iframe {
+  width: calc(100% / var(--note-html-scale, 1));
+  height: calc(100% / var(--note-html-scale, 1));
+  transform-origin: top left;
+  transform: scale(var(--note-html-scale, 1));
+}
 :is(.note-html-embed-stage, .note-html-tab-stage) iframe[inert] { pointer-events: none; }

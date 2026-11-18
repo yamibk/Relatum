@@ -22,9 +22,11 @@ const unused = path.join(notes, 'Schedule.assets', 'html', unusedId);
 const protectedFile = path.join(notes, 'Schedule.assets', 'html', protectedId, 'Protected.htm');
 const foreignDirectory = path.join(notes, 'Schedule.assets', 'html', '40b83e0a-c0d7-4f41-92a1-39a278952ee1');
 const recycled = path.join(root, 'recycled');
-const fixture = '<!doctype html><html lang="en"><head data-value="a > b"><style>body{margin:12px;height:950px}.week-band{display:flex;overflow:auto;width:min(90vw,650px)} .week-band span{flex:none;width:1400px}</style></head>'
-  + '<body><button>Week 12</button><output></output><div class="week-band"><span></span><b>Selected week</b></div><div style="width:1300px;margin-top:680px">Wide report</div>'
-  + '<script>document.querySelector("output").textContent = "Ready"; document.querySelector("button").onclick = event => event.target.textContent = "Week 13";</script>';
+const fixture = '<!doctype html><html lang="en"><head data-value="a > b"><style>body{margin:12px;height:950px}.week-band{display:flex;overflow:auto;width:min(90vw,650px)} .week-band span{flex:none;width:1400px}.zoom-band{overflow:auto}.zoom-grid{min-width:1000px;display:grid;grid-template-columns:repeat(7,1fr)}</style></head>'
+  + '<body><button>Week 12</button><output></output><div class="week-band"><span></span><b>Selected week</b></div>'
+  + '<div class="zoom-band"><div class="zoom-grid"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div></div>'
+  + '<div style="width:1300px;margin-top:680px">Wide report</div>'
+  + '<script>document.querySelector("output").textContent = "Ready"; document.querySelector("button").onclick = event => event.target.textContent = "Week " + (Number(event.target.textContent.slice(5)) + 1);</script>';
 const filename = '我的课表.html';
 const picker = path.join(root, filename);
 fs.mkdirSync(companion, { recursive: true });
@@ -42,7 +44,8 @@ fs.writeFileSync(path.join(notes, 'Schedule.md'), 'Before embed\n\n' + marker(id
   + Array.from({ length: 300 }, (_, index) => `Paragraph ${index + 1}\n\n`).join('') + marker(identity) + '\n\nAfter embed: ' + protectedId.toUpperCase() + '\n');
 fs.writeFileSync(path.join(notes, 'Import.md'), 'Insert here\n');
 fs.writeFileSync(path.join(notes, 'Missing.md'), 'Missing file\n\n' + marker(identity)
-  + '\n\n```html-embed invalid\n```\n\n```html-embed ' + identity + ' 9999x480\n```\n\n> ```html-embed ' + identity + '\n> ```\n');
+  + '\n\n```html-embed invalid\n```\n\n```html-embed ' + identity + ' 9999x480\n```\n\n```html-embed ' + identity + ' zoom=49%\n```'
+  + '\n\n> ```html-embed ' + identity + '\n> ```\n');
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function waitFor(check, description) {
@@ -264,6 +267,71 @@ async function freePort() {
       await page.keyboard.press('Control+z');
       assert.equal(await getDocument(), resized);
       await page.keyboard.press('Control+z');
+      assert.equal(await getDocument(), original);
+
+      const zoomHandle = block.getByRole('slider', { name: 'Page zoom' });
+      const stage = block.locator('.note-html-embed-stage');
+      const viewportSize = () => stage.evaluate(element => [element.clientWidth, element.clientHeight]);
+      const horizontalOverflow = () => frame.locator('.zoom-band').evaluate(element => element.scrollWidth - element.clientWidth);
+      await block.getByRole('button', { name: 'Interact' }).click();
+      await frame.getByText('Ready').waitFor();
+      await frame.getByRole('button', { name: 'Week 12' }).click();
+      const zoomAddress = await block.locator('iframe').getAttribute('src');
+      const initialViewport = await viewportSize();
+      assert(await horizontalOverflow() > 0);
+      assert.equal(await zoomHandle.getAttribute('aria-valuenow'), '100');
+      await zoomHandle.scrollIntoViewIfNeeded();
+      const zoomBounds = await zoomHandle.boundingBox();
+      const zoomTarget = { x: zoomBounds.x + zoomBounds.width / 2 - 120, y: zoomBounds.y + zoomBounds.height / 2 };
+      await drag(zoomHandle, zoomTarget, true);
+      assert.equal(await getDocument(), original);
+      assert.equal(await zoomHandle.getAttribute('aria-valuenow'), '100');
+      await drag(zoomHandle, zoomTarget);
+      const zoomed = await getDocument();
+      assert(zoomed.includes(identity + ' zoom=60%'));
+      assert.equal(await block.locator('iframe').getAttribute('src'), zoomAddress);
+      await frame.getByRole('button', { name: 'Week 13' }).waitFor();
+      await waitFor(async () => await horizontalOverflow() === 0, 'the seven-column grid fits the zoomed viewport');
+      assert.deepEqual(await viewportSize(), initialViewport);
+      assert.deepEqual(await shellPosition(), before);
+      await frame.getByRole('button', { name: 'Week 13' }).click();
+      await frame.getByRole('button', { name: 'Week 14' }).waitFor();
+
+      await zoomHandle.press('ArrowRight');
+      assert.equal(await zoomHandle.getAttribute('aria-valuenow'), '65');
+      await zoomHandle.press('ArrowLeft');
+      assert.equal(await zoomHandle.getAttribute('aria-valuenow'), '60');
+      await zoomHandle.press('Control+z');
+      assert.equal(await zoomHandle.getAttribute('aria-valuenow'), '65');
+      await zoomHandle.press('Control+y');
+      assert.equal(await zoomHandle.getAttribute('aria-valuenow'), '60');
+      await sizeHandle.scrollIntoViewIfNeeded();
+      point = await sizeHandle.boundingBox();
+      await drag(sizeHandle, { x: point.x + point.width / 2 - 10, y: point.y + point.height / 2 - 48 });
+      assert.match(await getDocument(), /\d+x\d+ zoom=60%/);
+      await page.evaluate(() => window.pywebview.api.set_restored_size(720, 680));
+      await page.waitForFunction(() => matchMedia('(max-width: 760px)').matches);
+      assert(await block.evaluate(element => {
+        const scroller = element.closest('.cm-scroller').getBoundingClientRect();
+        return element.getBoundingClientRect().right <= scroller.right + 1;
+      }), 'the saved fixed width still fits the narrower note column');
+      assert(await frame.locator('.week-band').evaluate(element => {
+        element.scrollLeft = 80;
+        return element.scrollLeft > 0;
+      }), 'embedded scroll areas remain usable when narrowed');
+      await page.evaluate(() => window.pywebview.api.set_restored_size(1450, 860));
+      await page.keyboard.press('Control+z');
+      assert.equal(await getDocument(), zoomed);
+      await waitFor(() => fs.readFileSync(path.join(notes, 'Schedule.md'), 'utf8') === zoomed, 'zoomed fence was not saved');
+      await open('Import.md');
+      await open('Schedule.md');
+      assert.equal(await zoomHandle.getAttribute('aria-valuenow'), '60');
+      await mode('reading');
+      await sizedReading.locator('iframe').waitFor();
+      assert.equal(await sizedReading.evaluate(element => getComputedStyle(element).getPropertyValue('--note-html-scale')), '0.6');
+      assert.equal(await sizedReading.getByRole('slider', { name: 'Page zoom' }).count(), 0);
+      await mode('live');
+      await zoomHandle.dblclick();
       assert.equal(await getDocument(), original);
 
       const cleanupMenu = page.locator('[data-role="note-context-menu"] [data-note-action="cleanup-unused-html"]');

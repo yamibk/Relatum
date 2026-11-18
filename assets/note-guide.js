@@ -196,8 +196,8 @@
       const source = document.createElement('pre');
       source.textContent = '```html-embed 10b83e0a-c0d7-4f41-92a1-39a278952ee1\n```';
       const detail = document.createElement('p');
-      detail.textContent = text('导入自动写入围栏。实时预览可用左上角手柄移动块，拖右下角调整预览宽高。尺寸保存到围栏，例如 640x360。移除块可撤销，未使用的文件可从文件树右键菜单回收。',
-        'Import adds the fence automatically. In Live Preview, drag the upper-left grip to move the block or the lower-right corner to resize it. The fence stores the size, for example 640x360. Removing a block is undoable. Use the file tree menu to recycle unused HTML files.');
+      detail.textContent = text('实时预览中，左上角手柄移动块，右下角调整容器宽高。底边中央手柄横向拖动可缩放网页内容，双击恢复 100%。宽高和缩放比例随笔记保存，例如 640x360 zoom=70%。调整和移除块都可撤销，未使用的文件可从文件树右键菜单回收。',
+        'In Live Preview, drag the upper-left grip to move the block or the lower-right corner to resize it. Drag the bottom-center grip sideways to zoom the page. Double-click it to restore 100%. The note stores the size and zoom, for example 640x360 zoom=70%. Adjustments and block removal are undoable. Use the file tree menu to recycle unused HTML files.');
       host.append(help, source, detail);
     }
     function show(next) {
