@@ -715,6 +715,40 @@ class NotesLibraryTests(unittest.TestCase):
         self.assertEqual(result["path"], "new")
         self.assertIn("[[new/Topic]]", self.store.load("Index.md")["content"])
 
+    def test_html_embed_is_owned_by_note_and_follows_companion(self):
+        self.store.create('', 'Main', 'note')
+        self.store.create('', 'Other', 'note')
+        self.store.create('', 'Folder', 'folder')
+        data = '<!doctype html><title>课表</title>'.encode('utf-8-sig')
+        self.assertFalse((self.root / 'Main.assets').exists())
+        with self.assertRaises(NotesError):
+            self.store.import_html_embed('Main.md', 'not html.png', data)
+        with self.assertRaises(NotesError):
+            self.store.import_html_embed('Main.md', 'binary.html', b'\xff\x00')
+        with self.assertRaises(NotesError):
+            self.store.import_html_embed('Main.md', '../escape.html', data)
+        self.assertFalse((self.root / 'Main.assets').exists())
+        imported = self.store.import_html_embed('Main.md', '我的课表.htm', data)
+        identity, name = imported['id'], imported['name']
+        self.assertEqual((self.root / 'Main.assets' / 'html' / identity / name).read_bytes(), data)
+        with self.assertRaises(NotesError):
+            self.store.read_html_embed('Other.md', identity)
+        with self.assertRaises(NotesError):
+            self.store.read_html_embed('Main.md', '../' + identity)
+
+        fence = f'```html-embed {identity}\n```\n'
+        initial = self.store.load('Main.md')
+        self.store.save('Main.md', fence, initial['revision'])
+        moved = 'Folder/Renamed.md'
+        self.store.move('Main.md', 'Renamed.md')
+        self.store.move('Renamed.md', moved)
+        self.assertEqual(self.store.load(moved)['content'], fence)
+        self.assertEqual(self.store.read_html_embed(moved, identity), (name, data))
+        self.store.cleanup_unused_images(moved, self.store.load(moved)['revision'])
+        _, targets = self.store.trash_targets(moved)
+        self.assertEqual([target.name for target in targets], ['Renamed.md', 'Renamed.assets'])
+        self.assertEqual((targets[1] / 'html' / identity / name).read_bytes(), data)
+
     def test_case_only_note_rename_keeps_companion_assets(self):
         self.store.create("", "Topic", "note")
         image = base64.b64decode(

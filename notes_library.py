@@ -51,6 +51,8 @@ NOTE_SUFFIX = ".md"
 NOTEBOOK_CONTAINER = "CustomNotebook"
 NOTEBOOK_COLORS = frozenset(("gray", "blue", "cyan", "green", "yellow", "orange", "red", "purple"))
 MAX_NOTE_BYTES = 4 * 1024 * 1024
+MAX_NOTE_HTML_BYTES = 8 * 1024 * 1024
+HTML_EMBED_ID = re.compile(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}')
 MAX_NOTE_IMAGE_BYTES = 40 * 1024 * 1024
 MAX_NOTE_IMAGE_PIXELS = 64 * 1024 * 1024
 MAX_NOTE_IMAGE_DIMENSION = 32768
@@ -1891,6 +1893,86 @@ class NotesStore:
         self._cache_document(normalized, encoded)
         return {"path": normalized, "content": updated, "revision": _revision(encoded)}
 
+    def _html_embed_root(self, note: object) -> Path:
+        path = self._absolute(self.normalize_path(note))
+        if path.suffix.casefold() != NOTE_SUFFIX or not path.is_file():
+            raise NotesError("笔记不存在", status=404, code="not_found")
+        relative = path.with_suffix('.assets').relative_to(self.root).as_posix()
+        return self._absolute(relative + '/html', allow_assets=True)
+
+    @staticmethod
+    def _validate_html_embed(content: bytes) -> None:
+        if len(content) > MAX_NOTE_HTML_BYTES:
+            raise NotesError("HTML 文件超过 8 MiB", status=413, code="too_large")
+        try:
+            if not content.decode('utf-8-sig').strip() or b'\0' in content:
+                raise ValueError('empty or binary HTML')
+        except ValueError as error:
+            raise NotesError("HTML 文件必须是非空 UTF-8 文本", code="invalid_html") from error
+
+    def import_html_embed(self, note: object, name: str, content: bytes) -> dict:
+        normalized = self.normalize_path(name, allow_assets=True)
+        if normalized != name or '/' in normalized or Path(normalized).suffix.casefold() not in ('.html', '.htm'):
+            raise NotesError("请选择 .html 或 .htm 文件", code="invalid_html")
+        self._validate_html_embed(content)
+        root = self._html_embed_root(note)
+        identity = str(uuid.uuid4())
+        directory = root / identity
+        directory.mkdir(parents=True)
+        try:
+            self.atomic_bytes(directory / name, content)
+        except OSError:
+            if not any(directory.iterdir()):
+                directory.rmdir()
+            raise
+        return {"id": identity, "name": name}
+
+    def read_html_embed(self, note: object, identity: object) -> tuple[str, bytes]:
+        if not isinstance(identity, str) or not HTML_EMBED_ID.fullmatch(identity):
+            raise NotesError("HTML 嵌入 ID 无效", code="invalid_html")
+        root = self._html_embed_root(note)
+        relative = (root / identity).relative_to(self.root).as_posix()
+        directory = self._absolute(relative, allow_assets=True)
+        if not directory.is_dir():
+            raise NotesError("HTML 文件不存在", status=404, code="not_found")
+        candidates = [entry.name for entry in directory.iterdir() if entry.suffix.casefold() in ('.html', '.htm')]
+        if len(candidates) != 1:
+            raise NotesError("HTML 文件缺失或存在多个入口", status=404, code="not_found")
+        target = self._absolute(relative + '/' + candidates[0], allow_assets=True)
+        if not target.is_file():
+            raise NotesError("HTML 文件不存在", status=404, code="not_found")
+        with target.open('rb') as stream:
+            content = stream.read(MAX_NOTE_HTML_BYTES + 1)
+        self._validate_html_embed(content)
+        return target.name, content
+
+    def unused_html_embeds(self, note: object) -> tuple[str, dict]:
+        """List managed HTML directories from a saved note under the mutation lock."""
+        root = self._html_embed_root(note)
+        document = self.load(note)
+        revision = document['revision']
+        if not root.exists():
+            return revision, {}
+        if not root.is_dir():
+            raise NotesError("HTML 素材路径不是目录", code="invalid_html")
+        # Keep UUIDs mentioned in any source context, including a fence under edit.
+        used = {match[0] for match in HTML_EMBED_ID.finditer(document['content'].lower())}
+        candidates = {}
+        for directory in root.iterdir():
+            identity = directory.name
+            if not HTML_EMBED_ID.fullmatch(identity) or identity in used or _is_reparse(directory) or not directory.is_dir():
+                continue
+            files = directory.iterdir()
+            entry = next(files, None)
+            if (entry is None or next(files, None) is not None or entry.suffix.casefold() not in ('.html', '.htm')
+                    or _is_reparse(entry) or not entry.is_file()):
+                continue
+            directory_stat, file_stat = directory.stat(), entry.stat()
+            signature = tuple((info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+                              for info in (directory_stat, file_stat))
+            candidates[identity] = (directory, entry.name, signature)
+        return revision, candidates
+
     def upload_image(self, note: object, name: object, content: bytes, media_type: object = "") -> dict:
         note_rel = self.normalize_path(note)
         note_path = self._absolute(note_rel)
@@ -2051,7 +2133,9 @@ class NotesStore:
         for base, directories, filenames in os.walk(asset_root, followlinks=False):
             directory = Path(base)
             directories[:] = [name for name in directories
-                              if name.casefold() not in (DATABASE_DIRECTORY, LEGACY_DATABASE_DIRECTORY) and not _is_reparse(directory / name)]
+                              if name.casefold() not in (DATABASE_DIRECTORY, LEGACY_DATABASE_DIRECTORY)
+                              and not (directory == asset_root and name.casefold() == 'html')
+                              and not _is_reparse(directory / name)]
             for name in filenames:
                 path = directory / name
                 if path.suffix.casefold() not in NOTE_IMAGE_TYPES or _is_reparse(path) or not path.is_file():

@@ -14,7 +14,7 @@ if ($Browser) {
     if ($LASTEXITCODE -ne 0) { throw 'Inline formula preview checks failed.' }
     & $Node (Join-Path $PSScriptRoot 'note-link-completion-browser.js')
     if ($LASTEXITCODE -ne 0) { throw 'Link completion browser checks failed.' }
-    foreach ($check in @('note-database-editor-browser.js','note-database-controls-browser.js','note-database-browser.js')) {
+    foreach ($check in @('note-database-editor-browser.js','note-database-controls-browser.js','note-database-browser.js','note-html-embed-browser.js')) {
         & $Node (Join-Path $PSScriptRoot $check)
         if ($LASTEXITCODE -ne 0) { throw ('Failed: ' + $check) }
     }

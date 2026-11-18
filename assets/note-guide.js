@@ -189,6 +189,17 @@
       if (image) image.innerHTML = '<svg viewBox="0 0 160 110" width="160" role="img" aria-label="' + text('图片示例', 'Image example') + '" style="max-width:100%;border-radius:7px;background:rgba(128,128,128,.08)"><path d="m0 110 48-65 36 40 30-30 46 55" fill="currentColor" opacity=".16"/><circle cx="125" cy="25" r="12" fill="currentColor" opacity=".25"/></svg>';
       const detail = document.createElement('p'); detail.textContent = text('支持标题、段落、列表、强调、高亮、链接、行内代码与行内公式。首行图片沿用现有图片语法，其他富块显示源码。Ctrl+Enter 跳到块后，Ctrl+Shift+Enter 跳到块前。', 'Supports headings, paragraphs, lists, emphasis, highlights, links, inline code and inline math. The first image uses the existing image syntax; other rich blocks remain source text. Ctrl+Enter moves after the block; Ctrl+Shift+Enter moves before it.'); host.append(detail);
     }
+    function htmlEmbed() {
+      const help = document.createElement('p');
+      help.textContent = text('在 Windows 桌面版笔记正文右键，选择「插入 → HTML」。文件使用 UTF-8，限 8 MiB，图片、样式和脚本应随单个文件携带。点击「互动」后运行脚本。',
+        'In Windows desktop notes, right-click the note body and choose Insert → HTML. Use a single UTF-8 file up to 8 MiB with its images, styles and scripts included. Choose Interact to run scripts.');
+      const source = document.createElement('pre');
+      source.textContent = '```html-embed 10b83e0a-c0d7-4f41-92a1-39a278952ee1\n```';
+      const detail = document.createElement('p');
+      detail.textContent = text('导入自动写入围栏。实时预览可用左上角手柄移动块，拖右下角调整预览宽高。尺寸保存到围栏，例如 640x360。移除块可撤销，未使用的文件可从文件树右键菜单回收。',
+        'Import adds the fence automatically. In Live Preview, drag the upper-left grip to move the block or the lower-right corner to resize it. The fence stores the size, for example 640x360. Removing a block is undoable. Use the file tree menu to recycle unused HTML files.');
+      host.append(help, source, detail);
+    }
     function show(next) {
       active = true;
       const lang = options.language();
@@ -197,9 +208,9 @@
         sequence++; diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; cardsControl?.destroy(); cardsControl = null; clearTimeout(feedbackTimer);
         topic = next; renderedLanguage = lang; host.replaceChildren(); host.dataset.language = lang; host.dataset.guideTopic = topic;
         const head = document.createElement('header'); head.className = 'note-guide-topic-head';
-        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards', media: 'Media' }[topic];
+        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards', media: 'Media', html: 'HTML' }[topic];
         const settings = document.createElement('button'); settings.type = 'button'; settings.dataset.noteAction = 'guide-settings'; settings.textContent = text('切换内容', 'Change topic'); head.append(title, settings); host.append(head);
-        if (topic === 'markdown') markdown(); else if (topic === 'mermaid') mermaid(); else if (topic === 'quiz') quiz(); else if (topic === 'cards') cards(); else if (topic === 'media') media(); else callouts();
+        if (topic === 'markdown') markdown(); else if (topic === 'mermaid') mermaid(); else if (topic === 'quiz') quiz(); else if (topic === 'cards') cards(); else if (topic === 'media') media(); else if (topic === 'html') htmlEmbed(); else callouts();
         host.scrollTop = positions.get(topic) || 0;
       }
       attachDiagrams(); attachQuizzes();

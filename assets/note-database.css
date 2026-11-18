@@ -91,15 +91,6 @@ body[data-start-theme="dark"] .note-database {
 @media (hover: none) {
   .note-database button.note-database-move { opacity: 1; }
 }
-.cm-editor.is-database-moving, .cm-editor.is-database-moving .note-database button.note-database-move { cursor: grabbing; }
-.note-database-block-drop {
-  position: absolute;
-  z-index: 5;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--note-control-focus, var(--note-theme-link, #437db3));
-  pointer-events: none;
-}
 .note-database .note-database-name { display: block; max-width: 100%; padding: 2px 8px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-database button.note-database-name { border-color: transparent; background: transparent; text-align: start; cursor: text; }
 .note-database button.note-database-name:enabled:hover { background: var(--db-hover); }

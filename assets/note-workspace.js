@@ -30,6 +30,8 @@
   const tabsEl = $('[data-role="note-tabs"]');
   const tabBar = $('.note-tab-bar');
   const tabActions = $('.note-tab-actions');
+  const htmlTabPanel = $('[data-role="note-html-tab-panel"]');
+  const mobileTreeButton = $('.note-current-copy > .note-mobile-pane-button');
   const newTabButton = $('[data-note-action="new-tab"]');
   const closeAllTabsButton = $('[data-note-action="close-all-tabs"]');
   const noteSystem = window.RelatumNoteSystem;
@@ -100,8 +102,9 @@
   const appleSelectionSetting = $('[data-role="note-apple-selection-setting"]');
   const appleSelectionSelect = $('[data-role="note-apple-selection"]');
   const GUIDE_TOPIC_KEY = 'canvas:noteGuideTopic:v1';
+  const GUIDE_TOPICS = ['callout', 'markdown', 'mermaid', 'quiz', 'cards', 'media', 'html'];
   let guideTopic = 'callout';
-  try { const saved = localStorage.getItem(GUIDE_TOPIC_KEY); if (['callout', 'markdown', 'mermaid', 'quiz', 'cards', 'media'].includes(saved)) guideTopic = saved; } catch (_) {}
+  try { const saved = localStorage.getItem(GUIDE_TOPIC_KEY); if (GUIDE_TOPICS.includes(saved)) guideTopic = saved; } catch (_) {}
   let liveEditor = null;
   let noteDatabase = null, noteDatabaseLoader = null, noteDatabaseManagement = false;
   function syncNoteDatabase() {
@@ -154,6 +157,37 @@
       return () => { disposed = true; unmount?.(); };
     },
   };
+  let noteHtmlEmbeds, noteHtmlLoader, noteHtmlCleaning = false, noteHtmlImporting = false;
+  function loadNoteHtmlEmbeds() {
+    if (noteHtmlLoader) return noteHtmlLoader;
+    const script = document.createElement('script'), css = document.createElement('link');
+    script.src = 'note-html-embed.js'; css.rel = 'stylesheet'; css.href = 'note-html-embed.css';
+    const ready = (element, name) => new Promise((resolve, reject) => {
+      element.onload = resolve;
+      element.onerror = () => reject(new Error(name));
+    });
+    noteHtmlLoader = Promise.all([ready(script, script.src), ready(css, css.href)]).then(() => {
+      noteHtmlEmbeds = window.RelatumNoteHtmlEmbed.create({ language, async whenSettled() {
+        await whenEditorInputSettled();
+        return !editorInputPending();
+      },
+        isCurrent: (path, mode) => state.current?.path === path && mode === state.viewMode && noteWorkspaceVisible()
+          && !state.openingPath && !noteMovePromise && !graphPresentation && !browserResultsActive() });
+      return noteHtmlEmbeds;
+    }).catch(error => { script.remove(); css.remove(); noteHtmlLoader = null; throw error; });
+    document.head.append(css, script);
+    return noteHtmlLoader;
+  }
+  const noteHtmlHost = {
+    native: () => typeof window.pywebview?.api?.note_html === 'function',
+    mount(element, options) {
+      let disposed = false, unmount;
+      loadNoteHtmlEmbeds().then(controller => {
+        if (!disposed) unmount = controller.mount(element, { ...options, onOpen: openHtmlAttachment });
+      }).catch(() => { if (!disposed) element.textContent = language() === 'en' ? 'Unable to load HTML preview' : '无法加载 HTML 预览'; });
+      return () => { disposed = true; unmount?.(); };
+    },
+  };
   let noteBrowser = null, browserLoader = null, browserSequence = 0, browserIntent = false;
   let browserFolderIndex = null, browserFolderSize = -1, browserFolderPaths = [];
   let treeNameLocale = '', treeNameComparator = null;
@@ -175,6 +209,9 @@
     try { return await task(); } finally { release?.(); }
   }
   const GRAPH_TAB = 'relatum:graph-tab:v1';
+  const HTML_TAB_PREFIX = 'relatum:html-tab:v1:';
+  const htmlTabs = new Map();
+  let htmlTabMount = null, htmlTabIntent = 0;
   const graphHost = $('[data-role="note-graph-panel"]');
   const graphEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.graph');
   let graphPresentation = false, graphSidebar = null;
@@ -193,11 +230,13 @@
     return ok;
   }
   async function waitForNoteMove(path) {
+    const html = htmlTabs.get(path);
+    if (html) path = html.path;
     while (noteMovePromise) {
       const operation = noteMovePromise, paths = noteMovePaths;
       if (await operation && paths && typeof path === 'string') path = mapPath(path, paths.source, paths.destination);
     }
-    return path;
+    return html ? htmlTabKey(path, html.id) : path;
   }
   const browserNavigation = $('[data-role="note-browser-navigation"]');
   const browserDisclosure = $('[data-role="note-browser-disclosure"]');
@@ -210,7 +249,105 @@
     else noteGraph?.remap(source, destination);
   }
   function isGraphTab(tab) { return tab === GRAPH_TAB; }
-  function isSpecialTab(tab) { return isGraphTab(tab) || isBlankTab(tab); }
+  function isHtmlTab(tab) { return typeof tab === 'string' && tab.startsWith(HTML_TAB_PREFIX); }
+  function htmlTabKey(path, id) { return HTML_TAB_PREFIX + JSON.stringify([path, id]); }
+  function isSpecialTab(tab) { return isGraphTab(tab) || isBlankTab(tab) || isHtmlTab(tab); }
+
+  function releaseHtmlTab() {
+    if (!htmlTabMount) return;
+    htmlTabMount.dispose?.();
+    htmlTabMount = null;
+    htmlTabPanel.replaceChildren();
+  }
+
+  function syncHtmlTab() {
+    if (!htmlTabPanel) return;
+    const tab = state.initialized && !browserResultsActive() ? htmlTabs.get(state.activeTab) : null;
+    const show = !!tab;
+    root.classList.toggle('note-html-tab-active', show);
+    htmlTabPanel.hidden = !show;
+    htmlTabPanel.inert = !show;
+    if (tab) htmlTabPanel.setAttribute('aria-label', tab.name);
+    if (mobileTreeButton) {
+      if (show && mobileTreeButton.parentElement !== tabActions) tabActions?.prepend(mobileTreeButton);
+      if (!show && mobileTreeButton.parentElement === tabActions) currentPathEl?.before(mobileTreeButton);
+    }
+    if (!tab || noteMovePromise || state.openingPath || !noteWorkspaceVisible()) { releaseHtmlTab(); return; }
+    if (htmlTabMount?.tab === tab && htmlTabMount.interactive === tab.interactive) return;
+    releaseHtmlTab();
+    const mount = { tab, interactive: tab.interactive };
+    htmlTabMount = mount;
+    const isCurrent = () => htmlTabMount === mount && htmlTabs.get(state.activeTab) === tab
+      && noteWorkspaceVisible() && !state.openingPath && !noteMovePromise && !browserResultsActive();
+    loadNoteHtmlEmbeds().then(controller => {
+      if (!isCurrent()) return;
+      mount.dispose = controller.mountTab(htmlTabPanel, { ...tab, isCurrent, onName(name) {
+        if (tab.name === name) return;
+        tab.name = name;
+        htmlTabPanel.setAttribute('aria-label', name);
+        persistTabs(); renderTabs();
+      } });
+    }).catch(() => {
+      if (!isCurrent()) return;
+      const status = document.createElement('p');
+      status.className = 'note-html-tab-status';
+      status.setAttribute('role', 'status');
+      status.textContent = language() === 'en' ? 'Unable to load HTML preview' : '无法加载 HTML 预览';
+      htmlTabPanel.replaceChildren(status);
+    });
+  }
+
+  async function activateHtmlTab(key, options, attachment) {
+    if (!htmlTabPanel || !noteWorkspaceVisible()) return false;
+    const existing = htmlTabs.get(key);
+    if (!existing && !attachment) return false;
+    if (attachment && (state.current?.path !== attachment.path || state.openingPath || noteMovePromise)) return false;
+    const intent = ++htmlTabIntent, previousTab = state.activeTab, previous = state.current;
+    const openSequence = state.openSeq, visibility = noteVisibilityEpoch;
+    const current = () => intent === htmlTabIntent && state.activeTab === previousTab && state.current === previous
+      && state.openSeq === openSequence && visibility === noteVisibilityEpoch && noteWorkspaceVisible()
+      && (!attachment || state.current?.path === attachment.path)
+      && !state.openingPath && !noteMovePromise && htmlTabs.get(key) === existing;
+    if (key !== previousTab) {
+      if (!(await finishInlineTitle()) || !current() || !(await flushCanvases()) || !current()) return false;
+      if (editorInputPending()) await whenEditorInputSettled();
+      if (!current() || editorInputPending() || (previous && !options?.skipSave && !(await flushSave(previous)))) return false;
+      if (!current()) return false;
+      rememberEditorState(previous);
+    }
+    const tab = existing || { ...attachment, interactive: false };
+    if (!existing) { htmlTabs.set(key, tab); state.tabs.push(key); }
+    if (options?.userSelected) tab.interactive = true;
+    if (noteBrowser) noteBrowser.showDocument();
+    if (key !== previousTab) {
+      state.activeTab = key;
+      clearCurrent({ keepTabs: true, keepActiveTab: true, keepCache: true });
+    } else syncHtmlTab();
+    if (!options?.noFocus && options?.userSelected) htmlTabPanel.focus({ preventScroll: true });
+    return true;
+  }
+
+  function openHtmlAttachment(attachment) {
+    return activateHtmlTab(htmlTabKey(attachment.path, attachment.id), { userSelected: true }, attachment);
+  }
+
+  function remapHtmlTabs(source, destination) {
+    let changed = false;
+    for (const [key, tab] of Array.from(htmlTabs)) {
+      const path = mapPath(tab.path, source, destination);
+      if (tab.path === path) continue;
+      const next = htmlTabKey(path, tab.id);
+      htmlTabs.delete(key);
+      htmlTabs.set(next, { ...tab, path });
+      state.tabs[state.tabs.indexOf(key)] = next;
+      if (state.activeTab === key) state.activeTab = next;
+      changed = true;
+    }
+    if (!changed) return;
+    state.tabs = Array.from(new Set(state.tabs));
+    persistTabs();
+    renderTabs();
+  }
   function graphContentActive() {
     return graphEnabled() && graphPresentation && isGraphTab(state.activeTab) && noteWorkspaceVisible()
       && !browserResultsActive();
@@ -606,7 +743,22 @@
     shortcutBindings: NOTE_SHORTCUTS ? NOTE_SHORTCUTS.load() : {},
   };
   try { const stored = JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]'); if (Array.isArray(stored)) state.expanded = new Set(stored); } catch (error) {}
-  try { const stored = JSON.parse(localStorage.getItem(OPEN_TABS_KEY) || '[]'); if (Array.isArray(stored)) state.tabs = Array.from(new Set(stored.filter((path) => typeof path === 'string'))); } catch (error) {}
+  try {
+    const stored = JSON.parse(localStorage.getItem(OPEN_TABS_KEY) || '[]');
+    if (Array.isArray(stored)) {
+      for (const item of stored) {
+        if (typeof item === 'string' && !isHtmlTab(item)) state.tabs.push(item);
+        else if (item?.kind === 'html' && typeof item.path === 'string' && /\.md$/i.test(item.path)
+            && typeof item.id === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(item.id)
+            && typeof item.name === 'string' && item.name) {
+          const { path, id, name } = item, key = htmlTabKey(path, id);
+          htmlTabs.set(key, { path, id, name, interactive: false });
+          state.tabs.push(key);
+        }
+      }
+      state.tabs = Array.from(new Set(state.tabs));
+    }
+  } catch (error) {}
   if (!graphEnabled()) state.tabs = state.tabs.filter(path => !isGraphTab(path));
   try { const stored = localStorage.getItem(ACTIVE_TAB_KEY) || ''; if (state.tabs.includes(stored)) state.activeTab = stored; } catch (error) {}
   try { state.viewMode = normalizeViewMode(localStorage.getItem(NOTE_VIEW_KEY)); } catch (error) {}
@@ -1163,7 +1315,7 @@
   });
 
   function applyGuideTopic(value, persist) {
-    const next = ['callout', 'markdown', 'mermaid', 'quiz', 'cards', 'media'].includes(value) ? value : 'callout';
+    const next = GUIDE_TOPICS.includes(value) ? value : 'callout';
     guideTopic = next;
     if (persist) try { if (localStorage.getItem(GUIDE_TOPIC_KEY) !== next) localStorage.setItem(GUIDE_TOPIC_KEY, next); } catch (_) {}
     settingsPop?.querySelectorAll('[name="note-guide-topic"]').forEach(input => { input.checked = input.value === next; });
@@ -1203,6 +1355,7 @@
       quiz: ['交互单选题与答案解析', 'Interactive questions and explanations'],
       cards: ['并列概念、图标与轻量卡片排版', 'Concept cards, icons and lightweight layouts'],
       media: ['左图右文、直接编辑与自动换行', 'Images beside editable, wrapping text'],
+      html: ['嵌入单个离线网页', 'Embed a self-contained offline page'],
     };
     function translateGuideOptions() {
       const focusedTopic = guide.contains(document.activeElement) ? document.activeElement.value : '';
@@ -1211,7 +1364,7 @@
         const label = document.createElement('label'); label.className = 'relatum-settings-guide-option';
         const input = document.createElement('input'); input.type = 'radio'; input.name = 'note-guide-topic'; input.value = id; input.checked = guideTopic === id;
         const body = document.createElement('span'), title = document.createElement('strong'), description = document.createElement('small');
-        title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards', media: 'Media' }[id]; description.textContent = names[language() === 'en' ? 1 : 0];
+        title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards', media: 'Media', html: 'HTML' }[id]; description.textContent = names[language() === 'en' ? 1 : 0];
         body.append(title, description); label.append(input, body); guide.append(label);
       });
       const hint = document.createElement('p'); hint.textContent = language() === 'en' ? 'Choose what the Guide sidebar displays. Changes apply immediately.' : '选择右侧“引导”面板展示的内容，更改立即生效。'; guide.append(hint);
@@ -2106,7 +2259,7 @@
     const documentState = payload || readingPayload();
     if (state.current && normalizeViewport(documentState.viewport) && !noteWorkspaceVisible()) deferredViewportDocument = state.current;
     if (window.RelatumNoteLiveEditor && typeof window.RelatumNoteLiveEditor.renderMarkdown === 'function') {
-      window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', { calloutSession: liveEditor?.calloutSession, onOpenExternal: openMarkdownTarget, database: noteDatabaseHost });
+      window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', { calloutSession: liveEditor?.calloutSession, onOpenExternal: openMarkdownTarget, database: noteDatabaseHost, htmlEmbed: noteHtmlHost });
     } else {
       const result = window.MarkdownMini && window.MarkdownMini.renderResult
         ? window.MarkdownMini.renderResult(documentState.value || '', { localImages: true, noteBlocks: true, noteSyntax: true, mermaid: !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid') })
@@ -2184,6 +2337,7 @@
           onOpenLocalFile: (target, syntax) => openLocalNoteFile(target, syntax),
           onImageFiles: (files) => uploadImages(files),
           database: noteDatabaseHost,
+          htmlEmbed: noteHtmlHost,
           onDatabaseFiles: importNoteDatabaseFiles,
           clipboardText: clipboardLinkMarkdown,
           onImageSelectionChange: (selection) => updateImageTextTools(selection),
@@ -2669,7 +2823,7 @@
   function treeView(pin) {
     let saved = ''; try { saved = localStorage.getItem(ACTIVE_PATH_KEY) || ''; } catch (error) {}
     return { expanded: Array.from(new Set([state.notebookRoot || '', ...state.expanded, ...state.notebookExpanded])).slice(0, 4096),
-      pins: Array.from(new Set([pin, state.selectedPath, state.selectedFolder, ...state.tabs, saved, state.current?.path || ''].filter(path => path && !isSpecialTab(path)))).slice(0, 256),
+      pins: Array.from(new Set([pin, state.selectedPath, state.selectedFolder, ...state.tabs.map(path => htmlTabs.get(path)?.path || path), saved, state.current?.path || ''].filter(path => path && !isSpecialTab(path)))).slice(0, 256),
       sort: state.treeSort, ...treeNameSortOptions() };
   }
   function requestTreeView(view, reconcile = false) {
@@ -3019,7 +3173,10 @@
   }
   function persistTabs() {
     try {
-      localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(state.tabs));
+      localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(state.tabs.map(key => {
+        const tab = htmlTabs.get(key);
+        return tab ? { kind: 'html', path: tab.path, id: tab.id, name: tab.name } : key;
+      })));
       if (state.activeTab && state.tabs.includes(state.activeTab)) localStorage.setItem(ACTIVE_TAB_KEY, state.activeTab);
       else localStorage.removeItem(ACTIVE_TAB_KEY);
     } catch (error) {}
@@ -3034,7 +3191,7 @@
       return false;
     }
     const activeIndex = state.tabs.indexOf(state.activeTab);
-    if (reuseActive && activeIndex >= 0 && !isGraphTab(state.activeTab)) {
+    if (reuseActive && activeIndex >= 0 && !isGraphTab(state.activeTab) && !isHtmlTab(state.activeTab)) {
       const [replaced] = state.tabs.splice(activeIndex, 1, path);
       noteDatabase?.clear(replaced);
     } else state.tabs.push(path);
@@ -3152,6 +3309,7 @@
     cancelTabCloseMotion(); cancelTabScroll();
   }
   function noteTabTitle(path) {
+    if (isHtmlTab(path)) return htmlTabs.get(path)?.name || 'HTML';
     return isGraphTab(path) ? (language() === 'en' ? 'Graph' : '关系图谱')
       + ' · ' + (state.notebookRoot ? state.notebookRoot.split('/').pop() : 'notes') : isBlankTab(path) ? tr('newTab') : noteTitle(path);
   }
@@ -3166,7 +3324,7 @@
       else if (state.tabs.some(path => existing.get(path)?.title !== noteTabTitle(path))) motionPositions = captureTabCloseMotion(true);
     }
     state.tabs.forEach((tabPath, index) => {
-      const blank = isBlankTab(tabPath), graph = isGraphTab(tabPath);
+      const blank = isBlankTab(tabPath), graph = isGraphTab(tabPath), html = isHtmlTab(tabPath);
       const title = noteTabTitle(tabPath);
       let tab = existing.get(tabPath);
       if (!tab) {
@@ -3182,7 +3340,9 @@
       tab.dataset.noteTabPath = tabPath;
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-selected', tabPath === activeTab ? 'true' : 'false');
-      if (graph) tab.setAttribute('aria-controls', 'note-graph-panel'); else tab.removeAttribute('aria-controls');
+      if (graph || html) tab.setAttribute('aria-controls', graph ? 'note-graph-panel' : 'note-html-tab-panel');
+      else tab.removeAttribute('aria-controls');
+      if (html) tab.setAttribute('aria-label', title);
       tab.title = title;
       tab.tabIndex = tabPath === activeTab ? 0 : -1;
       tab.draggable = true;
@@ -3293,9 +3453,11 @@
     return true;
   }
   async function activateTab(tabPath, options) {
+    if (!isHtmlTab(tabPath)) htmlTabIntent++;
     if (noteMovePromise) tabPath = await waitForNoteMove(tabPath);
     if (!tabPath || !state.tabs.includes(tabPath)) return false;
     if (isGraphTab(tabPath)) return activateGraphTab(options);
+    if (isHtmlTab(tabPath)) return activateHtmlTab(tabPath, options);
     if (isBlankTab(tabPath)) {
       if (!(await flushCanvases())) return false;
       if (noteBrowser) noteBrowser.showDocument();
@@ -3323,6 +3485,7 @@
     const active = state.activeTab === tabPath;
     tabCloseMotionPending = true;
     state.tabs.splice(index, 1);
+    htmlTabs.delete(tabPath);
     noteDatabase?.clear(tabPath);
     if (isGraphTab(tabPath)) {
       noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); backgroundTargetChanged(true);
@@ -3330,8 +3493,8 @@
     persistTabs();
     renderTabs();
     if (!active) return true;
-    // A failed read of the next file must not leave a closed graph occupying the pane.
-    if (isGraphTab(tabPath)) clearCurrent({ keepTabs: true, keepCache: true });
+    // Release the closed panel even if opening the next note fails.
+    if (isGraphTab(tabPath) || isHtmlTab(tabPath)) clearCurrent({ keepTabs: true, keepCache: true });
     const nextPath = state.tabs[Math.min(index, state.tabs.length - 1)] || state.tabs[index - 1] || '';
     if (nextPath) return activateTab(nextPath, { noFocus: !!(options && options.noFocus) });
     state.activeTab = '';
@@ -3351,6 +3514,7 @@
     tabCloseMotionPending = true;
     for (const path of state.tabs) noteDatabase?.clear(path);
     state.tabs = [];
+    htmlTabs.clear();
     state.activeTab = '';
     noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true });
     backgroundTargetChanged(true);
@@ -3362,7 +3526,7 @@
     if (!state.tabs.length) return;
     const index = Math.max(0, state.tabs.indexOf(state.activeTab));
     const next = state.tabs[(index + offset + state.tabs.length) % state.tabs.length];
-    if (next) activateTab(next);
+    if (next) activateTab(next, { userSelected: true });
   }
   function clearTreeRowIndex(host) {
     host.__noteTreeDispose?.(); host.__noteTreeDispose = null; host.__noteTreeRender = null; host.__noteFinishMotion = null;
@@ -3900,7 +4064,7 @@
     const oldActivePath = state.activeTab || (state.current && state.current.path) || '';
     const oldActiveIndex = Math.max(0, oldTabs.indexOf(oldActivePath));
     const isLiveTab = (path) => isSpecialTab(path) || !!findEntry(path);
-    const nextTabs = oldTabs.filter(isLiveTab);
+    const nextTabs = state.tabs.filter(isLiveTab);
     const currentMissing = !!state.current && !findEntry(state.current.path);
     const openingMissing = !!state.openingPath && !findEntry(state.openingPath);
 
@@ -3931,8 +4095,9 @@
     clearTimeout(state.saveTimer);
     clearTimeout(state.retryTimer);
     if (removedDocument) removedDocument.persistedGeneration = removedDocument.editGeneration;
-    const after = oldTabs.slice(oldActiveIndex + 1).find(isLiveTab);
-    const before = oldTabs.slice(0, oldActiveIndex).reverse().find(isLiveTab);
+    const stillOpen = path => nextTabs.includes(path);
+    const after = oldTabs.slice(oldActiveIndex + 1).find(stillOpen);
+    const before = oldTabs.slice(0, oldActiveIndex).reverse().find(stillOpen);
     const nextPath = after || before || state.tabs[0] || '';
     state.activeTab = nextPath;
     closeContextMenu();
@@ -3945,6 +4110,8 @@
     const seq = ++state.refreshSeq; if (!state.initialized) treeEl.textContent = tr('loading');
     const current = () => seq === state.refreshSeq && !noteMovePromise
       && (options?.externalSeq === undefined || options.externalSeq === state.externalSeq && noteWorkspaceVisible());
+    const activeHtml = htmlTabs.get(state.activeTab);
+    const htmlOwnerWasPresent = activeHtml && !!findEntry(activeHtml.path);
     try {
       indexActivity(noteWorkspaceVisible());
       let result;
@@ -3998,6 +4165,9 @@
       const previousNotebookRoots = notebookRoots().map(entry => entry.path);
       state.entries = entries;
       rebuildEntryIndex(flat);
+      if (htmlOwnerWasPresent && htmlTabs.get(state.activeTab) === activeHtml && !findEntry(activeHtml.path)) {
+        releaseHtmlTab(); syncHtmlTab();
+      }
       if (!state.notebookSettingsLoaded) restoreNotebookSettings(result.notebookSettings);
       const previousNotebookRoot = state.notebookRoot;
       const notebookMissing = reconcileNotebooks();
@@ -4104,6 +4274,8 @@
   }
   function syncEditorExtensions() {
     syncNoteDatabase();
+    syncHtmlTab();
+    noteHtmlEmbeds?.sync();
     fileColorHost?.refresh();
     liveEditor?.setExtensionsActive(noteWorkspaceVisible() && !!state.current && state.viewMode !== 'reading'
       && !graphPresentation && !browserResultsActive());
@@ -4113,6 +4285,8 @@
     if (editorHost) editorHost.toggleAttribute('inert', !!active);
     if (fallbackEditor) fallbackEditor.toggleAttribute('inert', !!active);
     if (readingHost) readingHost.toggleAttribute('inert', !!active);
+    if (active) { releaseHtmlTab(); noteHtmlEmbeds?.suspend(); }
+    else { syncHtmlTab(); noteHtmlEmbeds?.sync(); }
   }
   function setNoteMoveInputLocked(locked) {
     $('.note-document-body')?.toggleAttribute('inert', locked || root.classList.contains('note-browser-showing-results'));
@@ -4381,6 +4555,7 @@
     const operation = performMove(source, destination, quiet, options);
     noteMovePromise = operation;
     noteMovePaths = { source, destination };
+    releaseHtmlTab();
     try {
       const ok = await operation;
       options?.onResult?.(ok, state.lastMoveCode, state.lastMoveError);
@@ -4390,6 +4565,7 @@
       if (noteMovePromise === operation) {
         noteMovePromise = null; noteMovePaths = null;
         setNoteMoveInputLocked(false);
+        syncHtmlTab();
         refreshTree(false, { silentErrors: true });
         scheduleExternalSync();
         scheduleDocumentPrefetch();
@@ -4478,6 +4654,7 @@
     // changing the editor's asset base; a later read failure must not undo the UI path.
     window.RelatumNoteCanvas?.remapViews(source, destination, true);
     noteDatabase?.remap?.(source, destination);
+    remapHtmlTabs(source, destination);
     updateNoteGraphSession(source, destination);
     noteGraph?.invalidate(notebookRootForPath(source));
     if (notebookRootForPath(source) !== notebookRootForPath(destination)) noteGraph?.invalidate(notebookRootForPath(destination));
@@ -4613,6 +4790,10 @@
     try {
       if (!(await flushPromise)) { rollback(); return; }
       const result = await post('/api/note-trash', { path: entry.path });
+      const html = htmlTabs.get(state.activeTab);
+      if (html && (html.path === entry.path || html.path.startsWith(entry.path + '/'))) {
+        releaseHtmlTab(); syncHtmlTab();
+      }
       updateNoteGraphSession(entry.path); noteGraph?.invalidate(notebookRootForPath(entry.path));
       const serverEntries = result.tree && Array.isArray(result.tree.entries) ? result.tree.entries : state.entries;
       const treeChanged = !sameTreeStructure(state.entries, serverEntries);
@@ -4703,7 +4884,7 @@
     bullet: ['无序列表', 'Bulleted list'], ordered: ['有序列表', 'Numbered list'], task: ['任务列表', 'Task list'],
     body: ['正文', 'Normal text'], quote: ['引用', 'Quote'], table: ['表格', 'Table'], callout: ['标注', 'Callout'],
     rule: ['分隔线', 'Horizontal rule'], 'code-block': ['代码块', 'Code block'], math: ['数学块', 'Math block'],
-    canvas: ['画布', 'Canvas'], cards: ['Cards', 'Cards'], database: ['数据库', 'Database'],
+    canvas: ['画布', 'Canvas'], cards: ['Cards', 'Cards'], database: ['数据库', 'Database'], 'html-embed': ['HTML', 'HTML'],
     cut: ['剪切', 'Cut'], copy: ['复制', 'Copy'], paste: ['粘贴', 'Paste'], 'paste-plain': ['以纯文本形式粘贴', 'Paste as plain text'],
     'select-all': ['全选', 'Select all'], paragraph: ['段落设置', 'Paragraph'], insert: ['插入', 'Insert'],
     'highlight-color': ['高亮颜色', 'Highlight color'],
@@ -5086,6 +5267,83 @@
       noteDatabaseManagement = false;
     }
   }
+
+  async function cleanupUnusedHtml(path) {
+    if (noteHtmlCleaning || noteHtmlImporting || state.assetCleanupBusy || state.imageTextBusy || noteMovePromise || !noteWorkspaceVisible()) return;
+    const api = window.pywebview?.api;
+    if (typeof api?.note_html !== 'function') return;
+    const source = state.current, tab = state.activeTab, epoch = noteVisibilityEpoch;
+    const current = () => state.current === source && state.activeTab === tab && noteVisibilityEpoch === epoch
+      && noteWorkspaceVisible() && !noteMovePromise;
+    const text = (zh, en) => language() === 'en' ? en : zh;
+    noteHtmlCleaning = true;
+    try {
+      if (editorInputPending()) await whenEditorInputSettled();
+      const target = source?.path === path ? source : state.documentCache.get(path);
+      if (!current() || editorInputPending()) return;
+      if (target && !(await flushSave(target))) throw new Error(tr('saveFailed'));
+      if (!current()) return;
+      const plan = await api.note_html('plan-cleanup', path);
+      if (!current()) return;
+      if (plan.status !== 'ok') throw new Error(text('无法读取 HTML 附件。', 'Unable to read HTML attachments.'));
+      if (!plan.names.length) { showToast(text('没有需要清理的 HTML 文件。', 'No unused HTML files to clean up.')); return; }
+      const confirmed = await promptNoteModal(text('清理未使用的 HTML', 'Clean up unused HTML'), false, (dialog, finish) => {
+        const list = document.createElement('ul'); list.className = 'note-html-cleanup-list';
+        for (const name of plan.names) {
+          const item = document.createElement('li'); item.textContent = name; list.append(item);
+        }
+        const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
+        const cancel = contextButton(tr('cancel'), () => finish(false));
+        const recycle = contextButton(text('移到系统回收站', 'Move to Recycle Bin'), () => finish(true));
+        recycle.className = 'note-html-cleanup-primary';
+        actions.append(cancel, recycle);
+        dialog.append(list, actions);
+        return cancel;
+      }, { isCurrent: current, className: 'note-html-cleanup' });
+      if (!confirmed || !current()) return;
+      if (editorInputPending() || (target && hasPendingEdits(target))) throw new Error(text('笔记已更改，请重新打开清理。', 'The note changed. Reopen cleanup to review the files.'));
+      const result = await api.note_html('recycle-cleanup', path, plan.token);
+      const html = htmlTabs.get(state.activeTab);
+      if (html?.path === path && result.recycledIds?.includes(html.id)) {
+        releaseHtmlTab(); syncHtmlTab();
+      }
+      if (!current()) return;
+      if (result.status !== 'ok') throw new Error(result.code === 'note_changed'
+        ? text('笔记或附件已更改，请重新打开清理。', 'The note or attachments changed. Reopen cleanup to review the files.')
+        : text('无法回收 HTML 附件。', 'Unable to recycle HTML attachments.'));
+      const { recycledCount, failedCount } = result;
+      showToast(failedCount ? text(`已回收 ${recycledCount} 个 HTML 文件，${failedCount} 个未能回收。`, `Recycled ${recycledCount} HTML file(s). ${failedCount} could not be recycled.`)
+        : text(`已回收 ${recycledCount} 个 HTML 文件。`, `Moved ${recycledCount} HTML file(s) to the Recycle Bin.`), failedCount ? 'warning' : '');
+    } catch (error) {
+      if (current()) showToast(error.message, 'error');
+    } finally { noteHtmlCleaning = false; }
+  }
+
+  async function importHtmlEmbed(context) {
+    if (noteHtmlImporting || noteHtmlCleaning || !state.current) return;
+    const note = state.current, path = note.path, mode = state.viewMode, visibility = noteVisibilityEpoch;
+    const command = 'insert:html-embed';
+    const current = () => state.current === note && note.path === path && state.viewMode === mode
+      && noteWorkspaceVisible() && visibility === noteVisibilityEpoch && !state.openingPath && !noteMovePromise
+      && liveEditor.queryCommand(command, context).enabled;
+    noteHtmlImporting = true;
+    try {
+      await loadNoteHtmlEmbeds();
+      if (!current()) return;
+      if (!await window.RelatumNoteHtmlEmbed.checkSupport()) {
+        if (current()) showToast(language() === 'en' ? 'Update WebView2 to use offline HTML embeds.' : '请更新 WebView2 以使用离线 HTML 嵌入。', 'error');
+        return;
+      }
+      if (!current() || !await flushSave(note) || !current()) return;
+      const result = await window.pywebview.api.note_html('import', path, note.revision);
+      if (!current()) return;
+      if (result.status === 'ok' && liveEditor.executeCommand(command, context, result.id)) {
+        closeContextMenu();
+        await flushSave(note);
+      } else if (result.status !== 'cancelled') showHtmlImportError(result.code);
+    } finally { noteHtmlImporting = false; }
+  }
+
   async function renameCanvas(target) {
     if (target?.session && !target.path) {
       const adapter = target, documentState = state.current;
@@ -5280,6 +5538,8 @@
         const rawText = clipboardText == null ? await navigator.clipboard.readText() : clipboardText;
         if (bodyMenuContext !== context) return;
         if (rawText) liveEditor.executeCommand(name, context, rawText, clipboardHtml);
+      } else if (name === 'insert:html-embed') {
+        await importHtmlEmbed(context);
       } else if (name === 'insert:database') {
         const target = state.current;
         if (liveEditor.executeCommand(name, context)) {
@@ -5291,8 +5551,17 @@
     } catch (error) {
       if (name === 'copy' && context.image) {
         if (bodyMenuContext === context && noteWorkspaceVisible()) showToast(error instanceof RangeError ? error.message : tr('imageCopyFailed'), 'error');
-      } else showToast(name === 'insert:canvas' ? error.message : language() === 'en' ? 'Clipboard unavailable. Use the keyboard shortcut.' : '无法访问剪贴板，请使用键盘快捷键。', 'error');
+      } else if (name === 'insert:html-embed') showHtmlImportError();
+      else showToast(name === 'insert:canvas' ? error.message : language() === 'en' ? 'Clipboard unavailable. Use the keyboard shortcut.' : '无法访问剪贴板，请使用键盘快捷键。', 'error');
     } finally { if (bodyMenuContext === context) contextMenu.removeAttribute('aria-busy'); }
+  }
+  function showHtmlImportError(code) {
+    const labels = {
+      invalid_html: ['请选择非空的 UTF-8 HTML 文件。', 'Choose a non-empty UTF-8 HTML file.'],
+      too_large: ['HTML 文件超过 8 MiB。', 'The HTML file exceeds 8 MiB.'],
+      note_changed: ['笔记已在磁盘上更改，请同步后重试。', 'The note changed on disk. Sync it and try again.'],
+    };
+    showToast((labels[code] || ['无法导入 HTML 文件。', 'Unable to import the HTML file.'])[language() === 'en' ? 1 : 0], 'error');
   }
   function bodyCommandButton(name) {
     const button = document.createElement('button');
@@ -5315,10 +5584,11 @@
     const commands = paragraph ? ['bullet', 'ordered', 'task', 'heading-1', 'heading-2', 'heading-3', 'heading-4', 'heading-5', 'heading-6', 'body', 'quote']
       : ['table', 'database', 'callout', 'cards', 'rule', 'code-block', 'math'];
     if (!paragraph && !highlight && canvasEnabled()) commands.splice(4, 0, 'canvas');
+    if (!paragraph && !highlight && noteHtmlHost.native()) commands.splice(commands.indexOf('rule'), 0, 'html-embed');
     const submenu = document.createElement('div'); submenu.className = 'note-context-menu note-context-submenu';
     submenu.setAttribute('role', 'menu'); submenu.setAttribute('aria-label', parent.textContent);
     (highlight ? window.MarkdownMini.noteSyntax.highlightColors.map(item => item.id) : commands).forEach((kind, index) => {
-      if (!highlight && ((paragraph && (index === 3 || index === 10)) || (!paragraph && index === 4))) submenu.appendChild(separator());
+      if (!highlight && ((paragraph && (index === 3 || index === 10)) || (!paragraph && kind === 'rule'))) submenu.appendChild(separator());
       submenu.appendChild(bodyCommandButton((highlight ? 'highlight-color:' : paragraph ? 'paragraph:' : 'insert:') + kind));
     });
     contextMenu.appendChild(submenu); bodyMenuSubmenu = submenu; bodyMenuParent = parent;
@@ -5601,6 +5871,12 @@
       cleanup.dataset.noteAction = 'cleanup-unused-images';
       cleanup.disabled = !!(state.assetCleanupBusy || state.imageTextBusy);
       items.push(contextButton(tr('assets'), () => reveal(entry.path, true)), cleanup);
+      if (options?.fileTree && noteHtmlHost.native()) {
+        const cleanupHtml = contextButton(language() === 'en' ? 'Clean up unused HTML' : '清理未使用的 HTML', () => cleanupUnusedHtml(entry.path));
+        cleanupHtml.dataset.noteAction = 'cleanup-unused-html';
+        cleanupHtml.disabled = !!(noteHtmlCleaning || noteHtmlImporting || state.assetCleanupBusy || state.imageTextBusy || noteMovePromise);
+        items.push(cleanupHtml);
+      }
       const cleanupAttachments = contextButton(language() === 'en' ? 'Clean up unused attachments' : '清理未使用的附件', () => manageNoteDatabase(entry.path, 'cleanup'));
       const deleteDatabase = contextButton(language() === 'en' ? 'Delete database' : '删除数据库', () => manageNoteDatabase(entry.path, 'remove'), true);
       cleanupAttachments.dataset.noteAction = 'cleanup-unused-database-attachments';
@@ -6367,7 +6643,13 @@
       const close = event.target.closest('[data-note-tab-close]');
       if (close) { event.preventDefault(); event.stopPropagation(); if (await finishInlineTitle()) closeTab(close.dataset.noteTabClose); return; }
       const tab = event.target.closest('[data-note-tab-path]');
-      if (tab && await finishInlineTitle()) activateTab(tab.dataset.noteTabPath);
+      if (tab && await finishInlineTitle()) activateTab(tab.dataset.noteTabPath, { userSelected: true });
+    });
+    tabsEl.addEventListener('keydown', (event) => {
+      const tab = event.target.dataset.noteTabPath;
+      if (!isHtmlTab(tab) || (event.key !== 'Enter' && event.key !== ' ')) return;
+      event.preventDefault();
+      activateTab(tab, { userSelected: true });
     });
     tabsEl.addEventListener('dragstart', (event) => {
       const tab = event.target.closest('[data-note-tab-path]'); if (!tab) return;
@@ -6483,7 +6765,7 @@
     else if (mod && key === 't') { event.preventDefault(); openBlankTab(); }
     else if (mod && key === 'w' && state.activeTab) { event.preventDefault(); closeTab(state.activeTab); }
     else if (event.ctrlKey && event.key === 'Tab') { event.preventDefault(); switchTab(event.shiftKey ? -1 : 1); }
-    else if (mod && /^[1-9]$/.test(event.key) && state.tabs.length) { event.preventDefault(); const index = event.key === '9' ? state.tabs.length - 1 : Math.min(Number(event.key) - 1, state.tabs.length - 1); activateTab(state.tabs[index]); }
+    else if (mod && /^[1-9]$/.test(event.key) && state.tabs.length) { event.preventDefault(); const index = event.key === '9' ? state.tabs.length - 1 : Math.min(Number(event.key) - 1, state.tabs.length - 1); activateTab(state.tabs[index], { userSelected: true }); }
     else if (event.key === 'F2' && (state.selectedPath || state.current)) { event.preventDefault(); if (!browserResultsActive()) { const path = state.selectedPath || state.current.path; beginInlineRename(path, notebookTreeEl?.contains(event.target) || isNotebookRoot(path) ? notebookTreeEl : treeEl); } }
     else if (event.key === 'Escape') { closeContextMenu(); root.classList.remove('tree-overlay-open'); }
   });
@@ -6555,7 +6837,7 @@
     }
   }
   document.addEventListener('visibilitychange', syncNotePageVisibility);
-  window.addEventListener('pagehide', () => { clearNoteTreeDrag(); aiPageHiding = true; noteDatabase?.setActive('', false); closeNoteModal(); guideSequence++; guideController?.suspend(); aiSequence++; aiController?.suspend(true); indexActivity(false, true); });
+  window.addEventListener('pagehide', () => { clearNoteTreeDrag(); aiPageHiding = true; noteDatabase?.setActive('', false); releaseHtmlTab(); noteHtmlEmbeds?.suspend(); closeNoteModal(); guideSequence++; guideController?.suspend(); aiSequence++; aiController?.suspend(true); indexActivity(false, true); });
   window.addEventListener('canvasdesktop:visibility', syncNotePageVisibility);
   window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeWorkspacePopovers(); cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0; stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
   window.addEventListener('pageshow', () => { aiPageHiding = false; state.linksRefreshSuspended = false; syncNotePageVisibility(); });

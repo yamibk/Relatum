@@ -1,0 +1,96 @@
+.note-html-embed {
+  box-sizing: border-box;
+  width: var(--note-html-width, 100%);
+  max-width: 100%;
+  min-width: 0;
+  margin-block: .5em;
+  border: 1px solid var(--note-theme-border, rgba(125, 125, 125, .28));
+  border-radius: 10px;
+}
+
+.note-html-embed-bar {
+  box-sizing: border-box;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: .6em;
+  padding: 4px 9px;
+  font: 500 .84em/1.3 var(--font-ui, sans-serif);
+}
+
+.note-html-embed-bar > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-html-embed-status { opacity: .75; }
+
+.note-html-embed-bar button {
+  flex: none;
+  box-sizing: border-box;
+  min-height: 26px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--note-theme-text-muted, var(--text-secondary));
+  font: inherit;
+  cursor: pointer;
+}
+
+.note-html-embed-bar button:not(:disabled):hover { background: var(--note-control-hover); color: var(--note-theme-text, var(--text)); }
+.note-html-embed-bar button:disabled { cursor: wait; opacity: .65; }
+.note-html-embed-bar button:focus-visible { outline: 2px solid var(--note-control-focus, currentColor); outline-offset: -2px; }
+.note-html-embed-bar .note-html-interact {
+  margin-inline-start: auto;
+  padding-inline: 10px;
+  background: var(--note-control-hover);
+  white-space: nowrap;
+}
+.note-html-embed-bar .note-html-interact[aria-pressed="true"] {
+  background: var(--note-control-active);
+  color: var(--note-theme-text, var(--text));
+}
+.note-html-embed-bar .note-html-move { width: 24px; padding: 0; cursor: grab; touch-action: none; }
+.note-html-embed-bar :is(.note-html-remove, .note-html-open):not([hidden]) { display: grid; width: 26px; padding: 0; place-items: center; }
+.note-html-embed-bar :is(.note-html-remove, .note-html-open) > svg { width: 16px; height: 16px; }
+.note-html-embed :is(.note-html-move, .note-html-remove, .note-html-resize) { opacity: 0; }
+.note-html-embed:is(:hover, :focus-within, .is-resizing) :is(.note-html-move, .note-html-remove, .note-html-resize) { opacity: 1; }
+@media (hover: none), (pointer: coarse) {
+  .note-html-embed :is(.note-html-move, .note-html-remove, .note-html-resize) { opacity: 1; }
+}
+
+.note-html-embed-stage {
+  height: var(--note-html-height, 480px);
+  overflow: clip;
+  border-radius: 0 0 9px 9px;
+  background: rgba(125, 125, 125, .08);
+}
+.note-html-embed:has(.note-html-embed-footer:not([hidden])) .note-html-embed-stage { border-radius: 0; }
+.note-html-embed-footer { position: relative; height: 12px; }
+.note-html-resize {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 24px;
+  color: var(--note-theme-text-muted, var(--text-secondary));
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.note-html-resize::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  bottom: 3px;
+  width: 8px;
+  height: 5px;
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  border-bottom-right-radius: 2px;
+}
+.note-html-embed.is-resizing { cursor: nwse-resize; }
+.note-html-embed.is-resizing iframe { pointer-events: none; }
+
+.note-html-tab-stage { position: absolute; inset: 0; }
+:is(.note-html-embed-stage, .note-html-tab-stage) iframe { display: block; width: 100%; height: 100%; border: 0; background: white; }
+:is(.note-html-embed-stage, .note-html-tab-stage) iframe[inert] { pointer-events: none; }

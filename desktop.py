@@ -14,9 +14,12 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import logging
 import os
+import secrets
 import sys
 import threading
+import time
 from ctypes import wintypes
 from pathlib import Path
 from startup_trace import mark as startup_mark
@@ -476,6 +479,9 @@ class DesktopBridge:
         self._quit_after_flush = False
         self._markdown_enabled = False
         self._note_pdf = None
+        self._note_html_origin = ''
+        self._note_html_runtime = None
+        self._note_html_cleanup_plan = None
         self._geometry_lock = threading.RLock()
         self._geometry_timer = None
         self._geometry_closed = False
@@ -533,6 +539,118 @@ class DesktopBridge:
         if self._note_pdf is None:
             return {"status": "error", "code": "unavailable"}
         return self._note_pdf.export(self._window, path, value, language)
+
+    def note_html(self, action, path=None, identity=None, interactive=False) -> dict:
+        from notes_library import MAX_NOTE_HTML_BYTES, NotesError
+
+        if not self._note_html_origin or self._window is None or sys.platform != 'win32' or not isinstance(action, str):
+            return {"status": "unavailable"}
+        try:
+            if action in ('plan-cleanup', 'recycle-cleanup'):
+                return self._note_html_cleanup(action, path, identity)
+            if action in ('probe-control', 'probe', 'confirm'):
+                def probe():
+                    from note_html_runtime import NoteHtmlRuntime
+
+                    if self._note_html_runtime is None:
+                        self._note_html_runtime = NoteHtmlRuntime(self._window.native.browser, self._note_html_origin)
+                    runtime = self._note_html_runtime
+                    if runtime.verified or action == 'confirm' and runtime.confirm_probe():
+                        return {"status": "ready"}
+                    if action == 'confirm':
+                        return {"status": "unavailable"}
+                    return {"status": "ok", "url": runtime.start_probe(control=action == 'probe-control')}
+
+                return self._dispatch_html(probe)
+
+            runtime = self._note_html_runtime
+            if runtime is None or not runtime.verified:
+                return {"status": "unavailable"}
+            if action == 'revoke':
+                self._dispatch_html(lambda: runtime.revoke(path))
+                return {"status": "ok"}
+            if action == 'open':
+                with app._cross_process_mutation_lock(), app.NOTES_MUTATION_LOCK:
+                    name, content = app.NOTES_STORE.read_html_embed(path, identity)
+                url = self._dispatch_html(lambda: runtime.open_document(content, interactive is True))
+                return {"status": "ok", "name": name, "url": url}
+            if action == 'import':
+                import webview
+
+                picked = self._window.create_file_dialog(webview.OPEN_DIALOG, file_types=("HTML (*.html;*.htm)",))
+                if not picked:
+                    return {"status": "cancelled"}
+                source = Path(picked[0])
+                with source.open('rb') as stream:
+                    content = stream.read(MAX_NOTE_HTML_BYTES + 1)
+                with app._cross_process_mutation_lock(), app.NOTES_MUTATION_LOCK:
+                    note = app.NOTES_STORE.load(path)
+                    if note['revision'] != identity:
+                        return {"status": "error", "code": "note_changed"}
+                    result = app.NOTES_STORE.import_html_embed(path, source.name, content)
+                return {"status": "ok", **result}
+        except NotesError as error:
+            return {"status": "error", "code": error.code}
+        except (OSError, RuntimeError):
+            logging.getLogger(__name__).exception('Note HTML operation failed: %s', action)
+            return {"status": "unavailable" if action.startswith('probe') else "error"}
+        return {"status": "error"}
+
+    def _note_html_cleanup(self, action, path, identity):
+        with app._cross_process_mutation_lock(), app.NOTES_MUTATION_LOCK:
+            store = app.NOTES_STORE
+            path = store.normalize_path(path)
+            if action == 'plan-cleanup':
+                self._note_html_cleanup_plan = None
+                revision, candidates = store.unused_html_embeds(path)
+                if not candidates:
+                    return {"status": "ok", "names": []}
+                token = secrets.token_urlsafe(24)
+                self._note_html_cleanup_plan = (token, path, revision, candidates, time.monotonic() + 300)
+                return {"status": "ok", "token": token, "names": sorted(item[1] for item in candidates.values())}
+
+            plan = self._note_html_cleanup_plan
+            if not plan or (identity, path) != plan[:2]:
+                return {"status": "error", "code": "note_changed"}
+            self._note_html_cleanup_plan = None
+            _, _, revision, candidates, expires = plan
+            current_revision, current = store.unused_html_embeds(path)
+            if (time.monotonic() >= expires or current_revision != revision
+                    or any(current.get(key) != entry for key, entry in candidates.items())):
+                return {"status": "error", "code": "note_changed"}
+            targets = [entry[0] for entry in candidates.values()]
+            try:
+                app._recycle_note_media(targets)
+            except OSError:
+                logging.getLogger(__name__).exception('Could not recycle all unused HTML attachments')
+            recycled = [key for key, entry in candidates.items() if not os.path.lexists(entry[0])]
+            return {"status": "ok", "recycledCount": len(recycled), "failedCount": len(targets) - len(recycled),
+                    "recycledIds": recycled}
+
+    def _dispatch_html(self, callback):
+        from System import Action
+
+        completed = threading.Event()
+        cancelled = threading.Event()
+        value = error = None
+
+        def run():
+            nonlocal value, error
+            try:
+                if not cancelled.is_set():
+                    value = callback()
+            except Exception as exc:
+                error = exc
+            finally:
+                completed.set()
+
+        self._window.native.BeginInvoke(Action(run))
+        if not completed.wait(6):
+            cancelled.set()
+            raise TimeoutError('HTML frame WinForms dispatch timed out')
+        if error is not None:
+            raise RuntimeError('HTML frame WinForms dispatch failed') from error
+        return value
 
     def update_window_preferences(self, delta: dict, launcher_language=None) -> dict:
         return self._preferences.update(delta, launcher_language) if self._preferences is not None else {"ok": True}
@@ -1009,6 +1127,7 @@ def main() -> int:
     bridge._markdown_enabled = profile.enabled('notes')
     if bridge._markdown_enabled:
         from note_pdf import NotePdfExport
+        bridge._note_html_origin = f"http://127.0.0.1:{port}"
         bridge._note_pdf = NotePdfExport(f"http://127.0.0.1:{port}/note-print.html", app.NOTES_STORE,
                                         mermaid=profile.enabled('notes.mermaid'))
     try:

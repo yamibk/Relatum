@@ -180,7 +180,8 @@ function renderHarness() {
   };
   s.tabsEl.querySelector = () => s.tabsEl.children.find(tab => tab.className.split(' ').includes('active'));
   Object.assign(s, { language: () => 'en', tr: key => key, isGraphTab: tab => tab === GRAPH_TAB,
-    isBlankTab: tab => tab.startsWith('blank:'), noteTitle: name => name, noteIcon: () => ({}),
+    isBlankTab: tab => tab.startsWith('blank:'), isHtmlTab: tab => tab.startsWith('html:'),
+    htmlTabs: new Map(), noteTitle: name => name, noteIcon: () => ({}),
     newTabButton: null, closeAllTabsButton: null });
   s.state.activeTab = s.state.renderedActiveTab = 'a';
   s.state.notebookRoot = '';
@@ -285,6 +286,7 @@ function closeHarness() {
   const state = { tabs: ['a', 'b', 'c'], activeTab: 'c', current: documents.get('c'), documentCache: documents };
   const renders = [], releases = [], saved = [];
   const sandbox = { state, tabCloseMotionPending: false, noteMovePromise: null, noteGraphIntentSequence: 0, noteDatabase: null,
+    htmlTabs: new Map(), isHtmlTab: tab => tab.startsWith('html:'),
     noteGraph: { deactivate(options) { releases.push(options); } },
     flushCanvases: async () => true, flushSave: async document => { saved.push(document.path); return true; },
     isSpecialTab: tab => tab === GRAPH_TAB || tab.startsWith('blank:'), isGraphTab: tab => tab === GRAPH_TAB,

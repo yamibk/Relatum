@@ -175,6 +175,8 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
   grid-template-columns: clamp(220px, 19vw, 300px) minmax(380px, 1fr) clamp(230px, 21vw, 330px);
   margin: 0 24px 24px;
   overflow: hidden;
+  /* A framed page can scroll hidden ancestors through scrollIntoView(). */
+  overflow: clip;
   border: 1px solid rgba(31, 31, 28, 0.075);
   border-radius: 22px;
   color: var(--text);
@@ -985,6 +987,16 @@ body.start-page[data-start-theme="dark"] .note-live-editor-host:not(.is-source-m
 .note-table-grip { display: grid; grid-template-columns: repeat(2, 3px); grid-template-rows: repeat(3, 3px); gap: 2px; align-content: center; justify-content: center; cursor: grab; }
 .note-table-grip[data-table-kind="column"] { grid-template-columns: repeat(3, 3px); grid-template-rows: repeat(2, 3px); }
 .note-table-grip i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; }
+.cm-editor.is-reference-moving,
+.cm-editor.is-reference-moving :is(.note-database button.note-database-move, .note-html-embed .note-html-move) { cursor: grabbing; }
+.note-reference-block-drop {
+  position: absolute;
+  z-index: 5;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--note-control-focus, var(--note-theme-link, #437db3));
+  pointer-events: none;
+}
 .note-table-selection, .note-table-drop { position: absolute; pointer-events: none; z-index: 2; box-sizing: border-box; }
 .note-table-selection { border: 2px solid #78936c; border-radius: 4px; }
 .note-table-drop { background: #78936c; border-radius: 2px; z-index: 4; }
@@ -1308,6 +1320,20 @@ body.start-page[data-start-theme="dark"] .note-context-separator { background: r
 }
 .note-modal-field input:focus { border-color: rgba(80, 95, 70, 0.46); box-shadow: 0 0 0 3px rgba(95,113,84,.11); }
 .note-modal-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.note-html-cleanup-list { max-height: min(36vh, 240px); overflow: auto; padding-inline-start: 1.35em; overflow-wrap: anywhere; }
+.note-html-cleanup { --note-cleanup-ink: #000; --note-cleanup-surface: #fff; }
+body[data-start-theme="dark"] .note-html-cleanup { --note-cleanup-ink: #fff; --note-cleanup-surface: #000; }
+.note-html-cleanup .note-modal-actions { flex-wrap: wrap; }
+.note-html-cleanup .note-modal-actions > button {
+  appearance: none; min-height: 34px; padding: 5px 14px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--note-cleanup-ink) 22%, var(--note-cleanup-surface));
+  color: var(--note-cleanup-ink); background: var(--note-cleanup-surface); font: inherit; cursor: pointer;
+}
+.note-html-cleanup .note-modal-actions > .note-html-cleanup-primary {
+  color: var(--note-cleanup-surface); background: var(--note-cleanup-ink); border-color: var(--note-cleanup-ink);
+}
+.note-html-cleanup .note-modal-actions > button:hover { box-shadow: 0 0 0 1px currentColor inset; }
+.note-html-cleanup .note-modal-actions > button:focus-visible { outline: 2px solid var(--note-cleanup-ink); outline-offset: 2px; }
 .note-modal-danger {
   appearance: none; border: 0; padding: 9px 17px; border-radius: 999px; color: #fff; background: #a74b44;
   font: 600 12.5px/1 inherit; cursor: pointer;
@@ -30713,7 +30739,15 @@ html.dark-semantic-ui {
 /* A transparent notebook tab fills the document pane without its paper/title gutters. */
 .note-graph-active .note-document-head,
 .note-graph-active .note-document-body,
-.note-graph-active .note-document-status { display: none; }
+.note-graph-active .note-document-status,
+.note-html-tab-active :is(.note-document-head, .note-document-body, .note-document-status) { display: none; }
+.note-html-tab-panel { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: clip; border-radius: var(--note-theme-paper-radius, 0px); }
+.note-html-tab-panel[hidden] { display: none; }
+.note-html-tab-panel:focus { outline: none; }
+.note-html-tab-status { margin: 20px; color: var(--text-secondary); }
+@media (max-width: 760px) {
+  .note-html-tab-active .note-tab-actions > .note-mobile-pane-button { display: grid; }
+}
 .note-graph-panel { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; color: var(--text); background: transparent; outline: none; }
 .note-graph-panel[hidden] { display: none; }
 .note-settings-toggle,
