@@ -1948,6 +1948,18 @@
       }
       view.name.className = 'note-database-name';
       nameSlot.append(view.name);
+      if (!view.readOnly && view.onMoveBlock) {
+        const grip = view.moveGrip = element('button', 'note-database-move note-table-grip');
+        grip.type = 'button';
+        grip.setAttribute('aria-label', tr(label('移动整个数据库', 'Move database block')));
+        for (let i = 0; i < 6; i++) grip.append(element('i'));
+        const canMove = () => isVisible(session) && session.page?.exists
+          && !view.searchComposing && !sessionsFor(session.path).some(item => item.draft || item.write);
+        grip.addEventListener('pointerdown', event => {
+          if (canMove()) view.onMoveBlock(event, canMove);
+        });
+        nameSlot.prepend(grip);
+      }
       view.search = input('search', tr(label('搜索数据库', 'Search database')), session.query.search);
       view.search.dataset.dbRole = 'search';
       view.search.placeholder = tr(label('搜索', 'Search'));
@@ -2039,6 +2051,7 @@
       if (view.language !== language) {
         view.language = language;
         view.root.setAttribute('aria-label', tr(label('数据库', 'Database')));
+        view.moveGrip?.setAttribute('aria-label', tr(label('移动整个数据库', 'Move database block')));
         view.search.placeholder = tr(label('搜索', 'Search'));
         view.search.setAttribute('aria-label', tr(label('搜索数据库', 'Search database')));
         const controls = [[view.searchToggle, label('搜索', 'Search')], [view.viewToggle, label('视图选项', 'View options')],
@@ -2173,7 +2186,7 @@
       observer.observe(view.root);
     }
 
-    function mount(host, { path, databaseId, readOnly = false, observe = false, onLayout } = {}) {
+    function mount(host, { path, databaseId, readOnly = false, observe = false, onLayout, onMoveBlock } = {}) {
       if (destroyed || !path || !databaseId) return () => {};
       const session = getSession(path, databaseId);
       const root = element('section', 'note-database');
@@ -2185,7 +2198,7 @@
       status.setAttribute('role', 'status');
       root.append(body, status);
       host.append(root);
-      const view = { session, host, root, body, status, readOnly, onLayout, visible: !observe || !window.IntersectionObserver };
+      const view = { session, host, root, body, status, readOnly, onLayout, onMoveBlock, visible: !observe || !window.IntersectionObserver };
       root.addEventListener('copy', event => clipboard(view, event));
       root.addEventListener('paste', event => clipboard(view, event));
       root.addEventListener('keydown', event => {

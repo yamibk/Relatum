@@ -71,7 +71,35 @@ body[data-start-theme="dark"] .note-database {
 }
 .note-database [hidden] { display: none !important; }
 .note-database-toolbar { justify-content: flex-end; gap: 3px; padding: 0 0 3px; }
-.note-database-name-slot { flex: 1; min-width: 0; }
+.note-database-name-slot { position: relative; flex: 1; min-width: 0; }
+.note-database button.note-database-move {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 100%;
+  width: 24px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-secondary, #686763);
+  background: transparent;
+  opacity: 0;
+  cursor: grab;
+  touch-action: none;
+}
+.note-database-name-slot:is(:hover, :focus-within) > .note-database-move { opacity: 1; }
+@media (hover: none) {
+  .note-database button.note-database-move { opacity: 1; }
+}
+.cm-editor.is-database-moving, .cm-editor.is-database-moving .note-database button.note-database-move { cursor: grabbing; }
+.note-database-block-drop {
+  position: absolute;
+  z-index: 5;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--note-control-focus, var(--note-theme-link, #437db3));
+  pointer-events: none;
+}
 .note-database .note-database-name { display: block; max-width: 100%; padding: 2px 8px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-database button.note-database-name { border-color: transparent; background: transparent; text-align: start; cursor: text; }
 .note-database button.note-database-name:enabled:hover { background: var(--db-hover); }

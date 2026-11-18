@@ -4048,12 +4048,13 @@
   }
 
   class DatabaseBlockWidget extends WidgetType {
-    constructor(spec, path, database) {
+    constructor(spec, path, database, onMove) {
       super();
       this.id = spec.id;
       this.path = path;
       this.database = database;
       this.databaseId = spec.databaseId;
+      this.onMove = onMove;
     }
     get estimatedHeight() { return 72; }
     eq(other) { return this.id === other.id && this.path === other.path && this.database === other.database && this.databaseId === other.databaseId; }
@@ -4064,6 +4065,7 @@
       element.contentEditable = 'false';
       element.__relatumDatabaseDispose = this.database.mount(element, {
         path: this.path, databaseId: this.databaseId, readOnly: view.state.readOnly, observe: true,
+        onMoveBlock: (event, canMove) => this.onMove(event, this.id, this.path, canMove),
         onLayout: () => { if (element.isConnected) view.requestMeasure(); },
       });
       return element;
@@ -4270,7 +4272,7 @@
       return coordinator.layout && remembersBlockLayout(spec) ? new MeasuredBlockWidget(widget, coordinator) : widget;
     }
     if (spec.kind === 'quiz') return new QuizBlockWidget(spec, path, options, coordinator, selected);
-    if (spec.kind === 'database') return new DatabaseBlockWidget(spec, path, options.database);
+    if (spec.kind === 'database') return new DatabaseBlockWidget(spec, path, options.database, options.onMoveDatabaseBlock);
     if (spec.kind === 'canvas') return new CanvasBlockWidget(spec, path, options, coordinator, selected);
     const widget = spec.kind === 'table' && options.tableController && spec.tableModel
       ? options.tableController.widget(spec, path, coordinator)
@@ -6115,6 +6117,53 @@
     return true;
   }
 
+  function databaseDropBoundary(view, y, specs) {
+    const { doc } = view.state;
+    const documentTop = view.documentTop;
+    const hit = view.lineBlockAtHeight(y - documentTop);
+    let from = doc.lineAt(hit.from).from;
+    let to = doc.lineAt(hit.to).to;
+    const node = syntaxTree(view.state).topNode.childAfter(from);
+    if (node && node.from <= to) {
+      from = doc.lineAt(Math.min(from, node.from)).from;
+      to = doc.lineAt(Math.max(to, node.to)).to;
+    }
+    // Custom blocks can span several of the Markdown parser's children.
+    for (const spec of specs) {
+      if (spec.from > to) break;
+      if (spec.to < from) continue;
+      from = doc.lineAt(Math.min(from, spec.from)).from;
+      to = doc.lineAt(Math.max(to, spec.to)).to;
+    }
+    const metadata = documentFrontmatter(doc);
+    if (metadata && from <= metadata.to && to <= metadata.to) return null;
+    const top = documentTop + view.lineBlockAt(from).top;
+    const last = view.lineBlockAt(to);
+    const bottom = documentTop + last.top + last.height;
+    if (y < (top + bottom) / 2) return metadata && from <= metadata.to ? null : { at: from, y: top };
+    return { at: Math.min(to + 1, doc.length), y: bottom };
+  }
+
+  function databaseMoveChanges(state, spec, cut, at) {
+    const { doc } = state;
+    const before = doc.sliceString(Math.max(0, at - 2), at);
+    const after = doc.sliceString(at, Math.min(at + 2, doc.length));
+    const leading = at === 0 || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+    const trailing = at === doc.length ? (before.endsWith('\n') ? '\n' : '')
+      : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
+    // The old neighbors may have relied on the fence to separate their paragraphs.
+    const gap = spec.from > 0 && cut.to < doc.length
+      && doc.lineAt(spec.from - 1).text.trim() && doc.lineAt(cut.to).text.trim() ? '\n' : '';
+    const changes = state.changes([
+      { from: cut.from, to: cut.to, insert: gap },
+      { from: at, insert: leading + doc.sliceString(spec.from, spec.to) + trailing },
+    ]);
+    const position = changes.mapPos(at, -1) + leading.length;
+    // An unfinished fence, comment or math block can consume a seemingly valid drop.
+    if (databaseBlockPositions(changes.apply(doc).toString()).get(position)?.id !== spec.databaseId) return null;
+    return { changes, position };
+  }
+
   function exitEmptyQuoteMarkup(view) {
     if (!view || !view.state || view.state.selection.ranges.length !== 1) return false;
     const range = view.state.selection.main;
@@ -6177,6 +6226,7 @@
     let documentSetSeq = 0;
     const imageInsertions = new Set();
     const databaseInsertions = new Set();
+    let cancelDatabaseMove = null;
     let scrollRestoreSeq = 0;
     let destroyed = false;
     let highlightActive = true;
@@ -6295,6 +6345,7 @@
       clipboardText(text) { return text; },
       imageTextDefaults: { size: 'md', color: 'white' },
     }, options);
+    safeOptions.onMoveDatabaseBlock = startDatabaseMove;
     let imagePreviewPointer = null;
     const inputSession = {
       phase: 'idle',
@@ -7339,6 +7390,7 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (update.docChanged) cancelDatabaseMove?.();
           if (update.docChanged) cardsToolsSession?.check();
           if (mediaBodyTarget && update.docChanged) mediaBodyTarget.position = update.changes.mapPos(mediaBodyTarget.position, 1);
           mediaController?.sync();
@@ -7625,6 +7677,118 @@
     }
 
     const view = new EditorView({ state: makeState(options.value || '', EditorSelection.cursor(0)), parent: host });
+
+    function startDatabaseMove(event, id, path, canMove) {
+      if (event.button !== 0 || !event.isPrimary || cancelDatabaseMove) return;
+      const doc = view.state.doc;
+      const current = () => !destroyed && !sourceMode && !view.state.readOnly && path === currentPath
+        && doc === view.state.doc && !inputPending() && !imageTextController.active && noteRenderForeground(view) && canMove();
+      const spec = view.state.field(blockField, false)?.byId.get(id);
+      if (!current() || spec?.kind !== 'database') return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const cut = { from: spec.to < doc.length ? spec.from : Math.max(0, spec.from - 1),
+        to: Math.min(spec.to + 1, doc.length) };
+      const scroller = view.scrollDOM;
+      const pointerId = event.pointerId;
+      const controller = new AbortController(), { signal } = controller;
+      const marker = document.createElement('div');
+      marker.className = 'note-database-block-drop';
+      marker.setAttribute('aria-hidden', 'true');
+      marker.hidden = true;
+      const startX = event.clientX, startY = event.clientY;
+      let x = startX, y = startY, dragging = false, frame = 0;
+
+      const stopLifecycle = watchNoteRenderLifecycle(change => {
+        if (change.type === 'pagehide' || !current()) finish();
+      });
+      function finish() {
+        cancelDatabaseMove = null;
+        controller.abort();
+        stopLifecycle();
+        if (frame) cancelAnimationFrame(frame);
+        if (scroller.hasPointerCapture(pointerId)) scroller.releasePointerCapture(pointerId);
+        view.dom.classList.remove('is-database-moving');
+        marker.remove();
+      }
+
+      function boundary(rect) {
+        if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return null;
+        const specs = view.state.field(blockField, false)?.specs || [];
+        const target = databaseDropBoundary(view, y, specs);
+        if (!target || target.at >= cut.from && target.at <= cut.to || target.y < rect.top - 1 || target.y > rect.bottom + 1) return null;
+        return target;
+      }
+
+      function paint() {
+        frame = 0;
+        if (!current()) { finish(); return; }
+        const rect = scroller.getBoundingClientRect();
+        const target = boundary(rect);
+        marker.hidden = !target;
+        if (target) {
+          const editor = view.dom.getBoundingClientRect();
+          const content = view.contentDOM.getBoundingClientRect();
+          const left = Math.max(rect.left, content.left), right = Math.min(rect.right, content.right);
+          marker.style.left = (left - editor.left) + 'px';
+          marker.style.width = Math.max(0, right - left) + 'px';
+          marker.style.top = (clamp(target.y, rect.top + 1, rect.bottom - 1) - editor.top - 1) + 'px';
+        }
+        if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return;
+        const edge = Math.min(40, rect.height / 4);
+        const delta = Math.max(0, edge - (rect.bottom - y)) - Math.max(0, edge - (y - rect.top));
+        if (!delta) return;
+        const previous = scroller.scrollTop;
+        scroller.scrollTop += Math.sign(delta) * Math.max(1, Math.round(Math.abs(delta) / 3));
+        if (scroller.scrollTop !== previous) schedule();
+      }
+
+      function schedule() {
+        if (dragging && !frame) frame = requestAnimationFrame(paint);
+      }
+
+      function updatePointer(pointer) {
+        x = pointer.clientX;
+        y = pointer.clientY;
+        if (!dragging && Math.hypot(x - startX, y - startY) >= 4) {
+          dragging = true;
+          view.dom.classList.add('is-database-moving');
+          view.dom.append(marker);
+        }
+      }
+
+      cancelDatabaseMove = finish;
+      scroller.addEventListener('pointermove', pointer => {
+        if (pointer.pointerId !== pointerId) return;
+        updatePointer(pointer);
+        schedule();
+      }, { signal });
+      scroller.addEventListener('pointerup', pointer => {
+        if (pointer.pointerId !== pointerId) return;
+        updatePointer(pointer);
+        const target = dragging && current() && boundary(scroller.getBoundingClientRect());
+        finish();
+        if (!target) return;
+        const move = databaseMoveChanges(view.state, spec, cut, target.at);
+        if (!move) return;
+        view.dispatch({ changes: move.changes, selection: EditorSelection.cursor(move.position),
+          userEvent: 'move.database', annotations: CM.isolateHistory.of('full') });
+        view.focus();
+      }, { signal });
+      scroller.addEventListener('pointercancel', pointer => { if (pointer.pointerId === pointerId) finish(); }, { signal });
+      scroller.addEventListener('lostpointercapture', pointer => {
+        if (pointer.target === scroller && pointer.pointerId === pointerId) finish();
+      }, { signal });
+      scroller.addEventListener('scroll', schedule, { signal, passive: true });
+      window.addEventListener('blur', finish, { signal });
+      window.addEventListener('keydown', key => {
+        if (key.key !== 'Escape') return;
+        key.preventDefault(); key.stopPropagation(); finish();
+      }, { signal, capture: true });
+      try { scroller.setPointerCapture(pointerId); } catch (_) { finish(); }
+    }
+
     const databaseFileDropEnabled = () => options.database && typeof options.onDatabaseFiles === 'function'
       && !sourceMode && !view.state.readOnly && !imageTextController.active;
     function hasDroppedFiles(event) { return Array.from(event.dataTransfer?.types || []).includes('Files'); }
@@ -7767,6 +7931,7 @@
     }
 
     function setDocument(documentState) {
+      cancelDatabaseMove?.();
       closeCardsTools();
       cancelMathPointerScroll();
       imagePreviewPointer = null;
@@ -7927,6 +8092,7 @@
     }
 
     async function setNotePath(path, value) {
+      cancelDatabaseMove?.();
       cancelMathPointerScroll();
       window.RelatumNoteLinkCompletion?.closeAll();
       highlightInputs.forEach(input => input.dismiss());
@@ -7956,6 +8122,7 @@
     }
 
     function setSourceMode(active) {
+      cancelDatabaseMove?.();
       closeCardsTools();
       cancelMathPointerScroll();
       cancelViewportRestore(view.scrollDOM);
@@ -8330,6 +8497,7 @@
       get inputPending() { return inputPending(); },
       focus() { if (mediaController?.active()) mediaController.active().input.focus(); else view.focus(); },
       destroy() {
+        cancelDatabaseMove?.();
         cancelMathPointerScroll();
         cancelViewportRestore(view.scrollDOM);
         closeCardsTools();
