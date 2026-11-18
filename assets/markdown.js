@@ -14,6 +14,7 @@
 //
 // 对外接口：window.MarkdownMini.render(src) → 一段 HTML 字串；
 //           window.MarkdownMini.renderResult(src) → HTML + Math/Mermaid 特征。
+//           canvasNodeText:true 保留画布节点正文的普通换行与段间空行。
 
 (function (global) {
   'use strict';
@@ -1824,7 +1825,7 @@
       const hardBreak = /(?: {2,}|\\)$/.test(value);
       if (hardBreak) value = value.replace(/(?: {2,}|\\)$/, '');
       html += renderInline(escapeHtml(value), options?.noteSyntax);
-      if (index < lines.length - 1) html += hardBreak ? '<br>' : '\n';
+      if (index < lines.length - 1) html += hardBreak || options?.canvasNodeText === true ? '<br>' : '\n';
     });
     return html;
   }
@@ -1834,6 +1835,9 @@
   function parseBlocks(text, topLevel, options, lineOffset) {
     const lines = text.split('\n');
     const out = [];
+    const canvasNodeText = options?.canvasNodeText === true;
+    let lastParagraphEnd = 0;
+    let lastParagraphOutputCount = -1;
     let i = 0;
     let previousIndex = -1;
     let iterations = 0;
@@ -1975,7 +1979,7 @@
         }
       }
 
-      // 段落：吃掉连续的非空、非块级行；普通换行保留源码换行，双空格或反斜杠才是硬换行。
+      // 段落：吃掉连续的非空、非块级行。画布节点按行排版，其他宿主沿用 Markdown 软换行。
       const paraStart = i;
       const para = [];
       while (i < lines.length && lines[i].trim() !== '' && !isBlockStart(lines[i])
@@ -1983,7 +1987,18 @@
         para.push(lines[i]);
         i++;
       }
-      if (para.length) out.push('<p' + ln(paraStart) + span(paraStart, i) + '>' + renderParagraphLines(para, options) + '</p>');
+      if (para.length) {
+        let canvasAttrs = '';
+        if (canvasNodeText) {
+          canvasAttrs = ' class="md-canvas-paragraph"';
+          if (out.length === lastParagraphOutputCount && paraStart > lastParagraphEnd) {
+            canvasAttrs += ' style="--md-canvas-empty-lines:' + (paraStart - lastParagraphEnd) + '"';
+          }
+          lastParagraphEnd = i;
+          lastParagraphOutputCount = out.length + 1;
+        }
+        out.push('<p' + ln(paraStart) + span(paraStart, i) + canvasAttrs + '>' + renderParagraphLines(para, options) + '</p>');
+      }
     }
     return out.join('');
   }

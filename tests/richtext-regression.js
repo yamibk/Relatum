@@ -12,28 +12,13 @@ function element(tagName, children, dataset, innerText) {
     nodeName: String(tagName || 'div').toUpperCase(),
     tagName: String(tagName || 'div').toUpperCase(),
     dataset: dataset || {},
-    children: children || [],
+    childNodes: children || [],
     parentElement: null,
   };
-  el.children.forEach(function (child) { child.parentElement = el; });
+  el.childNodes.forEach(function (child) { child.parentElement = el; });
   if (innerText !== undefined) el.innerText = innerText;
   return el;
 }
-
-global.NodeFilter = { SHOW_TEXT: 4 };
-global.document = {
-  createTreeWalker: function (root) {
-    const nodes = [];
-    function visit(node) {
-      if (!node) return;
-      if (node.nodeType === 3) { nodes.push(node); return; }
-      (node.children || []).forEach(visit);
-    }
-    visit(root);
-    let index = 0;
-    return { nextNode: function () { return nodes[index++] || null; } };
-  },
-};
 
 require('../assets/richtext.js');
 const RichText = global.RelatumRichText;
@@ -55,10 +40,25 @@ function extract(root) {
   assert.deepEqual(extract(root), { text: '123\n456', marks: [] });
 }
 
-// <br> contributes a visible line break through innerText even though it has no text node.
+// An inline <br> contributes a visible line break even though it has no text node.
 {
   const root = element('div', [text('123'), element('br'), text('456')], {}, '123\n456');
   assert.deepEqual(extract(root), { text: '123\n456', marks: [] });
+}
+
+// A blank DIV uses a caret BR. Chromium's innerText counts both as breaks.
+{
+  const marked = text('456');
+  const line = element('div', [element('span', [marked], { rtBold: '1' })]);
+  const root = element('div', [text('123'), element('div', [element('br')]), line], {}, '123\n\n\n456');
+  assert.deepEqual(extract(root), { text: '123\n\n456', marks: [{ start: 5, end: 8, bold: true }] });
+  assert.equal(RichText.editableOffset(root, marked, 1), 6);
+}
+
+// A block can follow an existing LF and a BR, both of which occupy one line boundary.
+{
+  const root = element('div', [text('123\n'), element('br'), element('div', [text('456')])]);
+  assert.deepEqual(extract(root), { text: '123\n\n456', marks: [] });
 }
 
 // Rich runs on either side of a generated line break keep correct offsets and palettes.
@@ -76,9 +76,10 @@ function extract(root) {
   });
 }
 
-// DOM-only text omitted from innerText must not shift its style onto visible content.
+// Hidden editable descendants must not shift their style onto visible content.
 {
   const hidden = element('span', [text('hidden')], { rtColor: 'red' });
+  hidden.hidden = true;
   const visible = element('span', [text('visible')], { rtBold: '1' });
   const root = element('div', [hidden, visible], {}, 'visible');
   assert.deepEqual(extract(root), {

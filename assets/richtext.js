@@ -403,38 +403,73 @@
     return style;
   }
 
-  function editablePlainText(root) {
-    if (!root) return '';
-    // contenteditable 在不同浏览器、输入法与光标位置下可能把 Enter 表示成
-    // \r / \n 文本、<br>，或嵌套的 <div>/<p>。innerText 是浏览器对这些
-    // 可视行边界的统一纯文本投影；textContent 会漏掉 <br> 与块级换行。
-    const rendered = typeof root.innerText === 'string' ? root.innerText : (root.textContent || '');
-    return String(rendered).replace(/\r\n?/g, '\n');
+  function readEditable(root, point) {
+    let text = '';
+    let atLineBreak = false;
+    const marks = [];
+    let pointOffset = null;
+    const normalizeBreaks = value => value.replace(/\r\n?/g, '\n');
+    function recordPoint(container, offset) {
+      if (point && point.container === container && point.offset === offset) pointOffset = text.length;
+    }
+    function append(value) {
+      if (!value) return;
+      text += value;
+      atLineBreak = value.endsWith('\n');
+    }
+
+    // Chromium uses DIV/P siblings for lines and a trailing BR as a caret placeholder.
+    // Counting both as authored line breaks would double each blank block in innerText.
+    function visit(parent, endsBeforeSibling) {
+      const children = parent.childNodes;
+      let hasPrevious = false;
+      let previousBlock = false;
+      for (let index = 0; index < children.length; index++) {
+        const child = children[index];
+        recordPoint(parent, index);
+        if (pointOffset !== null) return;
+        if ((child.nodeType !== 3 && child.nodeType !== 1) || child.hidden || child.style?.display === 'none') continue;
+        const finalChild = index === children.length - 1;
+        const block = child.nodeName === 'DIV' || child.nodeName === 'P';
+        if (block && !child.childNodes.length) continue;
+        if (child.nodeType === 3 && !child.nodeValue) continue;
+        if (hasPrevious && (previousBlock || (block && !atLineBreak))) append('\n');
+        if (child.nodeType === 3) {
+          let value = normalizeBreaks(child.nodeValue);
+          if (finalChild && endsBeforeSibling && value.endsWith('\n')) value = value.slice(0, -1);
+          if (point?.container === child) {
+            pointOffset = text.length + Math.min(value.length, normalizeBreaks(child.nodeValue.slice(0, point.offset)).length);
+            return;
+          }
+          const start = text.length;
+          append(value);
+          if (!point && value) {
+            const style = styleFromAncestors(child, root);
+            if (hasStyle(style)) marks.push(Object.assign({ start: start, end: text.length }, style));
+          }
+        } else if (child.nodeName === 'BR') {
+          recordPoint(child, 0);
+          if (!finalChild) append('\n');
+        } else {
+          visit(child, block ? !finalChild : (finalChild && endsBeforeSibling));
+        }
+        if (pointOffset !== null) return;
+        hasPrevious = true;
+        previousBlock = block;
+      }
+      recordPoint(parent, children.length);
+    }
+    if (root) visit(root, false);
+    if (point) return pointOffset;
+    return { text: text, marks: normalize(text, marks) };
   }
 
   function extractEditable(root) {
-    if (!root || !global.document) return { text: '', marks: [] };
-    const text = editablePlainText(root);
-    const marks = [];
-    const walker = global.document.createTreeWalker(root, global.NodeFilter.SHOW_TEXT, null);
-    let cursor = 0;
-    let node;
-    while ((node = walker.nextNode())) {
-      const value = String(node.nodeValue || '').replace(/\r\n?/g, '\n');
-      if (!value) continue;
-      // innerText 会在 <br> / 块级元素之间补 \n；从上一个文本节点之后向前
-      // 匹配，既跨过这些合成换行，也能稳定处理内容相同的重复文本节点。
-      const found = text.indexOf(value, cursor);
-      // 若浏览器因隐藏内容等原因没有把某个 DOM 文本投影到 innerText，宁可
-      // 放弃那一段格式，也不要把样式错误套到后面的可见文字上。
-      if (found < 0) continue;
-      const start = found;
-      const end = start + value.length;
-      const style = styleFromAncestors(node, root);
-      if (end > start && hasStyle(style)) marks.push(Object.assign({ start: start, end: end }, style));
-      cursor = end;
-    }
-    return { text: text, marks: normalize(text, marks) };
+    return readEditable(root);
+  }
+
+  function editableOffset(root, container, offset) {
+    return readEditable(root, { container: container, offset: offset });
   }
 
   function concat(parts) {
@@ -463,6 +498,7 @@
     serialize: serialize,
     renderEditable: renderEditable,
     extractEditable: extractEditable,
+    editableOffset: editableOffset,
     concat: concat,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

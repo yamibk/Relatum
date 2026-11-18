@@ -3474,6 +3474,10 @@
 
   <!-- 节点右键菜单（右键节点弹出：改颜色 / 复制 / 删除）-->
   <div class="node-menu" data-role="node-menu" hidden>
+    <div data-role="node-menu-group-actions" hidden>
+      <button type="button" class="node-menu-item" data-action="group-fold">折叠分组</button>
+      <button type="button" class="node-menu-item" data-action="group-ungroup">解散分组</button>
+    </div>
     <div class="node-menu-colors" data-role="node-menu-normal-colors">
       <button type="button" class="color-dot color-default" data-color="" title="默认（无色）"></button>
       <button type="button" class="color-dot" data-color="gray" title="灰"></button>

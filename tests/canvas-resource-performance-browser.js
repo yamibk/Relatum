@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), net = require('node:net');
 const { spawn, execFileSync } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
-const { makePage, openCanvas, interactionRegression, lifecycleRegression, translationAndDualRegression, startRegression }
+const { makePage, openCanvas, interactionRegression, lifecycleRegression, groupAndTextRegression, translationAndDualRegression, startRegression }
   = require('./canvas-browser-performance.js');
 const repo = path.resolve(__dirname, '..');
 
@@ -91,6 +91,7 @@ async function freePort() {
 
 (async () => {
   const compare = process.argv.includes('--compare');
+  const groupAndTextOnly = process.argv.includes('--group-text');
   const baselineRef = process.env.RELATUM_CANVAS_BASELINE_REF || 'HEAD';
   const currentCanvas = fs.readFileSync(path.join(repo, 'assets/canvas.js'), 'utf8');
   const oldCanvas = compare ? execFileSync('git', ['show', baselineRef + ':assets/canvas.js'], { cwd: repo, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }) : '';
@@ -98,7 +99,8 @@ async function freePort() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-canvas-perf-'));
   const port = await freePort(), url = `http://127.0.0.1:${port}`;
   const python = process.env.RELATUM_PYTHON || 'python';
-  execFileSync(python, ['-B', 'tests/generate-performance-fixtures.py', root], { cwd: repo, windowsHide: true });
+  if (groupAndTextOnly) fs.mkdirSync(path.join(root, 'canvases'));
+  else execFileSync(python, ['-B', 'tests/generate-performance-fixtures.py', root], { cwd: repo, windowsHide: true });
   const nodes = [], edges = [];
   for (let i = 0; i < 16; i++) {
     nodes.push({ id: 'a' + i, kind: 'text', text: '起点 ' + i, x: 120 + i * 100, y: 120 + i * 100, width: 120, height: 60 },
@@ -120,6 +122,12 @@ async function freePort() {
     assert(ready, 'isolated server starts');
     browser = await chromium.launch({ headless: true, executablePath: process.env.RELATUM_EDGE_PATH });
     report.browser = browser.version();
+    if (groupAndTextOnly) {
+      for (const options of [{}, { dark: true, dpr: 2, reduced: true }]) {
+        console.log('canvas group and text:', await groupAndTextRegression(browser, { url, root }, options));
+      }
+      return;
+    }
     for (let run = 0; run < 3; run++) for (const baseline of compare ? [true, false] : [false]) {
       const page = await makePage(browser, { protectFixtures: true, dpr: run === 1 ? 2 : 1, reduced: run === 1 });
       await page.context().addInitScript(installProbe, run === 2);
@@ -182,6 +190,7 @@ async function freePort() {
         report.regressions.push(await interactionRegression(browser, config, options));
       }
       report.lifecycle = await lifecycleRegression(browser, config);
+      report.groupAndText = await groupAndTextRegression(browser, config);
       report.translationAndDual = await translationAndDualRegression(browser, config);
       report.start = await startRegression(browser, config);
     }

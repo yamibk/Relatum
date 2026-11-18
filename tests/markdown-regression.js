@@ -280,6 +280,16 @@ assert(!softBreak.includes('<br>'));
 assert(Markdown.render('alpha  \nbeta').includes('<br>'));
 assert(Markdown.render('alpha\\\nbeta').includes('<br>'));
 
+const canvasNodeText = { canvasNodeText: true };
+const canvasParagraphs = Markdown.render('123  abc\n456\n\n\n789', canvasNodeText);
+assert(canvasParagraphs.includes('123  abc<br>456'));
+assert(canvasParagraphs.includes('data-ln="4" class="md-canvas-paragraph" style="--md-canvas-empty-lines:2"'));
+assert.equal((Markdown.render('alpha  \nbeta\\\ngamma', canvasNodeText).match(/<br>/g) || []).length, 2);
+const canvasBlocks = Markdown.renderResult('first\n\n```text\n123\n456\n```\n\n- one\n- two\n\n$$x+y$$\n\nlast', canvasNodeText);
+assert(!canvasBlocks.html.includes('--md-canvas-empty-lines'), 'block spacing follows Markdown');
+assert(!canvasBlocks.html.includes('<br>'), 'code, list, and formula blocks own their own line boundaries');
+assert.deepEqual(canvasBlocks.features, { math: true, mermaid: false });
+
 const features = Markdown.renderResult('```mermaid\ngraph TD\nA-->B\n```\n\n$x$').features;
 assert.deepStrictEqual(features, { math: true, mermaid: true });
 for (const language of ['mermaid', 'flowchart', 'sequence']) {

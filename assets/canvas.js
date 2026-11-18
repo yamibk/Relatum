@@ -1,6 +1,6 @@
 // 画布交互核心 — 阶段 3 A/B + X 轮（键盘大礼包）
 // 在阶段 2 的基础上加：
-// - 节点多行文本：编辑态用 contenteditable=plaintext-only，Enter 自然换行、
+// - 节点多行文本：富文本编辑与 Markdown 显示保留 Enter 换行，
 //   Ctrl/Cmd+Enter 提交、Esc 取消；连线标签仍然是单行
 // - 节点 Markdown 渲染：显示态用 window.MarkdownMini.render(...) 渲成 HTML；
 //   字号/字色/高光/粗体使用 textMarks/bodyMarks 结构化保存，编辑态不显示增强语法
@@ -884,6 +884,8 @@
     const rulerAngleApply = rulerMenu && rulerMenu.querySelector('[data-action="apply-ruler-angle"]');
     // 节点右键菜单（C1 轮：颜色 + 复制 + 删除）
     const nodeMenu = opts.nodeMenu || null;
+    const groupMenuActions = nodeMenu && nodeMenu.querySelector('[data-role="node-menu-group-actions"]');
+    let menuGroupId = null;
     const edgeMenu = opts.edgeMenu || null;   // 连线右键菜单（编辑文字 / 删除）
     let menuEdgeId = null;                     // 当前右键菜单作用的连线 id
     const editPanel = opts.editPanel || null;  // 5-4：编辑模式右侧抽屉
@@ -1219,6 +1221,7 @@
     const edgeMap = new Map();           // id → { path, hit, labelEl }
     let nextEdgeOrder = 0;
     const removalGhosts = new Set();
+    const groupFoldAnimations = new Map();
     const timerMap = new Map();           // id → element
     const timerRuntime = new Map();       // id → { running, startedAt }，仅当前会话
     // 节点 id 索引：连线绘制与拖拽每帧都会大量查端点，不能反复线性扫描 data.nodes。
@@ -2584,18 +2587,22 @@
       }
     }
 
+    const canvasNodeMarkdownOptions = { canvasNodeText: true };
+
     function renderNodeText(textEl, raw, marks) {
       const source = raw || '';
       const renderSource = RichText ? RichText.serialize(source, marks || []) : source;
-      if (textEl.dataset.source === renderSource) return;
+      if (textEl.dataset.source === renderSource && !textEl.dataset.codeLanguage) return;
       if (textEl.dataset.hasMath === '1') clearMath(textEl);
       textEl.dataset.source = renderSource;
       delete textEl.dataset.codeLanguage;
       const md = global.MarkdownMini;
-      const rendered = md && typeof md.renderResult === 'function' ? md.renderResult(renderSource) : null;
-      textEl.innerHTML = rendered ? rendered.html : (md ? md.render(renderSource) : (source ? source.replace(/[&<>"]/g, function (c) {
-        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-      }) : ''));
+      const rendered = md && typeof md.renderResult === 'function' ? md.renderResult(renderSource, canvasNodeMarkdownOptions) : null;
+      textEl.classList.add('canvas-node-markdown');
+      textEl.classList.toggle('canvas-node-markdown-inline', !md);
+      if (rendered) textEl.innerHTML = rendered.html;
+      else if (md) textEl.innerHTML = md.render(renderSource, canvasNodeMarkdownOptions);
+      else textEl.textContent = source;
       // 仅含公式时触发 MathJax，避免大画布里普通文本也排队重排。
       scheduleElementMath(textEl, source, rendered ? rendered.features.math : null);
       // Mermaid 图表（```mermaid 块）：交由 Mermaid 渲染为 SVG
@@ -2610,19 +2617,19 @@
       if (textEl.dataset.hasMath === '1') clearMath(textEl);
       textEl.dataset.inlineSource = renderSource;
       const md = global.MarkdownMini;
+      textEl.classList.add('canvas-node-markdown');
       if (!md) {
+        textEl.classList.add('canvas-node-markdown-inline');
         textEl.textContent = source;
         scheduleElementMath(textEl, source);
         return;
       }
       const wrap = document.createElement('div');
-      const rendered = typeof md.renderResult === 'function' ? md.renderResult(renderSource) : null;
-      wrap.innerHTML = rendered ? rendered.html : md.render(renderSource);
-      if (wrap.children.length === 1 && wrap.firstElementChild && wrap.firstElementChild.tagName === 'P') {
-        textEl.innerHTML = wrap.firstElementChild.innerHTML;
-      } else {
-        textEl.innerHTML = wrap.innerHTML;
-      }
+      const rendered = typeof md.renderResult === 'function' ? md.renderResult(renderSource, canvasNodeMarkdownOptions) : null;
+      wrap.innerHTML = rendered ? rendered.html : md.render(renderSource, canvasNodeMarkdownOptions);
+      const singleParagraph = wrap.children.length === 1 && wrap.firstElementChild.tagName === 'P';
+      textEl.classList.toggle('canvas-node-markdown-inline', singleParagraph);
+      textEl.innerHTML = singleParagraph ? wrap.firstElementChild.innerHTML : wrap.innerHTML;
       scheduleElementMath(textEl, source, rendered ? rendered.features.math : null);
       // Mermaid 图表（```mermaid 块）：交由 Mermaid 渲染为 SVG
       if (!rendered || rendered.features.mermaid) renderMermaidDiagrams(textEl);
@@ -2784,6 +2791,8 @@
         renderNodeText(textEl, node.body || '');
         return;
       }
+      textEl.classList.remove('canvas-node-markdown', 'canvas-node-markdown-inline');
+      delete textEl.dataset.source;
       grid.mount(textEl, {
         markdown: node.body || '',
         title: node.text || '',
@@ -2919,6 +2928,7 @@
       const lang = normalizeCodeLanguage(language);
       if (textEl.dataset.source === source && textEl.dataset.codeLanguage === lang) return;
       if (textEl.dataset.hasMath === '1') clearMath(textEl);
+      textEl.classList.remove('canvas-node-markdown', 'canvas-node-markdown-inline');
       textEl.dataset.source = source;
       textEl.dataset.codeLanguage = lang;
       const md = global.MarkdownMini;
@@ -3794,6 +3804,8 @@
       removalGhosts.add(ghost);
       ghost.style.pointerEvents = 'none';
       ghost.classList.remove('selected');
+      ghost.classList.add('canvas-removal-ghost');
+      ghost.setAttribute('inert', '');
       (el.parentNode || surface).appendChild(ghost);
       if (withScale) {
         ghost.animate([{ transform: 'scale(1)' }, { transform: 'scale(0.86)' }],
@@ -5343,6 +5355,17 @@
       return lightContrast > darkContrast;
     }
 
+    function syncMindmapShortTitle(el, node) {
+      const source = node.mindmapStyleRole && !isCodeNode(node)
+        ? (isStickyNode(node) ? node.body : (node.text || node.name)) : '';
+      const title = String(source || '').trim();
+      if (title && title.length <= 6 && !/\s/.test(title)) {
+        el.dataset.mindmapShortTitle = '1';
+      } else {
+        el.removeAttribute('data-mindmap-short-title');
+      }
+    }
+
     function applyNodeStyle(el, node) {
       // In-place type switches must update this too, so undo rebuilds incompatible content.
       el.__canvasNodeKind = node.kind || '';
@@ -5354,8 +5377,10 @@
         el.dataset.layer = node.layer === 'front' ? 'front' : 'back';
         el.classList.add('decor-object');
         el.classList.remove('node-chrome-hidden', 'mindmap-inverse-text');
-        el.style.width = Math.max(20, Number(node.width) || 240) + 'px';
-        el.style.height = Math.max(8, Number(node.height) || 120) + 'px';
+        if (!isGroupBoxNode(node)) {
+          el.style.width = Math.max(20, Number(node.width) || 240) + 'px';
+          el.style.height = Math.max(8, Number(node.height) || 120) + 'px';
+        }
         el.style.setProperty('--decor-rotation', (Number(node.rotation) || 0) + 'deg');
         el.style.setProperty('--decor-opacity', node.opacity == null ? 1 : node.opacity);
         if (isTextBoxNode(node)) {
@@ -5430,12 +5455,10 @@
       el.style.removeProperty('--textbox-font-weight');
       el.style.removeProperty('--textbox-text-align');
       el.style.removeProperty('height');
+      syncMindmapShortTitle(el, node);
       if (node.mindmapStyleRole) {
         el.dataset.mindmapRole = node.mindmapStyleRole;
         el.dataset.mindmapSizeMode = node.mindmapSizeMode === 'custom' ? 'custom' : 'auto';
-        const mindmapTitle = String(node.text || node.name || '').trim();
-        if (mindmapTitle && mindmapTitle.length <= 6 && !/[\s\r\n]/.test(mindmapTitle)) el.dataset.mindmapShortTitle = '1';
-        else el.removeAttribute('data-mindmap-short-title');
         if (Number(node.mindmapMinWidth) > 0) el.style.setProperty('--mindmap-min-width', Number(node.mindmapMinWidth) + 'px');
         else el.style.removeProperty('--mindmap-min-width');
         if (Number(node.mindmapMaxWidth) > 0) el.style.setProperty('--mindmap-max-width', Number(node.mindmapMaxWidth) + 'px');
@@ -5451,7 +5474,6 @@
       } else {
         el.removeAttribute('data-mindmap-role');
         el.removeAttribute('data-mindmap-size-mode');
-        el.removeAttribute('data-mindmap-short-title');
         el.style.removeProperty('--mindmap-min-width');
         el.style.removeProperty('--mindmap-max-width');
         el.style.removeProperty('--mindmap-radius');
@@ -6463,7 +6485,7 @@
       if (type === 'dashed-box') return '<rect class="decor-dashed-box" x="4" y="7" width="92" height="86" rx="10"/>';
       if (type === 'group-box') {
         const x = fixedSvgInset(8, node.width || 340);
-        const y = fixedSvgInset(8, node.height || 230);
+        const y = fixedSvgInset(8, groupBoxDimensions(node, false).height);
         return '<rect class="decor-group-box" x="' + svgNum(x) + '" y="' + svgNum(y)
           + '" width="' + svgNum(100 - x * 2) + '" height="' + svgNum(100 - y * 2) + '" rx="2"/>';
       }
@@ -6517,8 +6539,9 @@
 
     function syncSemanticGroupControl(el, node) {
       let button = el.querySelector('.group-collapse-btn');
-      const members = Array.isArray(node.groupMemberIds) ? node.groupMemberIds : [];
-      if (!isGroupBoxNode(node) || !members.length) {
+      const count = semanticGroupMembers(node).length;
+      applyGroupGeometry(el, node, !!count && !!node.groupCollapsed);
+      if (!count) {
         if (button) button.remove();
         el.classList.remove('semantic-group', 'group-collapsed');
         return;
@@ -6531,13 +6554,18 @@
           event.preventDefault();
           event.stopPropagation();
         });
-        el.appendChild(button);
+        el.querySelector('.group-header').appendChild(button);
       }
       el.classList.add('semantic-group');
       el.classList.toggle('group-collapsed', !!node.groupCollapsed);
-      button.textContent = (node.groupCollapsed ? '+' : '−') + ' ' + members.length;
-      button.title = node.groupCollapsed ? '展开分组' : '折叠分组';
-      button.setAttribute('aria-label', button.title + '，共 ' + members.length + ' 个节点');
+      const countLabel = (node.groupCollapsed ? '+' : '−') + count;
+      if (button.textContent !== countLabel) {
+        button.textContent = countLabel;
+        if (node.groupCollapsed && node.groupCollapsedWidth == null) nodeSizeCache.delete(node.id);
+      }
+      button.title = node.groupCollapsed ? taskbookCopy('展开分组', 'Expand group') : taskbookCopy('折叠分组', 'Collapse group');
+      button.setAttribute('aria-label', button.title + taskbookCopy('，共 ' + count + ' 个节点', ', ' + count + ' nodes'));
+      button.setAttribute('aria-expanded', String(!node.groupCollapsed));
     }
 
     function renderDecoration(el, node) {
@@ -6565,6 +6593,12 @@
       let title = el.querySelector('.decor-box-title');
       if (isGroupBoxNode(node)) {
         ensureKoseFont();
+        let header = el.querySelector('.group-header');
+        if (!header) {
+          header = document.createElement('div');
+          header.className = 'group-header';
+          el.appendChild(header);
+        }
         if (!title) {
           title = document.createElement('div');
           title.className = 'decor-box-title';
@@ -6606,23 +6640,41 @@
               decorTitleLongPressTriggered = false;
               return;
             }
-            enterDecorTitleEdit(node);
+            if (!readOnlyCanvas && !el.classList.contains('semantic-group')) enterDecorTitleEdit(node);
           });
           title.addEventListener('dblclick', (e) => {
             e.preventDefault();
             e.stopPropagation();
             if (consumeSelectionToggleClick(title, e)) return;
-            enterDecorTitleEdit(node);
+            if (!readOnlyCanvas) enterDecorTitleEdit(node);
           });
-          el.appendChild(title);
+          title.addEventListener('keydown', (e) => {
+            if (editingDecorTitleId === node.id) return;
+            if (e.key === 'F2') {
+              if (!readOnlyCanvas) enterDecorTitleEdit(node);
+            } else if (e.key === 'Enter' || e.key === ' ') {
+              selectNodes([node.id], false);
+            } else {
+              return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+          });
+          header.appendChild(title);
         }
-        if (editingDecorTitleId !== node.id) title.textContent = node.title || 'Untitled';
-        title.style.backgroundColor = node.borderColor || '#d6b96a';
-        title.style.color = node.titleColor || '#ffffff';
-      } else if (title) {
-        title.remove();
+        if (editingDecorTitleId !== node.id && title.textContent !== (node.title || 'Untitled')) {
+          title.textContent = node.title || 'Untitled';
+          if (node.groupCollapsed && node.groupCollapsedWidth == null) nodeSizeCache.delete(node.id);
+        }
+        title.title = node.title || 'Untitled';
+        header.style.setProperty('--group-title-bg', node.borderColor || '#d6b96a');
+        header.style.setProperty('--group-title-fg', node.titleColor || '#ffffff');
+        syncSemanticGroupControl(el, node);
+      } else {
+        const header = el.querySelector('.group-header');
+        if (header) header.remove();
+        el.classList.remove('semantic-group', 'group-collapsed');
       }
-      syncSemanticGroupControl(el, node);
     }
 
     function renderTextBox(content, node) {
@@ -6833,9 +6885,11 @@
         const next = (title.textContent || '').trim() || 'Untitled';
         node.title = next;
         title.textContent = next;
+        title.title = next;
         title.contentEditable = 'false';
         title.classList.remove('editing');
         if (next !== editingDecorTitleOriginal) {
+          if (node.groupCollapsed && node.groupCollapsedWidth == null) nodeSizeCache.delete(node.id);
           pushHistory();
           notify();
         }
@@ -8428,6 +8482,7 @@
         if (codeLabel) codeLabel.remove();
         if (copyBtn) copyBtn.remove();
         el.classList.remove('node-card-filled');
+        syncMindmapShortTitle(el, node);
         const stickyText = el.querySelector(':scope > .node-text');
         if (stickyText && editingNodeId !== node.id) renderNodeText(stickyText, node.body || '', richMarks(node, 'body'));
         return;
@@ -10903,6 +10958,8 @@
     const DECOR_GROUP_TITLE_COLORS = { light: '#ffffff', dark: '#2f2c24' };
     const GROUP_BOX_MIN_WIDTH = 20;
     const GROUP_BOX_MIN_HEIGHT = 8;
+    const GROUP_CAPSULE_MIN_WIDTH = 68;
+    const GROUP_CAPSULE_MIN_HEIGHT = 24;
     const DECOR_COLOR_PRESETS = [
       '#d9b7ad', '#e7dcc3', '#d9bd70', '#dbeecb', '#cfe3f7', '#96a5c4',
       '#f8d4dc', '#d58f88', '#d3ede8', '#f1ddc9', '#96b292', '#f2b978',
@@ -12350,8 +12407,13 @@
         dpKindLabel.textContent = kindLabel;
       }
       const mixedText = englishUi ? 'Mixed' : '混合';
-      const widthState = editSharedState(panelTargets, (item) => Math.round(Number(item.width) || 240));
-      const heightState = editSharedState(panelTargets, (item) => Math.round(Number(item.height) || 120));
+      const allCapsules = panelTargets.every(isCollapsedSemanticGroup);
+      const widthState = editSharedState(panelTargets, (item) => isGroupBoxNode(item)
+        ? groupBoxDimensions(item, isCollapsedSemanticGroup(item), true).width
+        : Math.round(Number(item.width) || 240));
+      const heightState = editSharedState(panelTargets, (item) => isGroupBoxNode(item)
+        ? groupBoxDimensions(item, isCollapsedSemanticGroup(item)).height
+        : Math.round(Number(item.height) || 120));
       const fontSizeState = editSharedState(panelTargets, (item) => Math.round(Number(item.fontSize)
         || (styledText ? decorTextPresetBase(item.boxStyle).fontSize : 22)));
       const rotationState = editSharedState(panelTargets, (item) => Math.round(Number(item.rotation) || 0));
@@ -12368,6 +12430,10 @@
         : 'solid');
       const rotation = rotationState.value;
       const opacity = opacityState.value;
+      dpWidth.min = allCapsules ? GROUP_CAPSULE_MIN_WIDTH : 20;
+      dpHeight.min = allCapsules ? GROUP_CAPSULE_MIN_HEIGHT : 8;
+      dpWidth.max = dpHeight.max = allCapsules ? DECOR_MAX_SIZE : 2000;
+      dpWidth.step = dpHeight.step = allCapsules ? 1 : 5;
       dpWidth.value = width; dpWidthVal.textContent = widthState.mixed ? mixedText : width + 'px';
       dpHeight.value = height; dpHeightVal.textContent = heightState.mixed ? mixedText : height + 'px';
       setEditMixedControl(dpWidth, widthState.mixed);
@@ -12638,7 +12704,17 @@
         if (!moveDecorationTargetsToLayer(targets, value)) return false;
       } else {
         targets.forEach((node) => {
-          node[prop] = value;
+          const sizingGroup = isGroupBoxNode(node) && (prop === 'width' || prop === 'height');
+          if (sizingGroup && isCollapsedSemanticGroup(node)) {
+            const horizontal = prop === 'width';
+            const key = horizontal ? 'groupCollapsedWidth' : 'groupCollapsedHeight';
+            const min = horizontal ? GROUP_CAPSULE_MIN_WIDTH : GROUP_CAPSULE_MIN_HEIGHT;
+            cancelGroupFoldAnimation(node.id);
+            node[key] = Math.max(min, value);
+          } else {
+            node[prop] = value;
+            if (sizingGroup && prop === 'height') delete node.groupExpandedHeight;
+          }
           if (isColorBlockNode(node) && (prop === 'fillColor' || prop === 'borderColor')) {
             node.fillColor = value;
             node.borderColor = value;
@@ -12950,6 +13026,7 @@
         el.classList.add('decor-inserted');
         el.addEventListener('animationend', () => el.classList.remove('decor-inserted'), { once: true });
       }
+      if (nodeSizeObserver && isGroupBoxNode(node)) nodeSizeObserver.observe(el);
       if (opts.activateMode !== false) activateDecorMode();
       if (opts.transientMovableDecor) transientMovableDecorId = node.id;
       selectNodes([node.id], false);
@@ -13161,8 +13238,20 @@
       });
       entries.forEach((entry) => {
         if (isShapeNode(entry.node)) {
-          applyDecorShapeDefaults(entry.node, entry.defaults);
-          if (isColorBlockNode(entry.node)) entry.node.borderColor = entry.node.fillColor;
+          const node = entry.node;
+          const collapsed = isCollapsedSemanticGroup(node);
+          const { width, height, rotation } = node;
+          applyDecorShapeDefaults(node, entry.defaults);
+          if (collapsed) {
+            node.width = width;
+            node.height = height;
+            node.rotation = rotation;
+            delete node.groupCollapsedWidth;
+            delete node.groupCollapsedHeight;
+          } else if (isGroupBoxNode(node)) {
+            delete node.groupExpandedHeight;
+          }
+          if (isColorBlockNode(node)) node.borderColor = node.fillColor;
         }
         else if (isTextBoxNode(entry.node) && entry.node.boxStyle) applyDecorTextPresetDefaults(entry.node, entry.defaults);
         else if (isImageNode(entry.node)) applyDecorImageDefaults(entry.node, entry.defaults);
@@ -14983,6 +15072,8 @@
     function reconcileAll(changes) {
       normalizeTextBindings();
       contentBoundsCache = null;
+      const groupedNodeIds = !changes || changes.topology ? new Set() : null;
+      if (groupedNodeIds) hiddenGroupNodeIds = computeHiddenGroupNodeIds(groupedNodeIds);
       if (!changes || changes.ink) renderInk();
       reconcileNodes(changes);
       primeNodeSizeCache();
@@ -14990,7 +15081,7 @@
       if (!changes || changes.timers) renderTimers();
       if (!changes || changes.topology || changes.taskbook) refreshTaskbookVisibility();
       if (!changes || changes.topology) {
-        refreshGroupContainers();
+        refreshGroupContainers(groupedNodeIds);
         refreshMindmapFolding();
       }
       applySelection();
@@ -15005,6 +15096,7 @@
     }
 
     function disposeNodeElement(id, el) {
+      cancelGroupFoldAnimation(id);
       paintedNodeSelection.delete(id);
       disposeViewportAsset(id);
       if (nodeSizeObserver) nodeSizeObserver.unobserve(el);
@@ -16806,18 +16898,28 @@
     function startDecorResize(node, dir, e) {
       if (readOnlyCanvas) return;
       if (e.button !== 0 || !isDecorationNode(node)) return;
-      if (currentMode() !== 'decor' && !isTextBoxNode(node)) return;
+      const collapsed = isCollapsedSemanticGroup(node);
+      if (collapsed && dir !== 'e' && dir !== 's' && dir !== 'se') return;
+      if (currentMode() !== 'decor' && !isTextBoxNode(node) && !collapsed) return;
       if (isGroupBoxNode(node) && (dir === 'n' || dir === 'ne' || dir === 'nw')) return;
       e.preventDefault();
       e.stopPropagation();
       if (!selectedNodeIds.has(node.id) || selectedNodeIds.size !== 1 || selectedEdgeIds.size) {
         selectNodes([node.id], false);
       }
-      const width = Math.max(20, Number(node.width) || 240);
-      const height = Math.max(8, Number(node.height) || 120);
+      const size = isGroupBoxNode(node) ? groupBoxDimensions(node, collapsed, true) : {
+        width: Math.max(20, Number(node.width) || 240),
+        height: Math.max(8, Number(node.height) || 120),
+      };
+      cancelGroupFoldAnimation(node.id);
       drag = {
         mode: 'decor-resize',
         nodeId: node.id,
+        groupCapsule: collapsed,
+        startCollapsedWidth: node.groupCollapsedWidth,
+        startCollapsedHeight: node.groupCollapsedHeight,
+        startLegacyHeight: node.groupExpandedHeight,
+        startStoredHeight: node.height,
         dir: dir,
         startClientX: e.clientX,
         startClientY: e.clientY,
@@ -16826,8 +16928,8 @@
         startScale: curScale,
         startX: Number(node.x) || 0,
         startY: Number(node.y) || 0,
-        startW: width,
-        startH: height,
+        startW: size.width,
+        startH: size.height,
         rotation: Number(node.rotation) || 0,
         moved: false,
       };
@@ -16854,17 +16956,25 @@
       const nextW = cleanDecorNumber(
         east ? drag.startW + localDx : (west ? drag.startW - localDx : drag.startW),
         drag.startW,
-        20,
+        drag.groupCapsule ? GROUP_CAPSULE_MIN_WIDTH : 20,
         DECOR_MAX_SIZE,
         true,
       );
       const nextH = cleanDecorNumber(
         south ? drag.startH + localDy : (north ? drag.startH - localDy : drag.startH),
         drag.startH,
-        8,
+        drag.groupCapsule ? GROUP_CAPSULE_MIN_HEIGHT : 8,
         DECOR_MAX_SIZE,
         true,
       );
+      if (drag.groupCapsule) {
+        if (east) node.groupCollapsedWidth = nextW;
+        if (south) node.groupCollapsedHeight = nextH;
+        renderEditedDecoration(node);
+        refreshDecorPanel();
+        redrawMinimap();
+        return;
+      }
       const sx = east ? 1 : (west ? -1 : 0);
       const sy = south ? 1 : (north ? -1 : 0);
       const shiftLocalX = sx * (nextW - drag.startW) / 2;
@@ -16875,6 +16985,7 @@
       const centerY = drag.startY + drag.startH / 2 + shiftY;
       node.width = nextW;
       node.height = nextH;
+      if (isGroupBoxNode(node)) delete node.groupExpandedHeight;
       node.x = centerX - nextW / 2;
       node.y = centerY - nextH / 2;
       const el = nodeMap.get(node.id);
@@ -18430,7 +18541,7 @@
         if (drag.moved) {
           applyDecorResizeDrag(e.clientX, e.clientY);
           if (isPdfNode(node)) recrispPdfNode(node);   // 按新尺寸重栅格化可见页，恢复清晰
-          if (isGroupBoxNode(node)) refreshSemanticGroupMembershipFromBounds(node);
+          if (isGroupBoxNode(node) && !drag.groupCapsule) refreshSemanticGroupMembershipFromBounds(node);
           pushHistory();
           notify();
         }
@@ -18849,13 +18960,14 @@
       hideSelToolbar();            // 退出编辑收起选中工具栏
       textEl.contentEditable = 'false';
       el.classList.remove('editing');
+      // 编辑面已替换显示 DOM，即使文字没变也要重新渲染。
+      delete textEl.dataset.source;
 
       if (isCodeNode(node)) {
         if (newText) node.body = newText; else delete node.body;
         delete node.bodyMarks;
         node.text = codeTitleFromBody(newText, node.language);
         delete node.textMarks;
-        delete textEl.dataset.source;
         renderCodeNodeText(textEl, newText, node.language);
         renderTextNodeMeta(el, node);
         edgesIncidentTo(new Set([id])).forEach(updateEdgePath);
@@ -18872,9 +18984,8 @@
         if (newText) node.body = newText; else delete node.body;
         storeRichMarks(node, 'body', newMarks);
         syncStickyTitleFromBody(node, newText);
-        delete textEl.dataset.source;
-        renderNodeText(textEl, newText, newMarks);
         renderTextNodeMeta(el, node);
+        nodeSizeCache.delete(id);
         edgesIncidentTo(new Set([id])).forEach(updateEdgePath);
         if (newText !== oldText || marksChanged || wasNew) {
           pushHistory();
@@ -18883,51 +18994,26 @@
         return;
       }
 
-      if (wasNew && newText === '') {
+      const useDefaultTitle = wasNew && newText === '';
+      const changed = newText !== oldText || marksChanged;
+      if (useDefaultTitle) {
         // 新节点没打字也保留——统一用英文 Untitled，占位与界面语言无关。
         // （Esc 主动取消仍然删，那条路径在 cancelNodeEdit 里）
         node.text = 'Untitled';
         delete node.textMarks;
-        delete textEl.dataset.source;
-        renderNodeText(textEl, 'Untitled');
-        if (isPreviewNode(node)) renderTextNodeMeta(el, node);
-        nodeSizeCache.delete(id);
-        if (isMindmapWidthNode(node)) repairMindmapNodeSpacing(node, { history: false, notify: false });
-        edgesIncidentTo(new Set([id])).forEach(updateEdgePath);
-        pushHistory();
-        notify();
-        return;
-      }
-      if (newText !== oldText) {
+      } else if (changed) {
         node.text = newText;
         storeRichMarks(node, 'text', newMarks);
-        // 强制重渲染（清掉 dataset.source 缓存，避免命中"内容没变就不画"的优化）
-        delete textEl.dataset.source;
-        renderNodeText(textEl, newText, newMarks);
-        if (isPreviewNode(node)) renderTextNodeMeta(el, node);
-        nodeSizeCache.delete(id);
-        if (isMindmapWidthNode(node)) repairMindmapNodeSpacing(node, { history: false, notify: false });
-        edgesIncidentTo(new Set([id])).forEach(updateEdgePath);
+      }
+      syncMindmapShortTitle(el, node);
+      renderNodeText(textEl, node.text || '', useDefaultTitle ? [] : newMarks);
+      if (isPreviewNode(node)) renderTextNodeMeta(el, node);
+      nodeSizeCache.delete(id);
+      if (isMindmapWidthNode(node)) repairMindmapNodeSpacing(node, { history: false, notify: false });
+      edgesIncidentTo(new Set([id])).forEach(updateEdgePath);
+      if (changed || useDefaultTitle) {
         pushHistory();
         notify();
-      } else if (marksChanged) {
-        storeRichMarks(node, 'text', newMarks);
-        delete textEl.dataset.source;
-        renderNodeText(textEl, newText, newMarks);
-        if (isPreviewNode(node)) renderTextNodeMeta(el, node);
-        nodeSizeCache.delete(id);
-        if (isMindmapWidthNode(node)) repairMindmapNodeSpacing(node, { history: false, notify: false });
-        edgesIncidentTo(new Set([id])).forEach(updateEdgePath);
-        pushHistory();
-        notify();
-      } else {
-        // 内容没变也要把结构化富文本重新渲染回显示态。
-        delete textEl.dataset.source;
-        renderNodeText(textEl, oldText, oldMarks);
-        if (isPreviewNode(node)) renderTextNodeMeta(el, node);
-        nodeSizeCache.delete(id);
-        if (isMindmapWidthNode(node)) repairMindmapNodeSpacing(node, { history: false, notify: false });
-        edgesIncidentTo(new Set([id])).forEach(updateEdgePath);
       }
     }
 
@@ -19048,6 +19134,7 @@
 
     // ── 删除（不进 history 的原始操作）──────
     function removeNodeRaw(id) {
+      cancelGroupFoldAnimation(id);
       // 删除跟随目标时，文本框留在最后位置并解除关系；删除文本框本身则清掉会话吸附记忆。
       data.nodes.forEach(function (candidate) {
         if (isTextBoxNode(candidate) && candidate.textBindTarget === id) clearTextBinding(candidate);
@@ -19408,7 +19495,10 @@
           d.classList.toggle('active', !mixed && c === (common || ''));
         });
       }
-      // 先显示再量尺寸，做边界 clamp
+      placeNodeMenu(clientX, clientY);
+    }
+
+    function placeNodeMenu(clientX, clientY) {
       nodeMenu.hidden = false;
       const rect = nodeMenu.getBoundingClientRect();
       let x = clientX, y = clientY;
@@ -19420,8 +19510,47 @@
     function hideNodeMenu() {
       if (nodeMenu) {
         nodeMenu.hidden = true;
-        nodeMenu.classList.remove('decor-color-mode');
+        nodeMenu.classList.remove('decor-color-mode', 'group-mode');
       }
+      if (groupMenuActions) groupMenuActions.hidden = true;
+      menuGroupId = null;
+    }
+
+    function showGroupMenu(group, event) {
+      if (!groupMenuActions) return;
+      if (editingDecorTitleId !== null) commitDecorTitleEdit();
+      if (!selectedNodeIds.has(group.id) || selectedNodeIds.size !== 1 || selectedEdgeIds.size) {
+        selectNodes([group.id], false);
+      }
+      nodeMenu.classList.remove('sticky-mode', 'decor-color-mode');
+      nodeMenu.classList.add('group-mode');
+      menuGroupId = group.id;
+      groupMenuActions.querySelector('[data-action="group-fold"]').textContent = group.groupCollapsed
+        ? taskbookCopy('展开分组', 'Expand group') : taskbookCopy('折叠分组', 'Collapse group');
+      groupMenuActions.querySelector('[data-action="group-ungroup"]').textContent = taskbookCopy('解散分组', 'Ungroup');
+      groupMenuActions.hidden = false;
+      const anchor = event.clientX || event.clientY ? null : event.target.getBoundingClientRect();
+      placeNodeMenu(anchor ? anchor.left : event.clientX, anchor ? anchor.bottom : event.clientY);
+    }
+
+    function selectedGroupBorderAt(e) {
+      if (readOnlyCanvas || drawTool !== 'select' || selectedNodeIds.size !== 1) return null;
+      const group = findNode(selectedNodeIds.values().next().value);
+      if (!semanticGroupMembers(group).length || group.groupCollapsed) return null;
+      const size = groupBoxDimensions(group, false);
+      const x = Number(group.x) || 0;
+      const y = Number(group.y) || 0;
+      const point = clientToSurface(e.clientX, e.clientY);
+      const angle = -(Number(group.rotation) || 0) * Math.PI / 180;
+      const dx = point.x - x - size.width / 2;
+      const dy = point.y - y - size.height / 2;
+      const localX = Math.cos(angle) * dx - Math.sin(angle) * dy + size.width / 2;
+      const localY = Math.sin(angle) * dx + Math.cos(angle) * dy + size.height / 2;
+      const insetX = Math.min(8, size.width * 0.18);
+      const insetY = Math.min(8, size.height * 0.18);
+      const borderDistance = Math.min(localX - insetX, size.width - insetX - localX,
+        localY - insetY, size.height - insetY - localY);
+      return Math.abs(borderDistance) <= 6 / curScale ? group : null;
     }
 
     function menuColorBlockTargets() {
@@ -19462,13 +19591,7 @@
         const color = normalizeHexColor(decorColorFromMenuValue(button.getAttribute('data-color')));
         button.classList.toggle('active', !!current && color === current);
       });
-      nodeMenu.hidden = false;
-      const rect = nodeMenu.getBoundingClientRect();
-      let x = clientX, y = clientY;
-      if (x + rect.width > window.innerWidth - 8) x = window.innerWidth - rect.width - 8;
-      if (y + rect.height > window.innerHeight - 8) y = window.innerHeight - rect.height - 8;
-      nodeMenu.style.left = Math.max(8, x) + 'px';
-      nodeMenu.style.top = Math.max(8, y) + 'px';
+      placeNodeMenu(clientX, clientY);
     }
     // ── 连线右键菜单（编辑文字 / 删除连线）──────
     function showEdgeMenu(clientX, clientY) {
@@ -19549,6 +19672,16 @@
         return;
       }
       const nodeEl = e.target.closest ? e.target.closest('.node') : null;
+      if (!readOnlyCanvas) {
+        const group = nodeEl && surface.contains(nodeEl) ? findNode(nodeEl.dataset.id) : selectedGroupBorderAt(e);
+        if (semanticGroupMembers(group).length) {
+          e.preventDefault();
+          e.stopPropagation();
+          hideEdgeMenu();
+          showGroupMenu(group, e);
+          return;
+        }
+      }
       if (!nodeEl || !surface.contains(nodeEl)) {
         // 右键空白：切回左侧工具栏的「选择」工具（同时屏蔽浏览器原生右键菜单）
         hideNodeMenu();
@@ -20696,11 +20829,12 @@
       const activeEditor = codeNode ? editor : richEditor;
       const scroll = textReader && textReader.querySelector('[data-role="text-reader-scroll"]');
       const content = textReader && textReader.querySelector('[data-role="text-reader-content"]');
+      const richDraft = codeNode ? null : readRichEditable(richEditor);
       // 退出前记住光标行此刻的屏幕高度，回到预览后让对应块停在同一高度
       let anchorLine = -1, screenY = 0;
       if (activeEditor) {
         const caret = codeNode ? (editor.selectionStart || 0) : contentEditableCaretOffset(richEditor);
-        const editorText = codeNode ? editor.value : (richEditor.textContent || '');
+        const editorText = codeNode ? editor.value : richDraft.text;
         anchorLine = editorText.slice(0, caret).split('\n').length - 1;
         if (codeNode) {
           const top = textareaCaretTop(editor, caret);
@@ -20713,7 +20847,7 @@
       }
       const draft = codeNode
         ? { text: editor ? editor.value : (node && node.body) || '', marks: [] }
-        : canonicalRichDraft(readRichEditable(richEditor));
+        : canonicalRichDraft(richDraft);
       textReaderEditing = false;
       hideSelToolbar();
       if (node && isBodyNode(node)) {
@@ -22409,8 +22543,12 @@
       }
       return null;
     }
-    // contenteditable：range 端点 → 全局字符偏移（含 \n，与 textContent 一致）
+    // 富文本选区与保存共用同一套换行偏移，代码仍按原始文本取偏移。
     function ceCharOffset(root, container, offset) {
+      if (RichText && root.dataset.richEditorReady === '1' && root.contentEditable === 'true') {
+        const richOffset = RichText.editableOffset(root, container, offset);
+        if (richOffset !== null) return richOffset;
+      }
       const r = document.createRange();
       r.selectNodeContents(root);
       r.setEnd(container, offset);
@@ -24656,21 +24794,63 @@
       return out;
     }
 
-    function computeHiddenGroupNodeIds() {
+    function isCollapsedSemanticGroup(group) {
+      return !!(group && group.groupCollapsed && semanticGroupMembers(group).length);
+    }
+
+    function groupBoxDimensions(group, collapsed, measureAutoWidth) {
+      if (collapsed) {
+        const el = measureAutoWidth && nodeMap.get(group.id);
+        return {
+          width: group.groupCollapsedWidth == null ? (el ? cachedNodeSize(el, group.id).w : null)
+            : cleanDecorNumber(group.groupCollapsedWidth, 116, GROUP_CAPSULE_MIN_WIDTH, DECOR_MAX_SIZE, true),
+          height: group.groupCollapsedHeight == null ? 32
+            : cleanDecorNumber(group.groupCollapsedHeight, 32, GROUP_CAPSULE_MIN_HEIGHT, DECOR_MAX_SIZE, true),
+        };
+      }
+      return {
+        width: Math.max(GROUP_BOX_MIN_WIDTH, Number(group.width) || 240),
+        height: Math.max(GROUP_BOX_MIN_HEIGHT, Number(group.groupExpandedHeight) || Number(group.height) || 120),
+      };
+    }
+
+    function applyGroupGeometry(el, group, collapsed) {
+      const size = groupBoxDimensions(group, collapsed);
+      const autoWidth = size.width == null;
+      const width = autoWidth ? 'max-content' : size.width + 'px';
+      const height = size.height + 'px';
+      el.classList.toggle('group-capsule-auto-width', autoWidth);
+      if (el.style.width !== width || el.style.height !== height) {
+        el.style.width = width;
+        el.style.height = height;
+        nodeSizeCache.delete(group.id);
+      }
+    }
+
+    function restoreLegacyGroupHeight(group) {
+      if (Number(group.groupExpandedHeight) > 0) group.height = Number(group.groupExpandedHeight);
+      delete group.groupExpandedHeight;
+    }
+
+    function computeHiddenGroupNodeIds(groupedNodeIds) {
       const hidden = new Set();
       data.nodes.forEach(function (group) {
-        if (!isGroupBoxNode(group) || !group.groupCollapsed) return;
-        semanticGroupMembers(group).forEach(function (node) { hidden.add(node.id); });
+        if (!isGroupBoxNode(group) || (!group.groupCollapsed && !groupedNodeIds)) return;
+        semanticGroupMembers(group).forEach(function (node) {
+          if (groupedNodeIds) groupedNodeIds.add(node.id);
+          if (group.groupCollapsed) hidden.add(node.id);
+        });
       });
       return hidden;
     }
 
     function refreshSemanticGroupMembershipFromBounds(group) {
-      if (!isGroupBoxNode(group) || group.groupCollapsed) return false;
+      if (!isGroupBoxNode(group) || isCollapsedSemanticGroup(group)) return false;
+      const size = groupBoxDimensions(group, false);
       const left = Number(group.x) || 0;
       const top = Number(group.y) || 0;
-      const right = left + Math.max(20, Number(group.width) || 0);
-      const bottom = top + Math.max(20, Number(group.height) || 0);
+      const right = left + size.width;
+      const bottom = top + size.height;
       const ids = [];
       data.nodes.forEach(function (node) {
         if (!node || node.id === group.id || isDecorationNode(node)) return;
@@ -24682,6 +24862,10 @@
       const before = Array.isArray(group.groupMemberIds) ? group.groupMemberIds.join('|') : '';
       const after = ids.join('|');
       if (before === after) return false;
+      if (group.groupCollapsed) {
+        restoreLegacyGroupHeight(group);
+        delete group.groupCollapsed;
+      }
       if (ids.length) group.groupMemberIds = ids;
       else delete group.groupMemberIds;
       const el = nodeMap.get(group.id);
@@ -24689,8 +24873,11 @@
       return true;
     }
 
-    function refreshGroupContainers() {
-      hiddenGroupNodeIds = computeHiddenGroupNodeIds();
+    function refreshGroupContainers(groupedNodeIds) {
+      if (!groupedNodeIds) {
+        groupedNodeIds = new Set();
+        hiddenGroupNodeIds = computeHiddenGroupNodeIds(groupedNodeIds);
+      }
       hiddenGroupNodeIds.forEach(function (id) { selectedNodeIds.delete(id); });
       data.edges.forEach(function (edge) {
         if (hiddenGroupNodeIds.has(edge.from) || hiddenGroupNodeIds.has(edge.to)) selectedEdgeIds.delete(edge.id);
@@ -24698,6 +24885,7 @@
       nodeMap.forEach(function (el, id) {
         const node = findNode(id);
         const hidden = hiddenGroupNodeIds.has(id);
+        el.classList.toggle('group-fold-member', groupedNodeIds.has(id) || el.classList.contains('group-fold-hidden'));
         el.classList.toggle('group-fold-hidden', hidden);
         if (hidden) el.classList.remove('selected');
         if (node && isGroupBoxNode(node)) syncSemanticGroupControl(el, node);
@@ -24718,26 +24906,76 @@
       requestEdgesCanvasRender();
     }
 
+    function cancelGroupFoldAnimation(id) {
+      const motion = groupFoldAnimations.get(id);
+      if (!motion) return;
+      groupFoldAnimations.delete(id);
+      motion.animation.cancel();
+      motion.surfaceAnimation.cancel();
+      motion.overlay.remove();
+    }
+
+    function currentGroupFoldGeometry(group, el, collapsed) {
+      const motion = groupFoldAnimations.get(group.id);
+      if (motion) {
+        const style = getComputedStyle(motion.overlay);
+        return { width: style.width, height: style.height, borderRadius: style.borderRadius };
+      }
+      return {
+        width: el.offsetWidth + 'px',
+        height: el.offsetHeight + 'px',
+        borderRadius: collapsed ? '999px' : '8px',
+      };
+    }
+
+    function animateGroupFold(group, el, start) {
+      const overlay = document.createElement('div');
+      overlay.className = 'group-fold-motion';
+      overlay.setAttribute('aria-hidden', 'true');
+      el.appendChild(overlay);
+      const end = currentGroupFoldGeometry(group, el, !!group.groupCollapsed);
+      const options = { duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' };
+      const animation = overlay.animate([{ ...start, opacity: 0.85 }, { ...end, opacity: 0 }], options);
+      const visual = el.querySelector(group.groupCollapsed ? '.group-header' : '.decor-content');
+      const surfaceAnimation = visual.animate([{ opacity: 0.15 }, { opacity: 1 }], options);
+      const motion = { overlay, animation, surfaceAnimation };
+      groupFoldAnimations.set(group.id, motion);
+      animation.onfinish = function () {
+        if (groupFoldAnimations.get(group.id) === motion) groupFoldAnimations.delete(group.id);
+        overlay.remove();
+      };
+    }
+
     function toggleSemanticGroup(group) {
-      if (!isGroupBoxNode(group) || !Array.isArray(group.groupMemberIds) || !group.groupMemberIds.length) return;
+      if (readOnlyCanvas || scenePresentationMode || !semanticGroupMembers(group).length) return;
+      if (editingNodeId !== null) commitNodeEdit();
+      if (editingEdgeId !== null) commitEdgeEdit();
+      if (editingTextBoxId !== null) commitTextBoxEdit();
+      if (editingDecorTitleId !== null) commitDecorTitleEdit();
+      const wasCollapsed = !!group.groupCollapsed;
+      const el = nodeMap.get(group.id);
+      const animate = canWAAPI(el) && !prefersReducedMotion() && !document.hidden;
+      const start = animate && currentGroupFoldGeometry(group, el, wasCollapsed);
+      cancelGroupFoldAnimation(group.id);
+      restoreLegacyGroupHeight(group);
       if (group.groupCollapsed) {
         delete group.groupCollapsed;
-        if (Number(group.groupExpandedHeight) > 0) group.height = Number(group.groupExpandedHeight);
-        delete group.groupExpandedHeight;
       } else {
-        group.groupExpandedHeight = Math.max(56, Number(group.height) || 230);
         group.groupCollapsed = true;
-        group.height = 46;
       }
-      const el = nodeMap.get(group.id);
-      if (el) {
-        applyNodeStyle(el, group);
-        renderDecoration(el, group);
-      }
-      refreshGroupContainers();
       pushHistory();
       notify();
-      showCanvasToast(group.groupCollapsed ? '分组已折叠' : '分组已展开');
+      applySelection();
+      if (start) animateGroupFold(group, el, start);
+      showCanvasToast(wasCollapsed ? taskbookCopy('分组已展开', 'Group expanded') : taskbookCopy('分组已折叠', 'Group collapsed'));
+    }
+
+    function dissolveSemanticGroup(group) {
+      if (readOnlyCanvas || scenePresentationMode || !semanticGroupMembers(group).length) return;
+      if (editingDecorTitleId === group.id) commitDecorTitleEdit();
+      cancelGroupFoldAnimation(group.id);
+      executeTaskbookDeletionPlan(buildTaskbookDeletionPlan([], [group.id], []));
+      showCanvasToast(taskbookCopy('分组已解散', 'Group ungrouped'));
     }
 
     function onSemanticGroupControlClick(event) {
@@ -25179,7 +25417,7 @@
         // 画笔激活时尺子会穿透指针事件，右键首先落到 surface。
         // 必须在 mouseup 前拦下，否则会误启动“右键拖色块”，并在未拖动时把画笔切回选择工具。
         // contextmenu 随后仍由统一分派器做几何命中并打开角度面板。
-        if (rulerHitAtClient(e.clientX, e.clientY)) {
+        if (rulerHitAtClient(e.clientX, e.clientY) || selectedGroupBorderAt(e)) {
           e.preventDefault();
           e.stopPropagation();
           return;
@@ -25302,6 +25540,7 @@
     // ── 撤销 / 重做 ────────────────────────
     function applySnapshot(snap, options) {
       options = options || {};
+      groupFoldAnimations.forEach((_, id) => cancelGroupFoldAnimation(id));
       removalGhosts.forEach(function (ghost) {
         ghost.getAnimations().forEach(function (animation) { animation.cancel(); });
         ghost.remove();
@@ -25394,7 +25633,6 @@
       rulerSelected = false;
       if (!changes || changes.topology) {
         hiddenMindmapNodeIds = computeHiddenMindmapNodeIds();
-        hiddenGroupNodeIds = computeHiddenGroupNodeIds();
       }
       if (!changes || changes.topology || changes.taskbook) hiddenTaskbookNodeIds = computeHiddenTaskbookNodeIds();
       // Older standalone hosts without the change-set runtime retain the old rebuild fallback.
@@ -25498,6 +25736,8 @@
     function onKeyDown(e) {
       if (scenePresentationMode) return;
       if (externalOverlayOpen) return;
+      if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.closest
+          && e.target.closest('.group-collapse-btn, [data-role="node-menu-group-actions"] button, .decor-box-title:not(.editing)')) return;
       if (e.target && e.target.closest && e.target.closest('.table-grid-root')) {
         const tableGlobalShortcut = (e.ctrlKey || e.metaKey)
           && (e.key === 'z' || e.key === 'Z' || e.key === 'y' || e.key === 'Y'
@@ -25836,10 +26076,21 @@
           if (drag.mode === 'decor-resize') {
             const node = findNode(drag.nodeId);
             if (node) {
-              node.x = drag.startX;
-              node.y = drag.startY;
-              node.width = drag.startW;
-              node.height = drag.startH;
+              if (drag.groupCapsule) {
+                if (drag.startCollapsedWidth == null) delete node.groupCollapsedWidth;
+                else node.groupCollapsedWidth = drag.startCollapsedWidth;
+                if (drag.startCollapsedHeight == null) delete node.groupCollapsedHeight;
+                else node.groupCollapsedHeight = drag.startCollapsedHeight;
+              } else {
+                node.x = drag.startX;
+                node.y = drag.startY;
+                node.width = drag.startW;
+                node.height = drag.startH;
+                if (drag.startLegacyHeight != null) {
+                  node.groupExpandedHeight = drag.startLegacyHeight;
+                  node.height = drag.startStoredHeight;
+                }
+              }
               const elN = nodeMap.get(node.id);
               if (elN) {
                 elN.classList.remove('resizing');
@@ -26186,6 +26437,7 @@
     }
     // 窗口失焦时一并清理空格态 + 方向键态——否则 Alt-Tab 切走会卡住
     function onWindowBlur() {
+      groupFoldAnimations.forEach((_, id) => cancelGroupFoldAnimation(id));
       cancelInteractionPaint();
       cancelPanInertia();
       if (arrowPanRaf != null) { cancelAnimationFrame(arrowPanRaf); arrowPanRaf = null; arrowTickTs = 0; }
@@ -26721,6 +26973,13 @@
         const actionBtn = e.target.closest('[data-action]');
         if (actionBtn) {
           const act = actionBtn.getAttribute('data-action');
+          if (act === 'group-fold' || act === 'group-ungroup') {
+            const group = findNode(menuGroupId);
+            hideNodeMenu();
+            if (act === 'group-fold') toggleSemanticGroup(group);
+            else dissolveSemanticGroup(group);
+            return;
+          }
           if (act === 'sticky-random') setNodeColor('', { random: true });
           else if (act === 'duplicate') duplicateSelected();
           else if (act === 'delete') deleteSelected();
@@ -28058,6 +28317,7 @@
       clone.querySelectorAll('.node[data-shape-type="edge-anchor"]').forEach(function (e) { e.remove(); });
       clone.querySelectorAll(
         '.canvas-empty-hint, .decor-resize-handle, .edge-handle, .canvas-edge-hit, .frame-rect, .node-mindmap-fold, '
+        + '.group-fold-motion, .group-fold-hidden, .canvas-removal-ghost, '
         + '.table-node-grip, .table-drag-strip, .table-node-actions, .table-grid-toolbar, .table-edge-add, '
         + '.table-grid-corner, .table-column-head, .table-row-head'
       ).forEach(function (e) { e.remove(); });

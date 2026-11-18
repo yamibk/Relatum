@@ -329,6 +329,233 @@ async function lifecycleRegression(browser, config) {
   } finally { await page.context().close(); }
 }
 
+async function groupAndTextRegression(browser, config, options = {}) {
+  const name = options.reduced ? 'group-text-reduced' : 'group-text';
+  const fixtureFile = path.join(config.root, 'canvases', name + '.canvas');
+  const group = { kind: 'shape', shapeType: 'group-box', x: -40, y: 280, width: 380, title: '旧分组' };
+  fs.writeFileSync(fixtureFile, JSON.stringify({ version: 2, nodes: [
+    { id: 'a', kind: 'card', text: '标题', x: 0, y: 55 },
+    { id: 'b', kind: 'card', text: '组员', x: 180, y: 105 },
+    { id: 'c', kind: 'card', text: '组外', x: 390, y: 105 },
+    { id: 'legacy', ...group, height: 46, groupExpandedHeight: 160, groupCollapsed: true, groupMemberIds: ['d', 'b'] },
+    { id: 'd', kind: 'card', text: '旧组员', x: 60, y: 340 },
+    { id: 'box', ...group, x: 480, height: 80, title: '空盒子' },
+  ], edges: [{ id: 'member-link', from: 'b', to: 'c', arrow: 'end' }] }), { flag: 'wx' });
+
+  const page = await makePage(browser, options);
+  const requests = [];
+  page.on('request', (request) => requests.push(request.url()));
+  try {
+    await openCanvas(page, config, name);
+    if (options.dark) await page.evaluate(() => {
+      document.documentElement.classList.add('dark-semantic-ui');
+      document.querySelector('.editor-page').dataset.backgroundTone = 'dark';
+    });
+    const node = (id) => page.locator('.node[data-id="' + id + '"]');
+    const text = node('a').locator(':scope > .node-text');
+    const dimensions = (element) => element.evaluate((el) => [el.offsetWidth, el.offsetHeight]);
+    const model = (id) => page.evaluate((id) => CanvasModule.findNode(id), id);
+    const undo = () => page.evaluate(() => __testApi.undo());
+    const redo = () => page.evaluate(() => __testApi.redo());
+    const edit = async () => {
+      await text.dblclick();
+      await page.keyboard.press('Control+a');
+    };
+
+    await edit();
+    await page.keyboard.insertText('123');
+    await page.keyboard.press('Enter');
+    await page.keyboard.insertText('456');
+    assert.equal(await text.innerText(), '123\n456');
+    const editSize = await dimensions(node('a'));
+    await page.keyboard.press('Control+Enter');
+    assert.equal((await model('a')).text, '123\n456');
+    assert.equal(await text.innerText(), '123\n456');
+    assert.deepEqual(await dimensions(node('a')), editSize, 'plain text keeps its edit-time dimensions');
+    await undo();
+    assert.equal(await text.innerText(), '标题');
+    await redo();
+    assert.equal(await text.innerText(), '123\n456');
+
+    const legacy = node('legacy');
+    const legacyPill = legacy.locator('.group-header');
+    assert(await legacyPill.isVisible());
+    assert((await dimensions(legacy))[0] < 380, 'legacy fold opens as a compact capsule');
+    assert.equal(await node('d').isVisible(), false);
+    assert.equal(await node('box').locator('.group-collapse-btn').count(), 0);
+    await legacy.locator('.group-collapse-btn').click();
+    assert(await node('d').isVisible());
+    assert.deepEqual(await dimensions(legacy), [380, 160], 'legacy expanded dimensions survive');
+
+    const a = await node('a').boundingBox(), b = await node('b').boundingBox();
+    await page.mouse.move(a.x - 24, a.y - 24);
+    await page.mouse.down();
+    await page.mouse.move(b.x + b.width + 24, b.y + b.height + 24, { steps: 7 });
+    await page.mouse.up();
+    await page.getByRole('button', { name: '+ 分组', exact: true }).click();
+    const newGroup = await page.evaluate(() => __testData.nodes.find((node) => node.groupMemberIds?.includes('a')));
+    assert.deepEqual(newGroup.groupMemberIds, ['a', 'b']);
+    const frame = node(newGroup.id);
+    const expanded = await dimensions(frame);
+    const title = frame.locator('.decor-box-title');
+    const foldButton = frame.locator('.group-collapse-btn');
+    const menu = page.locator('[data-role="node-menu"]');
+    const fold = menu.locator('[data-action="group-fold"]');
+    const ungroup = menu.locator('[data-action="group-ungroup"]');
+    const openMenu = () => title.click({ button: 'right' });
+    const screenshot = async (state) => {
+      const output = !options.reduced && process.env.RELATUM_ARTIFACT_DIR;
+      if (!output) return;
+      fs.mkdirSync(output, { recursive: true });
+      await page.screenshot({ path: path.join(output, 'canvas-group-' + state + '.png'), animations: 'disabled' });
+    };
+
+    await title.click();
+    assert.equal(await frame.evaluate((el) => el.classList.contains('selected')), true);
+    assert.equal(await title.evaluate((el) => el.isContentEditable), false, 'single click selects the title');
+    await title.dblclick();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.insertText('123');
+    await page.keyboard.press('Enter');
+    assert.equal((await model(newGroup.id)).title, '123');
+    await screenshot('expanded');
+    await openMenu();
+    assert.equal(await fold.innerText(), '折叠分组');
+    assert.equal(await ungroup.innerText(), '解散分组');
+    await fold.click();
+    await node('a').waitFor({ state: 'hidden' });
+    await node('b').waitFor({ state: 'hidden' });
+    const beforeResize = await dimensions(frame);
+    assert(beforeResize[0] < expanded[0] && beforeResize[1] < expanded[1]);
+    assert.equal(await frame.locator('.decor-group-box').isVisible(), false);
+    assert.match(await foldButton.innerText(), /^\+\s*2$/);
+    assert(await frame.locator('.group-header').evaluate((header) => (
+      header.contains(header.querySelector('.decor-box-title')) && header.contains(header.querySelector('.group-collapse-btn'))
+      && getComputedStyle(header).borderRadius !== '0px'
+    )));
+    if (options.reduced) assert.equal(await frame.evaluate((el) => el.getAnimations({ subtree: true }).length), 0);
+    await screenshot('collapsed');
+
+    await title.click();
+    const handle = await frame.locator('.decor-resize-se').boundingBox();
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2 + 50, handle.y + handle.height / 2 + 25, { steps: 5 });
+    await page.mouse.up();
+    const resized = await dimensions(frame);
+    assert(resized[0] > beforeResize[0] && resized[1] > beforeResize[1], 'selected capsule resizes in canvas mode');
+    assert.deepEqual([(await model(newGroup.id)).width, (await model(newGroup.id)).height], expanded);
+    await undo();
+    assert.deepEqual(await dimensions(frame), beforeResize);
+    await redo();
+    assert.deepEqual(await dimensions(frame), resized);
+
+    await openMenu();
+    assert.equal(await fold.innerText(), '展开分组');
+    await fold.click();
+    assert.deepEqual(await dimensions(frame), expanded);
+    assert(await node('a').isVisible());
+    const transition = await frame.evaluate((el) => {
+      const button = el.querySelector('.group-collapse-btn');
+      button.click();
+      button.click();
+      return { overlays: el.querySelectorAll('.group-fold-motion').length, expanded: button.getAttribute('aria-expanded') };
+    });
+    assert.deepEqual(transition, { overlays: options.reduced ? 0 : 1, expanded: 'true' });
+    await openMenu();
+    await fold.click();
+    assert.deepEqual(await dimensions(frame), resized);
+    const exportInfo = await page.evaluate(async (groupId) => {
+      const result = await CanvasModule.exportImage({ scale: 1 });
+      const exportDom = new DOMParser().parseFromString(__testExportXml, 'image/svg+xml');
+      const exportGroup = exportDom.querySelector('.node[data-id="' + groupId + '"]');
+      return { type: result.blob.type, copies: exportDom.querySelectorAll('.node[data-id="' + groupId + '"]').length,
+        capsule: exportGroup?.classList.contains('group-collapsed'),
+        noOverlay: !exportGroup?.querySelector('.group-fold-motion'),
+        hiddenEdge: !exportDom.querySelector('.canvas-edge[data-id="member-link"]') };
+    }, newGroup.id);
+    assert.deepEqual(exportInfo, { type: 'image/png', copies: 1, capsule: true, noOverlay: true, hiddenEdge: true });
+    const overlaysOnHide = await frame.evaluate((el) => {
+      const button = el.querySelector('.group-collapse-btn');
+      button.click();
+      button.click();
+      window.dispatchEvent(new PageTransitionEvent('pagehide'));
+      return el.querySelectorAll('.group-fold-motion').length;
+    });
+    assert.equal(overlaysOnHide, 0);
+    assert.equal(await page.evaluate(() => EditorShell.saveNow()), true);
+    const saved = JSON.parse(fs.readFileSync(fixtureFile, 'utf8')).nodes;
+    assert.equal(saved.find((item) => item.id === 'a').text, '123\n456');
+    const savedGroup = saved.find((item) => item.id === newGroup.id);
+    assert.equal(savedGroup.groupCollapsed, true);
+    assert.deepEqual([savedGroup.groupCollapsedWidth, savedGroup.groupCollapsedHeight], resized);
+    await openCanvas(page, config, name);
+    assert.deepEqual(await dimensions(frame), resized);
+    assert(await node('a').evaluate((el) => el.classList.contains('group-fold-hidden')));
+    await node('a').waitFor({ state: 'hidden' });
+    await legacy.locator('.group-collapse-btn').click();
+    await openMenu();
+    await ungroup.click();
+    await frame.waitFor({ state: 'detached' });
+    await node('a').waitFor({ state: 'visible' });
+    assert.equal(await text.innerText(), '123\n456');
+    await node('b').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => __testData.edges.some((edge) => edge.id === 'member-link')), true);
+    await undo();
+    assert(await frame.isVisible());
+    await node('a').waitFor({ state: 'hidden' });
+    await redo();
+    await frame.waitFor({ state: 'detached' });
+    await node('a').waitFor({ state: 'visible' });
+    await legacy.locator('.group-collapse-btn').click();
+    await node('b').waitFor({ state: 'visible' });
+
+    await edit();
+    await page.keyboard.insertText('第一行');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+    await page.keyboard.insertText('第三行');
+    const blankLineSize = await dimensions(node('a'));
+    await page.keyboard.press('Control+Enter');
+    assert.equal((await model('a')).text, '第一行\n\n第三行');
+    assert.deepEqual(await dimensions(node('a')), blankLineSize);
+    await undo();
+
+    await edit();
+    const markdownSource = '**粗体**\n<样本>\n\n- 项目\n\n```js\nconst a = 1;\nconst b = 2;\n```';
+    await text.evaluate((el, source) => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData('text/plain', source.replace(/\n/g, '\r\n'));
+      el.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
+    }, markdownSource);
+    await page.keyboard.press('Control+Enter');
+    assert.equal((await model('a')).text, markdownSource.replace('**粗体**', '粗体'));
+    assert.equal((await model('a')).textMarks[0].bold, true);
+    assert.equal(await text.locator('strong').innerText(), '粗体');
+    assert.equal(await text.locator('p').first().innerText(), '粗体\n<样本>');
+    assert.equal(await text.locator('li').innerText(), '项目');
+    assert.match(await text.locator('pre code').innerText(), /const a = 1;\nconst b = 2;/);
+    await undo();
+    assert.equal(await text.innerText(), '123\n456');
+
+    await edit();
+    await page.keyboard.insertText('第一行');
+    await page.keyboard.press('Enter');
+    const cdp = await page.context().newCDPSession(page);
+    try {
+      await cdp.send('Input.imeSetComposition', { text: 'zhongwen', selectionStart: 8, selectionEnd: 8 });
+      assert.equal((await model('a')).text, '123\n456', 'IME preedit stays outside saved source');
+      await cdp.send('Input.insertText', { text: '中文' });
+      await page.keyboard.press('Control+Enter');
+    } finally { await cdp.detach(); }
+    assert.equal((await model('a')).text, '第一行\n中文');
+    assert.equal(await text.innerText(), '第一行\n中文');
+    assert(!requests.some((url) => /\/vendor\/(?:mathjax|mermaid)\//i.test(url)), 'plain text and code do not load diagram or math runtimes');
+    assert.deepEqual(page.testErrors, []);
+    return { ...options, editSize, expanded, beforeResize, resized };
+  } finally { await page.context().close(); }
+}
+
 async function translationAndDualRegression(browser, config) {
   const page = await makePage(browser, { protectFixtures: true });
   try {
@@ -496,5 +723,5 @@ async function main() {
 }
 
 module.exports = { installProbe, makePage, openCanvas, edgePoint, zoomFrames, dragAndUndo, panFrames,
-  interactionRegression, lifecycleRegression, translationAndDualRegression, startRegression };
+  interactionRegression, lifecycleRegression, groupAndTextRegression, translationAndDualRegression, startRegression };
 if (require.main === module) main().catch((error) => { console.error(error); process.exitCode = 1; });
