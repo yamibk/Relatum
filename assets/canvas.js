@@ -4093,18 +4093,34 @@
     function isIndexableNode(node) {
       return !!node && !isShapeNode(node) && !isImageNode(node);
     }
-    function indexNeighborId(edge, nodeId, eitherDirection) {
-      const arrow = normalizeEdgeArrow(edge.arrow);
-      if (edge.from === nodeId && (eitherDirection || arrow !== 'start')) return edge.to;
-      if (edge.to === nodeId && (eitherDirection || arrow !== 'end')) return edge.from;
-      return null;
+    // direction: 1 follows the arrow, -1 goes upstream, 0 accepts either direction.
+    function indexNeighborId(edge, nodeId, direction) {
+      const from = edge.from === nodeId;
+      if (!from && edge.to !== nodeId) return null;
+      if (direction) {
+        const arrow = normalizeEdgeArrow(edge.arrow);
+        if (arrow === 'start' || arrow === 'end') {
+          const outgoing = from === (arrow === 'end');
+          if (outgoing !== (direction === 1)) return null;
+        }
+      }
+      return from ? edge.to : edge.from;
     }
-    function edgeNeighborsFrom(nodeId, eitherDirection) {
+    function indexBranchDirection(rootId, entryId) {
+      const edges = incidentEdgeIds.get(entryId);
+      if (!edges) return 1;
+      for (const id of edges) {
+        const edge = edgeById.get(id);
+        if (indexNeighborId(edge, rootId, 1) === entryId) return 1;
+      }
+      return -1;
+    }
+    function edgeNeighborsFrom(nodeId, direction) {
       const ids = incidentEdgeIds.get(nodeId);
       if (!ids) return [];
       const neighbors = new Map();
       ids.forEach(function (id) {
-        const next = indexNeighborId(edgeById.get(id), nodeId, eitherDirection);
+        const next = indexNeighborId(edgeById.get(id), nodeId, direction);
         if (!next || next === nodeId || neighbors.has(next)) return;
         const node = findNode(next);
         if (isIndexableNode(node)) neighbors.set(next, node);
@@ -4124,20 +4140,20 @@
       ensureEdgeIndex();
       const limit = indexDepthLimit(root);
       const seen = new Set([root.id]);
-      const direct = edgeNeighborsFrom(root.id, true);
+      const direct = edgeNeighborsFrom(root.id, 0);
       // 直接相连的条目一律留在首层，即使另一条分支也可以到达它们。
       direct.forEach(function (node) { seen.add(node.id); });
       let count = 0;
       let deepest = 0;
-      function item(child, depth) {
+      function item(child, depth, direction) {
         count += 1;
         deepest = Math.max(deepest, depth);
         const children = [];
         if (depth < limit) {
-          edgeNeighborsFrom(child.id, false).forEach(function (next) {
+          edgeNeighborsFrom(child.id, direction).forEach(function (next) {
             if (seen.has(next.id)) return;
             seen.add(next.id);
-            children.push(item(next, depth + 1));
+            children.push(item(next, depth + 1, direction));
           });
         }
         return {
@@ -4148,7 +4164,9 @@
           children: children,
         };
       }
-      const children = direct.map(function (child) { return item(child, 1); });
+      const children = direct.map(function (child) {
+        return item(child, 1, limit > 1 ? indexBranchDirection(root.id, child.id) : 1);
+      });
       return { children: children, count: count, depth: deepest, ids: seen };
     }
     function indexNodeSummary(node) {
@@ -4169,29 +4187,31 @@
       if (changes && !changes.topology) {
         ensureEdgeIndex();
         affected = new Set();
-        const visited = new Set(changes.nodeIds);
-        let level = Array.from(visited);
-        // 从后代逆向查找最多五层祖先，最后一步允许任一方向连接根索引。
-        for (let depth = 0; depth < 6 && level.length; depth++) {
-          const nextLevel = [];
-          level.forEach(function (id) {
-            const node = findNode(id);
-            if (depth === 0 && isIndexNode(node)) affected.add(id);
-            if (!isIndexableNode(node)) return;
-            const edges = incidentEdgeIds.get(id);
-            if (!edges) return;
-            edges.forEach(function (edgeId) {
-              const edge = edgeById.get(edgeId);
-              const ancestor = indexNeighborId(edge, id, true);
-              const parent = findNode(ancestor);
-              if (isIndexNode(parent) && depth < indexDepthLimit(parent)) affected.add(ancestor);
-              if (depth === 5 || !isIndexableNode(parent) || visited.has(ancestor)
-                  || indexNeighborId(edge, ancestor, false) !== id) return;
-              visited.add(ancestor);
-              nextLevel.push(ancestor);
+        changes.nodeIds.forEach(function (id) {
+          if (isIndexNode(findNode(id))) affected.add(id);
+        });
+        // Each directory branch keeps its initial direction. Check ancestors separately for each direction.
+        for (const direction of [1, -1]) {
+          const visited = new Set(changes.nodeIds);
+          let level = Array.from(visited);
+          for (let depth = 0; depth < 6 && level.length; depth++) {
+            const nextLevel = [];
+            level.forEach(function (id) {
+              if (!isIndexableNode(findNode(id))) return;
+              incidentEdgeIds.get(id)?.forEach(function (edgeId) {
+                const edge = edgeById.get(edgeId);
+                const ancestor = indexNeighborId(edge, id, 0);
+                const parent = findNode(ancestor);
+                if (isIndexNode(parent) && depth < indexDepthLimit(parent)
+                    && (depth === 0 || indexBranchDirection(ancestor, id) === direction)) affected.add(ancestor);
+                if (depth === 5 || !isIndexableNode(parent) || visited.has(ancestor)
+                    || indexNeighborId(edge, id, -direction) !== ancestor) return;
+                visited.add(ancestor);
+                nextLevel.push(ancestor);
+              });
             });
-          });
-          level = nextLevel;
+            level = nextLevel;
+          }
         }
       }
       function refresh(node) {
@@ -4251,10 +4271,11 @@
       const ids = indexReaderLitPath.split(',').filter(Boolean);
       const edges = new Set();
       ensureEdgeIndex();
+      const direction = ids.length > 2 ? indexBranchDirection(ids[0], ids[1]) : 1;
       for (let i = 0; i < ids.length - 1; i++) {
         const a = ids[i], b = ids[i + 1];
         incidentEdgeIds.get(a)?.forEach(function (id) {
-          if (indexNeighborId(edgeById.get(id), a, i === 0) === b) edges.add(id);
+          if (indexNeighborId(edgeById.get(id), a, i === 0 ? 0 : direction) === b) edges.add(id);
         });
       }
       setIndexReaderHighlights(new Set(ids), edges);
@@ -8552,7 +8573,63 @@
       return btn;
     }
 
+    function syncIndexEdgeToggle(el, node) {
+      let button = el.__indexEdgeToggle;
+      if (readOnlyCanvas || !isIndexNode(node)) {
+        if (button) {
+          button.remove();
+          el.__indexEdgeToggle = null;
+        }
+        return;
+      }
+      if (!button) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'index-edge-toggle';
+        button.setAttribute('role', 'checkbox');
+        ['mousedown', 'pointerdown', 'dblclick', 'contextmenu'].forEach(function (type) {
+          button.addEventListener(type, function (event) { event.stopPropagation(); });
+        });
+        button.addEventListener('click', function (event) {
+          event.stopPropagation();
+          const current = findNode(node.id);
+          if (!isIndexNode(current) || scenePresentationMode || drag) return;
+          const ids = new Set([node.id]);
+          const edges = edgesIncidentTo(ids);
+          if (editingEdgeId && edges.some(function (edge) { return edge.id === editingEdgeId; })) {
+            commitEdgeEdit();
+          }
+          if (current.indexHideDirectEdges === true) delete current.indexHideDirectEdges;
+          else current.indexHideDirectEdges = true;
+          syncIndexEdgeToggle(el, current);
+          let selectionChanged = false;
+          edges.forEach(function (edge) {
+            const refs = edgeMap.get(edge.id);
+            syncIndexEdgeView(edge, refs);
+            if (refs?.indexEdgeView && selectedEdgeIds.delete(edge.id)) selectionChanged = true;
+          });
+          if (selectionChanged) applySelection(false);
+          requestEdgesCanvasRender();
+          pushHistory({ nodes: ids });
+          notify();
+        });
+        el.__indexEdgeToggle = button;
+        el.appendChild(button);
+      }
+      const label = document.body.dataset.toolbarLanguage === 'en' ? 'Hide direct links' : '隐藏直连线';
+      const checked = node.indexHideDirectEdges === true;
+      if (button.title !== label) {
+        button.title = label;
+        button.setAttribute('aria-label', label);
+      }
+      if (button.getAttribute('aria-checked') !== String(checked)) {
+        button.setAttribute('aria-checked', String(checked));
+        button.textContent = checked ? '✓' : '';
+      }
+    }
+
     function renderTextNodeMeta(el, node) {
+      if (isIndexNode(node) || el.__indexEdgeToggle) syncIndexEdgeToggle(el, node);
       let meta = el.querySelector('.text-node-meta');
       let previewBody = el.querySelector('.preview-node-body');
       let codeLabel = el.querySelector('.code-node-language');
@@ -14614,6 +14691,31 @@
       refreshDecorPanel();
     }
 
+    function indexHidesDirectEdges(node) {
+      return !readOnlyCanvas && isIndexNode(node) && node.indexHideDirectEdges === true;
+    }
+
+    function applyIndexEdgeView(element, view) {
+      element.classList.toggle('index-edge-hidden', view === 'hidden');
+      element.classList.toggle('index-edge-preview', view === 'preview');
+    }
+
+    function syncIndexEdgeView(edge, refs) {
+      if (!refs) return;
+      const from = indexHidesDirectEdges(findNode(edge.from));
+      const to = indexHidesDirectEdges(findNode(edge.to));
+      let view = '';
+      if (from || to) {
+        const revealed = (from && selectedNodeIds.has(edge.from)) || (to && selectedNodeIds.has(edge.to));
+        view = revealed ? 'preview' : 'hidden';
+      }
+      if (refs.indexEdgeView === view) return;
+      refs.indexEdgeView = view;
+      applyIndexEdgeView(refs.path, view);
+      applyIndexEdgeView(refs.hit, view);
+      if (refs.labelEl) applyIndexEdgeView(refs.labelEl, view);
+    }
+
     function ensureEdgeLabel(edge, refs) {
       if (!edge || !refs) return null;
       if (refs.labelEl) return refs.labelEl;
@@ -14630,6 +14732,7 @@
       labelEl.classList.toggle('taskbook-tree-hidden',
         hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to));
       labelEl.classList.toggle('selected', selectedEdgeIds.has(edge.id));
+      if (refs.indexEdgeView) applyIndexEdgeView(labelEl, refs.indexEdgeView);
       surface.appendChild(labelEl);
       refs.labelEl = labelEl;
       bindEdgeEvents(null, null, labelEl, edge);
@@ -14677,7 +14780,8 @@
       }
 
       const handlers = bindEdgeEvents(path, hit, null, edge);
-      const refs = { path: path, hit: hit, labelEl: null, order: nextEdgeOrder++, handlers: handlers };
+      const refs = { path: path, hit: hit, labelEl: null, order: nextEdgeOrder++, handlers: handlers, indexEdgeView: '' };
+      syncIndexEdgeView(edge, refs);
       if (edge.text) ensureEdgeLabel(edge, refs);
       applyEdgeStyle(refs, edge);     // 5-2：粗细 + 箭头
       return refs;
@@ -14687,6 +14791,7 @@
       indexEdgeData(edge);
       const refs = edgeMap.get(edge.id);
       if (!refs) return;
+      syncIndexEdgeView(edge, refs);
       const src = findNode(edge.from);
       const tgt = findNode(edge.to);
       if (!src || !tgt) return;
@@ -15006,7 +15111,8 @@
       // SVG 透明命中条原本不继承可见线的虚线、箭头和阴影。
       for (let i = items.length - 1; i >= 0; i--) {
         const item = items[i];
-        if (!edgeIsHidden(item.edge) && edgeHitCtx.isPointInStroke(item.path, p.x, p.y)) return item.edge;
+        if (!edgeMap.get(item.edge.id)?.indexEdgeView && !edgeIsHidden(item.edge)
+            && edgeHitCtx.isPointInStroke(item.path, p.x, p.y)) return item.edge;
       }
       return null;
     }
@@ -15168,7 +15274,7 @@
       for (let i = 0; i < visibleItems.length; i++) {
         const item = visibleItems[i];
         const edge = item.edge;
-        if (edgeIsHidden(edge)) continue;
+        if (edgeIsHidden(edge) || edgeMap.get(edge.id)?.indexEdgeView === 'hidden') continue;
         if (liveSvgEdgeIds.has(edge.id)) continue;
         const b = item.bounds;
         if (b.maxX < x0 || b.minX > x1 || b.maxY < y0 || b.minY > y1) continue;  // 屏外跳过
@@ -15370,6 +15476,9 @@
         previous.clear();
         next.forEach(function (id) { previous.add(id); });
       }
+      selectedEdgeIds.forEach(function (id) {
+        if (edgeMap.get(id)?.indexEdgeView) selectedEdgeIds.delete(id);
+      });
       const signature = Array.from(selectedNodeIds).sort().join('\u0000') + '\u0001'
         + Array.from(selectedEdgeIds).sort().join('\u0000') + '\u0001'
         + Array.from(selectedTimerIds).sort().join('\u0000') + '\u0001'
@@ -15386,10 +15495,20 @@
           selToolbar.hidden = true;
         }
       }
+      let indexSelectionChanges = null;
       paintDifference(paintedNodeSelection, selectedNodeIds, function (id, selected) {
         const el = nodeMap.get(id);
         if (el) el.classList.toggle('selected', selected);
+        if (indexHidesDirectEdges(findNode(id))) {
+          if (!indexSelectionChanges) indexSelectionChanges = new Set();
+          indexSelectionChanges.add(id);
+        }
       });
+      if (indexSelectionChanges) {
+        edgesIncidentTo(indexSelectionChanges).forEach(function (edge) {
+          syncIndexEdgeView(edge, edgeMap.get(edge.id));
+        });
+      }
       if (paintedTransientDecorId !== transientMovableDecorId || !selectedNodeIds.has(paintedTransientDecorId)) {
         const old = nodeMap.get(paintedTransientDecorId);
         if (old) old.classList.remove('transient-movable-decor');
@@ -25745,7 +25864,7 @@
     function onViewportMouseDownCapture(e) {
       refreshViewportRect();
       // 折叠按钮是瞬时点击，必须在视口收尾前放行，避免重绘替换按下时的按钮。
-      if (e.target.closest && e.target.closest('.group-collapse-btn')) return;
+      if (e.target.closest && e.target.closest('.group-collapse-btn, .index-edge-toggle')) return;
       cancelPanInertia();   // W 轮：任何在画布内按下都立即停掉平移惯性（抓手感，像 Figma/Miro）
       freezeViewportForInteraction();
       finishMindmapGlide(); // 脑图滑行中按下（拖节点/平移）→ 立即贴到终态，避免与拖动抢 transform
@@ -25786,7 +25905,7 @@
     let lastPointerType = 'mouse';   // 记录最近一次指针类型，用于「手写笔不建节点」
     function onViewportPointerDownCapture(e) {
       refreshViewportRect();
-      if (e.target.closest && e.target.closest('.group-collapse-btn')) return;
+      if (e.target.closest && e.target.closest('.group-collapse-btn, .index-edge-toggle')) return;
       lastPointerType = e.pointerType || 'mouse';
       freezeViewportForInteraction();
       if (scenePresentationMode) {
@@ -26024,7 +26143,7 @@
       if (scenePresentationMode) return;
       if (externalOverlayOpen) return;
       if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.closest
-          && e.target.closest('.group-collapse-btn, [data-role="node-menu-group-actions"] button, .decor-box-title:not(.editing)')) return;
+          && e.target.closest('.group-collapse-btn, .index-edge-toggle, [data-role="node-menu-group-actions"] button, .decor-box-title:not(.editing)')) return;
       if (e.target && e.target.closest && e.target.closest('.table-grid-root')) {
         const tableGlobalShortcut = (e.ctrlKey || e.metaKey)
           && (e.key === 'z' || e.key === 'Z' || e.key === 'y' || e.key === 'Y'
@@ -26887,6 +27006,11 @@
     document.addEventListener('focusout', onFocusOut);
     document.addEventListener('editor:languagechange', renderRuler);
     document.addEventListener('editor:languagechange', renderTimers);
+    document.addEventListener('editor:languagechange', function () {
+      nodeMap.forEach(function (el, id) {
+        if (el.__indexEdgeToggle) syncIndexEdgeToggle(el, findNode(id));
+      });
+    });
     // Z 轮：点击左下角缩放指示器 → 回到 100% 原点
     if (zoomIndicator) {
       zoomIndicator.addEventListener('click', function (e) {
@@ -28607,8 +28731,11 @@
         '.canvas-empty-hint, .decor-resize-handle, .edge-handle, .canvas-edge-hit, .frame-rect, .node-mindmap-fold, '
         + '.group-fold-motion, .group-fold-hidden, .canvas-removal-ghost, '
         + '.table-node-grip, .table-drag-strip, .table-node-actions, .table-grid-toolbar, .table-edge-add, '
-        + '.table-grid-corner, .table-column-head, .table-row-head'
+        + '.table-grid-corner, .table-column-head, .table-row-head, .index-edge-toggle'
       ).forEach(function (e) { e.remove(); });
+      clone.querySelectorAll('.index-edge-hidden, .index-edge-preview').forEach(function (e) {
+        e.classList.remove('index-edge-hidden', 'index-edge-preview');
+      });
       clone.querySelectorAll('.selected, .is-selected, .editing, .dragging, .culled, .group-fold-animating').forEach(function (e) {
         e.classList.remove('selected', 'is-selected', 'editing', 'dragging', 'culled', 'group-fold-animating');
       });

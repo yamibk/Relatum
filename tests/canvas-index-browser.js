@@ -15,6 +15,8 @@ const repo = path.resolve(__dirname, '..');
 const reader = '[data-role="text-reader"]';
 const item = '[data-role="index-reader-nav"] [data-index-node-id]';
 const accent = '#e41383';
+const directColor = '#176982';
+const branchColor = '#7855aa';
 const primaryOrder = ['incoming', 'legacy', 'reverse', 'four', 'outgoing', 'both'];
 
 function card(id, x, y) {
@@ -40,13 +42,13 @@ function writeFixtures(root) {
     edge('root-out', 'index', 'outgoing', 'one'),
     edge('root-both', 'index', 'both', 'both'),
     edge('root-shape', 'index', 'shape', 'none'),
-    edge('legacy-link', 'incoming', 'legacy', 'one'),
-    edge('reverse-link', 'reverse', 'legacy', 'start'),
+    edge('legacy-link', 'legacy', 'incoming', 'one'),
+    edge('reverse-link', 'legacy', 'reverse', 'start'),
     edge('four-link', 'reverse', 'four', 'none'),
     edge('five-link', 'four', 'five', 'both'),
-    edge('blocked-link', 'blocked', 'incoming', 'end'),
-    edge('cycle', 'outgoing', 'incoming', 'end'),
-    edge('entry-cross-link', 'incoming', 'outgoing', 'end'),
+    edge('blocked-link', 'incoming', 'blocked', 'end'),
+    edge('cycle', 'incoming', 'outgoing', 'end'),
+    edge('entry-cross-link', 'outgoing', 'incoming', 'end'),
   ];
   const write = (name, nodes, edges) => fs.writeFileSync(path.join(root, 'canvases', name + '.canvas'),
     JSON.stringify({ version: 2, nodes, edges }));
@@ -54,6 +56,40 @@ function writeFixtures(root) {
   write('index-svg', nodes, edges);
   write('index-selection', [card('left', 200, 160), card('right', 400, 160)],
     [edge('existing', 'left', 'right', 'end')]);
+
+  const screenshotNodes = [
+    { id: 'index', kind: 'index', text: '目录', x: 400, y: 345 },
+    card('A', 525, 100), card('B', 145, 175),
+    card('B1', -85, 20), card('B2', 70, 5), card('B3', 265, 20),
+  ];
+  const screenshotEdges = [
+    { ...edge('direct-a', 'A', 'index', 'end'), color: directColor, text: 'A 直连' },
+    { ...edge('direct-b', 'B', 'index', 'end'), color: directColor,
+      text: 'B 直连', waypoints: [{ x: 290, y: 265 }] },
+    ...['B1', 'B2', 'B3'].map(id => ({ ...edge('leaf-' + id, id, 'B', 'end'), color: branchColor })),
+  ];
+  write('index-visibility', screenshotNodes, screenshotEdges);
+  write('index-visibility-svg', screenshotNodes, screenshotEdges);
+  write('index-pair', [
+    { id: 'first', kind: 'index', text: 'First', x: 30, y: 45, indexHideDirectEdges: true },
+    { id: 'second', kind: 'index', text: 'Second', x: 380, y: 65, indexHideDirectEdges: true },
+  ], [{ ...edge('shared', 'first', 'second', 'end'), color: directColor, text: 'Shared' }]);
+  write('index-directions', [
+    { id: 'index', kind: 'index', text: '方向', x: 6, y: 230 },
+    ...['down', 'up', 'neutral', 'conflict'].map((id, i) => card(id, 280, 40 + i * 98)),
+    ...['down-child', 'up-child', 'neutral-child', 'conflict-child'].map((id, i) => card(id, 480, 40 + i * 98)),
+    card('cross', 670, 140),
+  ], [
+    edge('down', 'index', 'down', 'end'),
+    { ...edge('up', 'up', 'index', 'end'), text: 'Up' },
+    edge('neutral', 'index', 'neutral', 'none'),
+    edge('conflict-in', 'conflict', 'index', 'end'), edge('conflict-out', 'index', 'conflict', 'end'),
+    edge('down-child', 'down', 'down-child', 'end'), edge('up-child', 'up-child', 'up', 'end'),
+    edge('neutral-child', 'neutral', 'neutral-child', 'end'),
+    edge('conflict-child', 'conflict', 'conflict-child', 'end'),
+    edge('direction-switch', 'up', 'cross', 'end'),
+    edge('cycle', 'up', 'up-child', 'end'), edge('second-path', 'conflict', 'down-child', 'end'),
+  ]);
 }
 
 function installIndexProbe(svgOnly, color) {
@@ -70,17 +106,21 @@ function installIndexProbe(svgOnly, color) {
   if (svgOnly) window.Path2D = undefined;
   const proto = CanvasRenderingContext2D.prototype;
   const { clearRect, stroke } = proto;
-  window.__indexEdgePaint = { draws: 0, accentStrokes: 0 };
+  window.__indexEdgePaint = { draws: 0, accentStrokes: 0, colors: {} };
   proto.clearRect = function (...args) {
     if (this.canvas.dataset.role === 'canvas-edges-canvas') {
       __indexEdgePaint.draws++;
       __indexEdgePaint.accentStrokes = 0;
+      __indexEdgePaint.colors = {};
     }
     return clearRect.apply(this, args);
   };
   proto.stroke = function (...args) {
-    if (this.canvas.dataset.role === 'canvas-edges-canvas' && this.strokeStyle === color) {
-      __indexEdgePaint.accentStrokes++;
+    if (this.canvas.dataset.role === 'canvas-edges-canvas') {
+      const strokeColor = this.strokeStyle;
+      const colors = __indexEdgePaint.colors;
+      colors[strokeColor] = (colors[strokeColor] || 0) + 1;
+      if (strokeColor === color) __indexEdgePaint.accentStrokes++;
     }
     return stroke.apply(this, args);
   };
@@ -319,6 +359,125 @@ async function verifyGenerated(page, config) {
   assert.equal(await node(page, generated.id).count(), 0);
 }
 
+async function verifyBranchDirections(page, config) {
+  await openCanvas(page, config, 'index-directions');
+  assert.equal(await badge(page, 'index').textContent(), '8 项 · 2 层');
+  await openReader(page, 'index');
+  const paths = Object.fromEntries(await directory(page));
+  assert.equal(paths['up-child'], 'index,up,up-child');
+  assert.equal(paths['down-child'], 'index,down,down-child');
+  assert.equal(paths['neutral-child'], 'index,neutral,neutral-child');
+  assert.equal(paths['conflict-child'], 'index,conflict,conflict-child');
+  assert.equal(paths.cross, undefined, 'an inbound branch does not switch to following arrows');
+  await closeReader(page);
+  await page.locator('.canvas-edge-label[data-id="up"]').click();
+  await page.locator('[data-role="ee-arrow"] [data-arrow="both"]').click();
+  assert.equal(await badge(page, 'index').textContent(), '9 项 · 2 层');
+  await openReader(page, 'index');
+  assert.equal(Object.fromEntries(await directory(page)).cross, 'index,up,cross');
+  await closeReader(page);
+  await page.keyboard.press('Control+z');
+  assert.equal(await badge(page, 'index').textContent(), '8 项 · 2 层');
+}
+
+async function verifyIndexEdgeVisibility(page, config, svgOnly, native = false) {
+  const name = svgOnly ? 'index-visibility-svg' : 'index-visibility';
+  await openCanvas(page, config, name);
+  if (native) await page.evaluate(() => EditorShell.setModeSubmode('clean'));
+  assert.equal(await badge(page, 'index').textContent(), '5 项 · 2 层');
+  await openReader(page, 'index');
+  const paths = Object.fromEntries(await directory(page));
+  assert.equal(paths.A, 'index,A');
+  assert.equal(paths.B, 'index,B');
+  for (const id of ['B1', 'B2', 'B3']) assert.equal(paths[id], 'index,B,' + id);
+  await closeReader(page);
+
+  const button = node(page, 'index').getByRole('checkbox');
+  const labels = page.locator('.canvas-edge-label[data-id^="direct-"]');
+  const checkDirect = async (visible, preview = false) => {
+    for (const label of await labels.all()) {
+      await label.waitFor({ state: visible ? 'visible' : 'hidden' });
+      if (preview) assert.equal(await label.evaluate(el => getComputedStyle(el).pointerEvents), 'none');
+    }
+    if (svgOnly) {
+      assert.deepEqual(await page.locator('.canvas-edge[data-id^="direct-"]').evaluateAll(edges =>
+        edges.map(el => getComputedStyle(el).visibility)), Array(2).fill(visible ? 'visible' : 'hidden'));
+      assert.deepEqual(await page.locator('.canvas-edge-hit[data-id^="direct-"]').evaluateAll(edges =>
+        edges.map(el => getComputedStyle(el).pointerEvents)), Array(2).fill(visible && !preview ? 'stroke' : 'none'));
+      assert.equal(await page.locator('.canvas-edge[data-id^="leaf-"]:visible').count(), 3);
+    } else {
+      await page.waitForFunction(([direct, branch, expected]) =>
+        (__indexEdgePaint.colors[direct] || 0) === expected && __indexEdgePaint.colors[branch] === 3,
+      [directColor, branchColor, visible ? 2 : 0]);
+    }
+  };
+
+  await checkDirect(true);
+  assert.equal(await button.getAttribute('aria-checked'), 'false');
+  await node(page, 'A').locator('.node-text').click();
+  await button.click();
+  assert.equal(await button.getAttribute('aria-checked'), 'true');
+  assert.match(await node(page, 'A').getAttribute('class'), /\bselected\b/);
+  assert.equal(await badge(page, 'index').textContent(), '5 项 · 2 层');
+  await checkDirect(false);
+  await node(page, 'index').locator('.node-text').click();
+  await checkDirect(true, true);
+  // Exercise pointer hit testing away from the label as well as its disabled pointer target.
+  const midpoint = await labels.first().evaluate(el => {
+    const box = el.getBoundingClientRect();
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  });
+  await page.mouse.click(midpoint.x, midpoint.y);
+  assert.equal(await page.evaluate(() => __testSelection?.edges || 0), 0);
+  await checkDirect(false);
+  await node(page, 'index').locator('.node-text').click();
+  await node(page, 'B').locator('.node-text').click();
+  await checkDirect(false);
+
+  await button.press('Space');
+  assert.equal(await button.getAttribute('aria-checked'), 'false');
+  await checkDirect(true);
+  await page.keyboard.press('Control+z');
+  assert.equal(await button.getAttribute('aria-checked'), 'true');
+  await checkDirect(false);
+  await page.keyboard.press('Control+Shift+z');
+  assert.equal(await button.getAttribute('aria-checked'), 'false');
+  await checkDirect(true);
+  await button.click();
+  await checkDirect(false);
+  assert(await page.evaluate(() => EditorShell.saveNow()));
+  const saved = JSON.parse(fs.readFileSync(path.join(config.root, 'canvases', name + '.canvas'), 'utf8'));
+  assert.equal(saved.nodes.find(node => node.id === 'index').indexHideDirectEdges, true);
+  assert.equal(saved.edges.length, 5);
+  await openCanvas(page, config, name);
+  assert.equal(await button.getAttribute('aria-checked'), 'true');
+  await checkDirect(false);
+
+  const exported = await page.evaluate(async () => {
+    const { blob } = await CanvasModule.exportImage({ scale: 1 });
+    const xml = new DOMParser().parseFromString(__testExportXml, 'image/svg+xml');
+    return {
+      type: blob.type,
+      paths: Array.from(xml.querySelectorAll('.canvas-edge'), el => el.dataset.id).sort(),
+      labels: xml.querySelectorAll('.canvas-edge-label[data-id^="direct-"]').length,
+      editorChrome: xml.querySelectorAll('.index-edge-toggle, .index-edge-hidden, .index-edge-preview').length,
+    };
+  });
+  assert.deepEqual(exported, { type: 'image/png', paths: ['direct-a', 'direct-b', 'leaf-B1', 'leaf-B2', 'leaf-B3'],
+    labels: 2, editorChrome: 0 });
+}
+
+async function verifySharedHiddenEdge(page, config) {
+  await openCanvas(page, config, 'index-pair');
+  const label = page.locator('.canvas-edge-label[data-id="shared"]');
+  await label.waitFor({ state: 'hidden' });
+  for (const id of ['first', 'second']) {
+    await node(page, id).locator('.node-text').click();
+    await label.waitFor({ state: 'visible' });
+    assert.equal(await label.evaluate(el => getComputedStyle(el).pointerEvents), 'none');
+  }
+}
+
 async function main() {
   const native = process.argv.includes('--webview2');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-canvas-index-'));
@@ -351,6 +510,7 @@ async function main() {
       await setupPage(nativePage, false);
       await openCanvas(nativePage, config, 'index-tree');
       await verifyDirectory(nativePage, false, false);
+      await verifyIndexEdgeVisibility(nativePage, config, false, true);
       assert.deepEqual(nativePage.testErrors, []);
     } else {
       browser = await chromium.launch({ headless: true, executablePath: process.env.RELATUM_EDGE_PATH });
@@ -366,7 +526,10 @@ async function main() {
             await verifyInspector(page, config);
             await verifyManualConnection(page);
             await verifyGenerated(page, config);
+            await verifyBranchDirections(page, config);
           }
+          await verifyIndexEdgeVisibility(page, config, svgOnly);
+          await verifySharedHiddenEdge(page, config);
           assert.deepEqual(page.testErrors, []);
         } finally { await page.context().close(); }
       }

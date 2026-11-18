@@ -27240,6 +27240,38 @@ mark[data-hl="gray"]   { background: rgba(183, 190, 187, 0.42); }
   pointer-events: none;
 }
 
+.index-edge-toggle {
+  position: absolute;
+  top: -9px;
+  left: -9px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text);
+  font: 600 12px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.index-edge-toggle:hover,
+.index-edge-toggle[aria-checked="true"] {
+  border-color: var(--text);
+}
+
+.index-edge-toggle:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.scene-presentation-active .index-edge-toggle {
+  display: none;
+}
+
 /* ─── 连线（阶段 2）──────────────────────────── */
 
 .canvas-edges-layer {
@@ -28115,6 +28147,16 @@ html.dark-semantic-ui {
 
 .canvas-edge-label.empty {
   display: none;
+}
+
+.index-edge-hidden {
+  visibility: hidden !important;
+  transition: none !important;
+}
+
+.index-edge-hidden,
+.index-edge-preview {
+  pointer-events: none !important;
 }
 
 .canvas-edge-label.selected {
