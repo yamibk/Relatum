@@ -25047,7 +25047,7 @@
 
       el.after(overlay);
       el.classList.add('group-fold-animating');
-      const options = { duration: 260, easing: 'ease-in-out', fill: 'both' };
+      const options = { duration: 230, easing: 'ease-in-out', fill: 'both' };
       const folding = !!group.groupCollapsed;
       function animate(element, keyframes) {
         // Use the same curve and keyframes in both directions.

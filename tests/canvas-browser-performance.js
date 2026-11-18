@@ -539,8 +539,9 @@ async function groupAndTextRegression(browser, config, options = {}) {
           countColor: getComputedStyle(count).color, countOpacity: getComputedStyle(count).opacity,
           digits: count.lastElementChild.textContent };
       }
-      const samples = [sample(0), sample(130), sample(260)];
-      sample(130);
+      const duration = animations[0].effect.getTiming().duration;
+      const samples = [sample(0), sample(duration / 2), sample(duration)];
+      sample(duration / 2);
       button.click();
       return { samples, reversed: el.nextElementSibling === overlay, expanded: button.getAttribute('aria-expanded') };
     });
@@ -565,7 +566,7 @@ async function groupAndTextRegression(browser, config, options = {}) {
       await motion.evaluate((overlay) => {
         for (const animation of overlay.getAnimations({ subtree: true })) {
           animation.pause();
-          animation.currentTime = 130;
+          animation.currentTime = animation.effect.getTiming().duration / 2;
         }
       });
       await screenshot('fold-midpoint', 'allow');
