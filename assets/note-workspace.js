@@ -210,6 +210,7 @@
   }
   const GRAPH_TAB = 'relatum:graph-tab:v1';
   const HTML_TAB_PREFIX = 'relatum:html-tab:v1:';
+  const AUTO_INTERACT_RESTORED_HTML_LIMIT = 3;
   const htmlTabs = new Map();
   let htmlTabMount = null, htmlTabIntent = 0;
   const graphHost = $('[data-role="note-graph-panel"]');
@@ -759,6 +760,9 @@
       state.tabs = Array.from(new Set(state.tabs));
     }
   } catch (error) {}
+  if (htmlTabs.size <= AUTO_INTERACT_RESTORED_HTML_LIMIT) {
+    for (const tab of htmlTabs.values()) tab.interactive = true;
+  }
   if (!graphEnabled()) state.tabs = state.tabs.filter(path => !isGraphTab(path));
   try { const stored = localStorage.getItem(ACTIVE_TAB_KEY) || ''; if (state.tabs.includes(stored)) state.activeTab = stored; } catch (error) {}
   try { state.viewMode = normalizeViewMode(localStorage.getItem(NOTE_VIEW_KEY)); } catch (error) {}

@@ -55,10 +55,10 @@
 .note-html-embed-bar .note-html-move { width: 24px; padding: 0; cursor: grab; touch-action: none; }
 .note-html-embed-bar :is(.note-html-remove, .note-html-open):not([hidden]) { display: grid; width: 26px; padding: 0; place-items: center; }
 .note-html-embed-bar :is(.note-html-remove, .note-html-open) > svg { width: 16px; height: 16px; }
-.note-html-embed :is(.note-html-move, .note-html-remove, .note-html-resize) { opacity: 0; }
-.note-html-embed:is(:hover, :focus-within, .is-resizing) :is(.note-html-move, .note-html-remove, .note-html-resize) { opacity: 1; }
+.note-html-embed :is(.note-html-move, .note-html-resize) { opacity: 0; }
+.note-html-embed:is(:hover, :focus-within, .is-resizing) :is(.note-html-move, .note-html-resize) { opacity: 1; }
 @media (hover: none), (pointer: coarse) {
-  .note-html-embed :is(.note-html-move, .note-html-remove, .note-html-resize) { opacity: 1; }
+  .note-html-embed :is(.note-html-move, .note-html-resize) { opacity: 1; }
 }
 
 .note-html-embed-stage {

@@ -110,6 +110,14 @@ async function freePort() {
     await page.waitForFunction(native => window.__htmlTest?.state.initialized && __htmlTest.state.active && !__htmlTest.state.openingPath
       && (!native || typeof window.pywebview?.api?.note_html === 'function'), native);
   }
+  async function restartDesktop() {
+    const exited = new Promise(resolve => child.once('exit', resolve));
+    await page.evaluate(() => { void window.pywebview.api.close_window(); }).catch(() => {});
+    await Promise.race([exited, delay(10000)]);
+    assert.notEqual(child.exitCode, null, 'the desktop instance exited');
+    await browser.close().catch(() => {});
+    await launch({ instrument: false });
+  }
   try {
     await launch();
     const open = name => page.evaluate(name => __htmlTest.openNote(name, { reuseActiveTab: false }), name);
@@ -189,6 +197,12 @@ async function freePort() {
       });
       assert.deepEqual(scrollbarStyles, { mode: 'CSS1Compat', head: 'a > b', sizes: [['8px', '8px', 'none'], ['8px', '8px', 'none']] });
       await page.evaluate(() => window.pywebview.api.set_restored_size(1450, 860));
+      await page.mouse.move(1, 1);
+      const remove = block.getByRole('button', { name: 'Remove HTML block' });
+      assert.deepEqual(await remove.evaluate(button => ({
+        hoverOrFocus: button.closest('.note-html-embed').matches(':hover, :focus-within'),
+        opacity: getComputedStyle(button).opacity,
+      })), { hoverOrFocus: false, opacity: '1' });
       const before = await shellPosition();
       await block.getByRole('button', { name: 'Interact' }).click();
       await frame.getByText('Ready').waitFor();
@@ -390,24 +404,40 @@ async function freePort() {
       });
       assert.deepEqual(savedTab, { kind: 'html', path: 'Renamed.md', id: identity, name: filename });
 
-      const exited = new Promise(resolve => child.once('exit', resolve));
-      await page.evaluate(() => { void window.pywebview.api.close_window(); }).catch(() => {});
-      await Promise.race([exited, delay(10000)]);
-      assert.notEqual(child.exitCode, null, 'the first desktop instance exited');
-      await browser.close().catch(() => {});
-      await launch({ instrument: false });
+      const additionalTabs = [identity, unusedId, protectedId].map((id, index) => {
+        const name = 'Restored ' + (index + 1) + '.html';
+        const directory = path.join(notes, 'Import.assets', 'html', id);
+        fs.mkdirSync(directory, { recursive: true });
+        fs.writeFileSync(path.join(directory, name), fixture);
+        return { kind: 'html', path: 'Import.md', id, name };
+      });
+      const appendRestoredTabs = records => page.evaluate(records => {
+        const key = 'canvas:noteOpenTabs:v1', tabs = JSON.parse(localStorage.getItem(key));
+        localStorage.setItem(key, JSON.stringify([...tabs, ...records]));
+      }, records);
+
+      await appendRestoredTabs(additionalTabs.slice(0, 2));
+      await restartDesktop();
       await panel().waitFor();
-      assert.deepEqual(await page.locator('[data-role="note-tabs"] [role="tab"]').allTextContents(), order);
+      assert.deepEqual(await page.locator('[data-role="note-tabs"] [role="tab"]').allTextContents(),
+        [...order, ...additionalTabs.slice(0, 2).map(tab => tab.name)]);
       assert.equal(await tab().getAttribute('aria-selected'), 'true');
-      await tabFrame().getByRole('button', { name: 'Week 12' }).waitFor();
-      assert.equal(await tabFrame().locator('output').textContent(), '', 'a restored tab starts with scripts off');
-      await tab().press('Enter');
       await tabFrame().getByText('Ready').waitFor();
+      assert.equal(await page.locator('iframe[src^="https://relatum-html.invalid/"]').count(), 1, 'only the foreground HTML tab starts');
       await page.evaluate(() => window.pywebview.api.minimize());
       await page.waitForFunction(() => document.documentElement.dataset.desktopMinimized === '1');
       await panel().locator('iframe').waitFor({ state: 'detached' });
       await page.evaluate(() => window.pywebview.api.toggle_maximize());
       await page.waitForFunction(() => document.documentElement.dataset.desktopMinimized === '0');
+      await tabFrame().getByText('Ready').waitFor();
+
+      await appendRestoredTabs(additionalTabs.slice(2));
+      await restartDesktop();
+      await panel().waitFor();
+      assert.equal(await tab().getAttribute('aria-selected'), 'true');
+      await tabFrame().getByRole('button', { name: 'Week 12' }).waitFor();
+      assert.equal(await tabFrame().locator('output').textContent(), '', 'four restored HTML tabs require explicit activation');
+      await tab().press('Enter');
       await tabFrame().getByText('Ready').waitFor();
 
       fs.writeFileSync(path.join(notes, 'Renamed.md'), 'The HTML blocks were removed.\n');
@@ -420,7 +450,8 @@ async function freePort() {
       assert(fs.existsSync(path.join(recycled, identity, filename)));
       await tab().locator('.note-tab-close').click();
       await tab().waitFor({ state: 'detached' });
-      assert.equal(await panel().isVisible(), false);
+      await page.locator('[data-note-tab-path="Renamed.md"]').click();
+      await panel().waitFor({ state: 'hidden' });
     }
     console.log(`HTML embed verified (${native ? 'WebView2' : 'browser'}${notesOnly ? ', notes only' : ''})`);
   } catch (error) {
