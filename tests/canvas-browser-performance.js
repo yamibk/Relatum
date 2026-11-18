@@ -333,11 +333,13 @@ async function groupAndTextRegression(browser, config, options = {}) {
   const name = options.reduced ? 'group-text-reduced' : 'group-text';
   const fixtureFile = path.join(config.root, 'canvases', name + '.canvas');
   const group = { kind: 'shape', shapeType: 'group-box', x: -40, y: 280, width: 380, title: '旧分组' };
+  const longTitle = '长标题分组'.repeat(14);
   fs.writeFileSync(fixtureFile, JSON.stringify({ version: 2, nodes: [
     { id: 'a', kind: 'card', text: '标题', x: 0, y: 55 },
     { id: 'b', kind: 'card', text: '组员', x: 180, y: 105 },
     { id: 'c', kind: 'card', text: '组外', x: 390, y: 105 },
-    { id: 'legacy', ...group, height: 46, groupExpandedHeight: 160, groupCollapsed: true, groupMemberIds: ['d', 'b'] },
+    { id: 'legacy', ...group, height: 46, groupExpandedHeight: 160, groupCollapsed: true, groupMemberIds: ['d', 'b'],
+      rotation: 16, title: longTitle, groupCollapsedScale: 1.5, groupCollapsedWidth: 465, groupCollapsedHeight: 260 },
     { id: 'd', kind: 'card', text: '旧组员', x: 60, y: 340 },
     { id: 'box', ...group, x: 480, height: 80, title: '空盒子' },
   ], edges: [{ id: 'member-link', from: 'b', to: 'c', arrow: 'end' }] }), { flag: 'wx' });
@@ -354,6 +356,22 @@ async function groupAndTextRegression(browser, config, options = {}) {
     const node = (id) => page.locator('.node[data-id="' + id + '"]');
     const text = node('a').locator(':scope > .node-text');
     const dimensions = (element) => element.evaluate((el) => [el.offsetWidth, el.offsetHeight]);
+    const anchor = (element) => element.evaluate((el) => {
+      const capsule = el.classList.contains('group-collapsed');
+      const count = el.querySelector('.group-collapse-btn');
+      const x = capsule ? el.offsetWidth : count.offsetLeft + count.offsetWidth;
+      const y = capsule ? el.offsetHeight / 2 : count.offsetTop + count.offsetHeight / 2;
+      const style = getComputedStyle(el);
+      const [cx, cy] = style.transformOrigin.split(' ').map(parseFloat);
+      const point = new DOMMatrixReadOnly(style.transform).transformPoint(new DOMPoint(x - cx, y - cy));
+      return [point.x + cx, point.y + cy];
+    });
+    const near = (a, b, tolerance = 1) => Math.abs(a - b) <= tolerance;
+    const assertAnchor = async (element, expected) => {
+      const actual = await anchor(element);
+      assert(actual.every((value, index) => near(value, expected[index])),
+        'right midpoint stays fixed: ' + JSON.stringify({ actual, expected }));
+    };
     const model = (id) => page.evaluate((id) => CanvasModule.findNode(id), id);
     const undo = () => page.evaluate(() => __testApi.undo());
     const redo = () => page.evaluate(() => __testApi.redo());
@@ -380,12 +398,16 @@ async function groupAndTextRegression(browser, config, options = {}) {
     const legacy = node('legacy');
     const legacyPill = legacy.locator('.group-header');
     assert(await legacyPill.isVisible());
-    assert((await dimensions(legacy))[0] < 380, 'legacy fold opens as a compact capsule');
+    assert.deepEqual(await dimensions(legacy), [360, 48], 'long title respects the scaled width cap');
+    assert(await legacy.locator('.decor-box-title').evaluate((el) => el.scrollWidth > el.clientWidth));
+    assert.equal(await legacy.locator('.group-collapse-btn').innerText(), '+2');
+    const rotatedAnchor = await anchor(legacy);
     assert.equal(await node('d').isVisible(), false);
     assert.equal(await node('box').locator('.group-collapse-btn').count(), 0);
     await legacy.locator('.group-collapse-btn').click();
     assert(await node('d').isVisible());
     assert.deepEqual(await dimensions(legacy), [380, 160], 'legacy expanded dimensions survive');
+    await assertAnchor(legacy, rotatedAnchor);
 
     const a = await node('a').boundingBox(), b = await node('b').boundingBox();
     await page.mouse.move(a.x - 24, a.y - 24);
@@ -397,17 +419,18 @@ async function groupAndTextRegression(browser, config, options = {}) {
     assert.deepEqual(newGroup.groupMemberIds, ['a', 'b']);
     const frame = node(newGroup.id);
     const expanded = await dimensions(frame);
+    const motion = page.locator('.group-fold-motion[data-group-id="' + newGroup.id + '"]');
     const title = frame.locator('.decor-box-title');
     const foldButton = frame.locator('.group-collapse-btn');
     const menu = page.locator('[data-role="node-menu"]');
     const fold = menu.locator('[data-action="group-fold"]');
     const ungroup = menu.locator('[data-action="group-ungroup"]');
     const openMenu = () => title.click({ button: 'right' });
-    const screenshot = async (state) => {
+    const screenshot = async (state, animations = 'disabled') => {
       const output = !options.reduced && process.env.RELATUM_ARTIFACT_DIR;
       if (!output) return;
       fs.mkdirSync(output, { recursive: true });
-      await page.screenshot({ path: path.join(output, 'canvas-group-' + state + '.png'), animations: 'disabled' });
+      await page.screenshot({ path: path.join(output, 'canvas-group-' + state + '.png'), animations });
     };
 
     await title.click();
@@ -418,6 +441,7 @@ async function groupAndTextRegression(browser, config, options = {}) {
     await page.keyboard.insertText('123');
     await page.keyboard.press('Enter');
     assert.equal((await model(newGroup.id)).title, '123');
+    const expandedAnchor = await anchor(frame);
     await screenshot('expanded');
     await openMenu();
     assert.equal(await fold.innerText(), '折叠分组');
@@ -427,51 +451,133 @@ async function groupAndTextRegression(browser, config, options = {}) {
     await node('b').waitFor({ state: 'hidden' });
     const beforeResize = await dimensions(frame);
     assert(beforeResize[0] < expanded[0] && beforeResize[1] < expanded[1]);
+    await assertAnchor(frame, expandedAnchor);
     assert.equal(await frame.locator('.decor-group-box').isVisible(), false);
     assert.match(await foldButton.innerText(), /^\+\s*2$/);
     assert(await frame.locator('.group-header').evaluate((header) => (
       header.contains(header.querySelector('.decor-box-title')) && header.contains(header.querySelector('.group-collapse-btn'))
       && getComputedStyle(header).borderRadius !== '0px'
     )));
-    if (options.reduced) assert.equal(await frame.evaluate((el) => el.getAnimations({ subtree: true }).length), 0);
+    await motion.waitFor({ state: 'detached' });
     await screenshot('collapsed');
 
     await title.click();
-    const handle = await frame.locator('.decor-resize-se').boundingBox();
+    assert.deepEqual(await frame.locator('.decor-resize-handle:visible').evaluateAll((items) =>
+      items.map((item) => item.dataset.resizeDir)), ['sw']);
+    const scaleHandle = frame.locator('.decor-resize-sw');
+    const baseFontSize = await title.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    const handle = await scaleHandle.boundingBox();
     await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
     await page.mouse.down();
-    await page.mouse.move(handle.x + handle.width / 2 + 50, handle.y + handle.height / 2 + 25, { steps: 5 });
+    await page.mouse.move(handle.x + handle.width / 2 - 44, handle.y + handle.height / 2 + 8, { steps: 5 });
     await page.mouse.up();
     const resized = await dimensions(frame);
+    const storedScale = (await model(newGroup.id)).groupCollapsedScale;
+    assert.equal(storedScale, 1.5);
+    assert(resized.every((size, index) => near(size, beforeResize[index] * storedScale)));
+    assert.equal(await title.evaluate((el) => parseFloat(getComputedStyle(el).fontSize)), baseFontSize * storedScale);
+    await assertAnchor(frame, expandedAnchor);
     assert(resized[0] > beforeResize[0] && resized[1] > beforeResize[1], 'selected capsule resizes in canvas mode');
     assert.deepEqual([(await model(newGroup.id)).width, (await model(newGroup.id)).height], expanded);
     await undo();
     assert.deepEqual(await dimensions(frame), beforeResize);
     await redo();
     assert.deepEqual(await dimensions(frame), resized);
+    await title.click();
+    await scaleHandle.dblclick();
+    assert.deepEqual(await dimensions(frame), beforeResize);
+    await undo();
+    assert.deepEqual(await dimensions(frame), resized);
+
+    await page.locator('.editor-mode-btn[data-mode="decor"]').click();
+    await title.click();
+    const scaleSlider = page.locator('[data-role="decor-capsule-scale"]');
+    const widthSlider = page.locator('[data-role="decor-width"]');
+    await scaleSlider.waitFor();
+    assert.equal(await widthSlider.isVisible(), false);
+    await scaleSlider.press('End');
+    assert.equal((await model(newGroup.id)).groupCollapsedScale, 2.5);
+    assert.equal((await dimensions(frame))[1], 80);
+    await assertAnchor(frame, expandedAnchor);
+    await scaleSlider.press('Home');
+    assert.equal((await model(newGroup.id)).groupCollapsedScale, 0.75);
+    assert.equal((await dimensions(frame))[1], 24);
+    await assertAnchor(frame, expandedAnchor);
+    await undo();
+    await undo();
+    assert.deepEqual(await dimensions(frame), resized);
+    await title.click();
+    await node('box').locator('.decor-box-title').click({ modifiers: ['Shift'] });
+    assert.equal(await scaleSlider.isVisible(), false);
+    assert.equal(await widthSlider.isVisible(), false);
+    await page.locator('.editor-mode-btn[data-mode="normal"]').click();
 
     await openMenu();
     assert.equal(await fold.innerText(), '展开分组');
     await fold.click();
     assert.deepEqual(await dimensions(frame), expanded);
     assert(await node('a').isVisible());
+    await motion.waitFor({ state: 'detached' });
     const transition = await frame.evaluate((el) => {
       const button = el.querySelector('.group-collapse-btn');
       button.click();
+      const overlay = el.nextElementSibling;
+      if (!overlay?.classList.contains('group-fold-motion')) return null;
+      const animations = overlay.getAnimations({ subtree: true });
+      function sample(time) {
+        for (const animation of animations) {
+          animation.pause();
+          animation.currentTime = time;
+        }
+        const frame = overlay.querySelector('.group-fold-frame');
+        const title = overlay.querySelector('.group-fold-title');
+        const shell = overlay.querySelector('.group-fold-count-shell');
+        const count = overlay.querySelector('.group-fold-count');
+        return { width: frame.getBoundingClientRect().width, height: frame.getBoundingClientRect().height,
+          frameOpacity: Number(getComputedStyle(frame).opacity), titleX: title.getBoundingClientRect().left,
+          shellOpacity: Number(getComputedStyle(shell).opacity),
+          countColor: getComputedStyle(count).color, countOpacity: getComputedStyle(count).opacity,
+          digits: count.lastElementChild.textContent };
+      }
+      const samples = [sample(0), sample(130), sample(260)];
+      sample(130);
       button.click();
-      return { overlays: el.querySelectorAll('.group-fold-motion').length, expanded: button.getAttribute('aria-expanded') };
+      return { samples, reversed: el.nextElementSibling === overlay, expanded: button.getAttribute('aria-expanded') };
     });
-    assert.deepEqual(transition, { overlays: options.reduced ? 0 : 1, expanded: 'true' });
+    if (options.reduced) {
+      assert.equal(transition, null);
+      await foldButton.click();
+    } else {
+      const [start, middle, end] = transition.samples;
+      assert(transition.reversed && transition.expanded === 'true');
+      for (const prop of ['width', 'height', 'frameOpacity', 'shellOpacity']) {
+        assert(start[prop] > middle[prop] && middle[prop] > end[prop], prop + ' decreases during collapse');
+      }
+      assert(start.titleX < middle.titleX && middle.titleX < end.titleX);
+      assert.equal(middle.countColor, start.countColor);
+      assert(transition.samples.every((sample) => sample.digits === '2' && sample.countOpacity === '1'));
+      await motion.waitFor({ state: 'detached' });
+    }
     await openMenu();
     await fold.click();
     assert.deepEqual(await dimensions(frame), resized);
+    if (!options.reduced) {
+      await motion.evaluate((overlay) => {
+        for (const animation of overlay.getAnimations({ subtree: true })) {
+          animation.pause();
+          animation.currentTime = 130;
+        }
+      });
+      await screenshot('fold-midpoint', 'allow');
+    }
     const exportInfo = await page.evaluate(async (groupId) => {
       const result = await CanvasModule.exportImage({ scale: 1 });
       const exportDom = new DOMParser().parseFromString(__testExportXml, 'image/svg+xml');
       const exportGroup = exportDom.querySelector('.node[data-id="' + groupId + '"]');
       return { type: result.blob.type, copies: exportDom.querySelectorAll('.node[data-id="' + groupId + '"]').length,
         capsule: exportGroup?.classList.contains('group-collapsed'),
-        noOverlay: !exportGroup?.querySelector('.group-fold-motion'),
+        noOverlay: !exportDom.querySelector('.group-fold-motion')
+          && !exportGroup?.classList.contains('group-fold-animating'),
         hiddenEdge: !exportDom.querySelector('.canvas-edge[data-id="member-link"]') };
     }, newGroup.id);
     assert.deepEqual(exportInfo, { type: 'image/png', copies: 1, capsule: true, noOverlay: true, hiddenEdge: true });
@@ -479,8 +585,10 @@ async function groupAndTextRegression(browser, config, options = {}) {
       const button = el.querySelector('.group-collapse-btn');
       button.click();
       button.click();
-      window.dispatchEvent(new PageTransitionEvent('pagehide'));
-      return el.querySelectorAll('.group-fold-motion').length;
+      document.documentElement.dataset.desktopMinimized = '1';
+      window.dispatchEvent(new Event('canvasdesktop:visibility'));
+      delete document.documentElement.dataset.desktopMinimized;
+      return el.parentElement.querySelectorAll('.group-fold-motion').length;
     });
     assert.equal(overlaysOnHide, 0);
     assert.equal(await page.evaluate(() => EditorShell.saveNow()), true);
@@ -488,7 +596,7 @@ async function groupAndTextRegression(browser, config, options = {}) {
     assert.equal(saved.find((item) => item.id === 'a').text, '123\n456');
     const savedGroup = saved.find((item) => item.id === newGroup.id);
     assert.equal(savedGroup.groupCollapsed, true);
-    assert.deepEqual([savedGroup.groupCollapsedWidth, savedGroup.groupCollapsedHeight], resized);
+    assert.equal(savedGroup.groupCollapsedScale, storedScale);
     await openCanvas(page, config, name);
     assert.deepEqual(await dimensions(frame), resized);
     assert(await node('a').evaluate((el) => el.classList.contains('group-fold-hidden')));
@@ -500,6 +608,7 @@ async function groupAndTextRegression(browser, config, options = {}) {
     await node('a').waitFor({ state: 'visible' });
     assert.equal(await text.innerText(), '123\n456');
     await node('b').waitFor({ state: 'hidden' });
+    await assertAnchor(legacy, rotatedAnchor);
     assert.equal(await page.evaluate(() => __testData.edges.some((edge) => edge.id === 'member-link')), true);
     await undo();
     assert(await frame.isVisible());

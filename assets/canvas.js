@@ -1375,6 +1375,7 @@
           }
           if (!resizedIds.size) return;
           contentBoundsCache = null;
+          sceneGeometryCache = null;
           edgesIncidentTo(resizedIds).forEach(function (edge) {
             updateEdgePath(edge);
           });
@@ -3765,7 +3766,10 @@
     function applyTransform(el, x, y) {
       el.style.setProperty('--node-x', x + 'px');
       el.style.setProperty('--node-y', y + 'px');
-      el.style.transform = 'translate(var(--node-x), var(--node-y)) rotate(var(--decor-rotation, 0deg)) scale(var(--fold-scale, 1))';
+      const capsule = el.__groupCapsuleAnchor
+        ? ' translate(calc(var(--group-anchor-x) - 100%), calc(var(--group-anchor-y) - 50%))' : '';
+      el.style.transform = 'translate(var(--node-x), var(--node-y))' + capsule
+        + ' rotate(var(--decor-rotation, 0deg)) scale(var(--fold-scale, 1))';
     }
 
     function prefersReducedMotion() {
@@ -3843,9 +3847,7 @@
       return { w: w, h: h };
     }
     function nodeRect(node) {
-      const s = cachedNodeSize(nodeMap.get(node.id), node.id);
-      const r = Number(node.radius) >= 0 ? Number(node.radius) : 10;
-      return { x: node.x, y: node.y, w: s.w, h: s.h, r: r };
+      return rectFromXY(node, node.x, node.y);
     }
 
     // ── 文本框与内容节点的“显式跟随”关系 ─────────────────────
@@ -4036,9 +4038,17 @@
       state.textSnapResult = { nodeId: box.id, targetId: best.target.id, x: snapped.x, y: snapped.y };
       renderTextSnapGuides(snappedRect, best.rect, best.x, best.y);
     }
-    function rectFromXY(node, x, y) {
-      const s = cachedNodeSize(nodeMap.get(node.id), node.id);
+    function rectFromXY(node, x, y, size) {
+      const el = nodeMap.get(node.id);
+      const s = size || cachedNodeSize(el, node.id);
       const r = Number(node.radius) >= 0 ? Number(node.radius) : 10;
+      const anchor = el && el.__groupCapsuleAnchor;
+      if (anchor) {
+        const w = Math.abs(anchor.cos) * s.w + Math.abs(anchor.sin) * s.h;
+        const h = Math.abs(anchor.sin) * s.w + Math.abs(anchor.cos) * s.h;
+        return { x: x + anchor.x - (anchor.cos * s.w + w) / 2,
+          y: y + anchor.y - (anchor.sin * s.w + h) / 2, w: w, h: h, r: s.h / 2 };
+      }
       return { x: x, y: y, w: s.w, h: s.h, r: r };
     }
     function edgeEndpointRect(node, rect) {
@@ -4700,13 +4710,11 @@
       let maxX = inkBox ? inkBox.maxX : -Infinity;
       let maxY = inkBox ? inkBox.maxY : -Infinity;
       fitNodes.forEach(function (n) {
-        const el = nodeMap.get(n.id);
-        const w = el ? el.offsetWidth : 160;
-        const h = el ? el.offsetHeight : 36;
-        if (n.x < minX) minX = n.x;
-        if (n.y < minY) minY = n.y;
-        if (n.x + w > maxX) maxX = n.x + w;
-        if (n.y + h > maxY) maxY = n.y + h;
+        const rect = nodeRect(n);
+        minX = Math.min(minX, rect.x);
+        minY = Math.min(minY, rect.y);
+        maxX = Math.max(maxX, rect.x + rect.w);
+        maxY = Math.max(maxY, rect.y + rect.h);
       });
       const padding = 80;
       const contentW = (maxX - minX) + padding * 2;
@@ -5082,11 +5090,9 @@
       if (!n) return false;
       if (isAttachmentNode(n)) activateAttachment(id); // 搜索/目录/定位跳转不等待 observer 下一拍
       if (isImageNode(n)) activateCanvasImage(id);      // 图片定位同样立即揭示，不等待 observer 稳定窗口
-      const el = nodeMap.get(id);
-      const w = el ? el.offsetWidth : 160;
-      const h = el ? el.offsetHeight : 36;
-      const cx = n.x + w / 2;
-      const cy = n.y + h / 2;
+      const rect = nodeRect(n);
+      const cx = rect.x + rect.w / 2;
+      const cy = rect.y + rect.h / 2;
       const vRect = viewport.getBoundingClientRect();
       targetPanX = vRect.width / 2 - cx * targetScale;
       targetPanY = vRect.height / 2 - cy * targetScale;
@@ -6485,7 +6491,7 @@
       if (type === 'dashed-box') return '<rect class="decor-dashed-box" x="4" y="7" width="92" height="86" rx="10"/>';
       if (type === 'group-box') {
         const x = fixedSvgInset(8, node.width || 340);
-        const y = fixedSvgInset(8, groupBoxDimensions(node, false).height);
+        const y = fixedSvgInset(8, groupBoxDimensions(node).height);
         return '<rect class="decor-group-box" x="' + svgNum(x) + '" y="' + svgNum(y)
           + '" width="' + svgNum(100 - x * 2) + '" height="' + svgNum(100 - y * 2) + '" rx="2"/>';
       }
@@ -6561,7 +6567,7 @@
       const countLabel = (node.groupCollapsed ? '+' : '−') + count;
       if (button.textContent !== countLabel) {
         button.textContent = countLabel;
-        if (node.groupCollapsed && node.groupCollapsedWidth == null) nodeSizeCache.delete(node.id);
+        if (node.groupCollapsed) nodeSizeCache.delete(node.id);
       }
       button.title = node.groupCollapsed ? taskbookCopy('展开分组', 'Expand group') : taskbookCopy('折叠分组', 'Collapse group');
       button.setAttribute('aria-label', button.title + taskbookCopy('，共 ' + count + ' 个节点', ', ' + count + ' nodes'));
@@ -6664,7 +6670,7 @@
         }
         if (editingDecorTitleId !== node.id && title.textContent !== (node.title || 'Untitled')) {
           title.textContent = node.title || 'Untitled';
-          if (node.groupCollapsed && node.groupCollapsedWidth == null) nodeSizeCache.delete(node.id);
+          if (node.groupCollapsed) nodeSizeCache.delete(node.id);
         }
         title.title = node.title || 'Untitled';
         header.style.setProperty('--group-title-bg', node.borderColor || '#d6b96a');
@@ -6889,7 +6895,7 @@
         title.contentEditable = 'false';
         title.classList.remove('editing');
         if (next !== editingDecorTitleOriginal) {
-          if (node.groupCollapsed && node.groupCollapsedWidth == null) nodeSizeCache.delete(node.id);
+          if (node.groupCollapsed) nodeSizeCache.delete(node.id);
           pushHistory();
           notify();
         }
@@ -7108,6 +7114,20 @@
           handle.className = 'decor-resize-handle decor-resize-' + dir;
           handle.dataset.resizeDir = dir;
           handle.addEventListener('mousedown', (e) => startDecorResize(node, dir, e));
+          if (dir === 'sw' && isGroupBoxNode(node)) {
+            handle.addEventListener('dblclick', (e) => {
+              if (readOnlyCanvas || !isCollapsedSemanticGroup(node)) return;
+              e.preventDefault();
+              e.stopPropagation();
+              if (groupCapsuleScale(node.groupCollapsedScale) === 1) return;
+              cancelGroupFoldAnimation(node.id);
+              setGroupCapsuleScale(node, 1);
+              renderEditedDecoration(node);
+              refreshDecorPanel();
+              pushHistory();
+              notify();
+            });
+          }
           wrap.appendChild(handle);
         });
         el.appendChild(wrap);
@@ -10958,8 +10978,8 @@
     const DECOR_GROUP_TITLE_COLORS = { light: '#ffffff', dark: '#2f2c24' };
     const GROUP_BOX_MIN_WIDTH = 20;
     const GROUP_BOX_MIN_HEIGHT = 8;
-    const GROUP_CAPSULE_MIN_WIDTH = 68;
-    const GROUP_CAPSULE_MIN_HEIGHT = 24;
+    const GROUP_CAPSULE_MIN_SCALE = 0.75;
+    const GROUP_CAPSULE_MAX_SCALE = 2.5;
     const DECOR_COLOR_PRESETS = [
       '#d9b7ad', '#e7dcc3', '#d9bd70', '#dbeecb', '#cfe3f7', '#96a5c4',
       '#f8d4dc', '#d58f88', '#d3ede8', '#f1ddc9', '#96b292', '#f2b978',
@@ -11317,6 +11337,7 @@
     let decorPanelContextSignature = '';
     let decorPanelLibraryReturnScrollTop = null;
     let dpKindLabel, dpWidth, dpWidthVal, dpHeight, dpHeightVal;
+    let dpCapsuleScale, dpCapsuleScaleVal, dpCapsuleScaleWrap, dpCapsuleScaleLabel;
     let dpFontSize, dpFontSizeVal, dpFontSizeWrap, dpRotation, dpRotationVal, dpOpacity, dpOpacityVal;
     let dpShapeColors, dpBorder, dpBorderState, dpFill, dpFillState, dpTextColor, dpTextColorState, dpTextColorWrap;
     let dpBorderWidth, dpBorderWidthVal, dpBorderWidthWrap, dpBorderStyleWrap, dpBorderStyleBtns, dpBorderStyleState;
@@ -12407,12 +12428,13 @@
         dpKindLabel.textContent = kindLabel;
       }
       const mixedText = englishUi ? 'Mixed' : '混合';
-      const allCapsules = panelTargets.every(isCollapsedSemanticGroup);
+      const capsuleTargets = panelTargets.filter(isCollapsedSemanticGroup);
+      const allCapsules = capsuleTargets.length === panelTargets.length;
       const widthState = editSharedState(panelTargets, (item) => isGroupBoxNode(item)
-        ? groupBoxDimensions(item, isCollapsedSemanticGroup(item), true).width
+        ? groupBoxDimensions(item).width
         : Math.round(Number(item.width) || 240));
       const heightState = editSharedState(panelTargets, (item) => isGroupBoxNode(item)
-        ? groupBoxDimensions(item, isCollapsedSemanticGroup(item)).height
+        ? groupBoxDimensions(item).height
         : Math.round(Number(item.height) || 120));
       const fontSizeState = editSharedState(panelTargets, (item) => Math.round(Number(item.fontSize)
         || (styledText ? decorTextPresetBase(item.boxStyle).fontSize : 22)));
@@ -12430,14 +12452,18 @@
         : 'solid');
       const rotation = rotationState.value;
       const opacity = opacityState.value;
-      dpWidth.min = allCapsules ? GROUP_CAPSULE_MIN_WIDTH : 20;
-      dpHeight.min = allCapsules ? GROUP_CAPSULE_MIN_HEIGHT : 8;
-      dpWidth.max = dpHeight.max = allCapsules ? DECOR_MAX_SIZE : 2000;
-      dpWidth.step = dpHeight.step = allCapsules ? 1 : 5;
       dpWidth.value = width; dpWidthVal.textContent = widthState.mixed ? mixedText : width + 'px';
       dpHeight.value = height; dpHeightVal.textContent = heightState.mixed ? mixedText : height + 'px';
       setEditMixedControl(dpWidth, widthState.mixed);
       setEditMixedControl(dpHeight, heightState.mixed);
+      if (dpCapsuleScaleWrap) dpCapsuleScaleWrap.hidden = !allCapsules;
+      if (dpCapsuleScaleLabel) dpCapsuleScaleLabel.textContent = englishUi ? 'Capsule scale' : '胶囊缩放';
+      if (allCapsules && dpCapsuleScale) {
+        const state = editSharedState(capsuleTargets, (item) => Math.round(groupCapsuleScale(item.groupCollapsedScale) * 100));
+        dpCapsuleScale.value = state.value;
+        dpCapsuleScaleVal.textContent = state.mixed ? mixedText : state.value + '%';
+        setEditMixedControl(dpCapsuleScale, state.mixed);
+      }
       if (dpFontSize) dpFontSize.value = fontSize;
       if (dpFontSizeVal) dpFontSizeVal.textContent = fontSizeState.mixed ? mixedText : fontSize + 'px';
       setEditMixedControl(dpFontSize, fontSizeState.mixed);
@@ -12451,8 +12477,8 @@
       if (dpShapeColors) dpShapeColors.hidden = !(shape || styledText);
       const simpleBlock = shape && isColorBlockNode(node);
       const lineOnly = shape && isLineOnlyDecorShapeType(node.shapeType);
-      if (dpWidthWrap) dpWidthWrap.hidden = false;
-      if (dpHeightWrap) dpHeightWrap.hidden = false;
+      if (dpWidthWrap) dpWidthWrap.hidden = capsuleTargets.length > 0;
+      if (dpHeightWrap) dpHeightWrap.hidden = capsuleTargets.length > 0;
       if (dpFontSizeWrap) dpFontSizeWrap.hidden = !styledText;
       if (dpBorderWidthWrap) dpBorderWidthWrap.hidden = !styledText;
       if (dpBorderStyleWrap) dpBorderStyleWrap.hidden = !styledText;
@@ -12669,6 +12695,7 @@
     function renderEditedDecoration(node) {
       const el = nodeMap.get(node.id);
       if (!el) return;
+      if (isGroupBoxNode(node)) cancelGroupFoldAnimation(node.id);
       applyNodeStyle(el, node);
       renderDecoration(el, node);
     }
@@ -12696,6 +12723,8 @@
 
     function editDecorationField(prop, value) {
       const targets = decorNodeTargets();
+      if (prop === 'groupCollapsedScale' && (!targets.length || !targets.every(isCollapsedSemanticGroup))) return false;
+      if ((prop === 'width' || prop === 'height') && targets.some(isCollapsedSemanticGroup)) return false;
       if (!targets.length) {
         editDecorToolDefaultField(prop, value);
         return false;
@@ -12705,12 +12734,8 @@
       } else {
         targets.forEach((node) => {
           const sizingGroup = isGroupBoxNode(node) && (prop === 'width' || prop === 'height');
-          if (sizingGroup && isCollapsedSemanticGroup(node)) {
-            const horizontal = prop === 'width';
-            const key = horizontal ? 'groupCollapsedWidth' : 'groupCollapsedHeight';
-            const min = horizontal ? GROUP_CAPSULE_MIN_WIDTH : GROUP_CAPSULE_MIN_HEIGHT;
-            cancelGroupFoldAnimation(node.id);
-            node[key] = Math.max(min, value);
+          if (prop === 'groupCollapsedScale') {
+            setGroupCapsuleScale(node, value);
           } else {
             node[prop] = value;
             if (sizingGroup && prop === 'height') delete node.groupExpandedHeight;
@@ -13246,8 +13271,7 @@
             node.width = width;
             node.height = height;
             node.rotation = rotation;
-            delete node.groupCollapsedWidth;
-            delete node.groupCollapsedHeight;
+            setGroupCapsuleScale(node, 1);
           } else if (isGroupBoxNode(node)) {
             delete node.groupExpandedHeight;
           }
@@ -14330,10 +14354,14 @@
       dpKindLabel = q('[data-role="decor-kind-label"]');
       dpWidth = q('[data-role="decor-width"]');
       dpWidthVal = q('[data-role="decor-width-val"]');
-      dpWidthWrap = q('[data-role="decor-width-wrap"]');
+      dpWidthWrap = dpWidth?.closest('.sp-field');
       dpHeight = q('[data-role="decor-height"]');
       dpHeightVal = q('[data-role="decor-height-val"]');
-      dpHeightWrap = q('[data-role="decor-height-wrap"]');
+      dpHeightWrap = dpHeight?.closest('.sp-field');
+      dpCapsuleScale = q('[data-role="decor-capsule-scale"]');
+      dpCapsuleScaleVal = q('[data-role="decor-capsule-scale-val"]');
+      dpCapsuleScaleWrap = q('[data-role="decor-capsule-scale-wrap"]');
+      dpCapsuleScaleLabel = q('[data-role="decor-capsule-scale-label"]');
       dpFontSize = q('[data-role="decor-font-size"]');
       dpFontSizeVal = q('[data-role="decor-font-size-val"]');
       dpFontSizeWrap = q('[data-role="decor-font-size-wrap"]');
@@ -14424,6 +14452,7 @@
       [
         [dpWidth, 'width', (v) => Math.round(Number(v)), dpWidthVal, (v) => v + 'px'],
         [dpHeight, 'height', (v) => Math.round(Number(v)), dpHeightVal, (v) => v + 'px'],
+        [dpCapsuleScale, 'groupCollapsedScale', (v) => Number(v) / 100, dpCapsuleScaleVal, (v) => Math.round(v * 100) + '%'],
         [dpFontSize, 'fontSize', (v) => Math.round(Number(v)), dpFontSizeVal, (v) => v + 'px'],
         [dpBorderWidth, 'borderWidth', (v) => Number(v), dpBorderWidthVal, (v) => v + 'px'],
         [dpRotation, 'rotation', (v) => Math.round(Number(v)), dpRotationVal, (v) => v + '°'],
@@ -16815,6 +16844,7 @@
         idsBeingDragged = new Set([node.id]);
       }
 
+      idsBeingDragged.forEach(cancelGroupFoldAnimation);
       // 记录每个被拖节点的起始位置
       const starts = new Map();
       let minX = Infinity;
@@ -16899,7 +16929,7 @@
       if (readOnlyCanvas) return;
       if (e.button !== 0 || !isDecorationNode(node)) return;
       const collapsed = isCollapsedSemanticGroup(node);
-      if (collapsed && dir !== 'e' && dir !== 's' && dir !== 'se') return;
+      if (collapsed && dir !== 'sw') return;
       if (currentMode() !== 'decor' && !isTextBoxNode(node) && !collapsed) return;
       if (isGroupBoxNode(node) && (dir === 'n' || dir === 'ne' || dir === 'nw')) return;
       e.preventDefault();
@@ -16907,7 +16937,9 @@
       if (!selectedNodeIds.has(node.id) || selectedNodeIds.size !== 1 || selectedEdgeIds.size) {
         selectNodes([node.id], false);
       }
-      const size = isGroupBoxNode(node) ? groupBoxDimensions(node, collapsed, true) : {
+      const el = nodeMap.get(node.id);
+      const measured = collapsed && cachedNodeSize(el, node.id);
+      const size = collapsed ? { width: measured.w, height: measured.h } : isGroupBoxNode(node) ? groupBoxDimensions(node) : {
         width: Math.max(20, Number(node.width) || 240),
         height: Math.max(8, Number(node.height) || 120),
       };
@@ -16916,8 +16948,7 @@
         mode: 'decor-resize',
         nodeId: node.id,
         groupCapsule: collapsed,
-        startCollapsedWidth: node.groupCollapsedWidth,
-        startCollapsedHeight: node.groupCollapsedHeight,
+        startCapsuleScale: node.groupCollapsedScale,
         startLegacyHeight: node.groupExpandedHeight,
         startStoredHeight: node.height,
         dir: dir,
@@ -16933,7 +16964,6 @@
         rotation: Number(node.rotation) || 0,
         moved: false,
       };
-      const el = nodeMap.get(node.id);
       if (el) el.classList.add('resizing');
     }
 
@@ -16949,6 +16979,19 @@
       const sin = Math.sin(rad);
       const localDx = cos * dx + sin * dy;
       const localDy = -sin * dx + cos * dy;
+      if (drag.groupCapsule) {
+        const halfHeight = drag.startH / 2;
+        const delta = (-localDx * drag.startW + localDy * halfHeight)
+          / (drag.startW * drag.startW + halfHeight * halfHeight);
+        const nextScale = groupCapsuleScale(groupCapsuleScale(drag.startCapsuleScale) * (1 + delta));
+        if (nextScale === groupCapsuleScale(node.groupCollapsedScale)) return;
+        setGroupCapsuleScale(node, nextScale);
+        renderEditedDecoration(node);
+        sceneGeometryCache = null;
+        refreshDecorPanel();
+        redrawMinimap();
+        return;
+      }
       const east = drag.dir.indexOf('e') >= 0;
       const west = drag.dir.indexOf('w') >= 0;
       const south = drag.dir.indexOf('s') >= 0;
@@ -16956,25 +16999,17 @@
       const nextW = cleanDecorNumber(
         east ? drag.startW + localDx : (west ? drag.startW - localDx : drag.startW),
         drag.startW,
-        drag.groupCapsule ? GROUP_CAPSULE_MIN_WIDTH : 20,
+        20,
         DECOR_MAX_SIZE,
         true,
       );
       const nextH = cleanDecorNumber(
         south ? drag.startH + localDy : (north ? drag.startH - localDy : drag.startH),
         drag.startH,
-        drag.groupCapsule ? GROUP_CAPSULE_MIN_HEIGHT : 8,
+        8,
         DECOR_MAX_SIZE,
         true,
       );
-      if (drag.groupCapsule) {
-        if (east) node.groupCollapsedWidth = nextW;
-        if (south) node.groupCollapsedHeight = nextH;
-        renderEditedDecoration(node);
-        refreshDecorPanel();
-        redrawMinimap();
-        return;
-      }
       const sx = east ? 1 : (west ? -1 : 0);
       const sy = south ? 1 : (north ? -1 : 0);
       const shiftLocalX = sx * (nextW - drag.startW) / 2;
@@ -18127,14 +18162,11 @@
           if (!referenceOnlyCanvas && currentMode() === 'decor' && !isDecorationNode(n)) return;
           if (!referenceOnlyCanvas && currentMode() !== 'decor' && isShapeNode(n) && !selectableAnchor) return;   // 图案仍限图案模式；图片可随框选选中
         }
-        const el = nodeMap.get(n.id);
-        const size = nodeSizes && nodeSizes.get(n.id);
-        const w = size ? size.w : (el ? el.offsetWidth : 160);
-        const h = size ? size.h : (el ? el.offsetHeight : 36);
-        const overlaps = n.x < rect.x + rect.w
-          && n.x + w > rect.x
-          && n.y < rect.y + rect.h
-          && n.y + h > rect.y;
+        const box = rectFromXY(n, n.x, n.y, nodeSizes && nodeSizes.get(n.id));
+        const overlaps = box.x < rect.x + rect.w
+          && box.x + box.w > rect.x
+          && box.y < rect.y + rect.h
+          && box.y + box.h > rect.y;
         if (overlaps) out.push(n.id);
       });
       return out;
@@ -18145,13 +18177,11 @@
         if (!node || isEdgeAnchorNode(node)) return false;
         const el = nodeMap.get(node.id);
         if (!el || el.hidden || el.offsetParent === null) return false;
-        const size = nodeSizes && nodeSizes.get(node.id);
-        const width = size ? size.w : (el.offsetWidth || 160);
-        const height = size ? size.h : (el.offsetHeight || 36);
-        return node.x < rect.x + rect.w
-          && node.x + width > rect.x
-          && node.y < rect.y + rect.h
-          && node.y + height > rect.y;
+        const box = rectFromXY(node, node.x, node.y, nodeSizes && nodeSizes.get(node.id));
+        return box.x < rect.x + rect.w
+          && box.x + box.w > rect.x
+          && box.y < rect.y + rect.h
+          && box.y + box.h > rect.y;
       });
     }
 
@@ -19537,7 +19567,7 @@
       if (readOnlyCanvas || drawTool !== 'select' || selectedNodeIds.size !== 1) return null;
       const group = findNode(selectedNodeIds.values().next().value);
       if (!semanticGroupMembers(group).length || group.groupCollapsed) return null;
-      const size = groupBoxDimensions(group, false);
+      const size = groupBoxDimensions(group);
       const x = Number(group.x) || 0;
       const y = Number(group.y) || 0;
       const point = clientToSurface(e.clientX, e.clientY);
@@ -24150,8 +24180,8 @@
         if (selectedNodeIds.has(n.id) || editingNodeId === n.id) {
           visible = true;                         // 选中 / 编辑中的节点永不裁，拖动也不会闪隐
         } else {
-          const s = cachedNodeSize(el, n.id);
-          visible = !(n.x > r.x1 || n.x + s.w < r.x0 || n.y > r.y1 || n.y + s.h < r.y0);
+          const box = nodeRect(n);
+          visible = !(box.x > r.x1 || box.x + box.w < r.x0 || box.y > r.y1 || box.y + box.h < r.y0);
         }
         el.classList.toggle('culled', !visible);
       });
@@ -24177,11 +24207,11 @@
       if (!contentBoundsCache) {
         data.nodes.forEach(function (n) {
           if (isEdgeAnchorNode(n) || isCanvasNodeVisuallyHidden(n.id)) return;
-          const s = cachedNodeSize(nodeMap.get(n.id), n.id);
-          if (n.x < minX) minX = n.x;
-          if (n.y < minY) minY = n.y;
-          if (n.x + s.w > maxX) maxX = n.x + s.w;
-          if (n.y + s.h > maxY) maxY = n.y + s.h;
+          const box = nodeRect(n);
+          minX = Math.min(minX, box.x);
+          minY = Math.min(minY, box.y);
+          maxX = Math.max(maxX, box.x + box.w);
+          maxY = Math.max(maxY, box.y + box.h);
         });
         contentBoundsCache = { minX: minX, minY: minY, maxX: maxX, maxY: maxY };
       } else {
@@ -24251,7 +24281,7 @@
         if (isEdgeAnchorNode(n) || isCanvasNodeVisuallyHidden(n.id)) return;
         seen.add(n.id);
         if (incremental && !changes.nodeIds.has(n.id) && mmNodeMap.has(n.id)) return;
-        const sz = cachedNodeSize(nodeMap.get(n.id), n.id);
+        const sz = nodeRect(n);
         let dot = mmNodeMap.get(n.id);
         if (!dot) {
           dot = document.createElement('div');
@@ -24259,8 +24289,8 @@
           minimapNodes.appendChild(dot);
           mmNodeMap.set(n.id, dot);
         }
-        dot.style.left = (ox + (n.x - minX) * s) + 'px';
-        dot.style.top = (oy + (n.y - minY) * s) + 'px';
+        dot.style.left = (ox + (sz.x - minX) * s) + 'px';
+        dot.style.top = (oy + (sz.y - minY) * s) + 'px';
         dot.style.width = Math.max(2, sz.w * s) + 'px';
         dot.style.height = Math.max(2, sz.h * s) + 'px';
         // 节点有颜色时小地图也带一点该色调（用 data-color，CSS 给柔和底色）
@@ -24289,9 +24319,9 @@
         if (!node) return;
         const dot = mmNodeMap.get(id);
         if (!dot) { needsFullRedraw = true; return; }
-        const sz = cachedNodeSize(nodeMap.get(id), id);
-        dot.style.left = (ox + (pos.x - minX) * s) + 'px';
-        dot.style.top = (oy + (pos.y - minY) * s) + 'px';
+        const sz = rectFromXY(node, pos.x, pos.y);
+        dot.style.left = (ox + (sz.x - minX) * s) + 'px';
+        dot.style.top = (oy + (sz.y - minY) * s) + 'px';
         dot.style.width = Math.max(2, sz.w * s) + 'px';
         dot.style.height = Math.max(2, sz.h * s) + 'px';
       });
@@ -24798,28 +24828,53 @@
       return !!(group && group.groupCollapsed && semanticGroupMembers(group).length);
     }
 
-    function groupBoxDimensions(group, collapsed, measureAutoWidth) {
-      if (collapsed) {
-        const el = measureAutoWidth && nodeMap.get(group.id);
-        return {
-          width: group.groupCollapsedWidth == null ? (el ? cachedNodeSize(el, group.id).w : null)
-            : cleanDecorNumber(group.groupCollapsedWidth, 116, GROUP_CAPSULE_MIN_WIDTH, DECOR_MAX_SIZE, true),
-          height: group.groupCollapsedHeight == null ? 32
-            : cleanDecorNumber(group.groupCollapsedHeight, 32, GROUP_CAPSULE_MIN_HEIGHT, DECOR_MAX_SIZE, true),
-        };
-      }
+    function groupBoxDimensions(group) {
       return {
         width: Math.max(GROUP_BOX_MIN_WIDTH, Number(group.width) || 240),
         height: Math.max(GROUP_BOX_MIN_HEIGHT, Number(group.groupExpandedHeight) || Number(group.height) || 120),
       };
     }
 
+    function groupCapsuleScale(value) {
+      return cleanDecorNumber(value == null ? 100 : Number(value) * 100, 100,
+        GROUP_CAPSULE_MIN_SCALE * 100, GROUP_CAPSULE_MAX_SCALE * 100, true) / 100;
+    }
+
+    function setGroupCapsuleScale(group, value) {
+      const scale = groupCapsuleScale(value);
+      if (scale === 1) delete group.groupCollapsedScale;
+      else group.groupCollapsedScale = scale;
+    }
+
+    function groupCapsuleAnchor(box) {
+      // Same local coordinates as the expanded count button's right midpoint.
+      return { x: box.width - 4, y: -8 };
+    }
+
     function applyGroupGeometry(el, group, collapsed) {
-      const size = groupBoxDimensions(group, collapsed);
-      const autoWidth = size.width == null;
-      const width = autoWidth ? 'max-content' : size.width + 'px';
-      const height = size.height + 'px';
-      el.classList.toggle('group-capsule-auto-width', autoWidth);
+      const box = groupBoxDimensions(group);
+      const scale = collapsed ? groupCapsuleScale(group.groupCollapsedScale) : 1;
+      const wasCollapsed = !!el.__groupCapsuleAnchor;
+      const width = collapsed ? 'max-content' : box.width + 'px';
+      const height = (collapsed ? 32 * scale : box.height) + 'px';
+      if (collapsed) {
+        const point = groupCapsuleAnchor(box);
+        const angle = (Number(group.rotation) || 0) * Math.PI / 180;
+        const cos = Math.cos(angle), sin = Math.sin(angle);
+        const cx = box.width / 2, cy = box.height / 2;
+        const x = cx + (point.x - cx) * cos - (point.y - cy) * sin;
+        const y = cy + (point.x - cx) * sin + (point.y - cy) * cos;
+        el.__groupCapsuleAnchor = { x: x, y: y, cos: cos, sin: sin };
+        el.style.setProperty('--group-anchor-x', x + 'px');
+        el.style.setProperty('--group-anchor-y', y + 'px');
+        el.style.setProperty('--group-capsule-scale', scale);
+      } else if (wasCollapsed) {
+        delete el.__groupCapsuleAnchor;
+        el.style.removeProperty('--group-anchor-x');
+        el.style.removeProperty('--group-anchor-y');
+        el.style.removeProperty('--group-capsule-scale');
+      }
+      if (collapsed !== wasCollapsed) applyTransform(el, group.x, group.y);
       if (el.style.width !== width || el.style.height !== height) {
         el.style.width = width;
         el.style.height = height;
@@ -24846,7 +24901,7 @@
 
     function refreshSemanticGroupMembershipFromBounds(group) {
       if (!isGroupBoxNode(group) || isCollapsedSemanticGroup(group)) return false;
-      const size = groupBoxDimensions(group, false);
+      const size = groupBoxDimensions(group);
       const left = Number(group.x) || 0;
       const top = Number(group.y) || 0;
       const right = left + size.width;
@@ -24910,39 +24965,114 @@
       const motion = groupFoldAnimations.get(id);
       if (!motion) return;
       groupFoldAnimations.delete(id);
-      motion.animation.cancel();
-      motion.surfaceAnimation.cancel();
+      motion.element.classList.remove('group-fold-animating');
+      motion.animations.forEach((animation) => animation.cancel());
       motion.overlay.remove();
     }
 
-    function currentGroupFoldGeometry(group, el, collapsed) {
-      const motion = groupFoldAnimations.get(group.id);
-      if (motion) {
-        const style = getComputedStyle(motion.overlay);
-        return { width: style.width, height: style.height, borderRadius: style.borderRadius };
+    function cancelGroupFoldAnimations() {
+      groupFoldAnimations.forEach((_, id) => cancelGroupFoldAnimation(id));
+    }
+
+    function groupFoldAppearance(group, el, collapsed) {
+      // Both snapshots use the expanded box's local axes, including for rotated groups.
+      const anchor = groupCapsuleAnchor(groupBoxDimensions(group));
+      const baseX = collapsed ? anchor.x - el.offsetWidth : 0;
+      const baseY = collapsed ? anchor.y - el.offsetHeight / 2 : 0;
+      const title = el.querySelector('.decor-box-title');
+      const count = el.querySelector('.group-collapse-btn');
+      const header = collapsed ? el.querySelector('.group-header') : title;
+      function bounds(element) {
+        return {
+          left: baseX + element.offsetLeft + 'px',
+          top: baseY + element.offsetTop + 'px',
+          width: element.offsetWidth + 'px',
+          height: element.offsetHeight + 'px',
+        };
       }
+      function textStyle(element, style) {
+        return { ...bounds(element), fontSize: style.fontSize, padding: style.padding };
+      }
+      const label = getComputedStyle(title);
+      const badge = getComputedStyle(count);
+      const pill = getComputedStyle(header);
       return {
-        width: el.offsetWidth + 'px',
-        height: el.offsetHeight + 'px',
-        borderRadius: collapsed ? '999px' : '8px',
+        title: { ...textStyle(title, label), color: label.color },
+        count: textStyle(count, badge), countColor: badge.color,
+        titleFont: label.fontFamily, countFont: badge.fontFamily,
+        pill: { ...bounds(header), backgroundColor: pill.backgroundColor, boxShadow: pill.boxShadow },
+        countShell: { ...bounds(count), backgroundColor: badge.backgroundColor, boxShadow: badge.boxShadow,
+          borderWidth: badge.borderTopWidth, borderColor: badge.borderTopColor },
       };
     }
 
-    function animateGroupFold(group, el, start) {
+    function animateGroupFold(group, el, expanded, collapsed) {
+      const box = groupBoxDimensions(group);
       const overlay = document.createElement('div');
-      overlay.className = 'group-fold-motion';
+      overlay.className = 'decor-object group-fold-motion';
       overlay.setAttribute('aria-hidden', 'true');
-      el.appendChild(overlay);
-      const end = currentGroupFoldGeometry(group, el, !!group.groupCollapsed);
-      const options = { duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' };
-      const animation = overlay.animate([{ ...start, opacity: 0.85 }, { ...end, opacity: 0 }], options);
-      const visual = el.querySelector(group.groupCollapsed ? '.group-header' : '.decor-content');
-      const surfaceAnimation = visual.animate([{ opacity: 0.15 }, { opacity: 1 }], options);
-      const motion = { overlay, animation, surfaceAnimation };
+      overlay.dataset.groupId = group.id;
+      overlay.dataset.fillMode = el.dataset.fillMode;
+      overlay.style.cssText = el.style.cssText;
+      overlay.style.width = box.width + 'px';
+      overlay.style.height = box.height + 'px';
+      overlay.style.zIndex = getComputedStyle(el).zIndex;
+      applyTransform(overlay, group.x, group.y);
+      const frame = el.querySelector('.decor-content').cloneNode(true);
+      frame.classList.add('group-fold-frame');
+      overlay.appendChild(frame);
+      function part(name, value) {
+        const element = document.createElement('div');
+        element.className = 'group-fold-' + name;
+        if (value) element.textContent = value;
+        overlay.appendChild(element);
+        return element;
+      }
+      const pill = part('title-shell');
+      const countShell = part('count-shell');
+      countShell.style.borderStyle = 'solid';
+      const title = part('title', group.title || 'Untitled');
+      title.style.font = '800 12px/1.15 ' + expanded.titleFont;
+      const count = part('count');
+      count.style.font = '700 11px/1 ' + expanded.countFont;
+      const signs = document.createElement('span');
+      signs.className = 'group-fold-count-sign';
+      const minus = document.createElement('span'), plus = document.createElement('span');
+      minus.textContent = '−';
+      plus.textContent = '+';
+      signs.append(minus, plus);
+      const digits = document.createElement('span');
+      digits.textContent = el.querySelector('.group-collapse-btn').textContent.slice(1);
+      count.append(signs, digits);
+
+      el.after(overlay);
+      el.classList.add('group-fold-animating');
+      const options = { duration: 260, easing: 'ease-in-out', fill: 'both' };
+      const folding = !!group.groupCollapsed;
+      function animate(element, keyframes) {
+        // Use the same curve and keyframes in both directions.
+        return element.animate(keyframes, { ...options, direction: folding ? 'normal' : 'reverse' });
+      }
+      const animations = [
+        animate(frame, [{ transform: 'scale(1)', transformOrigin: '50% 0', opacity: 1 },
+          { transform: 'scale(.025, .015)', transformOrigin: '50% 0', opacity: 0 }]),
+        animate(pill, [expanded.pill, collapsed.pill]),
+        animate(title, [expanded.title, collapsed.title]),
+        animate(countShell, [expanded.countShell, collapsed.countShell]),
+        animate(countShell, [{ opacity: 1 }, { opacity: 1, offset: 0.35 }, { opacity: 0 }]),
+        animate(count, [expanded.count, collapsed.count]),
+        // The digits keep their surface contrast while the colored pill is still on its way.
+        animate(count, [{ color: expanded.countColor }, { color: expanded.countColor, offset: 0.94 },
+          { color: collapsed.countColor, offset: 0.99 }, { color: collapsed.countColor }]),
+        animate(minus, [{ opacity: 1 }, { opacity: 1, offset: 0.72 }, { opacity: 0, offset: 0.88 }, { opacity: 0 }]),
+        animate(plus, [{ opacity: 0 }, { opacity: 0, offset: 0.72 }, { opacity: 1, offset: 0.88 }, { opacity: 1 }]),
+      ];
+      const motion = { element: el, overlay, animations };
       groupFoldAnimations.set(group.id, motion);
-      animation.onfinish = function () {
-        if (groupFoldAnimations.get(group.id) === motion) groupFoldAnimations.delete(group.id);
-        overlay.remove();
+      animations[0].onfinish = function () {
+        if (groupFoldAnimations.get(group.id) === motion && animations[0].playState === 'finished') {
+          cancelGroupFoldAnimation(group.id);
+        }
       };
     }
 
@@ -24954,9 +25084,11 @@
       if (editingDecorTitleId !== null) commitDecorTitleEdit();
       const wasCollapsed = !!group.groupCollapsed;
       const el = nodeMap.get(group.id);
-      const animate = canWAAPI(el) && !prefersReducedMotion() && !document.hidden;
-      const start = animate && currentGroupFoldGeometry(group, el, wasCollapsed);
-      cancelGroupFoldAnimation(group.id);
+      const animate = canWAAPI(el) && !prefersReducedMotion() && !document.hidden
+        && document.documentElement.dataset.desktopMinimized !== '1';
+      const motion = animate && groupFoldAnimations.get(group.id);
+      const start = animate && !motion && groupFoldAppearance(group, el, wasCollapsed);
+      if (!motion) cancelGroupFoldAnimation(group.id);
       restoreLegacyGroupHeight(group);
       if (group.groupCollapsed) {
         delete group.groupCollapsed;
@@ -24966,7 +25098,15 @@
       pushHistory();
       notify();
       applySelection();
-      if (start) animateGroupFold(group, el, start);
+      if (motion) {
+        const lead = motion.animations[0];
+        const target = lead.playbackRate > 0 ? 0 : lead.effect.getTiming().duration;
+        if ((lead.currentTime || 0) === target) cancelGroupFoldAnimation(group.id);
+        else motion.animations.forEach((animation) => animation.reverse());
+      } else if (start) {
+        const end = groupFoldAppearance(group, el, !wasCollapsed);
+        animateGroupFold(group, el, wasCollapsed ? end : start, wasCollapsed ? start : end);
+      }
       showCanvasToast(wasCollapsed ? taskbookCopy('分组已展开', 'Group expanded') : taskbookCopy('分组已折叠', 'Group collapsed'));
     }
 
@@ -25540,7 +25680,7 @@
     // ── 撤销 / 重做 ────────────────────────
     function applySnapshot(snap, options) {
       options = options || {};
-      groupFoldAnimations.forEach((_, id) => cancelGroupFoldAnimation(id));
+      cancelGroupFoldAnimations();
       removalGhosts.forEach(function (ghost) {
         ghost.getAnimations().forEach(function (animation) { animation.cancel(); });
         ghost.remove();
@@ -26077,10 +26217,9 @@
             const node = findNode(drag.nodeId);
             if (node) {
               if (drag.groupCapsule) {
-                if (drag.startCollapsedWidth == null) delete node.groupCollapsedWidth;
-                else node.groupCollapsedWidth = drag.startCollapsedWidth;
-                if (drag.startCollapsedHeight == null) delete node.groupCollapsedHeight;
-                else node.groupCollapsedHeight = drag.startCollapsedHeight;
+                if (drag.startCapsuleScale == null) delete node.groupCollapsedScale;
+                else node.groupCollapsedScale = drag.startCapsuleScale;
+                sceneGeometryCache = null;
               } else {
                 node.x = drag.startX;
                 node.y = drag.startY;
@@ -26437,7 +26576,7 @@
     }
     // 窗口失焦时一并清理空格态 + 方向键态——否则 Alt-Tab 切走会卡住
     function onWindowBlur() {
-      groupFoldAnimations.forEach((_, id) => cancelGroupFoldAnimation(id));
+      cancelGroupFoldAnimations();
       cancelInteractionPaint();
       cancelPanInertia();
       if (arrowPanRaf != null) { cancelAnimationFrame(arrowPanRaf); arrowPanRaf = null; arrowTickTs = 0; }
@@ -26560,6 +26699,10 @@
     window.addEventListener('blur', onWindowBlur);
     window.addEventListener('pagehide', onWindowBlur);
     document.addEventListener('visibilitychange', function () { if (document.hidden) onWindowBlur(); });
+    window.addEventListener('canvasdesktop:visibility', function () {
+      if (document.documentElement.dataset.desktopMinimized === '1') cancelGroupFoldAnimations();
+    });
+    document.addEventListener('editor:modechange', cancelGroupFoldAnimations);
     window.addEventListener('resize', refreshViewportRect);
     window.addEventListener('resize', keepRememberedViewportCentered);
     window.addEventListener('resize', requestEdgesCanvasRender);
@@ -28260,10 +28403,8 @@
       }
       data.nodes.forEach(function (n) {
         if (n.kind === 'pdf' || isEdgeAnchorNode(n) || isCanvasNodeVisuallyHidden(n.id)) return;
-        const el = nodeMap.get(n.id);
-        const w = el ? el.offsetWidth : 160;
-        const h = el ? el.offsetHeight : 36;
-        includeExportBounds({ minX: n.x, minY: n.y, maxX: n.x + w, maxY: n.y + h });
+        const box = nodeRect(n);
+        includeExportBounds({ minX: box.x, minY: box.y, maxX: box.x + box.w, maxY: box.y + box.h });
       });
 
       const exportEdges = [];
@@ -28321,8 +28462,8 @@
         + '.table-node-grip, .table-drag-strip, .table-node-actions, .table-grid-toolbar, .table-edge-add, '
         + '.table-grid-corner, .table-column-head, .table-row-head'
       ).forEach(function (e) { e.remove(); });
-      clone.querySelectorAll('.selected, .is-selected, .editing, .dragging, .culled').forEach(function (e) {
-        e.classList.remove('selected', 'is-selected', 'editing', 'dragging', 'culled');
+      clone.querySelectorAll('.selected, .is-selected, .editing, .dragging, .culled, .group-fold-animating').forEach(function (e) {
+        e.classList.remove('selected', 'is-selected', 'editing', 'dragging', 'culled', 'group-fold-animating');
       });
       // 连线/墨迹 SVG 层固定 4000×3000，导出可能超出 → 不裁切
       clone.querySelectorAll('.canvas-edges-layer, .canvas-ink-layer').forEach(function (svg) {
