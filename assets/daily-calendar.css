@@ -218,6 +218,13 @@ body.start-page[data-start-theme="dark"] .daily-workspace.review-active .calenda
   background: transparent;
 }
 
+.daily-page-calendar {
+  scrollbar-width: none;
+}
+.daily-page-calendar::-webkit-scrollbar {
+  display: none;
+}
+
 .calendar-shell {
   width: min(1380px, 100%); margin: 0 auto; color: var(--text);
 }

@@ -1078,6 +1078,7 @@ Cards 快捷键 `cards` 使用 `Mod-f`，通过 `insert:cards-template` 插入�
 - 日期间隔浮窗的总天数摘要与日期段列表（含列表子元素）在 `assets/styles.css` 的起步页全局禁选规则后显式允许文本选择，并由 `assets/start-sticky-notes.js` 的 `selectstart` 拦截器放行，支持鼠标选中后复制；修改时须同时保留样式和事件两处例外。
 
 - 日历是日常工作区的独立子页，由 `RelatumDailyCalendar(root,host)` 创建，提供 activate、beforeLeave、deactivate、destroy。日历与记账各有明确入口，不再内部切换或互相预热；日记保存失败阻止导航，离场取消读取与动效，工作区交接完成后销毁视图。
+- `assets/daily-calendar.css` 隐藏 `.daily-page-calendar` 根滚动容器的原生滚动条，保留滚动能力，使活动记录增减时月历和右侧卡片宽度稳定。
 - 日历随宿主冻结内部 CSS 入场，右栏 WAAPI 由页面作用域持有，完成后释放填充效果，重播、退场收尾时集中取消。缓存重进同步准备错峰入场，子页退场中返回则接续已暂停的动画；完整工作区交接继续按页面保留策略复核数据。验证见 `tests/daily-workspace-browser.js`。
 - 日记是每天一个 Markdown 文件，带 frontmatter：`title/date/tags/updatedAt`。
 - `app.py` 的日记索引只缓存最多 4096 篇摘要，不保留正文；每次请求仍检查文件修改/创建时间、大小和文件身份，变化项沿原解析路径重读，读取前后签名一致才缓存。保存/删除成功立即失效，外部删除或读取失败清理旧项，切换数据目录清空缓存；响应字典和标签列表独立复制。超过容量时保留有效缓存，额外日记只生成本次摘要，避免按扫描顺序反复淘汰造成全库重读。缓存使用独立锁，不增加通用数据锁的扫描范围。`tests/test_diary_index.py` 覆盖一致性、并发和容量边界；`tests/diary-index-performance.py --baseline-ref <旧提交>` 使用一次性日记库测量前后摘要耗时及文件查询/正文读取次数。
