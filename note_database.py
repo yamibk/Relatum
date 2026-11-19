@@ -10,6 +10,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import time
 import unicodedata
 import uuid
 from collections import defaultdict
@@ -457,23 +458,21 @@ class NoteDatabases:
             expr = f'c.value {comparison} ?'
         return f'EXISTS({clause} AND {expr})', args + [needle]
 
-    def _snapshot(self, connection, directory, database_id, query=None, *, include_values=True, last_page=False) -> dict:
-        table = connection.execute('SELECT name,revision FROM databases WHERE id=?', (database_id,)).fetchone()
-        if not table or not table['revision']:
-            return _missing(deleted=table is not None)
-        query = {} if query is None else query
-        if not isinstance(query, dict):
-            raise NotesError('数据库查询格式无效')
+    @staticmethod
+    def _columns(connection, database_id):
         columns = {row['id']: dict(row) for row in connection.execute(
             'SELECT id,name,type,width,hidden,choices FROM columns WHERE database_id=? ORDER BY COALESCE(display_order,position),position', (database_id,))}
-        option_labels = {}
         for column in columns.values():
             column['choices'] = json.loads(column['choices'])
             if column['type'] in CHOICE_TYPES:
                 column['choices'] = _choices_with_tones(column['type'], column['choices'])
-                labels = {option['id']: option['name'] for option in column['choices']}
-                option_labels[column['id']] = labels
-                column['choice_ids'] = labels
+                column['choice_ids'] = {option['id']: option['name'] for option in column['choices']}
+        return columns
+
+    def _query_scope(self, connection, database_id, columns, query):
+        if not isinstance(query, dict):
+            raise NotesError('数据库查询格式无效')
+        option_labels = {identity: column['choice_ids'] for identity, column in columns.items() if 'choice_ids' in column}
 
         def searchable(column_id, value):
             options = option_labels.get(column_id)
@@ -503,7 +502,15 @@ class NoteDatabases:
                 if condition:
                     conditions.append(condition)
                     parameters.extend(args)
-        where = ' WHERE ' + ' AND '.join(conditions)
+        return ' WHERE ' + ' AND '.join(conditions), parameters
+
+    def _snapshot(self, connection, directory, database_id, query=None, *, include_values=True, last_page=False) -> dict:
+        table = connection.execute('SELECT name,revision FROM databases WHERE id=?', (database_id,)).fetchone()
+        if not table or not table['revision']:
+            return _missing(deleted=table is not None)
+        query = {} if query is None else query
+        columns = self._columns(connection, database_id)
+        where, parameters = self._query_scope(connection, database_id, columns, query)
         total = connection.execute('SELECT count(*) FROM records AS r' + where, parameters).fetchone()[0]
         requested_page = query.get('page', 1)
         if type(requested_page) is not int or requested_page < 1:
@@ -529,13 +536,17 @@ class NoteDatabases:
         records = {row['id']: {'id': row['id'], 'values': {}} for row in connection.execute(
             f'SELECT r.id FROM records AS r{join}{where} ORDER BY {order} LIMIT ? OFFSET ?',
             sort_args + parameters + [PAGE_SIZE, (page - 1) * PAGE_SIZE])}
+        presentation = {}
         if include_values:
+            from note_database_chart import chart_options, read_view
+
             self._fill_records(connection, directory, database_id, columns, records)
+            presentation = {'chartView': read_view(connection, database_id, columns), 'chartOptions': chart_options(columns)}
         for column in columns.values():
             column['hidden'] = bool(column['hidden'])
             column.pop('choice_ids', None)
         return {'exists': True, 'name': table['name'], 'revision': table['revision'], 'columns': list(columns.values()),
-                'rows': list(records.values()), 'page': page, 'total': total, 'pageSize': PAGE_SIZE}
+                'rows': list(records.values()), 'page': page, 'total': total, 'pageSize': PAGE_SIZE, **presentation}
 
     def _fill_records(self, connection, directory, database_id, columns, records):
         if not records:
@@ -558,6 +569,33 @@ class NoteDatabases:
             return _missing()
         with self._connection(database) as connection:
             return self._snapshot(connection, database.parent, database_id, query)
+
+    def read_chart(self, note, database_id, query=None, chart=None) -> dict:
+        from note_database_chart import QUERY_BUDGET_SECONDS, missing_chart, summarize
+
+        database_id = _database_id(database_id)
+        _, path, _ = self._note(note)
+        database = self._database_path(path)
+        if database is None:
+            return missing_chart()
+        with self._connection(database) as connection:
+            deadline = time.monotonic() + QUERY_BUDGET_SECONDS
+            try:
+                connection.set_progress_handler(lambda: time.monotonic() >= deadline, 1000)
+                connection.execute('BEGIN')
+                table = connection.execute('SELECT revision FROM databases WHERE id=?', (database_id,)).fetchone()
+                if not table or not table['revision']:
+                    return missing_chart(deleted=table is not None)
+                columns = self._columns(connection, database_id)
+                where, parameters = self._query_scope(connection, database_id, columns, {} if query is None else query)
+                return {'exists': True, 'revision': table['revision'],
+                        **summarize(connection, columns, where, parameters, chart)}
+            except sqlite3.OperationalError as err:
+                if err.sqlite_errorcode == sqlite3.SQLITE_INTERRUPT:
+                    raise NotesError('图表汇总超时，请缩小筛选范围', status=503, code='chart_timeout') from err
+                raise
+            finally:
+                connection.set_progress_handler(None, 0)
 
     @staticmethod
     def _one(connection, sql, identity, *scope):
@@ -899,6 +937,9 @@ class NoteDatabases:
 
     @staticmethod
     def _delete_tables(connection, identities):
+        from note_database_chart import delete_views
+
+        delete_views(connection, identities)
         connection.executemany('DELETE FROM records WHERE database_id=?', ((identity,) for identity in identities))
         connection.executemany('DELETE FROM columns WHERE database_id=?', ((identity,) for identity in identities))
         connection.executemany('UPDATE databases SET name=NULL,revision=NULL WHERE id=?', ((identity,) for identity in identities))
@@ -983,6 +1024,14 @@ class NoteDatabases:
                 candidates, token = self._unused(connection, database.parent)
                 return {'count': len(candidates), 'candidateToken': token}
         with self._connection(database, 'rw') as connection:
+            if kind == 'setChartView':
+                from note_database_chart import set_view
+
+                connection.execute('BEGIN IMMEDIATE')
+                self._require_revision(connection, database_id, action.get('revision'))
+                if set_view(connection, database_id, self._columns(connection, database_id), action):
+                    self._touch(connection, database_id)
+                return self._snapshot(connection, database.parent, database_id, query)
             if kind == 'cleanup':
                 candidates, token = self._unused(connection, database.parent)
                 if token != action.get('candidateToken'):

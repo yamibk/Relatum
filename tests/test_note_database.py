@@ -434,8 +434,188 @@ class NoteDatabaseTests(unittest.TestCase):
                     copy_attachment_to_downloads(io.BytesIO(b'unused'), 'new.pdf')
         self.assertEqual({p.name: p.read_bytes() for p in downloads.iterdir()}, {'同名.pdf': b'original', '同名 (2).pdf': b'copy'})
 
+    def chart(self, chart=None, query=None, identity=TABLE):
+        return self.database.read_chart('Source.md', identity, query, chart)
+
+    def add_chart_records(self, rows):
+        return self.action('batchCells', query={'page': self.latest['total'] + 1},
+                           changes=[{'row': None, 'values': values} for values in rows])
+
+    def test_chart_view_is_lazy_transactional_and_moves_with_the_database(self):
+        self.save(FENCE + '\n' + SECOND_FENCE)
+        day = self.action('addColumn', name='日期', columnType='date')['addedColumn']
+        filename = self.directory / 'database.sqlite3'
+        default = {'mode': 'data', 'chart': None, 'valid': False}
+        spec = self.latest['chartOptions']['suggested']
+        self.assertEqual(spec, {'type': 'line', 'groupBy': day, 'metric': {'op': 'count'}, 'bucket': 'day'})
+        before = filename.read_bytes()
+        self.assertEqual(self.read()['chartView'], default)
+        self.assertEqual(self.action('setChartView', mode='data')['chartView'], default)
+        with self.assertRaises(NotesError):
+            self.action('setChartView', mode='chart')
+        with mock.patch.object(self.database, '_snapshot', side_effect=OSError('injected')):
+            with self.assertRaises(OSError):
+                self.action('setChartView', mode='chart', chart=spec)
+        self.assertEqual(filename.read_bytes(), before)
+        previous_revision = self.latest['revision']
+        saved = self.action('setChartView', mode='chart', chart=spec)
+        self.assertNotEqual(saved['revision'], previous_revision)
+        self.assertEqual(saved['chartView'], {'mode': 'chart', 'chart': spec, 'valid': True})
+        with self.assertRaises(NotesError) as stale:
+            self.database.action('Source.md', TABLE, {'type': 'setChartView', 'mode': 'data', 'revision': previous_revision})
+        self.assertEqual(stale.exception.code, 'revision_conflict')
+        self.assertEqual(self.read(identity='second')['chartView'], default)
+        self.assertEqual(self.action('setChartView', mode='chart')['revision'], saved['revision'])
+        self.action('renameColumn', column=day, name='完成日期')
+        self.assertEqual(self.latest['chartView'], saved['chartView'])
+        self.assertEqual(next(field['name'] for field in self.latest['chartOptions']['fields'] if field['id'] == day), '完成日期')
+        data_view = self.action('setChartView', mode='data')['chartView']
+        self.assertEqual(data_view, {'mode': 'data', 'chart': spec, 'valid': True})
+        self.assertEqual(self.action('setChartView', mode='chart')['chartView'], saved['chartView'])
+        self.store.create('', 'Folder', 'folder')
+        self.store.move('Source.md', 'Folder/Moved.md')
+        self.assertEqual(self.read(path='Folder/Moved.md')['chartView'], saved['chartView'])
+
+    def test_invalid_saved_chart_remains_repairable_and_is_removed_with_table(self):
+        self.save()
+        day = self.action('addColumn', name='Date', columnType='date')['addedColumn']
+        spec = self.latest['chartOptions']['suggested']
+        self.action('setChartView', mode='chart', chart=spec)
+        self.action('deleteColumn', column=day)
+        self.assertEqual(self.read()['chartView'], {'mode': 'chart', 'chart': spec, 'valid': False})
+        self.action('setChartView', mode='data')
+        with self.assertRaises(NotesError) as invalid:
+            self.action('setChartView', mode='chart')
+        self.assertEqual(invalid.exception.code, 'invalid_chart')
+        self.action('deleteTables', tables=[{'id': TABLE, 'revision': self.latest['revision']}])
+        self.assertTrue(self.read()['deleted'])
+        with closing(sqlite3.connect(self.directory / 'database.sqlite3')) as connection:
+            self.assertEqual(connection.execute('PRAGMA user_version').fetchone(), (3,))
+            self.assertEqual(connection.execute('SELECT count(*) FROM chart_views').fetchone(), (0,))
+
+    def test_chart_default_and_full_filtered_date_buckets(self):
+        self.assertFalse(self.chart()['exists'])
+        self.save()
+        day = self.action('addColumn', name='日期', columnType='date')['addedColumn']
+        state = self.action('addColumn', name='状态', columnType='status')['columns'][-1]
+        done = state['choices'][-1]['id']
+        dates = ['2026-11-17', '2026-11-17', '2026-11-18', '2026-11-15', '2026-11-16', '2026-11-17']
+        self.add_chart_records([{day: value, state['id']: done} for value in dates])
+        spec = self.chart()['chart']
+        self.assertEqual(spec, {'type': 'line', 'groupBy': day, 'bucket': 'day', 'metric': {'op': 'count'}})
+        self.assertEqual([(point['key'], point['value']) for point in self.chart()['groups']],
+                         list(zip(sorted(set(dates)), [1, 1, 3, 1])))
+        self.add_chart_records([{day: '2026-11-17', state['id']: done}] * 60 + [
+            {day: '2026-11-01', state['id']: done}, {day: '2026-12-01', state['id']: done},
+            {day: '2026-12-01', state['id']: state['choices'][0]['id']}, {state['id']: done},
+        ])
+        query = {'search': state['choices'][-1]['name'], 'page': 2, 'sort': {'column': day, 'direction': 'desc'},
+                 'filters': [{'column': state['id'], 'operator': 'equals', 'value': done}]}
+        self.assertEqual(len(self.read(query)['rows']), 19)
+        database_file = self.directory / 'database.sqlite3'
+        before = database_file.read_bytes()
+        weeks = self.chart({**spec, 'bucket': 'week'}, query)
+        months = self.chart({**spec, 'bucket': 'month'}, query)
+        self.assertEqual([(point['key'], point['value']) for point in weeks['groups']],
+                         [('2026-10-26', 1), ('2026-11-09', 1), ('2026-11-16', 65), ('2026-11-30', 1)])
+        self.assertEqual([(point['key'], point['value']) for point in months['groups']],
+                         [('2026-11-01', 67), ('2026-12-01', 1)])
+        self.assertEqual(months['revision'], self.latest['revision'])
+        self.assertEqual(database_file.read_bytes(), before)
+        self.assertEqual(self.chart(spec, {'search': 'no match'})['groups'], [])
+        self.action('deleteColumn', column=day)
+        with self.assertRaises(NotesError) as missing_column:
+            self.chart(spec)
+        self.assertEqual(missing_column.exception.code, 'invalid_chart')
+        self.action('deleteTables', tables=[{'id': TABLE, 'revision': self.latest['revision']}])
+        self.assertTrue(self.chart()['deleted'])
+
+    def test_chart_metrics_unset_checkbox_and_overlapping_tags(self):
+        self.save()
+        label = self.latest['columns'][0]['id']
+        number = self.action('addColumn', name='Amount', columnType='number')['addedColumn']
+        check = self.action('addColumn', name='Done', columnType='checkbox')['addedColumn']
+        tags = self.action('addColumn', name='Topics', columnType='multiSelect')['addedColumn']
+        choices = self.action('setChoices', column=tags, choices=[{'name': 'B'}, {'name': 'A'}])['columns'][-1]['choices']
+        b, a = (choice['id'] for choice in choices)
+        self.add_chart_records([
+            {label: 'A', number: -2, check: True, tags: [b, a, b]},
+            {label: 'A', number: 2, check: False, tags: [a]},
+            {label: 'B', number: 3, check: True},
+            {label: 'C'},
+        ])
+        for op, values in [('sum', [0, 3, None]), ('avg', [0, 3, None]),
+                           ('min', [-2, 3, None]), ('max', [2, 3, None])]:
+            with self.subTest(op=op):
+                chart = {'type': 'column', 'groupBy': label, 'metric': {'op': op, 'column': number}}
+                self.assertEqual([point['value'] for point in self.chart(chart)['groups']], values)
+        groups = self.chart({'type': 'doughnut', 'groupBy': check})['groups']
+        self.assertEqual([(point['key'], point['value']) for point in groups], [('0', 2), ('1', 2)])
+        chart = {'type': 'bar', 'groupBy': tags}
+        groups = self.chart(chart)['groups']
+        self.assertEqual([(point['key'], point['label'], point['value']) for point in groups], [(b, 'B', 1), (a, 'A', 2)])
+        for invalid in ({**chart, 'type': 'doughnut'}, {**chart, 'metric': {'op': 'min', 'column': number}}):
+            with self.assertRaises(NotesError) as error:
+                self.chart(invalid)
+            self.assertEqual(error.exception.code, 'invalid_chart')
+        with self.assertRaises(NotesError) as negative:
+            self.chart({'type': 'doughnut', 'groupBy': label, 'metric': {'op': 'min', 'column': number}})
+        self.assertEqual(negative.exception.code, 'chart_metric_domain')
+
+    def test_chart_numeric_extremes_and_limits(self):
+        self.save()
+        label = self.latest['columns'][0]['id']
+        number = self.action('addColumn', name='Amount', columnType='number')['addedColumn']
+        self.add_chart_records([{label: 'A', number: 1e308}] * 2)
+        spec = {'type': 'bar', 'groupBy': label, 'metric': {'op': 'avg', 'column': number}}
+        self.assertEqual(self.chart(spec)['groups'][0]['value'], 1e308)
+        spec['metric']['op'] = 'sum'
+        with self.assertRaises(NotesError) as overflow:
+            self.chart(spec)
+        self.assertEqual(overflow.exception.code, 'chart_numeric_range')
+        self.add_chart_records([{label: 'A', number: -1e308}, {label: 'A', number: -1e308},
+                                {label: 'A', number: 5e-324}])
+        self.assertEqual(self.chart(spec)['groups'][0]['value'], 5e-324)
+        for start in range(0, 500, 200):
+            self.add_chart_records([{label: str(index)} for index in range(start, min(500, start + 200))])
+        for chart_type in ('doughnut', 'bar'):
+            with self.assertRaises(NotesError) as too_many:
+                self.chart({'type': chart_type, 'groupBy': label})
+            self.assertEqual((too_many.exception.status, too_many.exception.code), (422, 'chart_group_limit'))
+        with mock.patch('note_database_chart.QUERY_BUDGET_SECONDS', 0):
+            with self.assertRaises(NotesError) as timed_out:
+                self.chart()
+        self.assertEqual((timed_out.exception.status, timed_out.exception.code), (503, 'chart_timeout'))
+        self.assertEqual(self.read()['total'], 505)
+
 
 class NoteDatabaseHttpTests(unittest.TestCase):
+    def test_chart_route_is_read_only_and_notes_owned(self):
+        from feature_profile import FEATURES, LaunchProfile
+        from tests.usage_v2_test_support import IsolatedUsage
+
+        with IsolatedUsage() as fixture:
+            note = 'Source.md'
+            (fixture.notes / note).write_text(FENCE, encoding='utf-8')
+            endpoint = '/api/note-database/chart'
+            payload = {'path': note, 'databaseId': TABLE}
+            self.assertFalse(fixture.request(endpoint, payload)[1]['exists'])
+            self.assertFalse((fixture.notes / 'Source.assets').exists())
+            status, snapshot = fixture.request('/api/note-database/action', {**payload, 'action': {'type': 'create'}})
+            self.assertEqual(status, 200)
+            status, model = fixture.request(endpoint, payload)
+            self.assertEqual((status, model['revision'], model['groups']), (200, snapshot['revision'], []))
+            self.assertEqual(model['chart']['groupBy'], snapshot['columns'][0]['id'])
+            self.assertEqual(fixture.request(endpoint, {**payload, 'path': '../Source.md'})[0], 403)
+            self.assertEqual(fixture.request(endpoint, {**payload, 'chart': []})[1]['code'], 'invalid_chart')
+            self.assertEqual(fixture.request(endpoint, {**payload, 'chart': 'x' * (64 * 1024)})[0], 413)
+            for enabled in ('notes', 'canvas'):
+                profile = LaunchProfile({key: key == enabled for key in FEATURES}, restricted=True)
+                fixture.server.launch_profile = profile
+                self.assertEqual(fixture.request(endpoint, payload)[0], 200 if enabled == 'notes' else 403)
+                for resource in ('note-database-chart.js', 'vendor/echarts/echarts.min.js'):
+                    self.assertEqual(profile.resource_allowed(resource), enabled == 'notes')
+
     def test_query_action_import_external_open_and_disabled_profile(self):
         import app
         from feature_profile import FEATURES, LaunchProfile

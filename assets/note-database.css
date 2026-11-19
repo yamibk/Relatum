@@ -70,8 +70,52 @@ body[data-start-theme="dark"] .note-database {
   padding: 4px 0;
 }
 .note-database [hidden] { display: none !important; }
-.note-database-toolbar { justify-content: flex-end; gap: 3px; padding: 0 0 3px; }
+.note-database-toolbar { justify-content: flex-end; flex-wrap: wrap; gap: 3px; padding: 0 0 3px; }
 .note-database-name-slot { position: relative; flex: 1; min-width: 0; }
+.note-database-tools, .note-database-modes { display: flex; align-items: center; flex: none; gap: 2px; }
+.note-database-modes { align-self: center; padding: 2px; border-radius: 7px; background: var(--db-header); }
+.note-database .note-database-modes button {
+  border: 0;
+  border-radius: 5px;
+  min-height: 24px;
+  padding: 1px 7px;
+  background: transparent;
+  white-space: nowrap;
+  color: var(--text-secondary, #686763);
+  transition: color 120ms ease-out, background-color 120ms ease-out;
+}
+.note-database .note-database-modes button[aria-pressed="true"] {
+  color: var(--text, inherit);
+  background: var(--db-paper);
+  box-shadow: inset 0 0 0 1px var(--db-line);
+}
+.note-database-chart-stage { position: relative; width: 100%; min-width: 0; height: clamp(200px, 28vw, 300px); contain: inline-size; }
+.note-database-chart-canvas { width: 100%; height: 100%; }
+.note-database-chart-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  text-align: center;
+  color: var(--text-secondary, #686763);
+  overflow-wrap: anywhere;
+}
+.note-database-chart-form { display: grid; gap: 7px; padding: 3px; }
+.note-database-chart-form > label { display: grid; gap: 3px; min-width: 0; }
+.note-database-chart-form > label > span:first-child,
+.note-database-chart-notice { color: var(--text-secondary, #686763); }
+.note-database-chart-notice { margin: 4px 6px; }
+.note-database-chart-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 4px; padding-top: 4px; }
+.note-database-chart-actions button { padding-inline: 10px; }
+.note-database-chart-actions .note-database-chart-confirm {
+  background: var(--db-hover);
+  box-shadow: inset 0 0 0 1px var(--db-line);
+  font-weight: 600;
+}
 .note-database button.note-database-move {
   position: absolute;
   inset-block: 0;

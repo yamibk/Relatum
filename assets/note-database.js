@@ -4,6 +4,8 @@
 
   const snapshotRoute = '/api/note-database';
   const actionRoute = snapshotRoute + '/action';
+  const chartRoute = snapshotRoute + '/chart';
+  const chartModuleUrl = new URL('note-database-chart.js', document.currentScript?.src || document.baseURI).href;
   const importRoute = snapshotRoute + '/attachment/import';
   const downloadRoute = snapshotRoute + '/attachment/download';
   const documentExtensions = ['.pdf', '.md', '.markdown', '.csv', '.tsv', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp', '.txt', '.rtf'];
@@ -15,6 +17,20 @@
     checkbox: ['勾选', 'Checkbox'], attachment: ['附件', 'Attachment'],
     select: ['单标签', 'Single tag'], multiSelect: ['多标签', 'Multiple tags'], status: ['状态', 'Status'],
   };
+  const chartTypes = { column: ['柱状图', 'Column chart'], bar: ['横向条形图', 'Horizontal bar chart'],
+    line: ['折线图', 'Line chart'], doughnut: ['环形图', 'Doughnut chart'] };
+  const chartMetrics = { sum: ['求和', 'Sum'], avg: ['平均值', 'Average'], min: ['最小值', 'Minimum'], max: ['最大值', 'Maximum'] };
+  const chartBuckets = { day: ['日', 'Day'], week: ['周', 'Week'], month: ['月', 'Month'] };
+  const chartMessages = {
+    loading: ['正在加载图表…', 'Loading chart…'],
+    empty: ['没有可绘制的记录。可修改筛选条件，或到数据表添加记录。', 'No chart data. Change the filters or add records in Data.'],
+    invalid_chart: ['图表字段已不可用，请重新选择字段。', 'A chart field is unavailable. Choose another field.'],
+    chart_group_limit: ['分组太多。请缩小筛选范围，或使用更粗的日期粒度。', 'Too many groups. Narrow the filters or use a larger date interval.'],
+    chart_metric_domain: ['环形图需要非负数值且至少一组大于零。可改用记录数或另一种图表。', 'A doughnut chart needs non-negative values with at least one positive group. Try record count or another chart type.'],
+    chart_numeric_range: ['汇总数值超出范围。请缩小筛选范围或更换统计方式。', 'The result is out of range. Narrow the filters or change the aggregation.'],
+    chart_timeout: ['汇总耗时较长。可缩小筛选范围后重试。', 'Aggregation took too long. Narrow the filters and try again.'],
+    failed: ['图表未能加载。', 'Could not load the chart.'],
+  };
   const typeSymbols = { text: 'Aa', number: '#' };
   const choiceTones = { default: ['默认', 'Default'], neutral: ['灰色', 'Gray'], brown: ['棕色', 'Brown'],
     orange: ['橙色', 'Orange'], amber: ['黄色', 'Yellow'], green: ['绿色', 'Green'], blue: ['蓝色', 'Blue'],
@@ -25,6 +41,7 @@
   const sameCell = (a, b) => a?.[0] === b?.[0] && a?.[1] === b?.[1];
   const iconPaths = { plus: 'M8 3.5v9M3.5 8h9', search: 'M10.3 10.3l3.1 3.1M11.5 7a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Z',
     view: 'M2.5 4h11m-9 4h7m-5 4h3', more: 'M3.5 8h.2M7.9 8h.2M12.3 8h.2', prev: 'm10 4-4 4 4 4',
+    settings: 'M2 4h12M2 8h12M2 12h12M5 2.5v3m5.5 1v3M6.5 10.5v3',
     next: 'm6 4 4 4-4 4', '×': 'm5 5 6 6m0-6-6 6', check: 'm3.5 8 3 3 6-6',
     date: 'M3 4h10a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1ZM2 7h12M5 2v3m6-3v3',
     file: 'M4 2h5l4 4v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1ZM9 2v4h4',
@@ -35,7 +52,11 @@
     status: 'M14 8a6 6 0 1 1-12 0 6 6 0 0 1 12 0ZM8 4.5v4l2.5 1.5',
     trash: 'M2.5 4.5h11M6 4.5V3a.8.8 0 0 1 .8-.8h2.4a.8.8 0 0 1 .8.8v1.5m2 0-.6 8a1.3 1.3 0 0 1-1.3 1.3H5.9a1.3 1.3 0 0 1-1.3-1.3l-.6-8m2.7 2.2v4.8m2.6-4.8v4.8',
     download: 'M8 2.5v7m-3-3 3 3 3-3M3 11v2.5h10V11' };
-  let listSequence = 0;
+  let listSequence = 0, chartRuntime;
+
+  function loadChartRuntime() {
+    return chartRuntime ||= import(chartModuleUrl).catch(error => { chartRuntime = null; throw error; });
+  }
 
   const translate = (language, pair) => pair[language === 'en' ? 1 : 0];
   const label = (zh, en) => [zh, en];
@@ -270,7 +291,10 @@
     const tr = pair => translate(options.language?.(), pair);
     const sessions = new Map();
     const observed = new Map();
+    const drawingCharts = new Set();
     let observer = null;
+    let chartThemeObserver = null;
+    let offscreenChart = null;
     let activePath = null;
     let activeVisible = true;
     let destroyed = false;
@@ -310,6 +334,168 @@
       return isVisible(session) && Array.from(session.views).some(view => view.visible && view.host.isConnected);
     }
 
+    function stopChartRead(session) {
+      session.chartJob?.controller?.abort();
+      session.chartJob = null;
+    }
+
+    function clearChart(session) {
+      stopChartRead(session);
+      if (offscreenChart?.session === session) offscreenChart = null;
+    }
+
+    function releaseChart(view) {
+      view.chartPaint = null;
+      view.chartResize?.disconnect();
+      view.chartResize = null;
+      view.chartRenderer?.dispose();
+      view.chartRenderer = null;
+      if (drawingCharts.delete(view) && !drawingCharts.size) {
+        chartThemeObserver?.disconnect();
+        chartThemeObserver = null;
+      }
+    }
+
+    function chartVisible(view) {
+      return !!view.chartStage && !view.chartStage.hidden && view.chartStage.isConnected
+        && view.visible && (!view.observe || view.chartIntersecting) && isVisible(view.session);
+    }
+
+    function showChartStatus(view, status) {
+      const key = `${status}:${options.language?.()}`;
+      if (view.chartStatusKey === key) return;
+      view.chartStatusKey = key;
+      view.chartStatus.hidden = !status;
+      view.chartStatus.replaceChildren();
+      if (!status) return;
+      view.chartStatus.append(element('span', '', tr(chartMessages[status])));
+      if (status === 'failed' || status === 'chart_timeout') {
+        const retry = button(tr(label('重试', 'Retry')), () => {
+          clearChart(view.session);
+          view.session.stale = true;
+          void read(view.session);
+          syncCharts(view.session);
+        }, 'chart-retry');
+        view.chartStatus.append(retry);
+      } else if (!view.readOnly && ['invalid_chart', 'chart_group_limit', 'chart_metric_domain', 'chart_numeric_range'].includes(status)) {
+        view.chartStatus.append(button(tr(label('图表设置', 'Chart settings')), () => openChartSettings(view, view.chartSettings), 'chart-reconfigure'));
+      }
+    }
+
+    function paintChart(view, model) {
+      const language = options.language?.() || 'zh';
+      const dark = document.documentElement.dataset.startTheme === 'dark' || document.body.dataset.startTheme === 'dark';
+      if (view.chartPaint?.model === model && view.chartPaint.language === language && view.chartPaint.dark === dark) return;
+      const paint = view.chartPaint = { model, language, dark };
+      const current = () => view.chartPaint === paint && chartVisible(view);
+      const failed = () => {
+        if (!current()) return;
+        releaseChart(view);
+        showChartStatus(view, 'failed');
+      };
+      if (!view.chartRenderer) showChartStatus(view, 'loading');
+      drawingCharts.add(view);
+      if (!chartThemeObserver && window.MutationObserver) {
+        chartThemeObserver = new MutationObserver(() => {
+          for (const mounted of drawingCharts) if (chartVisible(mounted)) paintChart(mounted, mounted.chartPaint.model);
+        });
+        chartThemeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-start-theme'] });
+        chartThemeObserver.observe(document.body, { attributes: true, attributeFilter: ['data-start-theme'] });
+      }
+      void loadChartRuntime().then(async runtime => {
+        if (!current()) return;
+        const appearance = { language, dark };
+        if (view.chartRenderer) {
+          if (await view.chartRenderer.update(model, appearance) && current()) showChartStatus(view, '');
+          return;
+        }
+        const renderer = view.chartRenderer = runtime.mount(view.chartCanvas, model, appearance);
+        const painted = await renderer.ready;
+        if (painted && current()) showChartStatus(view, '');
+        // A language or theme update can reuse this instance while its engine is loading.
+        if (view.chartRenderer !== renderer || !chartVisible(view) || !window.ResizeObserver) return;
+        let width = painted ? view.chartCanvas.clientWidth : 0, height = painted ? view.chartCanvas.clientHeight : 0;
+        view.chartResize = new ResizeObserver(() => {
+          const nextWidth = view.chartCanvas.clientWidth, nextHeight = view.chartCanvas.clientHeight;
+          if (view.chartRenderer !== renderer || !chartVisible(view) || (nextWidth === width && nextHeight === height)) return;
+          width = nextWidth; height = nextHeight;
+          const currentPaint = view.chartPaint;
+          void renderer.resize().then(ok => {
+            if (ok && view.chartPaint === currentPaint && chartVisible(view)) showChartStatus(view, '');
+          }).catch(() => {
+            if (view.chartRenderer === renderer && chartVisible(view)) {
+              releaseChart(view);
+              showChartStatus(view, 'failed');
+            }
+          });
+        });
+        view.chartResize.observe(view.chartCanvas);
+      }).catch(failed);
+    }
+
+    function requestChart(session, key, revision, chart, query) {
+      const controller = new AbortController();
+      const job = session.chartJob = { key, controller };
+      const { path, databaseId } = session;
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]);
+      void request(chartRoute, { path, databaseId, query, chart }, signal).then(async model => {
+        if (session.chartJob !== job) return;
+        if (!model.exists || model.revision !== revision) {
+          session.stale = true;
+          await read(session);
+          if (session.chartJob !== job) return;
+          job.status = 'failed';
+        } else if (model.groups.some(point => Number.isFinite(point.value))) job.model = model;
+        else job.status = 'empty';
+        syncCharts(session);
+      }).catch(error => {
+        if (session.chartJob !== job) return;
+        job.status = Object.hasOwn(chartMessages, error.code) ? error.code : 'failed';
+        syncCharts(session);
+      });
+    }
+
+    function syncCharts(session) {
+      const chartView = session.page?.chartView;
+      if (chartView?.mode !== 'chart') { clearChart(session); return; }
+      const views = Array.from(session.views).filter(chartVisible);
+      if (!chartView.valid) {
+        clearChart(session);
+        for (const view of views) {
+          releaseChart(view);
+          showChartStatus(view, 'invalid_chart');
+        }
+        return;
+      }
+      if (!views.length) {
+        const job = session.chartJob;
+        if (job?.model && isVisible(session)) offscreenChart = { session, key: job.key, model: job.model };
+        stopChartRead(session);
+        return;
+      }
+      const { search, filters } = session.query;
+      const { revision } = session.page, { chart } = chartView;
+      const key = JSON.stringify([revision, chart, search, filters]);
+      if (session.chartJob?.key !== key) {
+        stopChartRead(session);
+        for (const view of views) {
+          releaseChart(view);
+          showChartStatus(view, session.readFailed ? 'failed' : 'loading');
+        }
+        if (session.stale || session.read || session.write || session.renderedQuery !== JSON.stringify(session.query)) return;
+        if (session.readFailed) return;
+        const cached = offscreenChart?.session === session ? offscreenChart : null;
+        if (cached) offscreenChart = null;
+        if (cached?.key === key) session.chartJob = { key, model: cached.model };
+        else requestChart(session, key, revision, chart, { search, filters });
+      }
+      const job = session.chartJob;
+      for (const view of views) {
+        if (job.model) paintChart(view, job.model);
+        else showChartStatus(view, job.status || 'loading');
+      }
+    }
+
     function announce(session, message) {
       if (session.status === message) return;
       session.status = message;
@@ -328,6 +514,7 @@
         session.redo.length = 0;
       }
       session.page = page;
+      session.readFailed = false;
       if (page.exists) {
         session.query.page = page.page;
         const columns = new Map(page.columns.map(column => [column.id, column]));
@@ -340,6 +527,7 @@
       }
       session.renderedQuery = JSON.stringify(session.query);
       for (const view of session.views) if (view.visible) draw(view);
+      syncCharts(session);
     }
 
     function markChanged(path, databaseId) {
@@ -366,6 +554,7 @@
       if (session.read) return session.readDone;
       if (!session.stale || !canRead(session) || session.write || options.pending?.(session.path, session.databaseId)) return;
       session.stale = false;
+      session.readFailed = false;
       const controller = new AbortController();
       session.read = controller;
       const task = async () => {
@@ -378,6 +567,7 @@
           } else if (!controller.signal.aborted) session.stale = true;
         } catch (error) {
           if (!controller.signal.aborted && canRead(session)) {
+            session.readFailed = true;
             announce(session, tr(label('读取数据库失败', 'Could not load database')));
             for (const view of session.views) if (!session.page && view.visible) draw(view);
           }
@@ -386,6 +576,7 @@
             session.read = null;
             session.readDone = null;
             if (session.stale) void read(session);
+            else syncCharts(session);
           }
         }
       };
@@ -431,7 +622,7 @@
           }
           if (JSON.stringify(session.query) === requestedQuery) applyPage(session, page, true);
           else {
-            if (session.page) session.page = { ...session.page, revision: page.revision };
+            if (session.page) session.page = { ...session.page, revision: page.revision, chartView: page.chartView };
             session.stale = true;
           }
           markChanged(session.path, session.databaseId);
@@ -451,6 +642,7 @@
           session.write = null;
           notifyDirty();
           if (session.stale) void read(session);
+          else syncCharts(session);
         }
       }
     }
@@ -487,6 +679,7 @@
       session.draft = null;
       notifyDirty();
       if (view.visible) draw(view);
+      syncCharts(session);
       if (restoreFocus && view.visible && isVisible(session)) focusCell(view, nextCell || [row.id, column.id]);
       else if (!view.root.contains(document.activeElement)) releasePinned(view);
     }
@@ -580,6 +773,7 @@
     }
 
     function clipboard(view, event, clear = false) {
+      if (view.table?.hidden) return;
       const range = bounds(view);
       if (!range || event.target.closest('input,textarea,select') || view.readOnly) return;
       if (view.session.draft || view.session.write) return;
@@ -650,6 +844,17 @@
       return saving.then(ok => {
         if (ok && view.host.isConnected && isVisible(session)) return callback();
       });
+    }
+
+    async function settleSession(session) {
+      if (session.write) {
+        try { await session.write; } catch (_) { return false; }
+      }
+      const draft = session.draft;
+      if (!draft) return true;
+      await draft.composition;
+      if (draft.error) return false;
+      return session.draft !== draft || await commitDraft(draft);
     }
 
     function adjacentCell(view, row, column, key, shift) {
@@ -1159,9 +1364,11 @@
 
     function changeQuery(session, patch, delay = 0) {
       stopRead(session);
+      session.readFailed = false;
       for (const view of session.views) view.pinned = null;
       Object.assign(session.query, { page: 1 }, patch);
       session.stale = true;
+      syncCharts(session);
       if (delay) session.timer = setTimeout(() => { session.timer = 0; void read(session); }, delay);
       else void read(session);
     }
@@ -1718,9 +1925,98 @@
       }
     }
 
+    function openChartSettings(view, anchor) {
+      panelAt(view, anchor, 'chart', (panel, close, { signal }) => {
+        const { session } = view;
+        const { fields = [], suggested } = session.page.chartOptions || {};
+        const compatible = Object.entries(chartTypes).filter(([type]) => fields.some(field => field.groupCharts.includes(type)));
+        if (!compatible.length) {
+          panel.append(element('p', 'note-database-chart-notice', tr(label('先添加可用于分组的字段，例如日期、文本或标签。',
+            'Add a grouping field first, such as a date, text, or tag.'))));
+          const dismiss = button(tr(label('关闭', 'Close')), () => close(true));
+          panel.append(dismiss);
+          return dismiss;
+        }
+        const initial = session.page.chartView?.chart || suggested;
+        const form = element('form', 'note-database-chart-form');
+        const field = (labelPair, role) => {
+          const name = tr(labelPair), wrapper = element('label'), input = select(name, [], '');
+          input.dataset.dbRole = role;
+          wrapper.append(element('span', '', name), input);
+          form.append(wrapper);
+          return { wrapper, input };
+        };
+        const type = field(label('图表类型', 'Chart type'), 'chart-type').input;
+        const group = field(label('分组字段', 'Group by'), 'chart-group').input;
+        const measure = field(label('统计值', 'Measure'), 'chart-measure').input;
+        const aggregation = field(label('汇总方式', 'Aggregation'), 'chart-aggregation');
+        const bucket = field(label('日期粒度', 'Date interval'), 'chart-bucket');
+        const actions = element('div', 'note-database-chart-actions');
+        const cancel = button(tr(label('取消', 'Cancel')), () => close(true), 'chart-cancel');
+        const save = element('button', 'note-database-chart-confirm', tr(label('确定', 'Confirm')));
+        save.type = 'submit'; save.dataset.dbRole = 'chart-confirm';
+        actions.append(cancel, save);
+        form.append(actions);
+        panel.append(form);
+        const fill = (control, entries, value) => {
+          if (view.panel?.choices) view.panel.choices.setOptions(control, entries.map(([key, name]) => ({ value: key, label: name })), value);
+          else {
+            control.replaceChildren(...entries.map(([key, name]) => new Option(name, key)));
+            control.value = entries.some(([key]) => key === value) ? value : entries[0]?.[0] || '';
+          }
+        };
+        const fieldName = field => field.name + (field.hidden ? tr(label('（隐藏）', ' (hidden)')) : '');
+        const updateFields = (groupId = group.value, measureId = measure.value, op = aggregation.input.value) => {
+          const groups = fields.filter(field => field.groupCharts.includes(type.value));
+          fill(group, groups.map(field => [field.id, fieldName(field)]), groupId);
+          const selected = groups.find(field => field.id === group.value);
+          const numbers = selected?.type === 'multiSelect' ? [] : fields.filter(field => field.metrics.length);
+          fill(measure, [['', tr(label('记录数', 'Record count'))], ...numbers.map(field => [field.id, fieldName(field)])], measureId);
+          const metric = numbers.find(field => field.id === measure.value);
+          aggregation.wrapper.hidden = !metric;
+          fill(aggregation.input, (metric?.metrics || []).map(key => [key, tr(chartMetrics[key])]), op || 'sum');
+          bucket.wrapper.hidden = selected?.type !== 'date';
+        };
+        fill(type, compatible.map(([key, names]) => [key, tr(names)]), initial?.type);
+        fill(bucket.input, Object.entries(chartBuckets).map(([key, names]) => [key, tr(names)]), initial?.bucket || 'day');
+        updateFields(initial?.groupBy, initial?.metric?.column, initial?.metric?.op);
+        for (const control of [type, group, measure]) control.addEventListener('change', () => updateFields());
+        form.addEventListener('submit', async event => {
+          event.preventDefault();
+          if (save.disabled || !group.value || !isVisible(session) || !view.host.isConnected) return;
+          const chart = { type: type.value, groupBy: group.value, metric: measure.value
+            ? { op: aggregation.input.value, column: measure.value } : { op: 'count' } };
+          if (!bucket.wrapper.hidden) chart.bucket = bucket.input.value;
+          save.disabled = cancel.disabled = true;
+          const result = await write(session, { type: 'setChartView', mode: 'chart', chart });
+          if (signal.aborted) return;
+          if (result) close(true);
+          else { save.disabled = cancel.disabled = false; save.focus({ preventScroll: true }); }
+        });
+        return type;
+      }, { name: tr(label('图表设置', 'Chart settings')) });
+    }
+
+    async function switchDatabaseMode(view, mode) {
+      const { session } = view;
+      if (session.chartSwitching || mode === (session.page?.chartView?.mode || 'data')) return;
+      session.chartSwitching = true;
+      try {
+        if (!await settleSession(session) || !view.host.isConnected || !isVisible(session) || !session.page?.exists) return;
+        if (mode === 'chart' && !session.page.chartView?.valid) openChartSettings(view, view.chartMode);
+        else {
+          view.panel?.close();
+          await write(session, { type: 'setChartView', mode });
+        }
+      } finally {
+        session.chartSwitching = false;
+      }
+    }
+
     function viewMenu(view, anchor) {
       panelAt(view, anchor, 'view', (panel, close) => {
         const { page, query } = view.session;
+        const chartMode = page.chartView?.mode === 'chart';
         if (!view.readOnly) panel.append(button(tr(label('重命名数据库', 'Rename database')), () => {
           close();
           renameDatabase(view, anchor);
@@ -1735,7 +2031,7 @@
           close(true);
           changeQuery(view.session, { sort: column ? { column, direction } : null });
         });
-        panel.append(sort);
+        if (!chartMode) panel.append(sort);
         const rules = element('div', 'note-database-view-rules');
         query.filters.forEach((rule, index) => {
           const column = page.columns.find(item => item.id === rule.column);
@@ -1752,6 +2048,7 @@
         add.disabled = query.filters.length >= 32;
         rules.append(add);
         panel.append(rules);
+        if (chartMode) return add;
         const fields = element('fieldset', 'note-database-visible-fields');
         fields.append(element('legend', '', tr(label('显示字段', 'Visible fields'))));
         const visible = shownColumns(page).length;
@@ -1935,7 +2232,7 @@
       });
     }
 
-    function buildGrid(view) {
+    function buildToolbar(view) {
       const { session, body } = view;
       body.replaceChildren();
       view.bar = element('div', 'note-database-toolbar');
@@ -1989,14 +2286,40 @@
       }, 'search-toggle');
       view.viewToggle = iconButton('view', tr(label('视图选项', 'View options')), () =>
         afterCellSave(view, () => viewMenu(view, view.viewToggle)), 'view');
-      view.bar.append(nameSlot, view.search, view.searchToggle);
+      const tools = element('div', 'note-database-tools');
+      tools.append(view.searchToggle);
+      view.bar.append(nameSlot);
       if (!view.readOnly) {
+        const modes = element('div', 'note-database-modes');
+        modes.setAttribute('role', 'group');
+        view.modeControls = modes;
+        view.dataMode = button('', () => void switchDatabaseMode(view, 'data'), 'data-mode');
+        view.chartMode = button('', () => void switchDatabaseMode(view, 'chart'), 'chart-mode');
+        modes.append(view.dataMode, view.chartMode);
+        view.bar.append(modes);
+      }
+      view.bar.append(view.search, tools);
+      if (!view.readOnly) {
+        view.chartSettings = iconButton('settings', tr(label('图表设置', 'Chart settings')),
+          () => openChartSettings(view, view.chartSettings), 'chart-settings');
+        tools.prepend(view.chartSettings);
         view.deleteTable = iconButton('trash', tr(label('删除数据库', 'Delete database')), () =>
           afterCellSave(view, () => deleteCurrentTable(view)), 'delete-database');
-        view.bar.append(view.deleteTable);
+        tools.append(view.deleteTable);
       }
-      view.bar.append(view.viewToggle);
+      tools.append(view.viewToggle);
+      view.chartStage = element('div', 'note-database-chart-stage');
+      view.chartStage.hidden = true;
+      view.chartCanvas = element('div', 'note-database-chart-canvas');
+      view.chartStatus = element('div', 'note-database-chart-status');
+      view.chartStatus.setAttribute('role', 'status');
+      view.chartStage.append(view.chartCanvas, view.chartStatus);
+      body.append(view.bar, view.chartStage);
+    }
 
+    function buildGrid(view) {
+      const { session, body } = view;
+      view.table = element('div', 'note-database-data');
       view.overflow = element('div', 'note-database-overflow');
       view.grid = element('table', 'note-database-grid');
       view.tracks = element('colgroup');
@@ -2022,9 +2345,10 @@
       view.next = iconButton('next', tr(label('下一页', 'Next')), () => changeQuery(session, { page: session.page.page + 1 }), 'next');
       view.pageText = element('span');
       view.pager.append(view.prev, view.pageText, view.next);
-      body.append(view.bar, view.overflow);
-      if (!view.readOnly) body.append(view.addRow);
-      body.append(view.pager);
+      view.table.append(view.overflow);
+      if (!view.readOnly) view.table.append(view.addRow);
+      view.table.append(view.pager);
+      body.append(view.table);
     }
 
     function renderView(view) {
@@ -2032,7 +2356,10 @@
       const page = session.page;
       if (!page?.exists) {
         view.panel?.close();
-        view.grid = null;
+        releaseChart(view);
+        stopObserving(view.chartStage);
+        view.bar = view.grid = view.table = view.chartStage = null;
+        view.mode = view.chartStatusKey = view.language = null;
         body.replaceChildren();
         if (!page && session.status) body.append(button(tr(label('重试', 'Retry')), () => refresh(session.path, false, session.databaseId)));
         if (page?.deleted) body.append(element('span', 'note-database-placeholder', tr(label('数据库已删除', 'Database deleted'))));
@@ -2043,10 +2370,36 @@
         }
         return;
       }
-      if (!view.grid) buildGrid(view);
+      if (!view.bar) buildToolbar(view);
+      const chartMode = page.chartView?.mode === 'chart';
+      const previousMode = view.mode;
+      view.mode = chartMode ? 'chart' : 'data';
+      if (!chartMode && !view.grid) buildGrid(view);
+      if (view.table) view.table.hidden = chartMode;
+      view.chartStage.hidden = !chartMode;
+      if (view.observe && previousMode !== view.mode) {
+        view.chartIntersecting = false;
+        if (chartMode) watch(view, view.chartStage);
+        else stopObserving(view.chartStage);
+      }
+      if (view.chartSettings) view.chartSettings.hidden = !chartMode;
+      if (view.modeControls) {
+        view.dataMode.setAttribute('aria-pressed', String(!chartMode));
+        view.chartMode.setAttribute('aria-pressed', String(chartMode));
+      }
+      if (previousMode && previousMode !== view.mode) {
+        view.modeAnimation?.cancel();
+        if (view.panel?.kind === 'view') view.panel.close();
+        if (chartMode) showChartStatus(view, 'loading');
+        else releaseChart(view);
+        const content = chartMode ? view.chartStage : view.table;
+        if (view.visible && isVisible(session) && document.documentElement.dataset.noteReducedMotion !== '1'
+            && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          view.modeAnimation = content.animate?.([{ opacity: .55 }, { opacity: 1 }], { duration: 120, easing: 'ease-out' });
+        }
+      }
       if (view.name.textContent !== (page.name || '')) view.name.textContent = page.name || '';
       const { query } = session;
-      const columns = shownColumns(page);
       const language = options.language?.() || 'zh';
       if (view.language !== language) {
         view.language = language;
@@ -2058,22 +2411,28 @@
           [view.addColumn, label('添加字段', 'Add field')], [view.addRow, label('添加记录', 'Add row')],
           [view.prev, label('上一页', 'Previous')], [view.next, label('下一页', 'Next')]];
         if (view.deleteTable) {
-          controls.push([view.deleteTable, label('删除数据库', 'Delete database')]);
+          controls.push([view.deleteTable, label('删除数据库', 'Delete database')], [view.chartSettings, label('图表设置', 'Chart settings')]);
           view.name.title = tr(label('双击重命名数据库', 'Double-click to rename database'));
+          view.modeControls.setAttribute('aria-label', tr(label('数据库显示方式', 'Database display')));
+          view.dataMode.textContent = tr(label('数据', 'Data'));
+          view.chartMode.textContent = tr(label('图表', 'Chart'));
         }
         for (const [control, names] of controls) {
+          if (!control) continue;
           control.title = tr(names);
           control.setAttribute('aria-label', control.title);
         }
       }
-      const activeBefore = document.activeElement;
-      const focusedCell = view.grid.contains(activeBefore) && activeBefore.classList.contains('note-database-cell-value');
-      const focusedHeader = view.header.contains(activeBefore) && activeBefore.dataset.dbRole;
       if (!view.searchComposing && view.search.value !== query.search) view.search.value = query.search;
       view.search.hidden = !(view.searchOpen ?? Boolean(query.search));
       view.searchToggle.setAttribute('aria-expanded', String(!view.search.hidden));
       view.searchToggle.classList.toggle('is-engaged', Boolean(query.search));
-      view.viewToggle.classList.toggle('is-engaged', Boolean(query.sort || query.filters.length || page.columns.some(column => column.hidden)));
+      view.viewToggle.classList.toggle('is-engaged', Boolean(query.filters.length || (!chartMode && (query.sort || page.columns.some(column => column.hidden)))));
+      if (chartMode) return;
+      const activeBefore = document.activeElement;
+      const focusedCell = view.grid.contains(activeBefore) && activeBefore.classList.contains('note-database-cell-value');
+      const focusedHeader = view.header.contains(activeBefore) && activeBefore.dataset.dbRole;
+      const columns = shownColumns(page);
       const headers = new Map();
       let width = view.readOnly ? 0 : 34;
       for (const column of columns) {
@@ -2161,29 +2520,42 @@
       }
     }
 
-    function stopObserving(view) {
-      if (!observed.delete(view.root)) return;
-      observer.unobserve(view.root);
+    function stopObserving(target) {
+      if (!target || !observed.delete(target)) return;
+      observer.unobserve(target);
       if (!observed.size) {
         observer.disconnect();
         observer = null;
       }
     }
 
-    function watch(view) {
+    function watch(view, target = view.root) {
       if (!observer) observer = new IntersectionObserver(entries => {
+        const changed = new Set();
         for (const entry of entries) {
           const current = observed.get(entry.target);
+          if (current && entry.target === current.chartStage) {
+            current.chartIntersecting = entry.isIntersecting;
+            if (!current.chartIntersecting) releaseChart(current);
+            changed.add(current.session);
+            continue;
+          }
           if (!current || current.visible === entry.isIntersecting) continue;
           current.visible = entry.isIntersecting;
           if (current.visible) {
             draw(current);
             void read(current.session);
-          } else if (current.session.draft?.view === current) dismissSuggestions(current.session.draft);
+          } else {
+            releaseChart(current);
+            if (current.panel?.kind === 'chart') current.panel.close();
+            if (current.session.draft?.view === current) dismissSuggestions(current.session.draft);
+          }
+          changed.add(current.session);
         }
+        for (const session of changed) syncCharts(session);
       });
-      observed.set(view.root, view);
-      observer.observe(view.root);
+      observed.set(target, view);
+      observer.observe(target);
     }
 
     function mount(host, { path, databaseId, readOnly = false, observe = false, onLayout, onMoveBlock } = {}) {
@@ -2198,11 +2570,12 @@
       status.setAttribute('role', 'status');
       root.append(body, status);
       host.append(root);
-      const view = { session, host, root, body, status, readOnly, onLayout, onMoveBlock, visible: !observe || !window.IntersectionObserver };
+      observe = observe && !!window.IntersectionObserver;
+      const view = { session, host, root, body, status, readOnly, onLayout, onMoveBlock, observe, visible: !observe };
       root.addEventListener('copy', event => clipboard(view, event));
       root.addEventListener('paste', event => clipboard(view, event));
       root.addEventListener('keydown', event => {
-        if (readOnly || composing(event) || !(event.ctrlKey || event.metaKey) || event.altKey
+        if (readOnly || view.mode === 'chart' || composing(event) || !(event.ctrlKey || event.metaKey) || event.altKey
             || event.target.closest('input,textarea,select') || view.panel || session.draft) return;
         const key = event.key.toLowerCase();
         if (key !== 'z' && key !== 'y') return;
@@ -2224,12 +2597,18 @@
         if (!view.addingRow) releasePinned(view, next);
       }));
       session.views.add(view);
-      if (view.visible) { draw(view); void read(session); }
-      else watch(view);
+      if (view.visible) { draw(view); void read(session); syncCharts(session); }
+      else {
+        if (session.page?.chartView?.mode === 'chart') draw(view);
+        watch(view);
+      }
       return () => {
         view.panel?.close();
+        view.modeAnimation?.cancel();
+        releaseChart(view);
         view.stopResize?.(false);
-        stopObserving(view);
+        stopObserving(view.root);
+        stopObserving(view.chartStage);
         view.visible = false;
         session.views.delete(view);
         const draft = session.draft;
@@ -2240,6 +2619,7 @@
           if (!draft.composition && !draft.error && !destroyed && isVisible(session)) void commitDraft(draft);
         }
         root.remove();
+        syncCharts(session);
       };
     }
 
@@ -2309,6 +2689,7 @@
       if (activePath === path && activeVisible === visible) return;
       for (const previous of sessionsFor(activePath)) {
         stopRead(previous);
+        clearChart(previous);
         previous.stale = true;
         if (previous.draft) {
           removeAttachmentPicker(previous.draft);
@@ -2316,6 +2697,8 @@
         }
         for (const view of previous.views) {
           view.panel?.close();
+          view.modeAnimation?.cancel();
+          releaseChart(view);
           view.stopResize?.(false);
           view.pinned = null;
         }
@@ -2327,14 +2710,18 @@
 
     function clearSession(session, force) {
       stopRead(session);
+      clearChart(session);
       if (session.draft) {
         removeAttachmentPicker(session.draft);
         dismissSuggestions(session.draft);
       }
       for (const view of session.views) {
         view.panel?.close();
+        view.modeAnimation?.cancel();
+        releaseChart(view);
         view.stopResize?.(false);
-        stopObserving(view);
+        stopObserving(view.root);
+        stopObserving(view.chartStage);
         view.visible = false;
         view.root.remove();
       }
@@ -2360,6 +2747,8 @@
         const moved = movedPath(path);
         if (moved === path) continue;
         stopRead(session);
+        clearChart(session);
+        for (const view of session.views) releaseChart(view);
         if (session.draft) {
           removeAttachmentPicker(session.draft);
           dismissSuggestions(session.draft);
@@ -2380,6 +2769,7 @@
     const languageChange = () => {
       for (const session of sessionsFor(activePath)) {
         for (const view of session.views) if (view.visible) { view.panel?.close(); draw(view); }
+        syncCharts(session);
       }
     };
     window.addEventListener('focus', focus);
@@ -2413,16 +2803,7 @@
       get dirty() { return dirty(); },
       async whenInputSettled(path) {
         const targets = path ? sessionsFor(path) : sessions.values();
-        for (const session of targets) {
-          if (session?.write) {
-            try { await session.write; } catch (_) { return false; }
-          }
-          const draft = session?.draft;
-          if (!draft) continue;
-          await draft.composition;
-          if (draft.error) return false;
-          if (session.draft === draft && !await commitDraft(draft)) return false;
-        }
+        for (const session of targets) if (!await settleSession(session)) return false;
         return true;
       },
       destroy() {

@@ -76,6 +76,14 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 实时预览数据库标题左侧的六点手柄在标题区域悬停或聚焦时显示，无可见文字或悬浮提示。拖动在正文显示顶层块边界，靠近上下边缘时滚动。`assets/note-database.js` 提供按钮，`assets/note-live-editor.js` 按该组件的源码范围移动一处完整围栏，沿用正文自动保存和单步撤销，保留数据库 ID 及 SQLite 会话数据。无效落点、Esc、切页和离场取消拖动。可在同篇两个同 ID 围栏之间插入正文，拖动其中一个，再用源码模式和一次撤销确认围栏位置与 ID。
 
+数据库图表底层由 `note_database.py` 复用路径授权、表结构及搜索筛选，`note_database_chart.py` 在同一 SQLite 快照内用完整匹配记录汇总。支持柱状、横向条形、日期折线及环形图。单次选择一个分组列和一个指标，使用现有列 ID，配置按请求传入。日期按日、周一开始的周或自然月分组。文本、单标签、状态和勾选可归类，未设置的勾选按表格显示归入未勾选，其他缺失分组值跳过。多标签只用于柱状/条形计数，一条记录可计入各自标签。记录数计算分组内的记录，数字指标支持求和、平均、最小和最大，跳过空值并保留空组指标为 `null`。环图使用互斥分类，数值须非负且至少一组为正。同一组的显示标签随最新列及选项名称按修订读取。不选配置时优先使用可见日期、状态、单标签、勾选、文本或多标签列，日期默认按日画记录数折线。
+
+实时预览数据库标题栏的「数据／图表」切换与图表设置复用原浮层和下拉。首次切图表按当前列推荐配置，确认后保存；切回数据保留配置。每篇笔记的 SQLite v3 首次保存时在事务内创建 `chart_views`，按数据库 ID 保存模式和列 ID 配置，同 ID 引用同步，随原伴生目录移动和备份，删除表时清除。旧库默认打开数据表，重启按已保存模式与当前记录恢复；搜索和筛选由两种模式共享并保留在当前会话。字段移除后原位显示修复提示。阅读模式显示已保存视图，PDF 使用上文的数据表投影。
+
+`assets/note-database.js` 在块的内容区显示 200–300px 的图表绘图区，SVG 内联宽度与正文的固有尺寸隔离。视图切换先结清单元格输入，保留 CodeMirror 正文选区与历史，沿用 `onLayout` 测量；表格 DOM 在当前挂载内复用。切换淡入为 120ms，减少动态效果时直接更新。可见的同 ID 引用按数据库修订、图表配置和搜索筛选共用一次汇总，交叉观察每批按数据库归并；视图宽度、深浅、语言、分页和排序独立于汇总请求。离屏释放绘制实例，最后一个可见引用离屏时只保留当前笔记最近一项已完成的汇总，返回时按修订和查询核对后复用。切数据、切页、隐藏或最小化清除相应汇总并作废迟到响应，筛选快照失败在图表区提供重试。
+
+`assets/note-database-chart.js` 导出 `mount(host, model, {language, dark})`，宿主提供独立可测量容器。控制器的 `ready`、`update(model, appearance)` 和 `resize()` 解析为是否已绘制，`dispose()` 释放图形并作废迟到加载。ECharts 6.1.0 完整压缩发行脚本约 1.07 MiB，固定校验值及许可证见 `assets/vendor/echarts/`，首次可见的有效绘制以 SVG 初始化，共用成功加载结果。归 `notes` 权限，随包离线分发。四种图的浅深配色和中英日期数值由适配器处理，用户标签按文本显示。验证入口为 `py -B -m unittest tests.test_note_database tests.test_feature_profile`、`node tests/note-database-browser.js --charts-only` 及 `node tests/note-database-browser.js --chart-views`。浏览器验证支持 `--notes-only` 和 `--webview2`，视图专项在同一隔离库中退出并重新启动宿主。
+
 笔记 HTML 块通过 Windows 桌面正文「右键 → 插入 → HTML」导入单个自包含 UTF-8 `.html` 或 `.htm`，上限 8 MiB。`notes_library.py` 按需创建 `<笔记名>.assets/html/<UUID>/<原文件名>`，保留字节、按当前笔记和 UUID 解析，随整个伴生目录改名、移动和回收。图片清理跳过 `html/`。`assets/note-live-editor.js` 用顶层空围栏 ` ```html-embed <UUID>` 投影，结尾围栏独占一行。可选尺寸写在 UUID 后，例如 `640x360` 或 `autox360`，默认铺满正文列宽和 480 CSS 像素高，自定义尺寸范围为宽 240–1600、高 160–1200。实时预览右下角调整宽高，网页随视口排版，松手只保存一次。左侧六点手柄复用数据库的正文落点、边缘自动滚动和围栏移动。右侧垃圾桶常驻显示，点击只移除当前围栏，重复引用共用附件。各项正文操作可单步撤销。源码及独立 Markdown 窗口保留围栏，浏览器版和 PDF 使用占位，笔记「引导」提供 HTML 说明。
 
 实时预览的底边中央手柄横向拖动缩放网页内容，范围 50%–100%，方向键按 5 个百分点微调，双击恢复 100%。`assets/note-html-embed.js/css` 扩大 iframe 的布局视口再等比缩小到容器内，保留网页交互与内部滚动。拖动和右下角宽高调整共用取消与提交逻辑，松手只保存一次，支持撤销。比例按块保存为围栏中的可选 `zoom=70%`，可接在尺寸后，缺省为 100%，阅读模式沿用保存的比例。
@@ -691,6 +699,8 @@ Cards 快捷键 `cards` 使用 `Mod-f`，通过 `insert:cards-template` 插入�
 ### POST
 
 - 笔记浏览查询：`POST /api/note-query` 统一 `search/recent/tags/paths`，请求含关键词、范围、标签、修改时间、排序及游标；返回 `items/total/hasMore/cursor/generation/index`，全文追加 UTF-16 高亮与源码范围。每页最多 50；游标绑定查询/版本，变化返回 `409/query_changed`。只读查询保留路径沙箱，退出文件/全局写锁；`POST /api/note-index-activity` 交接可见状态。完整协议见 `docs/notes-sqlite-search.md`。
+- 笔记数据库图表：只读 `POST /api/note-database/chart` 的请求为 `{path,databaseId,query?,chart?}`，`query` 接受原搜索与筛选，分页和排序与图表汇总独立。`chart` 为 `{type,groupBy,metric:{op,column?},bucket?}`，`type` 取 `column/bar/line/doughnut`，`op` 取 `count/sum/avg/min/max`，数字指标指定列 ID，`bucket` 取 `day/week/month`。返回 `{exists,revision,fields,chart,groups}`，每组为 `{key,label,value}`，未初始化或已删除的表另有 `deleted`。沿用 `notes` 权限和数据库读锁，汇总 SQL 预算 1 秒，分组最多 500、环图最多 24。无效配置返回 `400/invalid_chart`，分组或数值超限返回 `422`，执行超时返回 `503/chart_timeout`。
+- 笔记数据库视图：`GET /api/note-database` 的有效表快照附带 `chartView:{mode,chart,valid}` 和 `chartOptions:{fields,suggested}`。`POST /api/note-database/action` 的 `{type:"setChartView",revision,mode,chart?}` 复用表修订检查；`mode` 为 `data` 或 `chart`，`chart` 模式可提交配置或复用已保存配置，`data` 模式保存显示方式。返回标准数据库快照，相同选择重复提交沿用当前修订。
 
 - 生涯报告：`POST /api/career/generate` 返回后台任务，重复请求复用正在运行的任务。生成前冲刷采集队列，库存读取不占业务保存锁；成功原子替换，失败保留版本有效的旧 v2。每个来源独立标明未读取数量，不能显示成零。`POST /api/usage/archive-preview` 预览已删除/旧路径缺失笔记，`POST /api/usage/archive-notes` 按 `{token,ids}` 复核归档，保留数值并使旧快照失效；桌面 `POST /api/usage/backup` 用原生“另存为”导出 ZIP。
 - Markdown 笔记库：`/api/note-create`、`/api/note-save`、`/api/note-move`、`/api/note-trash`、`/api/note-upload-image`、`/api/note-import-begin|upload|commit|abort`、`/api/note-reveal`、`/api/note-reveal-assets`。`note-trash` 只校验库内精确目标并交给 Windows 系统回收站；`note-reveal` 接受空路径打开根目录，文件路径会在 Explorer 中被选中；图片定位使用 `{kind:"image",path:所属笔记路径,target:图片原引用,imageSyntax:"markdown"或"wiki"}`，语法缺省为 Markdown，复用 `resolve_image` 的库内路径、重解析点、格式、缺失及重名检查，未知 kind 返回 400。

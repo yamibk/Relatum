@@ -10,6 +10,7 @@
 *.json text eol=lf
 *.ps1 text eol=crlf
 *.bat text eol=crlf
+assets/vendor/echarts/** text eol=lf
 
 *.ico binary
 *.png binary

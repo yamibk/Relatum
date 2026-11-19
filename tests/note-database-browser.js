@@ -9,6 +9,8 @@ const net = require('node:net');
 const { spawn } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const { features } = require('../assets/feature-catalog.json');
+const chartsOnly = process.argv.includes('--charts-only');
+const chartViews = process.argv.includes('--chart-views');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-database-'));
 const notes = path.join(root, 'notes');
@@ -20,6 +22,9 @@ fs.mkdirSync(notes);
 fs.mkdirSync(downloads);
 fs.mkdirSync(path.join(root, 'recycled'));
 for (const name of ['Main', 'Drop', 'Other']) fs.writeFileSync(path.join(notes, name + '.md'), name + ' body\n');
+if (chartsOnly) fs.writeFileSync(path.join(notes, 'Charts.md'), marker('charts') + '\n');
+if (chartViews) fs.writeFileSync(path.join(notes, 'Charts.md'), 'Before chart\n\n' + marker('charts') + '\n\nBetween charts\n\n'
+  + marker('charts') + '\n\nAfter chart\n\n' + Array.from({ length: 120 }, (_, index) => `Paragraph ${index}\n\n`).join(''));
 
 async function freePort() {
   const socket = net.createServer();
@@ -41,8 +46,6 @@ async function until(fn) {
 (async () => {
   const native = process.argv.includes('--webview2');
   const notesOnly = process.argv.includes('--notes-only');
-  const port = await freePort(), debug = native ? await freePort() : 0;
-  const origin = 'http://127.0.0.1:' + port;
   const python = process.env[native ? 'RELATUM_WEBVIEW_PYTHON' : 'RELATUM_PYTHON'] || 'python';
   const code = 'import os, sys, uuid, app; from pathlib import Path; '
     + 'import note_database; '
@@ -54,16 +57,18 @@ async function until(fn) {
     + 'app._move_paths_to_recycle_bin = lambda paths: [p.rename(root / "recycled" / (uuid.uuid4().hex + "-" + p.name)) for p in paths]; '
     + (native ? 'import desktop; sys.argv[0] = "desktop.py"; sys.exit(desktop.main())' : 'sys.argv[0] = "app.py"; sys.exit(app.main())');
   const args = ['-B', '-c', code];
-  if (!native) args.push('--port', String(port), '--no-browser');
   if (notesOnly) args.push('--launch-profile', JSON.stringify({ version: 1,
     features: Object.fromEntries(features.map(({ id }) => [id, id === 'notes'])) }));
-  const child = spawn(python, args, { cwd: path.join(__dirname, '..'), windowsHide: true,
-    env: { ...process.env, RELATUM_DATA_ROOT: root,
-      ...(native ? { LOCALAPPDATA: root, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=' + debug } : {}) } });
-  let logs = '', browser, page;
-  child.stdout.on('data', data => { logs = (logs + data).slice(-12000); });
-  child.stderr.on('data', data => { logs = (logs + data).slice(-12000); });
-  try {
+  let logs = '', child, browser, page;
+  const errors = [], requests = [], chartRequests = [];
+  async function launch() {
+    const port = await freePort(), debug = native ? await freePort() : 0;
+    const origin = 'http://127.0.0.1:' + port;
+    child = spawn(python, native ? args : [...args, '--port', String(port), '--no-browser'], {
+      cwd: path.join(__dirname, '..'), windowsHide: true, env: { ...process.env, RELATUM_DATA_ROOT: root,
+        ...(native ? { LOCALAPPDATA: root, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=' + debug } : {}) },
+    });
+    for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { logs = (logs + data).slice(-12000); });
     const cdp = 'http://127.0.0.1:' + debug;
     await until(async () => {
       try { return (await fetch(native ? cdp + '/json/version' : origin + '/api/runtime')).ok; } catch { return false; }
@@ -76,9 +81,12 @@ async function until(fn) {
       page = await browser.newPage({ viewport: { width: 1310, height: 885 }, reducedMotion: 'reduce' });
     }
     page.setDefaultTimeout(12000);
-    const errors = [], requests = [];
     page.on('pageerror', error => errors.push(error.message));
-    page.on('request', request => { if (request.url().includes('/api/note-database')) requests.push(request.url()); });
+    page.on('request', request => {
+      const url = request.url();
+      if (url.includes('/api/note-database')) requests.push(url);
+      if (/\/note-database-chart\.js|\/vendor\/echarts\/|\/api\/note-database\/chart/.test(url)) chartRequests.push(url);
+    });
     await page.addInitScript(() => {
       localStorage.setItem('canvas:toolbarLanguage', 'en');
       localStorage.setItem('canvas:startWorkspace:v1', 'notes');
@@ -86,18 +94,57 @@ async function until(fn) {
     });
     const source = fs.readFileSync(path.join(__dirname, '..', 'assets', 'note-workspace.js'), 'utf8');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source.replace(
-      '  window.CanvasNoteWorkspace = {', '  window.__databaseTest = {state, openNote, flushSave, setViewMode, get editor() {return liveEditor;}};\n  window.CanvasNoteWorkspace = {') }));
+      '  window.CanvasNoteWorkspace = {', '  window.__databaseTest = {state, openNote, flushSave, setViewMode, movePath, get editor() {return liveEditor;}};\n  window.CanvasNoteWorkspace = {') }));
     await page.goto(native ? page.url() : origin);
     if (!notesOnly) {
       const workspace = page.locator('button[data-start-workspace="notes"]');
       if (await workspace.isVisible() && await workspace.getAttribute('aria-pressed') !== 'true') await workspace.click();
     }
-    await page.waitForFunction(() => window.__databaseTest?.state.initialized && __databaseTest.state.active && !__databaseTest.state.openingPath);
+    await page.waitForFunction(native => window.__databaseTest?.state.initialized && __databaseTest.state.active
+      && !__databaseTest.state.openingPath && (!native || typeof window.pywebview?.api?.close_window === 'function'), native);
+    return page;
+  }
+  async function stop(requireGraceful = false) {
+    if (!child) return;
+    if (native) {
+      const exited = child.exitCode === null ? new Promise(resolve => child.once('exit', resolve)) : Promise.resolve();
+      await page?.evaluate(() => { void window.pywebview?.api?.close_window(); }).catch(() => {});
+      await Promise.race([exited, pause(4500)]);
+    }
+    const graceful = child.exitCode === 0;
+    await browser?.close().catch(() => {});
+    const stopped = child.exitCode === null ? new Promise(resolve => child.once('close', resolve)) : Promise.resolve();
+    if (child.exitCode === null) child.kill();
+    await stopped;
+    child = browser = page = null;
+    if (requireGraceful && native) assert(graceful, 'WebView2 must exit normally before restarting');
+  }
+  try {
+    await launch();
     const open = note => page.evaluate(note => __databaseTest.openNote(note, { reuseActiveTab: false }), note);
     const save = () => page.evaluate(() => __databaseTest.flushSave());
     const mode = next => page.evaluate(next => __databaseTest.setViewMode(next), next);
     const body = page.locator('[data-role="note-editor"] .cm-content').first();
     const blocks = page.locator('.note-database-carrier:visible');
+    if (chartViews) {
+      const { checkChartViews } = require('./note-database-chart-views-browser.js');
+      await checkChartViews({ page, open, mode, chartRequests, until, restart: async () => {
+        await stop(true);
+        return launch();
+      } });
+      assert.deepEqual(errors, []);
+      console.log('Note database chart views and restart verified (' + (native ? 'WebView2' : 'Edge') + ')');
+      return;
+    }
+    if (chartsOnly) {
+      const { checkCharts } = require('./note-database-chart-browser.js');
+      assert(await open('Main.md'));
+      await body.locator('.cm-line').filter({ hasText: 'Main body' }).waitFor();
+      await checkCharts({ page, open, blocks, chartRequests });
+      assert.deepEqual(errors, []);
+      console.log('Note database charts verified (' + (native ? 'WebView2' : notesOnly ? 'notes only' : 'browser') + ')');
+      return;
+    }
     const documentText = () => page.evaluate(() => __databaseTest.editor.snapshot().value);
     const reveal = end => page.evaluate(end => {
       const { view } = __databaseTest.editor;
@@ -416,14 +463,7 @@ async function until(fn) {
   } catch (error) {
     console.error(logs, error); process.exitCode = 1;
   } finally {
-    if (native) {
-      await page?.evaluate(() => window.pywebview?.api?.close_window()).catch(() => {});
-      if (child.exitCode === null) await Promise.race([new Promise(resolve => child.once('exit', resolve)), pause(4000)]);
-    }
-    await browser?.close().catch(() => {});
-    const stopped = child.exitCode === null ? new Promise(resolve => child.once('close', resolve)) : Promise.resolve();
-    if (child.exitCode === null) child.kill();
-    await stopped;
+    await stop();
     assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
     assert(path.basename(root).startsWith('relatum-note-database-'));
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });

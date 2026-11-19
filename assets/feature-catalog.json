@@ -317,6 +317,8 @@
         "note-workspace.js",
         "note-database.js",
         "note-database.css",
+        "note-database-chart.js",
+        "vendor/echarts/",
         "note-print.html",
         "note-print.js",
         "note-print.css",

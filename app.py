@@ -9935,6 +9935,7 @@ POST_WITHOUT_DATA_LOCK = {
     "/api/note-reveal-assets",
     "/api/note-query",
     "/api/note-index-activity",
+    "/api/note-database/chart",
     "/api/note-database/attachment/download",
 }
 
@@ -10221,7 +10222,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         del raw
         try:
             payload = json.loads(text)
-        except json.JSONDecodeError as err:
+        except (json.JSONDecodeError, RecursionError) as err:
             raise RequestBodyError(400, "请求不是有效的 JSON") from err
         del text
         if not isinstance(payload, dict):
@@ -10651,6 +10652,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.close_connection = True
             return self._send_json(415, {"error": "附件下载请求必须为 JSON", "code": "invalid_content_type"})
         raw_length = str(self.headers.get("Content-Length") or "").strip()
+        if path == "/api/note-database/chart" and raw_length.isdigit() and int(raw_length) > 64 * 1024:
+            self.close_connection = True
+            return self._send_json(413, {"error": "图表请求超过 64 KiB", "code": "body-limit"})
         if path == "/api/note-ai/chat" and raw_length.isdigit() and int(raw_length) > 8 * 1024 * 1024:
             self.close_connection = True
             return self._send_json(413, {"error": "聊天请求超过 8 MiB，请减少图片或文字", "code": "body-limit"})
@@ -10859,6 +10863,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_note_upload_image(body)
         if path in {"/api/note-database/action", "/api/note-database/attachment/import"}:
             return self._api_note_database(body, upload=path.endswith('/import'))
+        if path == "/api/note-database/chart":
+            return self._api_note_database_chart(body)
         if path == "/api/note-database/attachment/download":
             return self._api_note_database_download(body)
         if path in {"/api/note-image-text-merge", "/api/note-image-text-cleanup"}:
@@ -11150,6 +11156,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_notes_error(err)
         except (OSError, sqlite3.Error):
             return self._send_json(500, {'error': '笔记数据库操作失败', 'code': 'database_failed'})
+
+    def _api_note_database_chart(self, body: dict):
+        try:
+            with _cross_process_mutation_lock(), NOTES_MUTATION_LOCK:
+                result = NOTES_STORE.database.read_chart(body.get('path'), body.get('databaseId'),
+                                                         body.get('query'), body.get('chart'))
+            return self._send_json(200, result)
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except (OSError, sqlite3.Error):
+            return self._send_json(500, {'error': '读取笔记数据库图表失败', 'code': 'database_failed'})
 
     def _api_note_database_download(self, body: dict):
         from note_database import copy_attachment_to_downloads
