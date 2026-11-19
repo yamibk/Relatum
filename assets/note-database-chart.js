@@ -181,6 +181,32 @@ function chartOptions(model, { language = 'zh', dark = false, palette, primary, 
   };
 }
 
+export async function renderPrintChart(model, appearance, width) {
+  const engine = await loadEngine();
+  const height = model.chart.type === 'bar' ? Math.min(560, Math.max(300, 48 + model.groups.length * 18)) : 300;
+  const container = document.createElement('div');
+  const { aria, legend, tooltip, ...options } = chartOptions(model, appearance, document);
+  const instance = engine.init(container, null, { renderer: 'svg', width, height });
+  try {
+    instance.setOption(options);
+    // Keep a detached vector copy before disposing the temporary renderer.
+    const svg = container.querySelector('svg')?.cloneNode(true);
+    if (!svg) throw new Error('Chart SVG unavailable');
+    svg.removeAttribute('style');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('aria-hidden', 'true');
+    return {
+      svg,
+      description: aria.label.description,
+      legendItems: legend ? options.series[0].data.map(point => ({
+        text: legend.formatter(point.name), color: point.itemStyle.color,
+      })) : [],
+    };
+  } finally {
+    instance.dispose();
+  }
+}
+
 // The host owns visibility and sizing. A dedicated, measurable container can be
 // updated or resized explicitly, and disposal invalidates any pending load.
 export function mount(container, model, appearance = {}) {

@@ -533,7 +533,7 @@ body.start-page:not([data-start-theme="dark"]) .note-live-editor-host .note-live
 .note-live-hl-green { background: rgba(115, 177, 106, .28); }
 .note-live-hl-gray { background: rgba(120, 120, 116, .2); }
 /* Notes-only palette shared by reading, live projection and detached pickers. */
-:is(.note-workspace, .note-document-body, .note-live-editor-host, .note-highlight-menu, .note-context-menu) {
+:is(.note-workspace, .note-document-body, .note-live-editor-host, .note-highlight-menu, .note-context-menu, .note-print) {
   --note-highlight-default: rgba(242,211,91,.42); --note-highlight-yellow: rgba(242,211,91,.42);
   --note-highlight-red: rgba(226,112,104,.31); --note-highlight-orange: rgba(238,167,78,.35);
   --note-highlight-green: rgba(115,177,106,.28); --note-highlight-blue: rgba(104,154,218,.27);

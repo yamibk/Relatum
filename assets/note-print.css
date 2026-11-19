@@ -52,6 +52,26 @@ body.note-print {
 .note-print .note-database-carrier thead { display: table-header-group; break-inside: avoid; }
 .note-print .note-database-carrier tr { break-inside: avoid; }
 .note-print .note-database-carrier :is(th, td) { border: 1px solid #ddd; padding: .25em .45em; overflow-wrap: anywhere; white-space: pre-wrap; }
+.note-print .note-database-print-figure { margin: 0; break-inside: avoid; }
+.note-print .note-database-print-figure figcaption { font-weight: 600; }
+.note-print .note-database-print-figure > svg { display: block; width: 100%; height: auto; }
+.note-print .note-database-print-description { margin: 0; color: var(--text-secondary); font-size: .9em; }
+.note-print .note-reading-content .note-database-print-legend {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .15em .8em;
+  margin: 0;
+  padding: 0;
+  font-size: .85em;
+}
+.note-print .note-reading-content .note-database-print-legend > li::before { content: none; }
+.note-print .note-database-print-swatch {
+  display: inline-block;
+  width: .72em;
+  height: .72em;
+  margin-inline-end: .45em;
+  border-radius: 2px;
+}
 .note-print .note-reading-content :is(pre, pre code) {
   max-height: none;
   overflow: visible;

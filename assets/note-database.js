@@ -261,13 +261,66 @@
     if (keep) stack.splice(0, keep);
   }
 
-  async function renderPrint(host, path, databaseId, language) {
+  async function readPrintDatabase(path, databaseId) {
+    const query = makeQuery();
+    const readPage = () => loadPage(path, databaseId, query, AbortSignal.timeout(10000));
+    let page = await readPage();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const view = page.chartView;
+      if (view?.mode !== 'chart' || !view.valid) break;
+      try {
+        const model = await request(chartRoute, { path, databaseId, query, chart: view.chart }, AbortSignal.timeout(10000));
+        if (!model.exists) return { page: model };
+        if (model.revision === page.revision) return { page, model };
+      } catch (_) { break; }
+      if (attempt === 0) page = await readPage();
+    }
+    return { page };
+  }
+
+  async function printChartFigure(host, page, model, language, runtime) {
+    const { style } = page.chartView;
+    const width = host.clientWidth;
+    if (!width) throw new Error('Chart print width unavailable');
+    const { svg, description, legendItems } = await runtime.renderPrintChart(model, {
+      language, dark: false, palette: style.palette, primary: style.primary, categories: style.categories,
+    }, width);
+    const figure = element('figure', 'note-database-print-figure');
+    figure.append(element('figcaption', '', page.name || description));
+    if (page.name) figure.append(element('p', 'note-database-print-description', description));
+    figure.append(svg);
+    if (legendItems.length) {
+      const legend = element('ul', 'note-database-print-legend');
+      for (const { text, color } of legendItems) {
+        const item = element('li');
+        const swatch = element('span', 'note-database-print-swatch');
+        swatch.style.backgroundColor = color;
+        item.append(swatch, text);
+        legend.append(item);
+      }
+      figure.append(legend);
+    }
+    return figure;
+  }
+
+  async function renderPrint(host, path, databaseId, language, duplicates = []) {
     const tr = pair => translate(language, pair);
     try {
-      const page = await loadPage(path, databaseId, makeQuery(), AbortSignal.timeout(10000));
+      const { page, model } = await readPrintDatabase(path, databaseId);
       if (!page.exists) {
         host.textContent = page.deleted ? tr(label('数据库已删除', 'Database deleted')) : tr(label('数据库尚未创建', 'Database not created'));
         return 0;
+      }
+      const chartMode = page.chartView?.mode === 'chart';
+      const hasChartData = model?.groups.some(point => Number.isFinite(point.value));
+      if (hasChartData) {
+        try {
+          const runtime = await loadChartRuntime();
+          const hosts = [host, ...duplicates];
+          const figures = await Promise.all(hosts.map(target => printChartFigure(target, page, model, language, runtime)));
+          hosts.forEach((target, index) => target.replaceChildren(figures[index]));
+          return 0;
+        } catch (_) { /* Print the data table if the chart cannot be drawn. */ }
       }
       const table = element('table', 'md-table note-database-print-table');
       if (page.name) table.createCaption().textContent = page.name;
@@ -280,9 +333,12 @@
         for (const column of columns) line.insertCell().textContent = display(row.values[column.id], column, tr);
       }
       host.replaceChildren(table);
+      if (chartMode) host.prepend(element('p', '', model && !hasChartData
+        ? tr(label('图表没有可绘制的数据，以下为数据表。', 'The chart has no plottable data. The table is shown below.'))
+        : tr(label('图表无法导出，以下为数据表。', 'The chart could not be exported. The table is shown below.'))));
       const remaining = page.total - page.rows.length;
       if (remaining > 0) host.append(element('p', '', tr(label(`另有 ${remaining} 行`, `${remaining} more rows`))));
-      return 0;
+      return Number(chartMode);
     } catch (_) {
       host.textContent = tr(label('数据库读取失败', 'Database unavailable'));
       return 1;

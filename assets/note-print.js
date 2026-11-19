@@ -122,8 +122,11 @@
     let warnings = 0;
     for (let i = 0; i < jobs.length; i += 4) {
       const results = await Promise.all(jobs.slice(i, i + 4).map(async ([id, [first, ...duplicates]]) => {
-        const result = await window.RelatumNoteDatabase.renderPrint(first, path, id, language);
-        for (const element of duplicates) element.replaceChildren(...Array.from(first.childNodes, node => node.cloneNode(true)));
+        const result = await window.RelatumNoteDatabase.renderPrint(first, path, id, language, duplicates);
+        // Charts draw each copy with its own SVG identifiers. Tables and messages share the first projection.
+        for (const element of duplicates) {
+          if (!element.hasChildNodes()) element.replaceChildren(...Array.from(first.childNodes, node => node.cloneNode(true)));
+        }
         return result;
       }));
       warnings += results.reduce((total, result) => total + result, 0);
@@ -145,9 +148,10 @@
       // Preload the actual glyphs at the final body width before measuring SVGs.
       content.getBoundingClientRect();
       await document.fonts.ready;
+      const hasMath = result.features.math || content.querySelector('[data-note-cards-math="1"], .md-derive-eq:not(:empty)');
       const [images, math, diagrams, databases] = await Promise.all([
         loadImages(content),
-        result.features.math || content.querySelector('[data-note-cards-math="1"]') ? renderMath(content) : 0,
+        hasMath ? renderMath(content) : 0,
         result.features.mermaid ? renderDiagrams(content) : 0,
         renderDatabases(content, path, language),
       ]);
