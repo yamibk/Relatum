@@ -783,10 +783,14 @@
     }
 
     function clipboard(view, event, clear = false) {
-      if (view.table?.hidden) return;
+      if (view.table?.hidden || event.defaultPrevented || view.readOnly) return;
       const range = bounds(view);
-      if (!range || event.target.closest('input,textarea,select') || view.readOnly) return;
-      if (view.session.draft || view.session.write) return;
+      if (!range) return;
+      const { session } = view;
+      const draft = session.draft;
+      const editing = event.type === 'paste' && draft?.view === view && event.target === draft.input
+        && draft.column.type !== 'attachment';
+      if (!editing && (event.target.closest('input,textarea,select') || draft || session.write)) return;
       if (event.type === 'copy') {
         if (!event.clipboardData) return;
         const columns = range.columns.slice(range.c0, range.c1 + 1);
@@ -800,31 +804,38 @@
       }
       const text = clear ? '' : event.clipboardData?.getData('text/plain');
       if (text === undefined || (!clear && !text)) return;
+      const oversized = text.length > 4 * 1024 * 1024;
+      const markdown = !oversized && text.includes('|') && /[\r\n]/.test(text) ? window.MarkdownTable?.parse(text) : null;
+      // Leave ordinary text paste to the input, including multiline cell text.
+      if (editing && !text.includes('\t') && !markdown?.ok) return;
       event.preventDefault();
       event.stopPropagation();
-      if (view.session.renderedQuery !== JSON.stringify(view.session.query)) {
-        announce(view.session, tr(label('视图正在更新，更新后可继续编辑范围。', 'The view is updating. Try again when the rows are ready.')));
+      if (editing && (draft.composition || draft.saving || session.write)) return;
+      if (session.renderedQuery !== JSON.stringify(session.query)) {
+        announce(session, tr(label('视图正在更新，更新后可继续编辑范围。', 'The view is updating. Try again when the rows are ready.')));
         return;
       }
       let matrix;
       try {
-        if (text.length > 4 * 1024 * 1024) throw new Error('length');
-        matrix = clear ? Array.from({ length: range.r1 - range.r0 + 1 }, () => Array(range.c1 - range.c0 + 1).fill('')) : parseClipboard(text);
+        if (oversized) throw new Error('length');
+        if (clear) matrix = Array.from({ length: range.r1 - range.r0 + 1 }, () => Array(range.c1 - range.c0 + 1).fill(''));
+        else if (markdown?.ok) matrix = [markdown.model.header, ...markdown.model.rows];
+        else matrix = parseClipboard(text);
       } catch (_) {
-        announce(view.session, tr(label('无法读取粘贴内容。', 'Could not read the pasted data.')));
+        announce(session, tr(label('无法读取粘贴内容。', 'Could not read the pasted data.')));
         return;
       }
       if (matrix.length > 200) {
-        announce(view.session, tr(label('一次最多粘贴 200 行。', 'Paste up to 200 rows at a time.')));
+        announce(session, tr(label('一次最多粘贴 200 行。', 'Paste up to 200 rows at a time.')));
         return;
       }
       const changes = [];
-      const { query, page } = view.session;
+      const { query, page } = session;
       const canAppend = !query.search && !query.sort && !query.filters.length && page.page * page.pageSize >= page.total;
       for (const [r, values] of matrix.entries()) {
         const row = range.rows[range.r0 + r];
         if ((!row && !canAppend) || (row && !page.rows.some(item => item.id === row.id))) {
-          announce(view.session, tr(label('粘贴超出当前页，表格未修改。', 'The paste extends beyond the current page. No cells changed.')));
+          announce(session, tr(label('粘贴超出当前页，表格未修改。', 'The paste extends beyond the current page. No cells changed.')));
           return;
         }
         const parsed = {};
@@ -834,9 +845,11 @@
             if (!column) throw new Error('column');
             parsed[column.id] = clipboardValue(value, column);
           } catch (_) {
-            const target = range.columns[Math.min(range.c0 + c, range.columns.length - 1)];
-            focusCell(view, [(row || range.rows.at(-1)).id, target.id]);
-            announce(view.session, tr(label(
+            if (!editing) {
+              const target = range.columns[Math.min(range.c0 + c, range.columns.length - 1)];
+              focusCell(view, [(row || range.rows.at(-1)).id, target.id]);
+            }
+            announce(session, tr(label(
               `粘贴内容第 ${r + 1} 行、第 ${c + 1} 列超出范围或类型不符，表格未修改。`,
               `Pasted row ${r + 1}, column ${c + 1} is out of range or has the wrong type. No cells changed.`)));
             return;
@@ -844,7 +857,14 @@
         }
         changes.push({ row: row?.id ?? null, values: parsed });
       }
-      void write(view.session, { type: 'batchCells', changes });
+      const operation = { type: 'batchCells', changes };
+      if (!editing) { void write(session, operation); return; }
+      // The batch replaces the active cell with its top-left value in one undo step.
+      draft.saving = write(session, operation).then(result => {
+        draft.saving = null;
+        if (result) finishDraft(draft, null, document.activeElement === draft.input);
+        return Boolean(result);
+      });
     }
 
     function afterCellSave(view, callback) {

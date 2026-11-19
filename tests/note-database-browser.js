@@ -239,15 +239,16 @@ async function until(fn) {
     await grid.locator('tbody tr').first().locator('td button').nth(1).click();
     await grid.locator('.note-database-panel').getByRole('button', { name: done.name, exact: true }).click();
     await until(async () => (await get('Main.md')).rows[0].values[status.id] === done.id);
-    async function paste(text) {
-      await firstCell.focus();
-      await firstCell.evaluate((node, value) => {
+    async function paste(text, target = firstCell) {
+      await target.focus();
+      await target.evaluate((node, value) => {
         const clipboardData = new DataTransfer();
         clipboardData.setData('text/plain', value);
         node.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
       }, text);
     }
-    await paste('Edited\t' + done.name + '\t42\r\nAppended\t' + done.name + '\t67');
+    await firstCell.click();
+    await paste('Edited\t' + done.name + '\t42\r\nAppended\t' + done.name + '\t67', editor);
     const pasted = await until(async () => {
       const data = await get('Main.md');
       return data.rows.length === 2 && data;
