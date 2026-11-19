@@ -1176,7 +1176,7 @@
       scan(cursor, Math.min(range.from, commentTo)); cursor = Math.max(cursor, range.to);
     });
     scan(cursor, commentTo);
-    if (open) ranges.push({ from: open.from, to: commentTo });
+    if (open) ranges.push({ from: open.from, to: commentTo, open: true });
     return ranges;
   }
 
@@ -1192,21 +1192,54 @@
     return { id: match[1], to: closer.to, source: doc.sliceString(opener.from, closer.to), size };
   }
 
-  function excludeReferenceMath(doc, positions, protectedBlocks, start) {
-    if (!positions.size) return;
-    const end = doc.lineAt(Array.from(positions.keys()).reduce((last, position) => Math.max(last, position), start)).number;
-    const ranges = protectedBlocks.slice().sort((a, b) => a.from - b.from);
-    let next = 0, protectedUntil = -1, closing = '';
-    for (let number = doc.lineAt(start).number; number <= end; number++) {
-      const line = doc.line(number);
-      while (next < ranges.length && ranges[next].from <= line.from) {
-        protectedUntil = Math.max(protectedUntil, ranges[next++].to);
+  function referenceMathRanges(doc, protectedBlocks, start, end) {
+    const ranges = [], protectedRanges = protectedBlocks.slice().sort((a, b) => a.from - b.from);
+    let next = 0, protectedUntil = -1, opening = 0, closing = '';
+    const from = doc.lineAt(start).from;
+    const source = doc.sliceString(from, doc.lineAt(end).to);
+    const markers = /\$\$|\\[\[\]]/g;
+    let match;
+    while ((match = markers.exec(source))) {
+      const line = doc.lineAt(from + match.index);
+      markers.lastIndex = line.to - from;
+      while (next < protectedRanges.length && protectedRanges[next].from <= line.from) {
+        protectedUntil = Math.max(protectedUntil, protectedRanges[next++].to);
       }
-      if (closing) positions.delete(line.from);
       if (protectedUntil > line.from) continue;
       const marker = window.MarkdownMini.quoteLine(line.text).text.trim();
-      if (closing && marker === closing) closing = '';
-      else if (!closing && (marker === '$$' || marker === '\\[')) closing = marker === '$$' ? '$$' : '\\]';
+      if (closing && marker === closing) {
+        ranges.push({ from: opening, to: line.to });
+        closing = '';
+      } else if (!closing && (marker === '$$' || marker === '\\[')) {
+        opening = line.from;
+        closing = marker === '$$' ? '$$' : '\\]';
+      }
+    }
+    if (closing) ranges.push({ from: opening, to: end, open: true });
+    return ranges;
+  }
+
+  function referenceRangeAt(ranges, position) {
+    let lo = 0, hi = ranges.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (ranges[mid].to < position) lo = mid + 1;
+      else hi = mid;
+    }
+    return ranges[lo];
+  }
+
+  function insideReferenceRange(range, position) {
+    return range && range.from < position && (position < range.to || range.open && position === range.to);
+  }
+
+  function excludeReferenceMath(doc, positions, protectedBlocks, start) {
+    if (!positions.size) return;
+    let end = start;
+    for (const position of positions.keys()) end = Math.max(end, position);
+    const ranges = referenceMathRanges(doc, protectedBlocks, start, end);
+    for (const position of positions.keys()) {
+      if (insideReferenceRange(referenceRangeAt(ranges, position), position)) positions.delete(position);
     }
   }
 
@@ -6208,31 +6241,95 @@
     return insertReferenceBlock(view, position, moveSelection, 'database', crypto.randomUUID());
   }
 
-  function referenceDropBoundary(view, y, specs) {
+  function referenceElementAtHeight(content, y) {
+    const children = content.children;
+    let lo = 0, hi = children.length;
+    // The projected DOM can already include a widget's new height when the
+    // editor's height map still omits it. Hit-test the rendered rows instead.
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (children[mid].getBoundingClientRect().bottom <= y) lo = mid + 1;
+      else hi = mid;
+    }
+    const next = children[lo], previous = children[lo - 1];
+    if (!next) return previous;
+    if (!previous) return next;
+    return y - previous.getBoundingClientRect().bottom < next.getBoundingClientRect().top - y ? previous : next;
+  }
+
+  function referenceRowRect(view, position, side) {
+    const { node, offset } = view.domAtPos(position);
+    const content = view.contentDOM;
+    let element = node === content ? content.childNodes[offset + (side < 0 ? -1 : 0)]
+      : node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    while (element && element.parentElement !== content) element = element.parentElement;
+    if (element?.nodeType === Node.ELEMENT_NODE && !element.classList.contains('cm-gap')) return element.getBoundingClientRect();
+    return view.coordsAtPos(position, side);
+  }
+
+  function referenceBlockRanges(specs) {
+    const ranges = [];
+    for (const { from, to } of specs) {
+      const previous = ranges[ranges.length - 1];
+      if (previous && from <= previous.to) previous.to = Math.max(previous.to, to);
+      else ranges.push({ from, to });
+    }
+    return ranges;
+  }
+
+  function referenceGapTarget(view, at, y) {
     const { doc } = view.state;
-    const documentTop = view.documentTop;
-    const hit = view.lineBlockAtHeight(y - documentTop);
-    let from = doc.lineAt(hit.from).from;
-    let to = doc.lineAt(hit.to).to;
-    const node = syntaxTree(view.state).topNode.childAfter(from);
-    if (node && node.from <= to) {
+    const line = doc.lineAt(at);
+    const blank = line.length === 0 ? line : line.from === at && line.number > 1 ? doc.line(line.number - 1) : null;
+    if (!blank || blank.length || blank.number === 1 || blank.number === doc.lines
+      || !doc.line(blank.number - 1).text.trim() || !doc.line(blank.number + 1).text.trim()) return { at, y };
+    const rect = referenceRowRect(view, blank.from, 1);
+    return { at: blank.from, y: rect ? (rect.top + rect.bottom) / 2 : y };
+  }
+
+  function referenceDropBoundary(view, y, tree, blocks) {
+    const { doc } = view.state;
+    const hit = referenceElementAtHeight(view.contentDOM, y);
+    if (!hit || hit.classList.contains('cm-gap')) return null;
+    const line = doc.lineAt(view.posAtDOM(hit, 0));
+    let { from, to } = line;
+    const node = tree.topNode.childAfter(from);
+    if (node && node.from <= to && node.name !== 'Paragraph') {
       from = doc.lineAt(Math.min(from, node.from)).from;
       to = doc.lineAt(Math.max(to, node.to)).to;
     }
-    // Custom blocks can span several of the Markdown parser's children.
-    for (const spec of specs) {
-      if (spec.from > to) break;
-      if (spec.to < from) continue;
-      from = doc.lineAt(Math.min(from, spec.from)).from;
-      to = doc.lineAt(Math.max(to, spec.to)).to;
+    // A projected table or formula can span several Markdown nodes.
+    const block = referenceRangeAt(blocks, from);
+    if (block && block.from <= to) {
+      from = doc.lineAt(Math.min(from, block.from)).from;
+      to = doc.lineAt(Math.max(to, block.to)).to;
     }
-    const metadata = documentFrontmatter(doc);
-    if (metadata && from <= metadata.to && to <= metadata.to) return null;
-    const top = documentTop + view.lineBlockAt(from).top;
-    const last = view.lineBlockAt(to);
-    const bottom = documentTop + last.top + last.height;
-    if (y < (top + bottom) / 2) return metadata && from <= metadata.to ? null : { at: from, y: top };
-    return { at: Math.min(to + 1, doc.length), y: bottom };
+    const rect = hit.getBoundingClientRect();
+    const top = from === line.from ? rect.top : referenceRowRect(view, from, 1)?.top;
+    const bottom = to === line.to ? rect.bottom : referenceRowRect(view, to, -1)?.bottom;
+    if (top == null && bottom == null) return null;
+    if (bottom == null || top != null && y < (top + bottom) / 2) return referenceGapTarget(view, from, top);
+    return referenceGapTarget(view, Math.min(to + 1, doc.length), bottom);
+  }
+
+  function referenceOriginRange(doc, spec) {
+    let first = doc.lineAt(spec.from).number, last = doc.lineAt(spec.to).number;
+    while (first > 1 && !doc.line(first - 1).text.trim()) first--;
+    while (last < doc.lines && !doc.line(last + 1).text.trim()) last++;
+    return { from: doc.line(first).from, to: Math.min(doc.line(last).to + 1, doc.length) };
+  }
+
+  function referenceDropProtection(doc, tree, metadata, hasComments, hasMath) {
+    const protectedBlocks = metadata ? [metadata] : [];
+    tree.iterate({ enter(node) {
+      if (!/^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock|InlineCode)$/.test(node.name)) return;
+      protectedBlocks.push({ from: node.from, to: node.to });
+      return false;
+    } });
+    const end = Math.min(tree.length, doc.length);
+    const comments = hasComments ? scanSourceComments(doc, 0, end, protectedBlocks) : [];
+    const math = hasMath ? referenceMathRanges(doc, protectedBlocks.concat(comments), 0, end) : [];
+    return { comments, math };
   }
 
   function referenceMoveChanges(state, spec, cut, at) {
@@ -6320,7 +6417,7 @@
     let documentSetSeq = 0;
     const imageInsertions = new Set();
     const databaseInsertions = new Set();
-    let cancelReferenceMove = null;
+    let cancelReferenceMove = null, refreshReferenceMove = null;
     let scrollRestoreSeq = 0;
     let destroyed = false;
     let highlightActive = true;
@@ -7489,6 +7586,9 @@
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) cancelReferenceMove?.();
+          else if (refreshReferenceMove && (update.geometryChanged || update.viewportChanged
+            || syntaxTree(update.startState) !== syntaxTree(update.state)
+            || update.startState.field(blockField) !== update.state.field(blockField))) refreshReferenceMove();
           if (update.docChanged) cardsToolsSession?.check();
           if (mediaBodyTarget && update.docChanged) mediaBodyTarget.position = update.changes.mapPos(mediaBodyTarget.position, 1);
           mediaController?.sync();
@@ -7824,7 +7924,10 @@
 
       const cut = { from: spec.to < doc.length ? spec.from : Math.max(0, spec.from - 1),
         to: Math.min(spec.to + 1, doc.length) };
+      const origin = referenceOriginRange(doc, spec);
+      const metadata = documentFrontmatter(doc);
       const scroller = view.scrollDOM;
+      const handle = event.currentTarget;
       const pointerId = event.pointerId;
       const controller = new AbortController(), { signal } = controller;
       const marker = document.createElement('div');
@@ -7833,12 +7936,16 @@
       marker.hidden = true;
       const startX = event.clientX, startY = event.clientY;
       let x = startX, y = startY, dragging = false, frame = 0;
+      let lastScrollFrame = null, scrollRemainder = 0;
+      let specs, ranges, protectedTree, protection, sourceMarkers;
+      const checkedEnds = new Map();
 
       const stopLifecycle = watchNoteRenderLifecycle(change => {
         if (change.type === 'pagehide' || !current()) finish();
       });
       function finish() {
         cancelReferenceMove = null;
+        refreshReferenceMove = null;
         controller.abort();
         stopLifecycle();
         if (frame) cancelAnimationFrame(frame);
@@ -7847,18 +7954,83 @@
         marker.remove();
       }
 
+      function inScroller(rect) {
+        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+      }
+
+      function validPosition(tree, at) {
+        if (at >= origin.from && at <= origin.to || metadata && at <= metadata.to
+          || tree.length < doc.length && at >= tree.length) return false;
+
+        // An actual source newline can still be inside a multiline inline span.
+        const inside = tree.resolveInner(at, 0);
+        if (inside.name !== 'Document' && inside.name !== 'Paragraph' && inside.from < at && at < inside.to) return false;
+
+        if (!sourceMarkers) {
+          const source = doc.toString();
+          sourceMarkers = { comments: source.includes('%%'), math: source.includes('$$') || source.includes('\\[') };
+        }
+        if (sourceMarkers.comments || sourceMarkers.math) {
+          if (protectedTree !== tree) {
+            protectedTree = tree;
+            protection = referenceDropProtection(doc, tree, metadata, sourceMarkers.comments, sourceMarkers.math);
+          }
+          if (insideReferenceRange(referenceRangeAt(protection.comments, at), at)
+            || insideReferenceRange(referenceRangeAt(protection.math, at), at)) return false;
+        }
+
+        // These terminal constructs can absorb trailing blank lines and a new
+        // fence. Use the same source validation as the final move once per slot.
+        const previous = tree.topNode.childBefore(at);
+        if (previous && !previous.nextSibling && /^(?:FencedCode|HTMLBlock|CommentBlock|ProcessingInstruction)$/.test(previous.name)) {
+          if (!checkedEnds.has(at)) checkedEnds.set(at, Boolean(referenceMoveChanges(view.state, spec, cut, at)));
+          return checkedEnds.get(at);
+        }
+        return true;
+      }
+
       function boundary(rect) {
-        if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return null;
-        const specs = view.state.field(blockField, false)?.specs || [];
-        const target = referenceDropBoundary(view, y, specs);
-        if (!target || target.at >= cut.from && target.at <= cut.to || target.y < rect.top - 1 || target.y > rect.bottom + 1) return null;
+        if (!inScroller(rect)) return null;
+        const currentSpecs = view.state.field(blockField).specs;
+        if (currentSpecs !== specs) {
+          specs = currentSpecs;
+          ranges = referenceBlockRanges(specs);
+        }
+        const tree = syntaxTree(view.state);
+        const target = referenceDropBoundary(view, y, tree, ranges);
+        if (!target || target.y < rect.top - 1 || target.y > rect.bottom + 1 || !validPosition(tree, target.at)) return null;
         return target;
       }
 
-      function paint() {
+      function scrollAtEdge(rect, time) {
+        const edge = Math.min(40, rect.height / 4);
+        const delta = inScroller(rect) && edge > 0
+          ? Math.max(0, edge - (rect.bottom - y)) - Math.max(0, edge - (y - rect.top)) : 0;
+        const limit = scroller.scrollHeight - scroller.clientHeight;
+        const previous = scroller.scrollTop;
+        if (!delta || (delta < 0 ? previous <= 0 : previous >= limit - 0.5)) {
+          lastScrollFrame = null;
+          scrollRemainder = 0;
+          return;
+        }
+        if (lastScrollFrame != null) {
+          if (Math.sign(scrollRemainder) !== Math.sign(delta)) scrollRemainder = 0;
+          scrollRemainder += delta / edge * 0.78 * Math.min(time - lastScrollFrame, 32);
+          const step = Math.trunc(scrollRemainder);
+          if (step) {
+            scroller.scrollTop = previous + step;
+            scrollRemainder -= step;
+          }
+        }
+        lastScrollFrame = time;
+        schedule();
+      }
+
+      function paint(time) {
         frame = 0;
         if (!current()) { finish(); return; }
         const rect = scroller.getBoundingClientRect();
+        scrollAtEdge(rect, time);
         const target = boundary(rect);
         marker.hidden = !target;
         if (target) {
@@ -7869,13 +8041,6 @@
           marker.style.width = Math.max(0, right - left) + 'px';
           marker.style.top = (clamp(target.y, rect.top + 1, rect.bottom - 1) - editor.top - 1) + 'px';
         }
-        if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return;
-        const edge = Math.min(40, rect.height / 4);
-        const delta = Math.max(0, edge - (rect.bottom - y)) - Math.max(0, edge - (y - rect.top));
-        if (!delta) return;
-        const previous = scroller.scrollTop;
-        scroller.scrollTop += Math.sign(delta) * Math.max(1, Math.round(Math.abs(delta) / 3));
-        if (scroller.scrollTop !== previous) schedule();
       }
 
       function schedule() {
@@ -7887,12 +8052,14 @@
         y = pointer.clientY;
         if (!dragging && Math.hypot(x - startX, y - startY) >= 4) {
           dragging = true;
-          view.dom.classList.add('is-reference-moving');
           view.dom.append(marker);
+          // A focused iframe would also receive the Escape key itself.
+          if (document.activeElement?.matches('.note-html-embed iframe')) handle.focus({ preventScroll: true });
         }
       }
 
       cancelReferenceMove = finish;
+      refreshReferenceMove = schedule;
       scroller.addEventListener('pointermove', pointer => {
         if (pointer.pointerId !== pointerId) return;
         updatePointer(pointer);
@@ -7920,7 +8087,10 @@
         if (key.key !== 'Escape') return;
         key.preventDefault(); key.stopPropagation(); finish();
       }, { signal, capture: true });
-      try { scroller.setPointerCapture(pointerId); } catch (_) { finish(); }
+      try {
+        scroller.setPointerCapture(pointerId);
+        view.dom.classList.add('is-reference-moving');
+      } catch (_) { finish(); }
     }
 
     const databaseFileDropEnabled = () => options.database && typeof options.onDatabaseFiles === 'function'

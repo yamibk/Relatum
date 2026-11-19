@@ -989,12 +989,14 @@ body.start-page[data-start-theme="dark"] .note-live-editor-host:not(.is-source-m
 .note-table-grip i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; }
 .cm-editor.is-reference-moving,
 .cm-editor.is-reference-moving :is(.note-database button.note-database-move, .note-html-embed .note-html-move) { cursor: grabbing; }
+/* Keep drag events in the editor when the pointer crosses an interactive iframe. */
+.cm-editor.is-reference-moving .note-html-embed iframe { pointer-events: none; }
 .note-reference-block-drop {
   position: absolute;
   z-index: 5;
   height: 2px;
   border-radius: 2px;
-  background: var(--note-control-focus, var(--note-theme-link, #437db3));
+  background: color-mix(in srgb, var(--note-control-focus, var(--text)) 75%, var(--text));
   pointer-events: none;
 }
 .note-table-selection, .note-table-drop { position: absolute; pointer-events: none; z-index: 2; box-sizing: border-box; }

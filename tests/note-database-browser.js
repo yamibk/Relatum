@@ -89,6 +89,7 @@ async function until(fn) {
       if (/\/note-database-chart\.js|\/vendor\/echarts\/|\/api\/note-database\/chart/.test(url)) chartRequests.push(url);
     });
     await page.addInitScript(() => {
+      if (window.top !== window) return;
       localStorage.setItem('canvas:toolbarLanguage', 'en');
       localStorage.setItem('canvas:startWorkspace:v1', 'notes');
       localStorage.setItem('canvas:noteView:v1', 'live');
@@ -127,6 +128,13 @@ async function until(fn) {
     const mode = next => page.evaluate(next => __databaseTest.setViewMode(next), next);
     const body = page.locator('[data-role="note-editor"] .cm-content').first();
     const blocks = page.locator('.note-database-carrier:visible');
+    if (process.argv.includes('--reference-move')) {
+      const { checkReferenceMove } = require('./note-reference-move-browser.js');
+      await checkReferenceMove({ page, notes, open, save, native });
+      assert.deepEqual(errors, []);
+      console.log(`Note reference block movement verified (${native ? 'WebView2' : 'Edge'})`);
+      return;
+    }
     if (chartViews || chartColors) {
       const check = chartColors ? require('./note-database-chart-colors-browser.js').checkChartColors
         : require('./note-database-chart-views-browser.js').checkChartViews;
