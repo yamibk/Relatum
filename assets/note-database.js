@@ -21,6 +21,7 @@
     line: ['折线图', 'Line chart'], doughnut: ['环形图', 'Doughnut chart'] };
   const chartMetrics = { sum: ['求和', 'Sum'], avg: ['平均值', 'Average'], min: ['最小值', 'Minimum'], max: ['最大值', 'Maximum'] };
   const chartBuckets = { day: ['日', 'Day'], week: ['周', 'Week'], month: ['月', 'Month'] };
+  const chartColorTarget = chart => `${chart.type}:${chart.groupBy}:${chart.bucket || ''}`;
   const chartMessages = {
     loading: ['正在加载图表…', 'Loading chart…'],
     empty: ['没有可绘制的记录。可修改筛选条件，或到数据表添加记录。', 'No chart data. Change the filters or add records in Data.'],
@@ -388,7 +389,8 @@
       const dark = document.documentElement.dataset.startTheme === 'dark' || document.body.dataset.startTheme === 'dark';
       const style = view.chartStyleDraft ?? view.session.page?.chartView?.style ?? {};
       const appearance = { language, dark, palette: window.RelatumNoteChartPalette.effective(style.palette),
-        ...(model.chart.type === 'doughnut' ? { categories: style.categories ?? {} } : { primary: style.primary }) };
+        ...(model.chart.type !== 'doughnut' && { primary: style.primary }),
+        ...(model.chart.type !== 'line' && { categories: style.categories ?? {} }) };
       const appearanceKey = JSON.stringify(appearance);
       if (view.chartPaint?.model === model && view.chartPaint.appearanceKey === appearanceKey) return;
       const paint = view.chartPaint = { model, appearanceKey };
@@ -1964,10 +1966,15 @@
         const current = session.page.chartView;
         const chart = current.chart;
         const ring = chart.type === 'doughnut';
+        const bar = chart.type === 'column' || chart.type === 'bar';
         const groupType = session.page.columns.find(column => column.id === chart.groupBy)?.type;
+        const english = (options.language?.() || 'zh').startsWith('en');
+        const dates = groupType === 'date' ? palette.dateFormatter(chart.bucket, english) : null;
+        const groupName = point => dates ? dates.format(Date.parse(`${point.key}T00:00:00Z`))
+          : palette.categoryLabel(point, groupType, english);
         const copy = (style = {}) => ({ ...style, categories: { ...style.categories } });
         let draft = copy(current.style), revision = current.styleRevision, target = null, saving = false;
-        let categoryGroups, rows = [];
+        let categoryGroups, rows = [], tone = palette.swatchTone(draft.primary) || 'light';
 
         const form = element('form', 'note-database-chart-form note-database-color-form');
         const preset = select(tr(label('配色预设', 'Color preset')),
@@ -1977,13 +1984,25 @@
         presetRow.append(element('span', '', tr(label('配色预设', 'Color preset'))), preset);
         const sample = element('div', 'note-database-color-preview');
         sample.setAttribute('aria-hidden', 'true');
-        const sampleChips = Array.from({ length: 8 }, () => element('i', 'note-database-color-chip'));
-        sample.append(...sampleChips);
+        let sampleChips = [];
+
+        const mainColor = tr(label('主色', 'Main color'));
+        const targetName = tr(label('配色对象', 'Color target'));
+        const targetSelect = bar ? select(targetName, [['', mainColor]], '') : null;
+        if (targetSelect) {
+          const targetRow = element('label');
+          targetRow.append(element('span', '', targetName), targetSelect);
+          form.append(presetRow, sample, targetRow);
+          view.panel?.choices?.enhance(targetSelect, { searchable: true });
+        } else form.append(presetRow, sample);
 
         const picker = element('div', 'note-database-color-picker');
-        const pickerLabel = element('strong', '', tr(label('主色', 'Main color')));
-        const swatches = element('div', 'note-database-color-swatches');
-        picker.append(pickerLabel, swatches);
+        const pickerLabel = element('strong', '', mainColor);
+        const toneControls = element('div', 'note-database-color-tones');
+        toneControls.setAttribute('role', 'group');
+        toneControls.setAttribute('aria-label', tr(label('色彩深浅', 'Color shade')));
+        if (!bar) picker.append(pickerLabel);
+        picker.append(toneControls);
         const categories = element('div', 'note-database-color-categories');
         const status = element('div', 'note-database-option-error');
         status.setAttribute('role', 'status');
@@ -1993,29 +2012,56 @@
           node.style.setProperty('--chart-chip-light', light);
           node.style.setProperty('--chart-chip-dark', dark);
         }
-        const swatchButtons = palette.swatches.map(([id, names]) => {
-          const swatch = button('', () => chooseColor(id), 'chart-color-swatch');
-          swatch.dataset.swatch = id;
-          swatch.title = tr(names); swatch.setAttribute('aria-label', swatch.title);
-          const chip = element('i', 'note-database-color-chip');
-          setChip(chip, palette.swatchColor(id, false), palette.swatchColor(id, true));
-          swatch.append(chip);
-          return [id, swatch];
-        });
         const automatic = button(tr(label('自动', 'Automatic')), () => chooseColor(null), 'chart-color-auto');
-        swatches.append(automatic, ...swatchButtons.map(([, swatch]) => swatch));
+        toneControls.append(automatic);
+        const swatchGroups = palette.swatchGroups.map(({ tone: group, label: names, swatches }) => {
+          const control = button(tr(names), () => { tone = group; refreshPicker(); }, 'chart-color-tone');
+          toneControls.append(control);
+          const grid = element('div', 'note-database-color-swatches');
+          const buttons = swatches.map(([id, names]) => {
+            const swatch = button('', () => chooseColor(id), 'chart-color-swatch');
+            swatch.dataset.swatch = id;
+            swatch.title = tr(names); swatch.setAttribute('aria-label', swatch.title);
+            const chip = element('i', 'note-database-color-chip');
+            setChip(chip, palette.swatchColor(id, false), palette.swatchColor(id, true));
+            swatch.append(chip);
+            grid.append(swatch);
+            return [id, swatch];
+          });
+          picker.append(grid);
+          return { group, control, grid, buttons };
+        });
         categories.hidden = true;
+
+        function selectTarget(key) {
+          target = key || null;
+          tone = palette.swatchTone(target ? draft.categories[target] : draft.primary) || 'light';
+          refreshColors();
+        }
+        targetSelect?.addEventListener('change', () => { if (!saving) selectTarget(targetSelect.value); });
 
         function syncCategories(groups) {
           if (groups === categoryGroups) return;
           categoryGroups = groups;
-          rows = (groups || []).filter(point => Number.isFinite(point.value)).map(point => {
-            const name = palette.categoryLabel(point, groupType, options.language?.() === 'en');
+          const available = (groups || []).filter(point => point.colorKey && Number.isFinite(point.value));
+          if (target && !available.some(point => point.colorKey === target)) target = null;
+          if (targetSelect) {
+            const entries = [{ value: '', label: mainColor }, ...available.map(point => ({ value: point.colorKey, label: groupName(point) }))];
+            const choices = view.panel?.choices;
+            if (choices) choices.setOptions(targetSelect, entries, target || '');
+            else {
+              targetSelect.replaceChildren(...entries.map(({ value, label }) => new Option(label, value)));
+              targetSelect.value = target || '';
+            }
+            refreshPicker();
+            return;
+          }
+          rows = available.map(point => {
+            const name = groupName(point);
             const row = button('', () => {
               if (saving) return;
-              target = point.colorKey;
               pickerLabel.textContent = name;
-              refreshColors();
+              selectTarget(point.colorKey);
               automatic.focus({ preventScroll: true });
             }, 'chart-color-category');
             const chip = element('i', 'note-database-color-chip');
@@ -2030,14 +2076,26 @@
           refreshColors();
         }
 
+        function refreshPicker() {
+          picker.hidden = ring && !target;
+          const selected = target ? draft.categories[target] : draft.primary;
+          automatic.setAttribute('aria-pressed', String(!selected));
+          for (const { group, control, grid, buttons } of swatchGroups) {
+            grid.hidden = group !== tone;
+            control.setAttribute('aria-pressed', String(group === tone));
+            for (const [id, swatch] of buttons) swatch.setAttribute('aria-pressed', String(selected === id));
+          }
+        }
+
         function refreshColors() {
           const effective = palette.effective(draft.palette);
           const light = palette.colors(effective, false), dark = palette.colors(effective, true);
+          if (sampleChips.length !== light.length) {
+            sampleChips = light.map(() => element('i', 'note-database-color-chip'));
+            sample.replaceChildren(...sampleChips);
+          }
           sampleChips.forEach((chip, index) => setChip(chip, light[index], dark[index]));
-          picker.hidden = ring && !target;
-          const selected = ring ? draft.categories[target] : draft.primary;
-          automatic.setAttribute('aria-pressed', String(!selected));
-          for (const [id, swatch] of swatchButtons) swatch.setAttribute('aria-pressed', String(selected === id));
+          refreshPicker();
           for (const { point, row, chip } of rows) {
             const id = draft.categories[point.colorKey];
             setChip(chip, palette.categoryColor(effective, false, chart.groupBy, point.key, id),
@@ -2052,7 +2110,7 @@
         }
         function chooseColor(id) {
           if (saving || (ring && !target)) return;
-          if (ring) {
+          if (target) {
             if (id) draft.categories[target] = id;
             else delete draft.categories[target];
           } else if (id) draft.primary = id;
@@ -2061,6 +2119,7 @@
         }
         function resetDraft(style) {
           draft = copy(style);
+          tone = palette.swatchTone(target ? draft.categories[target] : draft.primary) || 'light';
           preset.value = draft.palette || '';
           view.panel?.choices?.sync(preset);
           preview();
@@ -2089,9 +2148,9 @@
         const save = element('button', 'note-database-chart-confirm', tr(label('确定', 'Confirm')));
         save.type = 'submit'; save.dataset.dbRole = 'chart-color-confirm';
         actions.append(reset, cancel, save);
-        form.append(presetRow, sample, picker);
-        if (ring) {
-          form.append(categories);
+        form.append(picker);
+        if (ring) form.append(categories);
+        if (ring || bar) {
           syncCategories(session.chartJob?.model?.groups);
           view.syncChartColorCategories = syncCategories;
         }
@@ -2099,7 +2158,7 @@
         panel.append(form);
         refreshColors();
         view.refreshChartColors = refreshColors;
-        view.chartStyleTarget = `${chart.type}:${chart.groupBy}`;
+        view.chartStyleTarget = chartColorTarget(chart);
         signal.addEventListener('abort', () => {
           delete view.chartStyleDraft;
           delete view.refreshChartColors;
@@ -2117,14 +2176,16 @@
           }
           saving = true;
           save.disabled = reset.disabled = cancel.disabled = preset.disabled = true;
-          view.panel?.choices?.sync(preset);
+          if (targetSelect) targetSelect.disabled = true;
+          view.panel?.choices?.sync([preset, targetSelect]);
           showError('');
           const result = await write(session, { type: 'setChartAppearance', styleRevision: revision, style: copy(draft) });
           if (signal.aborted) return;
           if (result) { close(true); return; }
           saving = false;
           save.disabled = reset.disabled = cancel.disabled = preset.disabled = false;
-          view.panel?.choices?.sync(preset);
+          if (targetSelect) targetSelect.disabled = false;
+          view.panel?.choices?.sync([preset, targetSelect]);
           showError(session.status || tr(label('配色保存失败，请重试。', 'Could not save colors. Please try again.')));
           save.focus({ preventScroll: true });
         });
@@ -2596,7 +2657,7 @@
         view.chartPalette.hidden = !chartMode;
         view.chartPalette.disabled = !page.chartView?.valid;
         if (view.panel?.kind === 'chart-palette' && (!chartMode || !page.chartView.valid
-            || `${page.chartView.chart.type}:${page.chartView.chart.groupBy}` !== view.chartStyleTarget)) view.panel.close();
+            || chartColorTarget(page.chartView.chart) !== view.chartStyleTarget)) view.panel.close();
       }
       if (view.modeControls) {
         view.dataMode.setAttribute('aria-pressed', String(!chartMode));

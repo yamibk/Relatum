@@ -505,7 +505,10 @@ class NoteDatabaseTests(unittest.TestCase):
         key = original['groups'][1]['colorKey']
         self.assertRegex(key, r'^[a-f0-9]{64}$')
         self.assertEqual(self.chart(spec, {'search': 'B'})['groups'][0]['colorKey'], key)
+        for chart_type in ('column', 'bar'):
+            self.assertEqual(self.chart({**spec, 'type': chart_type})['groups'][1]['colorKey'], key)
         style = {'palette': 'earth', 'primary': 'iris', 'categories': {key: 'coral'}}
+        normalized = {**style, 'palette': 'deep'}
         with mock.patch.object(self.database, '_snapshot', side_effect=OSError('injected')):
             with self.assertRaises(OSError):
                 self.action('setChartAppearance', styleRevision=None, style=style)
@@ -513,7 +516,7 @@ class NoteDatabaseTests(unittest.TestCase):
         saved = self.action('setChartAppearance', styleRevision=None, style=style)
         self.assertEqual(saved['revision'], revision)
         appearance_revision = saved['chartView']['styleRevision']
-        self.assertEqual(saved['chartView']['style'], style)
+        self.assertEqual(saved['chartView']['style'], normalized)
         self.assertEqual(self.chart(spec), original)
         with self.assertRaises(NotesError) as conflict:
             self.action('setChartAppearance', styleRevision=None, style={})
@@ -526,10 +529,23 @@ class NoteDatabaseTests(unittest.TestCase):
         self.assertEqual(repeated['chartView']['styleRevision'], appearance_revision)
         self.action('setChartView', mode='data')
         self.action('setChartView', mode='chart')
-        self.assertEqual(self.read()['chartView']['style'], style)
+        self.assertEqual(self.read()['chartView']['style'], normalized)
+        self.action('setChartView', mode='chart', chart={**spec, 'type': 'column'})
+        self.assertEqual(self.read()['chartView']['style'], normalized)
         changed = self.action('setChartView', mode='chart', chart={**spec, 'groupBy': done})['chartView']
-        self.assertEqual(changed['style'], {'palette': 'earth', 'primary': 'iris'})
+        self.assertEqual(changed['style'], {'palette': 'deep', 'primary': 'iris'})
         self.assertNotEqual(changed['styleRevision'], appearance_revision)
+
+        date = self.action('addColumn', name='Date', columnType='date')['addedColumn']
+        self.add_chart_records([{date: '2026-11-01'}, {date: '2026-11-02'}])
+        daily = {**spec, 'type': 'column', 'groupBy': date, 'bucket': 'day'}
+        view = self.action('setChartView', mode='chart', chart=daily)['chartView']
+        daily_key = self.chart(daily)['groups'][0]['colorKey']
+        style = {'palette': 'vivid', 'primary': 'leaf-medium', 'categories': {daily_key: 'sky-light'}}
+        self.action('setChartAppearance', styleRevision=view['styleRevision'], style=style)
+        self.assertEqual(self.read()['chartView']['style'], style)
+        monthly = self.action('setChartView', mode='chart', chart={**daily, 'bucket': 'month'})['chartView']
+        self.assertEqual(monthly['style'], {'palette': 'vivid', 'primary': 'leaf-medium'})
 
     def test_chart_default_and_full_filtered_date_buckets(self):
         self.assertFalse(self.chart()['exists'])

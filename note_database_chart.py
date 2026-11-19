@@ -28,8 +28,10 @@ _NUMERIC_AGGREGATES = {
     'min': 'MIN(m.value)', 'max': 'MAX(m.value)',
 }
 _SUBNORMAL_SCALE = 1 << 1074
-_PALETTES = frozenset({'fresh', 'earth', 'contrast'})
-_SWATCHES = frozenset({'blue', 'coral', 'mint', 'iris', 'amber', 'rose', 'teal', 'olive'})
+_PALETTES = frozenset({'vivid', 'soft', 'deep', 'contrast'})
+_LEGACY_PALETTES = {'fresh': 'soft', 'earth': 'deep'}
+_HUES = ('blue', 'coral', 'mint', 'iris', 'amber', 'rose', 'teal', 'olive', 'sky', 'apricot', 'lemon', 'leaf')
+_SWATCHES = frozenset(hue + suffix for hue in _HUES for suffix in ('', '-light', '-medium'))
 _COLOR_KEY = re.compile(r'[0-9a-f]{64}')
 _STYLE_REVISION = re.compile(r'[0-9a-f]{32}')
 MAX_CATEGORY_COLORS = 128
@@ -136,14 +138,18 @@ def _appearance(value):
     for key, choices in (('palette', _PALETTES), ('primary', _SWATCHES)):
         selected = value.get(key)
         if selected is not None:
-            if not isinstance(selected, str) or selected not in choices:
+            if not isinstance(selected, str):
+                raise NotesError('图表配色选项无效', code='invalid_chart_style')
+            if key == 'palette':
+                selected = _LEGACY_PALETTES.get(selected, selected)
+            if selected not in choices:
                 raise NotesError('图表配色选项无效', code='invalid_chart_style')
             style[key] = selected
     categories = value.get('categories', {})
     if (not isinstance(categories, dict) or len(categories) > MAX_CATEGORY_COLORS
             or any(not isinstance(key, str) or not _COLOR_KEY.fullmatch(key) or not isinstance(tone, str)
                    or tone not in _SWATCHES for key, tone in categories.items())):
-        raise NotesError('环图分类配色无效或超过数量上限', code='invalid_chart_style')
+        raise NotesError('图表分类配色无效或超过数量上限', code='invalid_chart_style')
     if categories:
         style['categories'] = categories
     return style
@@ -200,7 +206,7 @@ def set_view(connection, database_id, columns, action):
         database_id TEXT PRIMARY KEY REFERENCES databases(id),
         mode TEXT NOT NULL CHECK(mode IN ('data','chart')), chart TEXT NOT NULL)''')
     style, style_revision = current['style'], current['styleRevision']
-    if style.get('categories') and chart.get('groupBy') != current['chart'].get('groupBy'):
+    if style.get('categories') and any(chart.get(key) != current['chart'].get(key) for key in ('groupBy', 'bucket')):
         style = {key: value for key, value in style.items() if key != 'categories'}
         style_revision = uuid.uuid4().hex
     _write_view(connection, database_id, mode, chart, style, style_revision)
@@ -260,8 +266,8 @@ def summarize(connection, columns, where, parameters, chart):
         if value is not None and not math.isfinite(value):
             raise NotesError('图表汇总数值超出范围', status=422, code='chart_numeric_range')
         point = {'key': str(key), 'label': labels.get(key, str(key)), 'value': value}
-        if spec['type'] == 'doughnut':
-            point['colorKey'] = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+        if spec['type'] in _CATEGORIES:
+            point['colorKey'] = hashlib.sha256(point['key'].encode('utf-8')).hexdigest()
         groups.append(point)
     if labels:
         order = {key: index for index, key in enumerate(labels)}

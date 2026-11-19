@@ -79,9 +79,7 @@ function chartOptions(model, { language = 'zh', dark = false, palette, primary, 
   colors[0] = palettes.swatchColor(primary, dark) || colors[0];
   const metricText = local(metricNames[chart.metric.op]);
   const seriesName = metric ? `${metric.name} · ${metricText}` : metricText;
-  const dateFormat = new Intl.DateTimeFormat(locale, chart.bucket === 'month'
-    ? { timeZone: 'UTC', year: 'numeric', month: 'short' }
-    : { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' });
+  const dateFormat = group.type === 'date' ? palettes.dateFormatter(chart.bucket, english) : null;
   const dateTime = key => Date.parse(`${key}T00:00:00Z`);
   const label = point => {
     if (group.type === 'date') return dateFormat.format(dateTime(point.key));
@@ -173,9 +171,13 @@ function chartOptions(model, { language = 'zh', dark = false, palette, primary, 
     };
   }
   const horizontal = chart.type === 'bar';
+  const data = values.map((value, index) => {
+    const color = palettes.swatchColor(categories[groups[index].colorKey], dark);
+    return color ? { value, itemStyle: { color } } : value;
+  });
   return { ...options, grid, xAxis: horizontal ? valueAxis : categoryAxis,
     yAxis: horizontal ? { ...categoryAxis, inverse: true } : valueAxis,
-    series: [{ type: 'bar', name: seriesName, data: values, barMaxWidth: 38, itemStyle: { borderRadius: 3 } }],
+    series: [{ type: 'bar', name: seriesName, data, barMaxWidth: 38, itemStyle: { borderRadius: 3 } }],
   };
 }
 
