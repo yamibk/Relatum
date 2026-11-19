@@ -116,6 +116,25 @@ body[data-start-theme="dark"] .note-database {
   box-shadow: inset 0 0 0 1px var(--db-line);
   font-weight: 600;
 }
+.note-database-color-preview, .note-database-color-swatches { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
+.note-database-color-chip {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--chart-chip-light);
+}
+body[data-start-theme="dark"] .note-database-color-chip { background: var(--chart-chip-dark); }
+.note-database-color-preview > i { flex: 1; height: 8px; border-radius: 2px; }
+.note-database-color-picker { display: grid; gap: 4px; }
+.note-database-color-picker > strong { font-size: .9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-database .note-database-color-swatches button { min-height: 26px; padding: 3px 5px; display: inline-flex; align-items: center; justify-content: center; }
+.note-database .note-database-color-swatches button[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--db-focus); }
+.note-database-color-categories { display: grid; gap: 2px; max-height: 142px; overflow: auto; overscroll-behavior: contain; }
+.note-database .note-database-color-categories > button { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.note-database-color-categories > button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-database-color-actions > :first-child { margin-inline-end: auto; }
 .note-database button.note-database-move {
   position: absolute;
   inset-block: 0;

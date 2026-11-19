@@ -99,6 +99,7 @@
   let settingsChoices = null, themeLayoutAnchor = null, themeLayoutSequence = 0;
   let linkCompletionSettings = null;
   const themeSelect = $('[data-role="note-theme"]');
+  const chartPaletteSelect = $('[data-role="note-chart-palette"]');
   const appleSelectionSetting = $('[data-role="note-apple-selection-setting"]');
   const appleSelectionSelect = $('[data-role="note-apple-selection"]');
   const GUIDE_TOPIC_KEY = 'canvas:noteGuideTopic:v1';
@@ -1265,6 +1266,47 @@
   }
   window.addEventListener('relatum:note-apple-selection', syncNoteThemeSettings);
 
+  function syncNoteChartPaletteSettings() {
+    const palette = window.RelatumNoteChartPalette;
+    if (!chartPaletteSelect || !palette) return;
+    const en = language() === 'en', languageKey = String(en), selected = palette.read();
+    if (chartPaletteSelect.dataset.language !== languageKey) {
+      chartPaletteSelect.dataset.language = languageKey;
+      chartPaletteSelect.replaceChildren(...palette.presets.map(([id, names]) => new Option(names[en ? 1 : 0], id)));
+      const title = en ? 'Chart colors' : '图表配色';
+      $('[data-role="note-chart-palette-label"]').textContent = title;
+      chartPaletteSelect.setAttribute('aria-label', title);
+      settingsChoices?.refresh(chartPaletteSelect);
+    }
+    chartPaletteSelect.value = selected;
+    settingsChoices?.sync(chartPaletteSelect);
+    const preview = $('[data-role="note-chart-palette-preview"]');
+    const key = `${selected}:${languageKey}`;
+    if (preview.dataset.palette === key) return;
+    preview.dataset.palette = key;
+    preview.replaceChildren(...[false, true].map(dark => {
+      const row = document.createElement('div');
+      row.dataset.tone = dark ? 'dark' : 'light';
+      const name = document.createElement('span');
+      name.textContent = dark ? (en ? 'Dark' : '深色') : (en ? 'Light' : '浅色');
+      const colors = document.createElement('span');
+      colors.className = 'note-settings-chart-colors';
+      colors.setAttribute('aria-hidden', 'true');
+      for (const value of palette.colors(selected, dark)) {
+        const swatch = document.createElement('i'); swatch.style.backgroundColor = value; colors.append(swatch);
+      }
+      row.append(name, colors);
+      return row;
+    }));
+  }
+
+  function resetNoteChartPalette() {
+    if (window.RelatumNoteChartPalette && !window.RelatumNoteChartPalette.reset()) {
+      throw new Error(language() === 'en' ? 'Could not reset chart colors.' : '图表配色恢复失败');
+    }
+    syncNoteChartPaletteSettings();
+  }
+
   // Explicit theme changes preserve a visible text anchor without an editor transaction.
   window.addEventListener('relatum:note-theme-beforechange', () => {
     cancelDocumentViewportRestore();
@@ -1404,10 +1446,10 @@
     const markdownFileSettings = window.RelatumMarkdownFilesSettings.createPanel({ language,
       confirmAction: value => settingsDialog.confirmAction(value) });
     const categories = [
-      { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-laptop-minimal', panel: appearance, keywords: '主题 Claude Apple theme 字体 font size image text scale',
+      { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-laptop-minimal', panel: appearance, keywords: '主题 Claude Apple theme 字体 font size image text scale 图表配色 chart palette',
         searchTargets: () => Array.from(appearance.querySelectorAll('label, [data-settings-keywords], .note-canvas-default-tabs button, .note-shortcut-row'))
           .filter(element => !element.closest('[data-role="note-apple-selection-setting"]') || (element === appleSelectionSetting && !appleSelectionSetting.hidden)),
-        reset: () => { resetNoteTheme(); pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
+        reset: () => { resetNoteTheme(); resetNoteChartPalette(); pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
       { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮 双向链接 补全 候选 搜索 正文 排序 wiki link completion suggestions scope search content sort', reset: resetEditingSettings },
       { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings,
         keywords: '排序 命名 文件名开头优先 相同前缀后优先 高级排序 sort name timestamp file name prefix priority after a shared prefix advanced sorting',
@@ -1491,6 +1533,17 @@
     settingsChoices = window.RelatumReviewControls.createManager(settingsPop, themePortal);
     settingsChoices.enhance(themeSelect);
     if (appleSelectionSelect) settingsChoices.enhance(appleSelectionSelect);
+    if (chartPaletteSelect && window.RelatumNoteChartPalette) {
+      syncNoteChartPaletteSettings();
+      settingsChoices.enhance(chartPaletteSelect);
+      window.addEventListener(window.RelatumNoteChartPalette.changed, syncNoteChartPaletteSettings);
+      chartPaletteSelect.addEventListener('change', () => {
+        if (!window.RelatumNoteChartPalette.apply(chartPaletteSelect.value)) {
+          settingsDialog.setStatus(language() === 'en' ? 'Could not save chart colors. Please retry.' : '图表配色保存失败，请重试');
+        }
+        syncNoteChartPaletteSettings();
+      });
+    }
     for (const select of [libraryNamePriority, librarySharedPrefixPriority]) {
       const choice = settingsChoices.enhance(select);
       choice.element.querySelector('button').setAttribute('aria-describedby', select.getAttribute('aria-describedby'));
@@ -1522,7 +1575,7 @@
       }
     });
     settingsDialog.dialog.querySelector('[data-settings-search]').addEventListener('input', () => { settingsChoices.close(); linkCompletionSettings?.close(); });
-    document.addEventListener('relatum:languagechange', () => { settingsChoices.close(); finishLibrarySortMotion(); syncNoteThemeSettings(); linkCompletionSettings?.refresh(); });
+    document.addEventListener('relatum:languagechange', () => { settingsChoices.close(); finishLibrarySortMotion(); syncNoteThemeSettings(); syncNoteChartPaletteSettings(); linkCompletionSettings?.refresh(); });
     settingsDialog.dialog.addEventListener('click', handleWorkspaceClick);
     settingsTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     libraryTrigger.setAttribute('aria-controls', 'note-settings-dialog');
@@ -1542,6 +1595,7 @@
   function resetNoteSettings() {
     resetEditingSettings();
     resetNoteTheme();
+    resetNoteChartPalette();
     const preference = window.RelatumNotePreferences;
     preference?.resetGraphSpacing?.();
     preference?.resetGraphPreload?.();

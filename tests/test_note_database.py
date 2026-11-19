@@ -445,7 +445,7 @@ class NoteDatabaseTests(unittest.TestCase):
         self.save(FENCE + '\n' + SECOND_FENCE)
         day = self.action('addColumn', name='日期', columnType='date')['addedColumn']
         filename = self.directory / 'database.sqlite3'
-        default = {'mode': 'data', 'chart': None, 'valid': False}
+        default = {'mode': 'data', 'chart': None, 'valid': False, 'style': {}, 'styleRevision': None}
         spec = self.latest['chartOptions']['suggested']
         self.assertEqual(spec, {'type': 'line', 'groupBy': day, 'metric': {'op': 'count'}, 'bucket': 'day'})
         before = filename.read_bytes()
@@ -460,7 +460,7 @@ class NoteDatabaseTests(unittest.TestCase):
         previous_revision = self.latest['revision']
         saved = self.action('setChartView', mode='chart', chart=spec)
         self.assertNotEqual(saved['revision'], previous_revision)
-        self.assertEqual(saved['chartView'], {'mode': 'chart', 'chart': spec, 'valid': True})
+        self.assertEqual(saved['chartView'], {**default, 'mode': 'chart', 'chart': spec, 'valid': True})
         with self.assertRaises(NotesError) as stale:
             self.database.action('Source.md', TABLE, {'type': 'setChartView', 'mode': 'data', 'revision': previous_revision})
         self.assertEqual(stale.exception.code, 'revision_conflict')
@@ -470,7 +470,7 @@ class NoteDatabaseTests(unittest.TestCase):
         self.assertEqual(self.latest['chartView'], saved['chartView'])
         self.assertEqual(next(field['name'] for field in self.latest['chartOptions']['fields'] if field['id'] == day), '完成日期')
         data_view = self.action('setChartView', mode='data')['chartView']
-        self.assertEqual(data_view, {'mode': 'data', 'chart': spec, 'valid': True})
+        self.assertEqual(data_view, {**default, 'chart': spec, 'valid': True})
         self.assertEqual(self.action('setChartView', mode='chart')['chartView'], saved['chartView'])
         self.store.create('', 'Folder', 'folder')
         self.store.move('Source.md', 'Folder/Moved.md')
@@ -482,7 +482,7 @@ class NoteDatabaseTests(unittest.TestCase):
         spec = self.latest['chartOptions']['suggested']
         self.action('setChartView', mode='chart', chart=spec)
         self.action('deleteColumn', column=day)
-        self.assertEqual(self.read()['chartView'], {'mode': 'chart', 'chart': spec, 'valid': False})
+        self.assertEqual(self.read()['chartView'], {'mode': 'chart', 'chart': spec, 'valid': False, 'style': {}, 'styleRevision': None})
         self.action('setChartView', mode='data')
         with self.assertRaises(NotesError) as invalid:
             self.action('setChartView', mode='chart')
@@ -492,6 +492,44 @@ class NoteDatabaseTests(unittest.TestCase):
         with closing(sqlite3.connect(self.directory / 'database.sqlite3')) as connection:
             self.assertEqual(connection.execute('PRAGMA user_version').fetchone(), (3,))
             self.assertEqual(connection.execute('SELECT count(*) FROM chart_views').fetchone(), (0,))
+
+    def test_chart_appearance_uses_independent_revision_and_stable_category_keys(self):
+        self.save()
+        title = self.latest['columns'][0]['id']
+        done = self.action('addColumn', name='Done', columnType='checkbox')['addedColumn']
+        self.add_chart_records([{title: 'A'}, {title: 'B', done: True}])
+        spec = {'type': 'doughnut', 'groupBy': title, 'metric': {'op': 'count'}}
+        self.action('setChartView', mode='chart', chart=spec)
+        revision = self.latest['revision']
+        original = self.chart(spec)
+        key = original['groups'][1]['colorKey']
+        self.assertRegex(key, r'^[a-f0-9]{64}$')
+        self.assertEqual(self.chart(spec, {'search': 'B'})['groups'][0]['colorKey'], key)
+        style = {'palette': 'earth', 'primary': 'iris', 'categories': {key: 'coral'}}
+        with mock.patch.object(self.database, '_snapshot', side_effect=OSError('injected')):
+            with self.assertRaises(OSError):
+                self.action('setChartAppearance', styleRevision=None, style=style)
+        self.assertEqual(self.read()['chartView']['style'], {})
+        saved = self.action('setChartAppearance', styleRevision=None, style=style)
+        self.assertEqual(saved['revision'], revision)
+        appearance_revision = saved['chartView']['styleRevision']
+        self.assertEqual(saved['chartView']['style'], style)
+        self.assertEqual(self.chart(spec), original)
+        with self.assertRaises(NotesError) as conflict:
+            self.action('setChartAppearance', styleRevision=None, style={})
+        self.assertEqual(conflict.exception.code, 'chart_style_conflict')
+        for invalid in ({'palette': 'unknown'}, {'primary': '#024a77'}, {'categories': {'A': 'coral'}}):
+            with self.assertRaises(NotesError) as error:
+                self.action('setChartAppearance', styleRevision=appearance_revision, style=invalid)
+            self.assertEqual(error.exception.code, 'invalid_chart_style')
+        repeated = self.action('setChartAppearance', styleRevision=appearance_revision, style=style)
+        self.assertEqual(repeated['chartView']['styleRevision'], appearance_revision)
+        self.action('setChartView', mode='data')
+        self.action('setChartView', mode='chart')
+        self.assertEqual(self.read()['chartView']['style'], style)
+        changed = self.action('setChartView', mode='chart', chart={**spec, 'groupBy': done})['chartView']
+        self.assertEqual(changed['style'], {'palette': 'earth', 'primary': 'iris'})
+        self.assertNotEqual(changed['styleRevision'], appearance_revision)
 
     def test_chart_default_and_full_filtered_date_buckets(self):
         self.assertFalse(self.chart()['exists'])
@@ -613,7 +651,7 @@ class NoteDatabaseHttpTests(unittest.TestCase):
                 profile = LaunchProfile({key: key == enabled for key in FEATURES}, restricted=True)
                 fixture.server.launch_profile = profile
                 self.assertEqual(fixture.request(endpoint, payload)[0], 200 if enabled == 'notes' else 403)
-                for resource in ('note-database-chart.js', 'vendor/echarts/echarts.min.js'):
+                for resource in ('note-database-chart.js', 'note-chart-palette.js', 'vendor/echarts/echarts.min.js'):
                     self.assertEqual(profile.resource_allowed(resource), enabled == 'notes')
 
     def test_query_action_import_external_open_and_disabled_profile(self):

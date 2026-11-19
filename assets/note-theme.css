@@ -7,6 +7,11 @@
 #note-settings-dialog .note-settings-theme > label { font-size: 13px; font-weight: 580; }
 #note-settings-dialog .note-settings-theme > label > strong { font-weight: inherit; }
 #note-settings-dialog .note-settings-theme > small { grid-column: 1 / -1; color: var(--settings-muted); font-size: 11px; line-height: 1.6; }
+.note-settings-chart-palette-preview { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.note-settings-chart-palette-preview > div { display: grid; gap: 4px; padding: 6px 8px; border: 1px solid #dcded9; border-radius: 6px; background: #fff; color: #42453f; font-size: 11px; }
+.note-settings-chart-palette-preview > [data-tone="dark"] { background: #252823; color: #e5e7de; border-color: #434740; }
+.note-settings-chart-colors { display: flex; gap: 2px; }
+.note-settings-chart-colors > i { flex: 1; max-width: 24px; height: 9px; border-radius: 2px; }
 #note-settings-dialog .note-settings-theme .review-choice { width: 100%; }
 #note-settings-dialog .note-settings-theme .review-choice-trigger {
   --border: color-mix(in srgb, var(--settings-text) 12%, transparent);

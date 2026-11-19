@@ -1024,12 +1024,15 @@ class NoteDatabases:
                 candidates, token = self._unused(connection, database.parent)
                 return {'count': len(candidates), 'candidateToken': token}
         with self._connection(database, 'rw') as connection:
-            if kind == 'setChartView':
-                from note_database_chart import set_view
+            if kind in ('setChartView', 'setChartAppearance'):
+                from note_database_chart import set_appearance, set_view
 
                 connection.execute('BEGIN IMMEDIATE')
                 self._require_revision(connection, database_id, action.get('revision'))
-                if set_view(connection, database_id, self._columns(connection, database_id), action):
+                columns = self._columns(connection, database_id)
+                if kind == 'setChartAppearance':
+                    set_appearance(connection, database_id, columns, action)
+                elif set_view(connection, database_id, columns, action):
                     self._touch(connection, database_id)
                 return self._snapshot(connection, database.parent, database_id, query)
             if kind == 'cleanup':

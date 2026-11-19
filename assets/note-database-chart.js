@@ -1,10 +1,8 @@
 const ENGINE_URL = new URL('./vendor/echarts/echarts.min.js', import.meta.url);
 const ENGINE_VERSION = '6.1.0';
 const themes = {
-  light: { text: '#42453f', axis: '#666962', grid: '#e5e6df',
-    colors: ['#476e62', '#a66043', '#61758f', '#9a793a', '#806887', '#567a85', '#a75c65', '#737b45'] },
-  dark: { text: '#e5e7de', axis: '#b6b9af', grid: '#3a3f38',
-    colors: ['#8abcaa', '#e49b78', '#97b1d5', '#d6b361', '#bd9bc7', '#83bbc7', '#df929d', '#b3be76'] },
+  light: { text: '#42453f', axis: '#666962', grid: '#e5e6df' },
+  dark: { text: '#e5e7de', axis: '#b6b9af', grid: '#3a3f38' },
 };
 const chartNames = {
   column: ['柱状图', 'Column chart'], bar: ['条形图', 'Bar chart'],
@@ -56,18 +54,18 @@ function numberFormat(locale, precision) {
   };
 }
 
-function compactLabel(value) {
+function compactLabel(value, limit = 18) {
   let width = 0;
   let label = '';
   for (const character of value.trim().replace(/\s+/g, ' ')) {
     width += character.codePointAt(0) > 0xff ? 2 : 1;
-    if (width > 18) return `${label}…`;
+    if (width > limit) return `${label}…`;
     label += character;
   }
   return label;
 }
 
-function chartOptions(model, { language = 'zh', dark = false }, document) {
+function chartOptions(model, { language = 'zh', dark = false, palette, primary, categories = {} }, document) {
   const { chart, fields, groups } = model;
   const group = fields.find(field => field.id === chart.groupBy);
   const metric = fields.find(field => field.id === chart.metric.column);
@@ -75,6 +73,10 @@ function chartOptions(model, { language = 'zh', dark = false }, document) {
   const local = labels => labels[english ? 1 : 0];
   const locale = english ? 'en' : 'zh-CN';
   const theme = dark ? themes.dark : themes.light;
+  const palettes = window.RelatumNoteChartPalette;
+  const preset = palettes.effective(palette);
+  const colors = palettes.colors(preset, dark);
+  colors[0] = palettes.swatchColor(primary, dark) || colors[0];
   const metricText = local(metricNames[chart.metric.op]);
   const seriesName = metric ? `${metric.name} · ${metricText}` : metricText;
   const dateFormat = new Intl.DateTimeFormat(locale, chart.bucket === 'month'
@@ -83,9 +85,7 @@ function chartOptions(model, { language = 'zh', dark = false }, document) {
   const dateTime = key => Date.parse(`${key}T00:00:00Z`);
   const label = point => {
     if (group.type === 'date') return dateFormat.format(dateTime(point.key));
-    if (group.type === 'checkbox') return point.key === '1'
-      ? local(['已勾选', 'Checked']) : local(['未勾选', 'Unchecked']);
-    return point.label;
+    return palettes.categoryLabel(point, group.type, english);
   };
   const labels = groups.map(label);
   const displayNumber = numberFormat(locale, 12);
@@ -96,6 +96,10 @@ function chartOptions(model, { language = 'zh', dark = false }, document) {
     ? Math.max(-308, Math.floor(Math.log10(magnitude))) : 0;
   const scale = 10 ** exponent;
   const values = groups.map(point => point.value === null ? null : point.value / scale);
+  const total = chart.type === 'doughnut' && ['count', 'sum'].includes(chart.metric.op)
+    ? values.reduce((sum, value) => sum + (value ?? 0), 0) : 0;
+  const formatPercent = total > 0 ? new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1 }) : null;
+  const percent = index => formatPercent && Number.isFinite(values[index]) ? formatPercent.format(values[index] / total) : '';
   const tooltip = {
     trigger: chart.type === 'line' ? 'axis' : 'item', confine: true, renderMode: 'html', transitionDuration: 0,
     backgroundColor: dark ? '#292e29' : '#fff', borderColor: theme.grid, textStyle: { color: theme.text },
@@ -104,27 +108,53 @@ function chartOptions(model, { language = 'zh', dark = false }, document) {
       const node = document.createElement('div');
       node.style.cssText = 'max-width:240px;white-space:normal;overflow-wrap:anywhere';
       const point = groups[dataIndex];
-      if (point?.value != null) node.textContent = `${labels[dataIndex]} · ${seriesName} ${displayNumber(point.value)}`;
+      if (point?.value != null) {
+        const share = percent(dataIndex);
+        node.textContent = `${labels[dataIndex]} · ${seriesName} ${displayNumber(point.value)}${share ? ` · ${share}` : ''}`;
+      }
       return node;
     },
   };
   const options = {
-    animation: false, useUTC: true, color: theme.colors, textStyle: { color: theme.text }, tooltip,
+    animation: false, useUTC: true, color: colors, textStyle: { color: theme.text }, tooltip,
     aria: { enabled: true, label: { description: `${local(chartNames[chart.type])} · ${group.name} · ${seriesName}` } },
   };
   if (chart.type === 'doughnut') {
+    const nameIndex = new Map(labels.map((name, index) => [name, index]));
+    let title;
+    if (formatPercent) {
+      const unscaled = total * scale;
+      let displayed;
+      if (Number.isFinite(unscaled)) displayed = numberFormat(locale, 7)(unscaled);
+      else {
+        const [coefficient, power] = total.toExponential(5).split('e');
+        displayed = `${numberFormat(locale, 6)(Number(coefficient))}E${Number(power) + exponent}`;
+      }
+      const caption = local(group.type === 'multiSelect' ? ['标签合计', 'Tag total'] : ['总计', 'Total']);
+      options.aria.label.description += ` · ${caption} ${displayed}`;
+      title = { text: displayed, subtext: caption, left: 'center', top: '38%', padding: 0, itemGap: 3,
+        textStyle: { color: theme.text, fontSize: 16, fontWeight: 600 }, subtextStyle: { color: theme.axis, fontSize: 11 } };
+    }
     return { ...options,
-      legend: { type: 'scroll', bottom: 4, textStyle: { color: theme.text, width: 110, overflow: 'truncate' },
+      title,
+      legend: { type: 'scroll', bottom: 4, textStyle: { color: theme.text, width: 125, overflow: 'truncate' },
         pageTextStyle: { color: theme.text }, pageIconColor: theme.axis, pageIconInactiveColor: theme.grid,
-        selectedMode: false, formatter: compactLabel },
+        selectedMode: false, formatter: name => {
+          const share = percent(nameIndex.get(name));
+          return share ? `${compactLabel(name, 12)} ${share}` : compactLabel(name);
+        } },
       series: [{ type: 'pie', name: seriesName, radius: ['46%', '72%'], center: ['50%', '46%'],
         label: { show: false }, emphasis: { scale: false },
-        data: labels.map((name, index) => ({ name, value: values[index] })) }],
+        data: labels.map((name, index) => {
+          const point = groups[index];
+          const color = palettes.categoryColor(preset, dark, chart.groupBy, point.key, categories[point.colorKey]);
+          return { name, value: values[index], itemStyle: { color } };
+        }) }],
     };
   }
 
   const categoryAxis = { type: 'category', data: labels,
-    axisLabel: { color: theme.axis, width: 112, overflow: 'truncate', hideOverlap: true, formatter: compactLabel },
+    axisLabel: { color: theme.axis, width: 112, overflow: 'truncate', hideOverlap: true, formatter: value => compactLabel(value) },
     axisLine: { lineStyle: { color: theme.grid } }, axisTick: { show: false } };
   const valueAxis = { type: 'value', minInterval: chart.metric.op === 'count' ? 1 : undefined,
     axisLabel: { color: theme.axis, hideOverlap: true, formatter: value => {
@@ -178,7 +208,9 @@ export function mount(container, model, appearance = {}) {
     try {
       const engine = await loadEngine();
       if (disposed || current !== generation || !measurable()) return false;
-      instance?.resize({ silent: true });
+      if (instance && (instance.getWidth() !== container.clientWidth || instance.getHeight() !== container.clientHeight)) {
+        instance.resize({ silent: true });
+      }
       instance ??= engine.init(container, null, { renderer: 'svg' });
       instance.setOption(chartOptions(model, appearance, container.ownerDocument), { notMerge: true });
       painted = current;

@@ -11,6 +11,7 @@ const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const { features } = require('../assets/feature-catalog.json');
 const chartsOnly = process.argv.includes('--charts-only');
 const chartViews = process.argv.includes('--chart-views');
+const chartColors = process.argv.includes('--chart-colors');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-database-'));
 const notes = path.join(root, 'notes');
@@ -23,7 +24,7 @@ fs.mkdirSync(downloads);
 fs.mkdirSync(path.join(root, 'recycled'));
 for (const name of ['Main', 'Drop', 'Other']) fs.writeFileSync(path.join(notes, name + '.md'), name + ' body\n');
 if (chartsOnly) fs.writeFileSync(path.join(notes, 'Charts.md'), marker('charts') + '\n');
-if (chartViews) fs.writeFileSync(path.join(notes, 'Charts.md'), 'Before chart\n\n' + marker('charts') + '\n\nBetween charts\n\n'
+if (chartViews || chartColors) fs.writeFileSync(path.join(notes, 'Charts.md'), 'Before chart\n\n' + marker('charts') + '\n\nBetween charts\n\n'
   + marker('charts') + '\n\nAfter chart\n\n' + Array.from({ length: 120 }, (_, index) => `Paragraph ${index}\n\n`).join(''));
 
 async function freePort() {
@@ -94,7 +95,7 @@ async function until(fn) {
     });
     const source = fs.readFileSync(path.join(__dirname, '..', 'assets', 'note-workspace.js'), 'utf8');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source.replace(
-      '  window.CanvasNoteWorkspace = {', '  window.__databaseTest = {state, openNote, flushSave, setViewMode, movePath, get editor() {return liveEditor;}};\n  window.CanvasNoteWorkspace = {') }));
+      '  window.CanvasNoteWorkspace = {', '  window.__databaseTest = {state, openNote, flushSave, setViewMode, movePath, setNoteSettingsOpen, get editor() {return liveEditor;}};\n  window.CanvasNoteWorkspace = {') }));
     await page.goto(native ? page.url() : origin);
     if (!notesOnly) {
       const workspace = page.locator('button[data-start-workspace="notes"]');
@@ -126,14 +127,15 @@ async function until(fn) {
     const mode = next => page.evaluate(next => __databaseTest.setViewMode(next), next);
     const body = page.locator('[data-role="note-editor"] .cm-content').first();
     const blocks = page.locator('.note-database-carrier:visible');
-    if (chartViews) {
-      const { checkChartViews } = require('./note-database-chart-views-browser.js');
-      await checkChartViews({ page, open, mode, chartRequests, until, restart: async () => {
+    if (chartViews || chartColors) {
+      const check = chartColors ? require('./note-database-chart-colors-browser.js').checkChartColors
+        : require('./note-database-chart-views-browser.js').checkChartViews;
+      await check({ page, open, mode, chartRequests, until, restart: async () => {
         await stop(true);
         return launch();
       } });
       assert.deepEqual(errors, []);
-      console.log('Note database chart views and restart verified (' + (native ? 'WebView2' : 'Edge') + ')');
+      console.log(`Note database chart ${chartColors ? 'colors' : 'views'} and restart verified (${native ? 'WebView2' : 'Edge'})`);
       return;
     }
     if (chartsOnly) {

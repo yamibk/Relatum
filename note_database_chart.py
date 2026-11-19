@@ -1,7 +1,10 @@
 """Query and projection rules for charts over one note database."""
 
+import hashlib
 import json
 import math
+import re
+import uuid
 
 from notes_library import NotesError
 
@@ -25,6 +28,11 @@ _NUMERIC_AGGREGATES = {
     'min': 'MIN(m.value)', 'max': 'MAX(m.value)',
 }
 _SUBNORMAL_SCALE = 1 << 1074
+_PALETTES = frozenset({'fresh', 'earth', 'contrast'})
+_SWATCHES = frozenset({'blue', 'coral', 'mint', 'iris', 'amber', 'rose', 'teal', 'olive'})
+_COLOR_KEY = re.compile(r'[0-9a-f]{64}')
+_STYLE_REVISION = re.compile(r'[0-9a-f]{32}')
+MAX_CATEGORY_COLORS = 128
 
 
 class _NumericTotal:
@@ -121,8 +129,28 @@ def _has_views(connection):
     return connection.execute("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='chart_views'").fetchone() is not None
 
 
+def _appearance(value):
+    if not isinstance(value, dict) or not value.keys() <= {'palette', 'primary', 'categories'}:
+        raise NotesError('图表配色格式无效', code='invalid_chart_style')
+    style = {}
+    for key, choices in (('palette', _PALETTES), ('primary', _SWATCHES)):
+        selected = value.get(key)
+        if selected is not None:
+            if not isinstance(selected, str) or selected not in choices:
+                raise NotesError('图表配色选项无效', code='invalid_chart_style')
+            style[key] = selected
+    categories = value.get('categories', {})
+    if (not isinstance(categories, dict) or len(categories) > MAX_CATEGORY_COLORS
+            or any(not isinstance(key, str) or not _COLOR_KEY.fullmatch(key) or not isinstance(tone, str)
+                   or tone not in _SWATCHES for key, tone in categories.items())):
+        raise NotesError('环图分类配色无效或超过数量上限', code='invalid_chart_style')
+    if categories:
+        style['categories'] = categories
+    return style
+
+
 def read_view(connection, database_id, columns):
-    result = {'mode': 'data', 'chart': None, 'valid': False}
+    result = {'mode': 'data', 'chart': None, 'valid': False, 'style': {}, 'styleRevision': None}
     if not _has_views(connection):
         return result
     saved = connection.execute('SELECT mode,chart FROM chart_views WHERE database_id=?', (database_id,)).fetchone()
@@ -130,11 +158,29 @@ def read_view(connection, database_id, columns):
         return result
     result['mode'] = saved['mode']
     try:
-        result['chart'] = json.loads(saved['chart'])
-        result['valid'] = result['chart'] is not None and _configuration(columns, result['chart']) is not None
+        chart = json.loads(saved['chart'])
+        if isinstance(chart, dict):
+            style = chart.pop('style', {})
+            revision = chart.pop('styleRevision', None)
+            result['chart'] = chart
+            if isinstance(revision, str) and _STYLE_REVISION.fullmatch(revision):
+                result['styleRevision'] = revision
+            try:
+                result['style'] = _appearance(style)
+            except NotesError:
+                pass
+            result['valid'] = _configuration(columns, chart) is not None
     except (ValueError, RecursionError):
         pass
     return result
+
+
+def _write_view(connection, database_id, mode, chart, style, style_revision):
+    if style_revision is not None:
+        chart = {**chart, 'style': style, 'styleRevision': style_revision}
+    connection.execute('''INSERT INTO chart_views(database_id,mode,chart) VALUES(?,?,?)
+        ON CONFLICT(database_id) DO UPDATE SET mode=excluded.mode,chart=excluded.chart''',
+        (database_id, mode, json.dumps(chart, separators=(',', ':'))))
 
 
 def set_view(connection, database_id, columns, action):
@@ -153,10 +199,21 @@ def set_view(connection, database_id, columns, action):
     connection.execute('''CREATE TABLE IF NOT EXISTS chart_views(
         database_id TEXT PRIMARY KEY REFERENCES databases(id),
         mode TEXT NOT NULL CHECK(mode IN ('data','chart')), chart TEXT NOT NULL)''')
-    connection.execute('''INSERT INTO chart_views(database_id,mode,chart) VALUES(?,?,?)
-        ON CONFLICT(database_id) DO UPDATE SET mode=excluded.mode,chart=excluded.chart''',
-        (database_id, mode, json.dumps(chart, separators=(',', ':'))))
+    style, style_revision = current['style'], current['styleRevision']
+    if style.get('categories') and chart.get('groupBy') != current['chart'].get('groupBy'):
+        style = {key: value for key, value in style.items() if key != 'categories'}
+        style_revision = uuid.uuid4().hex
+    _write_view(connection, database_id, mode, chart, style, style_revision)
     return True
+
+
+def set_appearance(connection, database_id, columns, action):
+    current = read_view(connection, database_id, columns)
+    if current['mode'] != 'chart' or not current['valid'] or action.get('styleRevision') != current['styleRevision']:
+        raise NotesError('图表配色已修改，请重新载入', status=409, code='chart_style_conflict')
+    style = _appearance(action.get('style'))
+    if style != current['style']:
+        _write_view(connection, database_id, current['mode'], current['chart'], style, uuid.uuid4().hex)
 
 
 def delete_views(connection, identities):
@@ -202,7 +259,10 @@ def summarize(connection, columns, where, parameters, chart):
     for key, value in rows:
         if value is not None and not math.isfinite(value):
             raise NotesError('图表汇总数值超出范围', status=422, code='chart_numeric_range')
-        groups.append({'key': str(key), 'label': labels.get(key, str(key)), 'value': value})
+        point = {'key': str(key), 'label': labels.get(key, str(key)), 'value': value}
+        if spec['type'] == 'doughnut':
+            point['colorKey'] = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+        groups.append(point)
     if labels:
         order = {key: index for index, key in enumerate(labels)}
         groups.sort(key=lambda point: order.get(point['key'], len(order)))

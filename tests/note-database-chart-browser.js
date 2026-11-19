@@ -108,7 +108,7 @@ async function checkCharts({ page, open, blocks, chartRequests }) {
   assert.deepEqual(initial.points, line.groups.map(({ key, value }) => [key, value]));
   assert.deepEqual(initial.orientation, ['category', 'category']);
   assert.deepEqual(initial.labels, ['折线图 · 日期 · 记录数', 'Column chart · 名称 · Amount · Sum',
-    'Doughnut chart · Status · Record count']);
+    'Doughnut chart · Status · Record count · Total 6']);
   assert.deepEqual(initial.ring, [['Unchecked', 4], ['Checked', 2]]);
   assert(initial.categoryLabels.every(labels => labels.includes('Study') && labels.some(label => /(?:…|\.\.\.)$/.test(label))),
     JSON.stringify(initial.categoryLabels));
@@ -144,8 +144,19 @@ async function checkCharts({ page, open, blocks, chartRequests }) {
     ['Line chart · 日期 · Record count', initial.color[1]],
     ['柱状图 · 名称 · Amount · 合计', initial.color[1]],
     ['条形图 · 名称 · Amount · 合计', initial.color[0]],
-    ['环形图 · Status · 记录数', initial.color[0]],
+    ['环形图 · Status · 记录数 · 总计 6', initial.color[0]],
   ]);
+
+  const largeRing = await page.evaluate(async model => {
+    const index = 3;
+    const labels = ['A', 'B'];
+    const groups = model.groups.map((point, i) => ({ ...point, label: labels[i], value: Number.MAX_VALUE }));
+    const fields = model.fields.map(field => field.id === model.chart.groupBy ? { ...field, type: 'multiSelect' } : field);
+    await chartQa.renders[index].update({ ...model, fields, groups }, { language: 'en' });
+    const option = echarts.getInstanceByDom(chartQa.hosts[index]).getOption();
+    return [option.title[0].text, option.title[0].subtext, ...option.series[0].data.map(point => option.legend[0].formatter(point.name))];
+  }, doughnut);
+  assert.deepEqual(largeRing, ['3.59539E308', 'Tag total', 'A 50%', 'B 50%']);
 
   const lifecycle = await page.evaluate(async ({ line, column }) => {
     const [controller] = chartQa.renders;

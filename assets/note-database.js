@@ -42,6 +42,7 @@
   const iconPaths = { plus: 'M8 3.5v9M3.5 8h9', search: 'M10.3 10.3l3.1 3.1M11.5 7a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Z',
     view: 'M2.5 4h11m-9 4h7m-5 4h3', more: 'M3.5 8h.2M7.9 8h.2M12.3 8h.2', prev: 'm10 4-4 4 4 4',
     settings: 'M2 4h12M2 8h12M2 12h12M5 2.5v3m5.5 1v3M6.5 10.5v3',
+    palette: 'M8.1 2.1a5.9 5.9 0 1 0 0 11.8h.8a1.3 1.3 0 0 0 1-2.1 1.1 1.1 0 0 1 .9-1.8h1.3a2 2 0 0 0 2-2.1 5.9 5.9 0 0 0-6-5.8ZM5 6.2h.1M8 4.8h.1M11 6h.1M4.7 9.4h.1',
     next: 'm6 4 4 4-4 4', '×': 'm5 5 6 6m0-6-6 6', check: 'm3.5 8 3 3 6-6',
     date: 'M3 4h10a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1ZM2 7h12M5 2v3m6-3v3',
     file: 'M4 2h5l4 4v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1ZM9 2v4h4',
@@ -385,8 +386,12 @@
     function paintChart(view, model) {
       const language = options.language?.() || 'zh';
       const dark = document.documentElement.dataset.startTheme === 'dark' || document.body.dataset.startTheme === 'dark';
-      if (view.chartPaint?.model === model && view.chartPaint.language === language && view.chartPaint.dark === dark) return;
-      const paint = view.chartPaint = { model, language, dark };
+      const style = view.chartStyleDraft ?? view.session.page?.chartView?.style ?? {};
+      const appearance = { language, dark, palette: window.RelatumNoteChartPalette.effective(style.palette),
+        ...(model.chart.type === 'doughnut' ? { categories: style.categories ?? {} } : { primary: style.primary }) };
+      const appearanceKey = JSON.stringify(appearance);
+      if (view.chartPaint?.model === model && view.chartPaint.appearanceKey === appearanceKey) return;
+      const paint = view.chartPaint = { model, appearanceKey };
       const current = () => view.chartPaint === paint && chartVisible(view);
       const failed = () => {
         if (!current()) return;
@@ -404,7 +409,6 @@
       }
       void loadChartRuntime().then(async runtime => {
         if (!current()) return;
-        const appearance = { language, dark };
         if (view.chartRenderer) {
           if (await view.chartRenderer.update(model, appearance) && current()) showChartStatus(view, '');
           return;
@@ -491,9 +495,15 @@
       }
       const job = session.chartJob;
       for (const view of views) {
+        view.syncChartColorCategories?.(job.model?.groups);
         if (job.model) paintChart(view, job.model);
         else showChartStatus(view, job.status || 'loading');
       }
+    }
+
+    function repaintChart(view) {
+      const model = view.session.chartJob?.model;
+      if (model && chartVisible(view)) paintChart(view, model);
     }
 
     function announce(session, message) {
@@ -1417,7 +1427,8 @@
         if (event.key === 'Escape') { event.stopPropagation(); close(true); return; }
         if (event.target.closest('.review-choice-trigger') || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
         if (event.target.closest('input,textarea,select') && (kind !== 'addColumn' || event.key !== 'ArrowDown')) return;
-        const buttons = Array.from(surface.querySelectorAll('button:not(:disabled):not(.review-choice-trigger):not(.note-database-choice-more)'));
+        const buttons = Array.from(surface.querySelectorAll('button:not(:disabled):not(.review-choice-trigger):not(.note-database-choice-more)'))
+          .filter(button => !button.closest('[hidden]'));
         if (!buttons.length) return;
         const current = document.activeElement.classList.contains('note-database-choice-more')
           ? document.activeElement.parentElement.querySelector('[data-choice]') : document.activeElement;
@@ -1925,6 +1936,182 @@
       }
     }
 
+    function openChartPalette(view) {
+      const palette = window.RelatumNoteChartPalette;
+      if (!palette || !view.session.page?.chartView?.valid) return;
+      panelAt(view, view.chartPalette, 'chart-palette', (panel, close, { signal }) => {
+        const { session } = view;
+        const current = session.page.chartView;
+        const chart = current.chart;
+        const ring = chart.type === 'doughnut';
+        const groupType = session.page.columns.find(column => column.id === chart.groupBy)?.type;
+        const copy = (style = {}) => ({ ...style, categories: { ...style.categories } });
+        let draft = copy(current.style), revision = current.styleRevision, target = null, saving = false;
+        let categoryGroups, rows = [];
+
+        const form = element('form', 'note-database-chart-form note-database-color-form');
+        const preset = select(tr(label('配色预设', 'Color preset')),
+          [['', tr(label('跟随笔记设置', 'Follow note settings'))], ...palette.presets.map(([id, names]) => [id, tr(names)])], draft.palette || '');
+        preset.dataset.dbRole = 'chart-palette-preset';
+        const presetRow = element('label');
+        presetRow.append(element('span', '', tr(label('配色预设', 'Color preset'))), preset);
+        const sample = element('div', 'note-database-color-preview');
+        sample.setAttribute('aria-hidden', 'true');
+        const sampleChips = Array.from({ length: 8 }, () => element('i', 'note-database-color-chip'));
+        sample.append(...sampleChips);
+
+        const picker = element('div', 'note-database-color-picker');
+        const pickerLabel = element('strong', '', tr(label('主色', 'Main color')));
+        const swatches = element('div', 'note-database-color-swatches');
+        picker.append(pickerLabel, swatches);
+        const categories = element('div', 'note-database-color-categories');
+        const status = element('div', 'note-database-option-error');
+        status.setAttribute('role', 'status');
+        status.hidden = true;
+
+        function setChip(node, light, dark) {
+          node.style.setProperty('--chart-chip-light', light);
+          node.style.setProperty('--chart-chip-dark', dark);
+        }
+        const swatchButtons = palette.swatches.map(([id, names]) => {
+          const swatch = button('', () => chooseColor(id), 'chart-color-swatch');
+          swatch.dataset.swatch = id;
+          swatch.title = tr(names); swatch.setAttribute('aria-label', swatch.title);
+          const chip = element('i', 'note-database-color-chip');
+          setChip(chip, palette.swatchColor(id, false), palette.swatchColor(id, true));
+          swatch.append(chip);
+          return [id, swatch];
+        });
+        const automatic = button(tr(label('自动', 'Automatic')), () => chooseColor(null), 'chart-color-auto');
+        swatches.append(automatic, ...swatchButtons.map(([, swatch]) => swatch));
+        categories.hidden = true;
+
+        function syncCategories(groups) {
+          if (groups === categoryGroups) return;
+          categoryGroups = groups;
+          rows = (groups || []).filter(point => Number.isFinite(point.value)).map(point => {
+            const name = palette.categoryLabel(point, groupType, options.language?.() === 'en');
+            const row = button('', () => {
+              if (saving) return;
+              target = point.colorKey;
+              pickerLabel.textContent = name;
+              refreshColors();
+              automatic.focus({ preventScroll: true });
+            }, 'chart-color-category');
+            const chip = element('i', 'note-database-color-chip');
+            row.append(chip, element('span', '', name));
+            return { point, name, row, chip };
+          });
+          const selected = rows.find(({ point }) => point.colorKey === target);
+          if (selected) pickerLabel.textContent = selected.name;
+          else target = null;
+          categories.replaceChildren(...rows.map(({ row }) => row));
+          categories.hidden = !rows.length;
+          refreshColors();
+        }
+
+        function refreshColors() {
+          const effective = palette.effective(draft.palette);
+          const light = palette.colors(effective, false), dark = palette.colors(effective, true);
+          sampleChips.forEach((chip, index) => setChip(chip, light[index], dark[index]));
+          picker.hidden = ring && !target;
+          const selected = ring ? draft.categories[target] : draft.primary;
+          automatic.setAttribute('aria-pressed', String(!selected));
+          for (const [id, swatch] of swatchButtons) swatch.setAttribute('aria-pressed', String(selected === id));
+          for (const { point, row, chip } of rows) {
+            const id = draft.categories[point.colorKey];
+            setChip(chip, palette.categoryColor(effective, false, chart.groupBy, point.key, id),
+              palette.categoryColor(effective, true, chart.groupBy, point.key, id));
+            row.setAttribute('aria-pressed', String(target === point.colorKey));
+          }
+        }
+        function preview() {
+          view.chartStyleDraft = copy(draft);
+          refreshColors();
+          repaintChart(view);
+        }
+        function chooseColor(id) {
+          if (saving || (ring && !target)) return;
+          if (ring) {
+            if (id) draft.categories[target] = id;
+            else delete draft.categories[target];
+          } else if (id) draft.primary = id;
+          else delete draft.primary;
+          preview();
+        }
+        function resetDraft(style) {
+          draft = copy(style);
+          preset.value = draft.palette || '';
+          view.panel?.choices?.sync(preset);
+          preview();
+        }
+        function showError(message) {
+          status.textContent = message;
+          status.hidden = !message;
+        }
+        preset.addEventListener('change', () => {
+          if (saving) return;
+          if (preset.value) draft.palette = preset.value;
+          else delete draft.palette;
+          preview();
+        });
+        const reload = button(tr(label('重新载入配色', 'Reload colors')), () => {
+          const saved = session.page.chartView;
+          revision = saved.styleRevision;
+          resetDraft(saved.style);
+          reload.hidden = true;
+          showError('');
+        });
+        reload.hidden = true;
+        const actions = element('div', 'note-database-chart-actions note-database-color-actions');
+        const reset = button(tr(label('恢复自动配色', 'Reset colors')), () => resetDraft({}), 'chart-color-reset');
+        const cancel = button(tr(label('取消', 'Cancel')), () => close(true), 'chart-color-cancel');
+        const save = element('button', 'note-database-chart-confirm', tr(label('确定', 'Confirm')));
+        save.type = 'submit'; save.dataset.dbRole = 'chart-color-confirm';
+        actions.append(reset, cancel, save);
+        form.append(presetRow, sample, picker);
+        if (ring) {
+          form.append(categories);
+          syncCategories(session.chartJob?.model?.groups);
+          view.syncChartColorCategories = syncCategories;
+        }
+        form.append(status, reload, actions);
+        panel.append(form);
+        refreshColors();
+        view.refreshChartColors = refreshColors;
+        view.chartStyleTarget = `${chart.type}:${chart.groupBy}`;
+        signal.addEventListener('abort', () => {
+          delete view.chartStyleDraft;
+          delete view.refreshChartColors;
+          delete view.syncChartColorCategories;
+          delete view.chartStyleTarget;
+          repaintChart(view);
+        }, { once: true });
+        form.addEventListener('submit', async event => {
+          event.preventDefault();
+          if (saving || !isVisible(session) || !view.host.isConnected) return;
+          if (session.page.chartView.styleRevision !== revision) {
+            showError(tr(label('配色已在其他窗口更改。可载入已保存的配色。', 'Colors changed in another window. Reload the saved colors.')));
+            reload.hidden = false;
+            return;
+          }
+          saving = true;
+          save.disabled = reset.disabled = cancel.disabled = preset.disabled = true;
+          view.panel?.choices?.sync(preset);
+          showError('');
+          const result = await write(session, { type: 'setChartAppearance', styleRevision: revision, style: copy(draft) });
+          if (signal.aborted) return;
+          if (result) { close(true); return; }
+          saving = false;
+          save.disabled = reset.disabled = cancel.disabled = preset.disabled = false;
+          view.panel?.choices?.sync(preset);
+          showError(session.status || tr(label('配色保存失败，请重试。', 'Could not save colors. Please try again.')));
+          save.focus({ preventScroll: true });
+        });
+        return preset;
+      });
+    }
+
     function openChartSettings(view, anchor) {
       panelAt(view, anchor, 'chart', (panel, close, { signal }) => {
         const { session } = view;
@@ -2302,7 +2489,9 @@
       if (!view.readOnly) {
         view.chartSettings = iconButton('settings', tr(label('图表设置', 'Chart settings')),
           () => openChartSettings(view, view.chartSettings), 'chart-settings');
-        tools.prepend(view.chartSettings);
+        view.chartPalette = iconButton('palette', tr(label('图表配色', 'Chart colors')),
+          () => openChartPalette(view), 'chart-palette');
+        tools.prepend(view.chartSettings, view.chartPalette);
         view.deleteTable = iconButton('trash', tr(label('删除数据库', 'Delete database')), () =>
           afterCellSave(view, () => deleteCurrentTable(view)), 'delete-database');
         tools.append(view.deleteTable);
@@ -2383,6 +2572,12 @@
         else stopObserving(view.chartStage);
       }
       if (view.chartSettings) view.chartSettings.hidden = !chartMode;
+      if (view.chartPalette) {
+        view.chartPalette.hidden = !chartMode;
+        view.chartPalette.disabled = !page.chartView?.valid;
+        if (view.panel?.kind === 'chart-palette' && (!chartMode || !page.chartView.valid
+            || `${page.chartView.chart.type}:${page.chartView.chart.groupBy}` !== view.chartStyleTarget)) view.panel.close();
+      }
       if (view.modeControls) {
         view.dataMode.setAttribute('aria-pressed', String(!chartMode));
         view.chartMode.setAttribute('aria-pressed', String(chartMode));
@@ -2411,7 +2606,8 @@
           [view.addColumn, label('添加字段', 'Add field')], [view.addRow, label('添加记录', 'Add row')],
           [view.prev, label('上一页', 'Previous')], [view.next, label('下一页', 'Next')]];
         if (view.deleteTable) {
-          controls.push([view.deleteTable, label('删除数据库', 'Delete database')], [view.chartSettings, label('图表设置', 'Chart settings')]);
+          controls.push([view.deleteTable, label('删除数据库', 'Delete database')], [view.chartSettings, label('图表设置', 'Chart settings')],
+            [view.chartPalette, label('图表配色', 'Chart colors')]);
           view.name.title = tr(label('双击重命名数据库', 'Double-click to rename database'));
           view.modeControls.setAttribute('aria-label', tr(label('数据库显示方式', 'Database display')));
           view.dataMode.textContent = tr(label('数据', 'Data'));
@@ -2547,7 +2743,7 @@
             void read(current.session);
           } else {
             releaseChart(current);
-            if (current.panel?.kind === 'chart') current.panel.close();
+            if (['chart', 'chart-palette'].includes(current.panel?.kind)) current.panel.close();
             if (current.session.draft?.view === current) dismissSuggestions(current.session.draft);
           }
           changed.add(current.session);
@@ -2772,8 +2968,16 @@
         syncCharts(session);
       }
     };
+    const paletteEvent = window.RelatumNoteChartPalette?.changed;
+    const paletteChange = () => {
+      for (const session of sessionsFor(activePath)) for (const view of session.views) {
+        view.refreshChartColors?.();
+        repaintChart(view);
+      }
+    };
     window.addEventListener('focus', focus);
     window.addEventListener('blur', dismiss);
+    if (paletteEvent) window.addEventListener(paletteEvent, paletteChange);
     document.addEventListener('relatum:languagechange', languageChange);
     if (channel) channel.onmessage = event => {
       if (event.data?.path === activePath) void refresh(activePath, true, event.data.databaseId);
@@ -2812,6 +3016,7 @@
         channel?.close();
         window.removeEventListener('focus', focus);
         window.removeEventListener('blur', dismiss);
+        if (paletteEvent) window.removeEventListener(paletteEvent, paletteChange);
         document.removeEventListener('relatum:languagechange', languageChange);
       },
     };

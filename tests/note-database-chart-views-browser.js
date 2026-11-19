@@ -193,7 +193,7 @@ async function checkChartViews({ page, open, mode, chartRequests, until, restart
   page = await restart();
   await openNote();
   await rendered('pie', [60, 72]);
-  assert.deepEqual((await api('')).chartView, { mode: 'chart', chart: saved, valid: true });
+  assert.deepEqual((await api('')).chartView, { mode: 'chart', chart: saved, valid: true, style: {}, styleRevision: null });
   await mode('reading');
   await rendered('pie', [60, 72]);
   assert.equal(await role('chart-settings').count(), 0, 'reading projects the saved chart without edit controls');
@@ -201,7 +201,7 @@ async function checkChartViews({ page, open, mode, chartRequests, until, restart
   await role('data-mode').click();
   await block().locator('table').waitFor();
   assert.equal(await page.locator('.note-database-chart-canvas svg').count(), 0);
-  assert.deepEqual((await api('')).chartView, { mode: 'data', chart: saved, valid: true });
+  assert.deepEqual((await api('')).chartView, { mode: 'data', chart: saved, valid: true, style: {}, styleRevision: null });
 
   const beforeRestart = chartRequests.length;
   page = await restart();
