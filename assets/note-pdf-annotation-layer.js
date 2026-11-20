@@ -1,3 +1,5 @@
+import { placeStickyBox, resizeStickyBox, stickyBounds } from './note-pdf-sticky-box.js';
+
 const svgNS = 'http://www.w3.org/2000/svg';
 const palette = [
   ['#f4b740', '黄', 'Yellow'], ['#e8482f', '红', 'Red'], ['#3aa66e', '绿', 'Green'],
@@ -30,7 +32,7 @@ function shape(tag, attributes) {
   return node;
 }
 
-function selectionQuads(range, textLayer, project, skipBlank = false) {
+function selectionQuads(range, textLayer, project) {
   const quads = [], walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT);
   const caret = document.createRange();
   const layerTransform = getComputedStyle(textLayer).transform;
@@ -39,7 +41,7 @@ function selectionQuads(range, textLayer, project, skipBlank = false) {
     if (!range.intersectsNode(node)) continue;
     const from = range.startContainer === node ? range.startOffset : 0;
     const to = range.endContainer === node ? range.endOffset : node.length;
-    if (from >= to || (skipBlank && !node.data.slice(from, to).trim())) continue;
+    if (from >= to || !node.data.slice(from, to).trim()) continue;
     caret.setStart(node, from); caret.collapse(true);
     const start = caret.getBoundingClientRect();
     caret.setStart(node, to); caret.collapse(true);
@@ -59,52 +61,81 @@ function selectionQuads(range, textLayer, project, skipBlank = false) {
   return quads;
 }
 
-function selectionPath(quads) {
+function textLineQuads(quads) {
   const directions = new Map();
   for (const points of quads) {
-    const [start, end] = points;
-    const angle = Math.atan2(end[1] - start[1], end[0] - start[0]);
-    const key = (Math.round(angle * 180 / Math.PI) + 180) % 180;
+    const [top, , , base] = points;
+    // Use the side edge to keep the same baseline for LTR and RTL fragments.
+    const angle = Math.atan2(top[0] - base[0], base[1] - top[1]);
+    const key = (Math.round(angle * 180 / Math.PI) + 360) % 360;
     if (!directions.has(key)) directions.set(key, { angle, fragments: [] });
     const { angle: basis, fragments } = directions.get(key);
     const cos = Math.cos(basis), sin = Math.sin(basis);
     const along = points.map(([x, y]) => x * cos + y * sin);
     const across = points.map(([x, y]) => y * cos - x * sin);
-    const top = Math.min(...across), bottom = Math.max(...across);
-    fragments.push({ start: Math.min(...along), end: Math.max(...along), center: (top + bottom) / 2, height: bottom - top });
+    const start = Math.min(...along), end = Math.max(...along);
+    const min = Math.min(...across), max = Math.max(...across);
+    if (end > start && max > min) fragments.push({ start, end, center: (min + max) / 2, height: max - min });
   }
-  const path = [];
+  const bands = [];
   for (const { angle, fragments } of directions.values()) {
     const lines = [];
     for (const fragment of fragments.sort((a, b) => a.center - b.center)) {
       const line = lines.at(-1), reference = line?.[0];
-      if (reference && fragment.center - reference.center <= Math.max(reference.height, fragment.height) * .3) line.push(fragment);
-      else lines.push([fragment]);
+      if (reference) {
+        const height = Math.max(reference.height, fragment.height);
+        const script = Math.min(reference.height, fragment.height) < height * .8;
+        if (fragment.center - reference.center <= height * (script ? .5 : .3)) {
+          if (fragment.height > reference.height * 1.05) line.unshift(fragment);
+          else line.push(fragment);
+          continue;
+        }
+      }
+      lines.push([fragment]);
     }
     const cos = Math.cos(angle), sin = Math.sin(angle);
-    const project = (x, y) => round(x * cos - y * sin) + ' ' + round(x * sin + y * cos);
+    const project = (x, y) => [x * cos - y * sin, x * sin + y * cos];
+    const rows = [];
     for (const line of lines) {
+      const { center, height } = line[0];
       line.sort((a, b) => a.start - b.start);
-      let index = 0;
-      while (index < line.length) {
-        const first = line[index++];
-        let end = first.end;
-        const heights = [first.height], centers = [first.center];
-        while (index < line.length && line[index].start - end <= Math.min(first.height, line[index].height) / 3) {
-          const next = line[index++];
-          end = Math.max(end, next.end);
-          heights.push(next.height); centers.push(next.center);
-        }
-        const middle = heights.length >> 1;
-        const height = heights.sort((a, b) => a - b)[middle];
-        const center = centers.sort((a, b) => a - b)[middle];
-        const top = center - height / 2, bottom = center + height / 2;
-        path.push('M' + project(first.start, top) + 'L' + project(end, top)
-          + 'L' + project(end, bottom) + 'L' + project(first.start, bottom) + 'Z');
+      const runs = [];
+      for (const { start, end } of line) {
+        const run = runs.at(-1);
+        if (run && start - run.end <= height * .45) run.end = Math.max(run.end, end);
+        else runs.push({ start, end });
       }
+      rows.push({ center, height, top: center - height / 2, bottom: center + height / 2, runs });
+    }
+    // Font bounding boxes can overlap even on two distinct lines. Leave a
+    // narrow seam where their runs share horizontal space.
+    for (let index = 1; index < rows.length; index++) {
+      const upper = rows[index - 1], lower = rows[index];
+      const halfGap = Math.min(upper.height, lower.height) * .04;
+      if (upper.bottom + 2 * halfGap < lower.top || !overlapRuns(upper.runs, lower.runs)) continue;
+      const middle = (upper.center + lower.center) / 2;
+      upper.bottom = Math.min(upper.bottom, middle - halfGap);
+      lower.top = Math.max(lower.top, middle + halfGap);
+    }
+    for (const { top, bottom, runs } of rows) {
+      for (const { start, end } of runs) bands.push([project(start, top), project(end, top), project(end, bottom), project(start, bottom)]);
     }
   }
-  return path.join('');
+  return bands;
+}
+
+function overlapRuns(left, right) {
+  let a = 0, b = 0;
+  while (a < left.length && b < right.length) {
+    if (left[a].end <= right[b].start) a++;
+    else if (right[b].end <= left[a].start) b++;
+    else return true;
+  }
+  return false;
+}
+
+function quadsPath(quads) {
+  return quads.map(points => 'M' + points.map(point => point.map(round).join(' ')).join('L') + 'Z').join('');
 }
 
 export function mountTextSelection(host, textLayer, viewport) {
@@ -118,9 +149,9 @@ export function mountTextSelection(host, textLayer, viewport) {
     if (range?.intersectsNode(textLayer)) {
       const bounds = host.getBoundingClientRect();
       if (bounds.width && bounds.height) {
-        path = selectionPath(selectionQuads(range, textLayer, (x, y) => [
+        path = quadsPath(textLineQuads(selectionQuads(range, textLayer, (x, y) => [
           (x - bounds.left) * viewport.width / bounds.width, (y - bounds.top) * viewport.height / bounds.height,
-        ], true));
+        ])));
       }
     }
     if (highlight.getAttribute('d') !== path) highlight.setAttribute('d', path);
@@ -165,18 +196,19 @@ function stroke(record, viewport, group) {
 
 function draw(record, viewport, group) {
   if (record.points) { stroke(record, viewport, group); return; }
-  for (const quad of record.quads || [record.quad]) {
-    const points = quad.map(point => viewport.convertToViewportPoint(...point));
+  const project = quad => quad.map(point => viewport.convertToViewportPoint(...point));
+  if (record.quads) {
+    const bands = textLineQuads(record.quads.map(project));
     if (record.kind === 'underline') {
-      const [end, start] = points.slice(2);
-      group.append(shape('path', { d: smooth([start, end]), fill: 'none', stroke: record.color, 'stroke-width': 1.8 }));
+      const d = bands.map(([, , end, start]) => smooth([start.map(round), end.map(round)])).join('');
+      group.append(shape('path', { d, fill: 'none', stroke: record.color, 'stroke-width': viewport.scale }));
     } else {
-      const attributes = { points: points.map(point => point.join(',')).join(' ') };
-      if (record.kind === 'box') Object.assign(attributes, { fill: 'none', stroke: record.color, 'stroke-width': 2 });
-      else Object.assign(attributes, { fill: record.color, opacity: .34 });
-      group.append(shape('polygon', attributes));
+      group.append(shape('path', { d: quadsPath(bands), fill: record.color, opacity: .4 }));
     }
+    return;
   }
+  const points = project(record.quad).map(point => point.join(',')).join(' ');
+  group.append(shape('polygon', { points, fill: 'none', stroke: record.color, 'stroke-width': 2 }));
 }
 
 export function createAnnotationTools({ copy, button, current, confirmReload, notify, signal }) {
@@ -189,7 +221,7 @@ export function createAnnotationTools({ copy, button, current, confirmReload, no
   const message = html('span');
   const listeners = new Set(), textSelections = new Set();
   const locks = ['pdf_changed', 'annotation_conflict', 'annotation_unreadable'];
-  let open = false, tool = '', selected = '', session, unsubscribe, working = false, draft, toolIntent = 0;
+  let open = false, tool = '', selected = '', session, unsubscribe, working = false, draft, cancelResize, toolIntent = 0;
   const canChoose = () => !!session && !locks.includes(session.error);
   const canEdit = () => canChoose() && session.ready && !session.loading;
   function update(affected) {
@@ -238,7 +270,7 @@ export function createAnnotationTools({ copy, button, current, confirmReload, no
     if (palette.some(([hex]) => hex === value)) color.value = value;
     update();
   }
-  function settle() { draft?.(); }
+  function settle() { cancelResize?.(); draft?.(); }
   const modesGroup = html('div', 'note-pdf-annotation-group');
   const buttons = modes.map(([key, zh, en, glyph]) => [key, button(copy(zh, en),
     () => chooseTool(true, open && tool === key ? '' : key), 'note-pdf-annotation-tool', glyph)]);
@@ -297,7 +329,9 @@ export function createAnnotationTools({ copy, button, current, confirmReload, no
         || event.target?.closest?.('[role="dialog"]')) return;
     const key = event.key.toLowerCase();
     if (key === 'escape') {
-      event.preventDefault(); event.stopPropagation(); void chooseTool(false); toggle.focus();
+      event.preventDefault(); event.stopPropagation();
+      if (cancelResize) cancelResize();
+      else { void chooseTool(false); toggle.focus(); }
     } else if ((event.ctrlKey || event.metaKey) && !event.altKey && /^[zy]$/.test(key)) {
       event.preventDefault(); event.stopPropagation();
       if (key === 'y' || event.shiftKey) { if (!redo.disabled) redo.click(); }
@@ -331,6 +365,7 @@ export function createAnnotationTools({ copy, button, current, confirmReload, no
     get selected() { return selected; },
     setDraft(commit) { settle(); draft = commit; },
     clearDraft(commit) { if (draft === commit) draft = null; },
+    setResizeCancel(cancel) { cancelResize = cancel; },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     onTextSelection(annotate) { textSelections.add(annotate); return () => textSelections.delete(annotate); },
   };
@@ -339,36 +374,48 @@ export function createAnnotationTools({ copy, button, current, confirmReload, no
 export function mountAnnotationPage(host, page, viewport, session, tools, copy, button) {
   const lifetime = new AbortController(), { signal } = lifetime;
   const layer = html('div', 'note-pdf-annotations');
-  const vector = shape('svg', { viewBox: '0 0 ' + viewport.width + ' ' + viewport.height, 'aria-hidden': 'true' });
+  const svgAttributes = { viewBox: '0 0 ' + viewport.width + ' ' + viewport.height, 'aria-hidden': 'true' };
+  const markup = html('div', 'note-pdf-text-marks');
+  const textVector = shape('svg', svgAttributes);
+  const vector = shape('svg', svgAttributes);
   const saved = shape('g', {}), preview = shape('g', { 'pointer-events': 'none' });
   const notes = html('div', 'note-pdf-sticky-layer');
-  vector.append(saved, preview); layer.append(vector, notes); host.append(layer);
+  markup.append(textVector); vector.append(saved, preview); layer.append(markup, vector, notes); host.append(layer);
   const stickyViews = new Map();
-  let gesture, frame, textPointer, noteDrag, draggedHandle;
+  const stage = host.closest('.note-pdf-scroll');
+  let gesture, frame, textPointer, noteDrag, noteResize, draggedHandle;
   const selecting = () => !!tools?.active && !tools.mode;
   const editingNote = () => selecting() || (tools?.active && tools.mode === 'note');
 
-  function positionNote(view, x, y, paper) {
-    const popup = view.popup;
-    if (popup) {
-      const visible = host.closest('.note-pdf-scroll').getBoundingClientRect();
-      paper ??= host.getBoundingClientRect();
-      const anchorVisible = paper.left + x >= visible.left && paper.left + x <= visible.right
-        && paper.top + y >= visible.top && paper.top + y <= visible.bottom;
-      const place = (pin, start, end, size, pageSize) => {
-        const available = Math.max(0, pageSize - size);
-        const min = clamp(start, available);
-        const max = Math.max(min, clamp(end - size, available));
-        const position = pin + 10 <= max ? pin + 10 : pin - 10 - size;
-        return Math.max(min, Math.min(max, position)) + 'px';
-      };
-      const left = place(x, anchorVisible ? visible.left - paper.left + 4 : 0,
-        anchorVisible ? visible.right - paper.left - 4 : host.clientWidth, popup.offsetWidth, host.clientWidth);
-      const top = place(y, anchorVisible ? visible.top - paper.top + 4 : 0,
-        anchorVisible ? visible.bottom - paper.top - 4 : host.clientHeight, popup.offsetHeight, host.clientHeight);
-      popup.style.left = left; popup.style.top = top;
+  function measureNote(view, width) {
+    const text = view.input?.value ?? view.text;
+    if (!view.measured || view.measure.value !== text) {
+      view.measured = new Map();
+      view.measure.value = text;
     }
+    if (!view.measured.has(width)) {
+      view.measure.style.width = Math.max(1, width - view.insetX) + 'px';
+      view.measured.set(width, Math.max(60, view.measure.scrollHeight + view.insetY + 1));
+    }
+    return view.measured.get(width);
+  }
+
+  function showNoteBox(view, box) {
+    for (const [key, value] of Object.entries(box)) {
+      if (view.box?.[key] !== value) view.popup.style[key] = value + 'px';
+    }
+    view.box = box;
+  }
+
+  function positionNote(view, x, y, paper = host.getBoundingClientRect()) {
     view.pin.style.left = x + 'px'; view.pin.style.top = y + 'px';
+    if (!view.popup || !paper.width || !paper.height) return;
+    const reader = stage.getBoundingClientRect();
+    const anchorVisible = paper.left + x >= reader.left && paper.left + x <= reader.right
+      && paper.top + y >= reader.top && paper.top + y <= reader.bottom;
+    const visible = anchorVisible && stickyBounds(paper, reader);
+    const bounds = visible || { left: 0, top: 0, right: Math.floor(paper.width), bottom: Math.floor(paper.height) };
+    showNoteBox(view, placeStickyBox(x, y, bounds, view.cardBox, width => measureNote(view, width)));
   }
 
   function toggleNote(id, open, focusText = false) {
@@ -424,14 +471,29 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
         if (event.key === 'Escape' && !event.isComposing) { event.stopPropagation(); toggleNote(record.id, false); }
       };
     }
-    popup.append(view.content);
+    const measure = view.measure = html('textarea', 'note-pdf-sticky-measure');
+    measure.tabIndex = -1;
+    measure.setAttribute('aria-hidden', 'true');
+    popup.append(view.content, measure);
+    if (tools) {
+      for (const edge of ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']) {
+        const handle = html('span', 'note-pdf-sticky-resize');
+        handle.dataset.edge = edge;
+        handle.setAttribute('aria-hidden', 'true');
+        popup.append(handle);
+      }
+    }
     notes.append(popup);
+    view.insetX = popup.offsetWidth - view.content.offsetWidth;
+    view.insetY = popup.offsetHeight - view.content.offsetHeight + measure.offsetHeight - measure.clientHeight;
   }
 
   function closeNote(view) {
+    if (noteResize?.view === view) finishNoteResize(null, false);
     view.finishEdit?.();
     view.popup?.remove();
     view.popup = view.content = view.input = view.finishEdit = null;
+    view.box = view.measure = view.measured = null;
   }
 
   function syncNote(record, expanded) {
@@ -461,8 +523,11 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
         if (!view.editGroup && view.input.value !== record.text) view.input.value = record.text;
       } else if (view.content.textContent !== record.text) view.content.textContent = record.text;
     }
-    if (opening || view.point !== record.point) {
-      view.point = record.point;
+    const pointChanged = view.point !== record.point;
+    const layoutChanged = opening || pointChanged || (expanded && (view.text !== record.text || view.cardBox !== record.cardBox));
+    view.point = record.point; view.text = record.text; view.cardBox = record.cardBox;
+    if (layoutChanged) {
+      if (noteResize?.view === view) finishNoteResize(null, false);
       if (noteDrag?.view !== view || !noteDrag.moved) positionNote(view, ...viewport.convertToViewportPoint(...record.point));
     }
     view.color = record.color;
@@ -470,8 +535,10 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
   }
 
   function render(affected) {
+    if (noteResize && !selecting()) finishNoteResize(null, false);
     if (affected && !affected.has(page)) return;
     saved.replaceChildren();
+    textVector.replaceChildren();
     const mode = tools?.mode || '';
     if (noteDrag && !selecting()) finishNoteDrag(null, false);
     if (gesture && mode !== gesture.kind) finish(null, false);
@@ -487,7 +554,8 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
         const group = shape('g', {});
         group.dataset.annotationId = record.id;
         draw(record, viewport, group);
-        saved.append(group);
+        group.classList.toggle('is-selected', record.id === tools?.selected);
+        (textModes.has(record.kind) ? textVector : saved).append(group);
       }
     }
     for (const [id, view] of stickyViews) {
@@ -495,12 +563,18 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
       if (noteDrag?.view === view) finishNoteDrag(null, false);
       closeNote(view); view.pin.remove(); stickyViews.delete(id);
     }
-    for (const item of saved.children) item.classList.toggle('is-selected', item.dataset.annotationId === tools?.selected);
   }
   const offSession = tools ? () => {} : session.subscribe(render);
   const offTools = tools?.subscribe(render);
+  function layout() {
+    finishNoteResize(null, false);
+    const paper = host.getBoundingClientRect();
+    for (const view of stickyViews.values()) {
+      if (view.popup) positionNote(view, ...viewport.convertToViewportPoint(...view.point), paper);
+    }
+  }
   render();
-  if (!tools) return () => { offSession(); layer.remove(); };
+  if (!tools) return { layout, dispose() { offSession(); lifetime.abort(); layer.remove(); } };
 
   function point(x, y) {
     return viewport.convertToPdfPoint(clamp(x, viewport.width), clamp(y, viewport.height)).map(round);
@@ -518,6 +592,53 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
   }
   function fresh(kind) { return { id: crypto.randomUUID(), page, kind, color: tools.color }; }
   function commit(record, group) { return session.commit(new Map([[record.id, record]]), group); }
+
+  function beginNoteResize(event, handle) {
+    const id = handle.parentElement.dataset.annotationId;
+    const view = stickyViews.get(id);
+    const bounds = stickyBounds(host.getBoundingClientRect(), stage.getBoundingClientRect());
+    if (!view?.box || !bounds) return;
+    event.preventDefault(); event.stopPropagation();
+    tools.settle(); tools.select(id);
+    const [x, y] = viewport.convertToViewportPoint(...view.point);
+    const { left, top, width, height } = view.box;
+    const measure = width => measureNote(view, width);
+    const start = placeStickyBox(x, y, bounds, { width, height, offsetX: left - x, offsetY: top - y }, measure);
+    const events = new AbortController();
+    noteResize = { id, view, bounds, start, x, y, measure, handle, events, pointer: event.pointerId,
+      clientX: event.clientX, clientY: event.clientY, last: event, frame: 0 };
+    tools.setResizeCancel(() => finishNoteResize(null, false));
+    stage.addEventListener('scroll', () => finishNoteResize(null, false), { passive: true, signal: events.signal });
+    handle.setPointerCapture(event.pointerId);
+  }
+
+  function paintNoteResize(resize) {
+    resize.frame = 0;
+    const dx = Math.round(resize.last.clientX - resize.clientX), dy = Math.round(resize.last.clientY - resize.clientY);
+    const box = resizeStickyBox(resize.start, resize.bounds, resize.handle.dataset.edge, dx, dy, resize.measure);
+    showNoteBox(resize.view, box);
+    return box;
+  }
+
+  function finishNoteResize(event, accept) {
+    const resize = noteResize;
+    if (!resize || (event && resize.pointer !== event.pointerId)) return;
+    noteResize = null;
+    tools.setResizeCancel(null);
+    resize.events.abort();
+    cancelAnimationFrame(resize.frame);
+    if (resize.handle.hasPointerCapture(resize.pointer)) resize.handle.releasePointerCapture(resize.pointer);
+    const record = session.get(resize.id);
+    if (accept && selecting() && record?.kind === 'note') {
+      resize.last = event;
+      const { left, top, width, height } = paintNoteResize(resize);
+      if (width !== resize.start.width || height !== resize.start.height) {
+        const cardBox = { width, height, offsetX: Math.round(left - resize.x), offsetY: Math.round(top - resize.y) };
+        if (commit({ ...record, cardBox })) return;
+      }
+    }
+    positionNote(resize.view, resize.x, resize.y);
+  }
 
   function beginNoteDrag(event, handle) {
     if (noteDrag) return;
@@ -643,18 +764,22 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
     commit(current.record);
   }
   layer.addEventListener('pointerdown', event => {
-    if (!event.isPrimary || event.button !== 0 || gesture) return;
+    if (!event.isPrimary || event.button !== 0 || gesture || noteDrag || noteResize) return;
     const kind = tools.mode;
+    const resize = event.target.closest('.note-pdf-sticky-resize');
     const pin = event.target.closest('.note-pdf-sticky-pin');
     const header = event.target.closest('.note-pdf-sticky-head');
     draggedHandle = null;
+    if (selecting() && resize) { beginNoteResize(event, resize); return; }
     if (selecting() && (pin || (header && !event.target.closest('button')))) {
       beginNoteDrag(event, pin || header);
       return;
     }
     if (event.target.closest('.note-pdf-sticky') || (pin && kind === 'note')) return;
     if (!drawModes.has(kind)) {
-      if (tools.active && vector.contains(event.target)) tools.select(event.target.closest('[data-annotation-id]')?.dataset.annotationId || '');
+      if (tools.active && (vector.contains(event.target) || textVector.contains(event.target))) {
+        tools.select(event.target.closest('[data-annotation-id]')?.dataset.annotationId || '');
+      }
       return;
     }
     event.preventDefault();
@@ -683,27 +808,38 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
   vector.addEventListener('pointerup', event => finish(event, true), { signal });
   for (const name of ['pointercancel', 'lostpointercapture']) vector.addEventListener(name, event => finish(event, false), { signal });
   layer.addEventListener('pointermove', event => {
+    const resize = noteResize;
+    if (resize?.pointer === event.pointerId) {
+      resize.last = event;
+      if (!resize.frame) resize.frame = requestAnimationFrame(() => paintNoteResize(resize));
+      return;
+    }
     const drag = noteDrag;
     if (!drag || drag.pointer !== event.pointerId) return;
     sampleNoteDrag(drag, event);
     if (drag.moved && !drag.frame) drag.frame = requestAnimationFrame(() => paintNoteDrag(drag));
   }, { signal });
-  layer.addEventListener('pointerup', event => finishNoteDrag(event, true), { signal });
+  layer.addEventListener('pointerup', event => {
+    finishNoteResize(event, true); finishNoteDrag(event, true);
+  }, { signal });
   layer.addEventListener('click', event => {
     if (!event.detail || !draggedHandle?.contains(event.target)) return;
     draggedHandle = null;
     event.preventDefault();
     event.stopPropagation();
   }, { capture: true, signal });
-  for (const name of ['pointercancel', 'lostpointercapture']) layer.addEventListener(name, event => finishNoteDrag(event, false), { signal });
-  window.addEventListener('blur', () => {
-    textPointer = undefined; finish(null, false); finishNoteDrag(null, false);
+  for (const name of ['pointercancel', 'lostpointercapture']) layer.addEventListener(name, event => {
+    finishNoteResize(event, false); finishNoteDrag(event, false);
   }, { signal });
-  return () => {
+  window.addEventListener('blur', () => {
+    textPointer = undefined; finish(null, false); finishNoteDrag(null, false); finishNoteResize(null, false);
+  }, { signal });
+  return { layout, dispose() {
     offSelection(); offTools?.(); offSession();
     finish(null, false);
     finishNoteDrag(null, false);
+    finishNoteResize(null, false);
     for (const view of stickyViews.values()) closeNote(view);
     lifetime.abort(); layer.remove();
-  };
+  } };
 }

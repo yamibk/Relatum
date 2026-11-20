@@ -72,6 +72,23 @@ class NotePdfAnnotationTests(unittest.TestCase):
             self.save([{**second, 'point': [float('nan'), 0]}])
         self.assertEqual(pdf.read(self.sidecar), current)
 
+    def test_note_card_box_is_optional_and_validated(self):
+        legacy, note = self.note(), self.note()
+        box = {'width': 240, 'height': 125, 'offsetX': -260, 'offsetY': 10}
+        resized = {**note, 'cardBox': box}
+        self.save([legacy, resized])
+        snapshot = pdf.read(self.sidecar)
+        self.assertEqual({mark['id']: mark for mark in snapshot['annotations']},
+                         {legacy['id']: legacy, note['id']: resized})
+        for invalid in (None, {}, {**box, 'height': 0}, {**box, 'width': 10_001},
+                        {**box, 'offsetY': True}, {**box, 'offsetX': 1.5}, {**box, 'offsetX': -1_000_001}):
+            with self.subTest(invalid=invalid), self.assertRaises(NotesError):
+                self.save([{**resized, 'cardBox': invalid}])
+        with self.assertRaises(NotesError):
+            self.save([{'id': note['id'], 'page': 2, 'color': note['color'], 'kind': 'box',
+                        'quad': [[0, 0], [4, 0], [4, 6], [0, 6]], 'cardBox': box}])
+        self.assertEqual(pdf.read(self.sidecar), snapshot)
+
     def test_write_can_be_replayed_until_another_write_commits(self):
         mark = self.note()
         digest = pdf.fingerprint(self.target, pdf.asset_revision(self.target.stat()))

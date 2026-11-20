@@ -37,9 +37,11 @@ function makePdf() {
   ];
   itemIds.forEach((id, index) => {
     const size = index % 2 ? '730 390' : '480 650';
-    const content = index === 7 ? '32 32 50 50 re S\n'
+    let content = index === 7 ? '32 32 50 50 re S\n'
       : 'BT /F 18 Tf ' + (index === 3 ? '68 66' : index % 2 ? '30 350' : '30 610') + ' Td (Circuit page ' + (index + 1) + ') Tj ET\n';
     const rotated = index === 3 ? ' /CropBox [40 20 690 365] /Rotate 90' : '';
+    if (rotated) content += 'BT /F 18 Tf 50 140 Td (alpha) Tj /F 11 Tf 42 6 Td (2) Tj '
+      + '/F 18 Tf 9 -6 Td (omega) Tj -51 -16 Td (second row) Tj ET\n';
     objects.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + size + ']' + rotated + ' /Resources << /Font << /F 3 0 R >> >> /Contents ' + (id + 1) + ' 0 R >>');
     objects.push('<< /Length ' + content.length + ' >>\nstream\n' + content + 'endstream');
   });
@@ -389,6 +391,41 @@ async function waitFor(check, description = 'the test host') {
       assert.ok(Math.abs(end[1] - start[1]) < .1 && end[0] - start[0] > 50,
         name + ' follows the text direction in PDF space: ' + JSON.stringify(mark.quads[0]));
     }
+    let formulaHighlight;
+    for (const [name, kind] of [['Highlight text', 'highlight'], ['Underline', 'underline']]) {
+      await tool('Select annotations').click();
+      await sheet(4).locator('.note-pdf-text').evaluate(layer => {
+        const nodes = [...layer.querySelectorAll('span')];
+        const start = nodes.find(node => node.textContent.startsWith('alpha')).firstChild;
+        const end = nodes.find(node => node.textContent === 'second row').firstChild;
+        const range = document.createRange();
+        range.setStart(start, 1); range.setEnd(end, end.length - 1);
+        const selection = window.getSelection();
+        selection.removeAllRanges(); selection.addRange(range);
+      });
+      assert.equal((await selectionMark.getAttribute('d')).match(/M/g).length, 2, 'blue selection is grouped by line');
+      await tool(name).click();
+      const mark = await waitFor(async () => (await savedMarks()).find(mark => mark.kind === kind && mark.text.startsWith('lpha')), name + ' with inline math');
+      assert.ok(mark.text.endsWith('second ro') && mark.quads.length >= 4, 'partial words and formula fragments survive saving');
+      const path = sheet(4).locator('.note-pdf-text-marks [data-annotation-id="' + mark.id + '"] > path');
+      assert.match(await path.getAttribute('d'), /^M[^M]+M[^M]+$/, 'one path with two separate text lines');
+      if (kind === 'highlight') {
+        const bands = (await path.getAttribute('d')).split('M').slice(1).map(fragment => fragment.match(/-?[\d.]+/g).map(Number));
+        assert.ok(bands[0][6] > bands[1][0], 'rotated highlight bands leave a gap');
+        assert.equal(await path.evaluate(node => getComputedStyle(node.closest('.note-pdf-text-marks')).mixBlendMode), 'multiply');
+        const [x, y, , , oppositeX, oppositeY] = bands[0];
+        formulaHighlight = { id: mark.id, center: [(x + oppositeX) / 2, (y + oppositeY) / 2] };
+      } else {
+        assert.equal(await path.getAttribute('fill'), 'none');
+      }
+    }
+    await tool('Select annotations').click();
+    const paper = await sheet(4).boundingBox();
+    const [markX, markY] = formulaHighlight.center;
+    await page.mouse.click(paper.x + markX, paper.y + markY);
+    assert.equal(await removeAnnotation.isEnabled(), true, 'the blended highlight remains selectable');
+    await brush('Eraser', 4, formulaHighlight.center);
+    await waitFor(async () => !(await savedMarks()).some(mark => mark.id === formulaHighlight.id), 'erasing the blended highlight');
     await brush('Pen', 4, [110, 145], [180, 175]);
     await brush('Highlighter', 4, [200, 145], [260, 163]);
     await brush('Box', 4, [105, 210], [195, 280]);
@@ -401,7 +438,66 @@ async function waitFor(check, description = 'the test host') {
     const popupBounds = await sheet(4).locator('.note-pdf-sticky').boundingBox();
     assert.ok(popupBounds.y >= viewBounds.y && popupBounds.y + popupBounds.height <= viewBounds.y + viewBounds.height,
       'sticky note by the lower edge fits the reading viewport');
-    await sheet(4).getByRole('textbox', { name: 'Sticky note text' }).fill('旋转页便签');
+    const stickyCard = sheet(4).locator('.note-pdf-sticky');
+    const stickyInput = sheet(4).getByRole('textbox', { name: 'Sticky note text' });
+    const stickyId = await stickyCard.getAttribute('data-annotation-id');
+    const stickyPin = sheet(4).locator('.note-pdf-sticky-pin[data-annotation-id="' + stickyId + '"]');
+    const persistedSticky = async () => (await savedMarks()).find(mark => mark.id === stickyId);
+    const cardRect = () => stickyCard.evaluate(node => ['left', 'top', 'width', 'height'].map(key => parseInt(node.style[key], 10)));
+    const textOverflow = () => stickyInput.evaluate(node => ({
+      width: node.scrollWidth - node.clientWidth, height: node.scrollHeight - node.clientHeight,
+    }));
+    async function resizeSticky(edge, dx, dy, cancel = false) {
+      const grip = stickyCard.locator('[data-edge="' + edge + '"]');
+      await grip.waitFor();
+      const { x, y, width, height } = await grip.boundingBox();
+      const startX = x + width / 2, startY = y + height / 2;
+      await page.mouse.move(startX, startY);
+      await page.mouse.down();
+      try {
+        await page.mouse.move(startX + dx, startY + dy, { steps: 8 });
+        await grip.evaluate(() => new Promise(requestAnimationFrame));
+        if (cancel) await page.keyboard.press('Escape');
+      } finally { await page.mouse.up(); }
+    }
+    await tool('Select annotations').click();
+    assert.equal(await stickyCard.locator('.note-pdf-sticky-resize:visible').count(), 8);
+    const defaultCard = await cardRect();
+    const pinBeforeResize = await stickyPin.boundingBox();
+    await resizeSticky('se', -115, -95);
+    const smallEmpty = await waitFor(async () => (await persistedSticky())?.cardBox, 'saving the empty sticky size');
+    assert.equal(smallEmpty.width, 120);
+    assert.equal(smallEmpty.height, 60);
+    assert.deepEqual((await cardRect()).slice(0, 2), defaultCard.slice(0, 2), 'southeast drag keeps the opposite corner');
+    await tool('Undo annotation').click();
+    await waitFor(async () => !(await persistedSticky())?.cardBox, 'undoing the empty sticky resize');
+    assert.deepEqual(await cardRect(), defaultCard);
+    await stickyInput.fill('第一行\n' + '便签会根据拖动后的宽度自动换行。'.repeat(9));
+    const wideCard = await cardRect();
+    await resizeSticky('w', 78, 0);
+    const resizedCard = await waitFor(async () => (await persistedSticky())?.cardBox, 'saving a text-constrained resize');
+    const narrowCard = await cardRect();
+    assert.ok(narrowCard[2] < wideCard[2] && narrowCard[3] > wideCard[3], 'narrowing wraps text and increases height');
+    assert.equal(narrowCard[0] + narrowCard[2], wideCard[0] + wideCard[2], 'west drag keeps the right edge');
+    const overflow = await textOverflow();
+    assert.ok(overflow.height <= 1 && overflow.width <= 1,
+      'resizing leaves enough room for wrapped text: ' + JSON.stringify({ wideCard, narrowCard, overflow }));
+    const resizedBounds = await stickyCard.boundingBox();
+    assert.ok(resizedBounds.y >= Math.max(paperBounds.y, viewBounds.y) && resizedBounds.y + resizedBounds.height <=
+      Math.min(paperBounds.y + paperBounds.height, viewBounds.y + viewBounds.height), 'auto-growth stays within visible paper');
+    assert.deepEqual(await stickyPin.boundingBox(), pinBeforeResize, 'resizing keeps the pin at its PDF location');
+    await resizeSticky('n', 0, narrowCard[3] - 50);
+    assert.deepEqual(await cardRect(), narrowCard, 'shrinking stops at the text height');
+    await resizeSticky('e', 40, 0, true);
+    assert.deepEqual(await cardRect(), narrowCard, 'Escape restores the card geometry');
+    assert.equal(await tool('Select annotations').getAttribute('aria-pressed'), 'true');
+    await tool('Undo annotation').click();
+    await waitFor(async () => !(await persistedSticky())?.cardBox, 'undoing the wrapped sticky resize');
+    assert.deepEqual(await cardRect(), wideCard);
+    await tool('Redo annotation').click();
+    await waitFor(async () => (await persistedSticky())?.cardBox?.width === resizedCard.width, 'redoing the wrapped sticky resize');
+    assert.deepEqual(await cardRect(), narrowCard);
+    await stickyInput.fill('旋转页便签');
     await sheet(4).getByRole('button', { name: 'Close note' }).click();
     const sticky = await waitFor(async () => (await savedMarks()).find(mark => mark.text === '旋转页便签'), 'sticky note');
     if (!native) {
@@ -485,7 +581,7 @@ async function waitFor(check, description = 'the test host') {
 
     // A separate writer advances the saved revision while the PDF is open.
     const snapshot = await savedSnapshot();
-    const remote = { ...sticky, id: randomUUID(), text: 'Second writer' };
+    const remote = { ...sticky, id: randomUUID(), page: 7, point: [50, 50], text: 'Second writer' };
     const response = await fetch(api, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ note: 'Lab.md', id, assetRevision: metadata.assetRevision, pdfHash: snapshot.pdfHash,
         revision: snapshot.revision, upsert: [remote], remove: [] }) });
@@ -569,6 +665,13 @@ async function waitFor(check, description = 'the test host') {
     assert.deepEqual(fs.readFileSync(path.join(movedDirectory, filename)), pdf);
     await tab.waitFor();
     await panel.locator('canvas').first().waitFor();
+    await page.reload();
+    await page.waitForFunction(() => window.__pdfTest?.state.initialized && __pdfTest.state.active);
+    await tab.click();
+    await goTo(4);
+    await stickyPin.click();
+    assert.deepEqual((await cardRect()).slice(2), [resizedCard.width, resizedCard.height], 'sticky size survives reloading the workspace');
+    assert.equal(await stickyInput.inputValue(), '旋转页便签');
     if (native) {
       assert.equal(await open('Cleanup.md'), true);
       const row = page.locator('[data-role="note-tree"] [data-path="Cleanup.md"] > .note-tree-row');

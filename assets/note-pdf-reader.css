@@ -261,14 +261,16 @@ body.start-page[data-start-theme="dark"] :is(.note-pdf-embed, .note-pdf-tab-pane
 }
 .note-pdf-annotation-width:disabled { opacity: .35; cursor: default; }
 .note-pdf-annotation-width:focus-visible { outline: 2px solid var(--note-control-focus, currentColor); outline-offset: 2px; }
-.note-pdf-annotations, .note-pdf-annotations > svg, .note-pdf-sticky-layer {
+.note-pdf-annotations, .note-pdf-annotations > svg, .note-pdf-sticky-layer,
+.note-pdf-text-marks, .note-pdf-text-marks > svg {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   pointer-events: none;
 }
-.note-pdf-annotations { z-index: 2; }
+.note-pdf-annotations > * { z-index: 2; }
+.note-pdf-text-marks { mix-blend-mode: multiply; }
 .note-pdf-annotations.is-drawing > svg { pointer-events: auto; touch-action: none; cursor: crosshair; }
 .note-pdf-annotations:is(.is-selecting, [data-tool="eraser"]) svg [data-annotation-id] { pointer-events: visiblePainted; }
 .note-pdf-annotations.is-selecting svg [data-annotation-id] { cursor: pointer; }
@@ -298,9 +300,10 @@ body.start-page[data-start-theme="dark"] :is(.note-pdf-embed, .note-pdf-tab-pane
   z-index: 1;
   box-sizing: border-box;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   justify-items: end;
   width: min(202px, 100%);
-  min-height: 70px;
+  height: 108px;
   padding: 3px 6px 6px;
   border: 1px solid var(--pdf-annotation-color);
   border-radius: 7px;
@@ -317,11 +320,30 @@ body.start-page[data-start-theme="dark"] :is(.note-pdf-embed, .note-pdf-tab-pane
 }
 .note-pdf-sticky-head button { min-height: 22px; padding: 1px 3px; }
 .note-pdf-sticky textarea, .note-pdf-sticky p {
-  box-sizing: border-box; width: 100%; margin: 0; padding: 3px;
+  box-sizing: border-box; width: 100%; height: 100%; min-height: 0; margin: 0; padding: 3px;
+  border: 1px solid transparent; overflow: auto; scrollbar-width: thin; scrollbar-gutter: stable;
   color: inherit; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.note-pdf-sticky textarea { height: 75px; resize: none; border: 1px solid rgba(50, 46, 38, .2); border-radius: 4px; background: #ffffffb0; }
-.note-pdf-sticky p { max-height: 88px; overflow: auto; }
+.note-pdf-sticky textarea { resize: none; border-color: rgba(50, 46, 38, .2); border-radius: 4px; background: #ffffffb0; }
+.note-pdf-sticky .note-pdf-sticky-measure {
+  position: absolute; inset: 0 auto auto 0; height: 0; max-width: none;
+  visibility: hidden; pointer-events: none; overflow: hidden;
+}
+.note-pdf-sticky-resize { display: none; position: absolute; z-index: 1; touch-action: none; }
+.note-pdf-annotations.is-selecting .note-pdf-sticky-resize { display: block; }
+.note-pdf-sticky-resize:is([data-edge="n"], [data-edge="s"]) { inset-inline: 8px; height: 5px; cursor: ns-resize; }
+.note-pdf-sticky-resize:is([data-edge="w"], [data-edge="e"]) { inset-block: 8px; width: 5px; cursor: ew-resize; }
+.note-pdf-sticky-resize:is([data-edge="nw"], [data-edge="ne"], [data-edge="sw"], [data-edge="se"]) { width: 8px; height: 8px; }
+.note-pdf-sticky-resize:is([data-edge="nw"], [data-edge="se"]) { cursor: nwse-resize; }
+.note-pdf-sticky-resize:is([data-edge="ne"], [data-edge="sw"]) { cursor: nesw-resize; }
+.note-pdf-sticky-resize[data-edge^="n"] { top: -1px; }
+.note-pdf-sticky-resize[data-edge^="s"] { bottom: -1px; }
+.note-pdf-sticky-resize[data-edge$="w"] { left: -1px; }
+.note-pdf-sticky-resize[data-edge$="e"] { right: -1px; }
+.note-pdf-sticky-resize[data-edge="se"]::after {
+  content: ''; position: absolute; right: 2px; bottom: 2px; width: 4px; height: 4px;
+  border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; opacity: .42;
+}
 .note-pdf-match { z-index: 3; }
 
 @media (max-width: 480px) {

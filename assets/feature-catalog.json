@@ -352,6 +352,7 @@
         "note-pdf-reader.css",
         "note-pdf-annotation-state.js",
         "note-pdf-annotation-layer.js",
+        "note-pdf-sticky-box.js",
         "note-pdf-scrollbar.js",
         "vendor/pdfjs/",
         "note-cards.js",

@@ -93,7 +93,10 @@ def validate_record(record):
         'pen': {'points', 'width'}, 'highlighter': {'points', 'width'},
         'box': {'quad'}, 'note': {'point', 'text'},
     }
-    if not isinstance(kind, str) or kind not in fields or set(record) != {'id', 'page', 'kind', 'color'} | fields[kind]:
+    if not isinstance(kind, str) or kind not in fields:
+        raise invalid()
+    optional = {'cardBox'} if kind == 'note' and 'cardBox' in record else set()
+    if set(record) != {'id', 'page', 'kind', 'color'} | fields[kind] | optional:
         raise invalid()
     if kind in ('highlight', 'underline'):
         if (not isinstance(record['quads'], list) or not 1 <= len(record['quads']) <= 4096
@@ -109,6 +112,12 @@ def validate_record(record):
         raise invalid()
     if kind == 'note' and (not point(record['point']) or not text(record['text'])):
         raise invalid()
+    if optional:
+        box = record['cardBox']
+        if (not isinstance(box, dict) or set(box) != {'width', 'height', 'offsetX', 'offsetY'}
+                or any(type(value) is not int or abs(value) > 1_000_000 for value in box.values())
+                or not all(1 <= box[key] <= 10_000 for key in ('width', 'height'))):
+            raise invalid()
     for value in record.values():
         if isinstance(value, str):
             try:

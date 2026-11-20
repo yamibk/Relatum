@@ -130,6 +130,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
   function paint() {
     frame = 0;
     if (!alive() || !pdf || !stage.clientWidth || !stage.clientHeight) return;
+    const stageResized = width !== stage.clientWidth || height !== stage.clientHeight;
     const anchor = position();
     if (dirty) {
       const center = (stage.scrollLeft + stage.clientWidth / 2) / stage.scrollWidth;
@@ -139,9 +140,9 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
     else if (target) moveTo(target);
     target = null;
     lastPosition = position();
-    const top = stage.scrollTop, height = stage.clientHeight;
+    const top = stage.scrollTop, viewHeight = stage.clientHeight;
     const visible = pageAt(top + PAGE_GAP + 1);
-    const from = pageAt(top - height / 2), to = pageAt(top + height * 1.5);
+    const from = pageAt(top - viewHeight / 2), to = pageAt(top + viewHeight * 1.5);
     for (const [number, item] of pages) {
       if (number < from || number > to) {
         resetPage(item); item.host.remove(); pages.delete(number);
@@ -165,7 +166,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
         resetPage(item);
         item.width = pageWidth; item.height = pageHeight;
         void drawPage(number, item);
-      }
+      } else if (stageResized) item.annotation?.layout();
     }
     if (lastPage !== visible) {
       lastPage = visible;
@@ -182,7 +183,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
 
   function resetPage(item) {
     item.generation = (item.generation || 0) + 1;
-    item.annotation?.(); item.annotation = null;
+    item.annotation?.dispose(); item.annotation = null;
     cancel(item.render); cancel(item.textRender);
     item.page?.cleanup();
     item.page = null;
