@@ -61,7 +61,7 @@ function selectionQuads(range, textLayer, project) {
   return quads;
 }
 
-function textLineQuads(quads) {
+function textLineQuads(quads, heightScale = 1) {
   const directions = new Map();
   for (const points of quads) {
     const [top, , , base] = points;
@@ -105,7 +105,8 @@ function textLineQuads(quads) {
         if (run && start - run.end <= height * .45) run.end = Math.max(run.end, end);
         else runs.push({ start, end });
       }
-      rows.push({ center, height, top: center - height / 2, bottom: center + height / 2, runs });
+      const halfHeight = height * heightScale / 2;
+      rows.push({ center, height, top: center - halfHeight, bottom: center + halfHeight, runs });
     }
     // Font bounding boxes can overlap even on two distinct lines. Leave a
     // narrow seam where their runs share horizontal space.
@@ -198,12 +199,12 @@ function draw(record, viewport, group) {
   if (record.points) { stroke(record, viewport, group); return; }
   const project = quad => quad.map(point => viewport.convertToViewportPoint(...point));
   if (record.quads) {
-    const bands = textLineQuads(record.quads.map(project));
+    const bands = textLineQuads(record.quads.map(project), record.kind === 'highlight' ? .8 : 1);
     if (record.kind === 'underline') {
       const d = bands.map(([, , end, start]) => smooth([start.map(round), end.map(round)])).join('');
       group.append(shape('path', { d, fill: 'none', stroke: record.color, 'stroke-width': viewport.scale }));
     } else {
-      group.append(shape('path', { d: quadsPath(bands), fill: record.color, opacity: .4 }));
+      group.append(shape('path', { d: quadsPath(bands), fill: record.color }));
     }
     return;
   }
@@ -377,6 +378,9 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
   const svgAttributes = { viewBox: '0 0 ' + viewport.width + ' ' + viewport.height, 'aria-hidden': 'true' };
   const markup = html('div', 'note-pdf-text-marks');
   const textVector = shape('svg', svgAttributes);
+  // Composite the finished highlight layer once so overlapping marks do not darken.
+  const highlights = shape('g', { opacity: .4 }), underlines = shape('g', {});
+  textVector.append(highlights, underlines);
   const vector = shape('svg', svgAttributes);
   const saved = shape('g', {}), preview = shape('g', { 'pointer-events': 'none' });
   const notes = html('div', 'note-pdf-sticky-layer');
@@ -538,7 +542,8 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
     if (noteResize && !selecting()) finishNoteResize(null, false);
     if (affected && !affected.has(page)) return;
     saved.replaceChildren();
-    textVector.replaceChildren();
+    highlights.replaceChildren();
+    underlines.replaceChildren();
     const mode = tools?.mode || '';
     if (noteDrag && !selecting()) finishNoteDrag(null, false);
     if (gesture && mode !== gesture.kind) finish(null, false);
@@ -555,7 +560,8 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
         group.dataset.annotationId = record.id;
         draw(record, viewport, group);
         group.classList.toggle('is-selected', record.id === tools?.selected);
-        (textModes.has(record.kind) ? textVector : saved).append(group);
+        const target = record.kind === 'highlight' ? highlights : record.kind === 'underline' ? underlines : saved;
+        target.append(group);
       }
     }
     for (const [id, view] of stickyViews) {
