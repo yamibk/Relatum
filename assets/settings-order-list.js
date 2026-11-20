@@ -88,7 +88,9 @@
       if (!current?.active) return;
       current.frame = 0;
       current.ghost.style.transform = `translate(${current.x - current.offsetX}px,${current.y - current.offsetY}px)`;
-      const scroll = host.closest('.relatum-settings-scroll'), rect = scroll.getBoundingClientRect();
+      const scroll = options.scrollHost || host.closest('.relatum-settings-scroll');
+      if (!scroll) { moveAt(current.y); return; }
+      const rect = scroll.getBoundingClientRect();
       const previous = scroll.scrollTop;
       if (current.y < rect.top + 30) scroll.scrollTop -= 8;
       else if (current.y > rect.bottom - 30) scroll.scrollTop += 8;
@@ -112,7 +114,7 @@
           const ghost = current.ghost = row.cloneNode(true);
           ghost.classList.add('note-sidebar-ghost'); ghost.setAttribute('aria-hidden', 'true'); ghost.inert = true;
           ghost.style.width = rect.width + 'px'; ghost.style.height = rect.height + 'px';
-          host.closest('dialog').append(ghost); row.classList.add('is-dragging');
+          (options.ghostHost || host.closest('dialog') || host).append(ghost); row.classList.add('is-dragging');
         }
         if (current.active) { e.preventDefault(); if (!current.frame) current.frame = requestAnimationFrame(frame); }
       }
@@ -130,11 +132,13 @@
       available().forEach(id => {
         const row = document.createElement('div'); row.className = 'note-sidebar-setting'; row.dataset.sidebarPage = id;
         const grip = document.createElement('button'); grip.type = 'button'; grip.className = 'note-sidebar-grip'; grip.textContent = '⠿'; grip.setAttribute('aria-label', text('拖动调整顺序：', 'Reorder: ') + NAMES[id][options.language() === 'en' ? 1 : 0]);
-        const label = document.createElement('label'), input = document.createElement('input'), name = document.createElement('strong');
+        const label = document.createElement('label'), input = document.createElement('input');
+        const name = document.createElement(options.activate ? 'button' : 'strong');
         input.type = 'checkbox'; input.checked = !hidden.has(id); input.dataset.sidebarVisible = id;
         name.textContent = NAMES[id][options.language() === 'en' ? 1 : 0];
+        if (options.visibilityLabel) input.setAttribute('aria-label', options.visibilityLabel(name.textContent));
         if (options.visibility !== false) label.append(input);
-        label.append(name);
+        if (!options.activate) label.append(name);
         input.addEventListener('change', () => { if (pending) return; if (input.checked) hidden.delete(id); else hidden.add(id); persist(); });
         grip.addEventListener('pointerdown', event => begin(event, row, grip));
         grip.addEventListener('keydown', event => {
@@ -142,6 +146,14 @@
           event.preventDefault(); reorder(id, event.key === 'Home' ? -Infinity : event.key === 'End' ? Infinity : event.key === 'ArrowUp' ? -1 : 1);
         });
         row.append(grip, label);
+        if (options.activate) {
+          name.type = 'button';
+          name.dataset.orderActivate = id;
+          name.title = name.textContent;
+          name.disabled = hidden.has(id);
+          name.addEventListener('click', () => { if (!pending) options.activate(id); });
+          row.append(name);
+        }
         [-1, 1].forEach(direction => {
           const button = document.createElement('button'); button.type = 'button'; button.className = 'note-sidebar-step'; button.textContent = direction < 0 ? '↑' : '↓';
           button.setAttribute('aria-label', text(direction < 0 ? '上移' : '下移', direction < 0 ? 'Move up' : 'Move down') + ' ' + name.textContent);
@@ -171,7 +183,7 @@
       setItems(ids, names) { suspend(); IDS = ids.slice(); NAMES = names; if (!pending) { read(); render(); } },
       sync() { if (!pending) { read(); render(); } },
       destroy() { suspend(); lifetime.abort(); host = null; },
-      initPanel(element) { host = element; render(); host.addEventListener('keydown', event => { if (event.key === 'Escape' && drag) { event.preventDefault(); event.stopPropagation(); finish(true); } }, true); },
+      initPanel(element) { host = element; render(); host.addEventListener('keydown', event => { if (event.key === 'Escape' && drag) { event.preventDefault(); event.stopPropagation(); finish(true); } }, { capture: true, signal: lifetime.signal }); },
       reset() { suspend(); order = IDS.slice(); hidden.clear(); try { localStorage.removeItem(KEY); } catch (_) {} render(); options.onChange?.(); },
     };
   }

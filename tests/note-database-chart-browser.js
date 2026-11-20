@@ -27,11 +27,12 @@ async function checkCharts({ page, open, blocks, chartRequests }) {
   const category = table.columns[0].id;
   const date = (await change('addColumn', { columnType: 'date', name: '日期' })).addedColumn;
   const number = (await change('addColumn', { columnType: 'number', name: 'Amount' })).addedColumn;
+  const duration = (await change('addColumn', { columnType: 'number', name: 'Duration' })).addedColumn;
   const check = (await change('addColumn', { columnType: 'checkbox', name: 'Status' })).addedColumn;
   const days = [17, 17, 18, 15, 16, 17];
   await change('batchCells', { changes: days.map((day, index) => ({ row: null, values: {
     [category]: index === 0 ? longLabel : 'Study', [date]: `2026-11-${day}`,
-    [number]: index - 2, [check]: index < 2,
+    [number]: index - 2, [duration]: 2 * index, [check]: index < 2,
   } })) });
   assert(await open('Charts.md'));
   await blocks.first().locator('table').waitFor();
@@ -157,6 +158,29 @@ async function checkCharts({ page, open, blocks, chartRequests }) {
     return [option.title[0].text, option.title[0].subtext, ...option.series[0].data.map(point => option.legend[0].formatter(point.name))];
   }, doughnut);
   assert.deepEqual(largeRing, ['3.59539E308', 'Tag total', 'A 50%', 'B 50%']);
+
+  const histogram = await post('chart', { chart: { type: 'histogram', groupBy: number, bins: 5 } });
+  await change('setNumberFormat', { column: duration, format: { unit: 'min', decimals: 1 } });
+  const scatter = await post('chart', { chart: { type: 'scatter', groupBy: number, metric: { op: 'value', column: duration } } });
+  const numeric = await page.evaluate(async ({ histogram, scatter }) => {
+    const hosts = [chartQa.host(), chartQa.host()];
+    const controllers = [histogram, scatter].map((model, index) => chartQa.mount(hosts[index], model, { language: 'en' }));
+    try {
+      const ready = await Promise.all(controllers.map(controller => controller.ready));
+      const [histogramOptions, scatterOptions] = hosts.map(node => echarts.getInstanceByDom(node).getOption());
+      return {
+        ready,
+        counts: histogramOptions.series[0].data,
+        scatter: scatterOptions.series[0].data,
+        label: scatterOptions.yAxis[0].axisLabel.formatter(10),
+      };
+    } finally {
+      controllers.forEach(controller => controller.dispose());
+      hosts.forEach(node => node.remove());
+    }
+  }, { histogram, scatter });
+  assert.deepEqual(numeric, { ready: [true, true], counts: [1, 1, 1, 1, 2],
+    scatter: [[-2, 0], [-1, 2], [0, 4], [1, 6], [2, 8], [3, 10]], label: '10.0 min' });
 
   const lifecycle = await page.evaluate(async ({ line, column }) => {
     const [controller] = chartQa.renders;

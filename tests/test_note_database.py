@@ -643,6 +643,108 @@ class NoteDatabaseTests(unittest.TestCase):
         self.assertEqual(self.read()['total'], 505)
 
 
+    def test_named_chart_views_migrate_legacy_style_and_keep_independent_filters(self):
+        self.save()
+        title = self.latest['columns'][0]['id']
+        self.add_chart_records([{title: 'Keep'}, {title: 'Other'}, {title: 'Keep'}])
+        spec = {'type': 'column', 'groupBy': title, 'metric': {'op': 'count'}}
+        self.action('setChartView', mode='chart', chart=spec)
+        with closing(sqlite3.connect(self.directory / 'database.sqlite3')) as connection:
+            connection.execute('UPDATE chart_views SET chart=?', (json.dumps({**spec, 'style': {'primary': 'coral'},
+                                                                              'styleRevision': 'a' * 32}),))
+            connection.commit()
+        self.assertEqual(self.read()['chartCards'][0]['style'], {'primary': 'coral'})
+        self.assertEqual(self.read()['chartOrientation'], 'vertical')
+        self.assertFalse(self.read()['chartHideTitles'])
+        added = self.latest = self.database.action('Source.md', TABLE, {
+            'type': 'setChartCard', 'operation': 'add', 'revision': self.latest['revision'],
+            'name': 'Only kept', 'chart': spec, 'query': {'search': 'Keep'},
+        })
+        identity = added['changedChartId']
+        duplicate = self.action('setChartCard', operation='duplicate', chartId=identity, name='Copy')
+        copy_id = duplicate['changedChartId']
+        self.action('setChartAppearance', chartId=copy_id, styleRevision=None, style={'primary': 'mint'})
+        layout = [{'id': copy_id, 'hidden': True}, {'id': identity, 'hidden': False}, {'id': 'default', 'hidden': False}]
+        with self.assertRaises(NotesError):
+            self.action('setChartCard', operation='arrange', orientation='unknown', layout=layout)
+        with self.assertRaises(NotesError):
+            self.action('setChartCard', operation='arrange', hideTitles='true', layout=layout)
+        self.action('setChartCard', operation='arrange', showData=True, orientation='horizontal', hideTitles=True, layout=layout)
+        self.assertTrue(self.read()['chartShowData'])
+        self.assertEqual(self.read()['chartOrientation'], 'horizontal')
+        self.action('setChartCard', operation='arrange', layout=layout)
+        self.action('setChartView', mode='data')
+        self.action('setChartView', mode='chart')
+        self.assertEqual(self.read()['chartOrientation'], 'horizontal')
+        self.assertTrue(self.read()['chartHideTitles'])
+        self.assertEqual([(c['name'], c['style'].get('primary'), c['hidden']) for c in self.read()['chartCards']],
+                         [('Copy', 'mint', True), ('Only kept', None, False), ('', 'coral', False)])
+        before = next(c for c in self.latest['chartCards'] if c['id'] == identity)
+        with self.assertRaises(NotesError):
+            self.action('setChartCard', operation='rename', chartId=identity, name='   ')
+        renamed = self.action('setChartCard', operation='rename', chartId=identity, name=' Kept detail ')
+        self.assertEqual(renamed['changedChartId'], identity)
+        self.assertEqual(next(c for c in renamed['chartCards'] if c['id'] == identity), {**before, 'name': 'Kept detail'})
+        self.assertTrue(renamed['chartHideTitles'])
+        self.assertEqual(self.action('setChartCard', operation='rename', chartId=identity, name='Kept detail')['revision'],
+                         renamed['revision'])
+        read_chart = lambda **kwargs: self.database.read_chart('Source.md', TABLE, chart_id=identity, **kwargs)
+        self.assertEqual([p['value'] for p in read_chart()['groups']], [2])
+        self.assertEqual(read_chart(query={'search': 'Other'})['groups'], [])
+        detail = read_chart(detail={'key': 'Keep'})
+        self.assertEqual(detail['total'], 2)
+        self.assertEqual([r['values'][title] for r in detail['rows']], ['Keep', 'Keep'])
+        for card_id in (identity, copy_id, 'default'):
+            self.action('setChartCard', operation='delete', chartId=card_id)
+        self.assertEqual(self.read()['chartView']['mode'], 'data')
+        self.assertEqual(self.read()['chartCards'], [])
+        self.assertEqual(self.read()['chartOrientation'], 'horizontal')
+        self.assertEqual(self.read()['total'], 3)
+        with closing(sqlite3.connect(self.directory / 'database.sqlite3')) as connection:
+            connection.execute('UPDATE chart_views SET chart=?', (json.dumps({'cards': [], 'orientation': 'unknown'}),))
+            connection.commit()
+        self.assertEqual(self.read()['chartOrientation'], 'vertical')
+
+    def test_chart_series_checked_rate_distribution_and_numeric_display(self):
+        self.save()
+        title = self.latest['columns'][0]['id']
+        day = self.action('addColumn', columnType='date', name='Date')['addedColumn']
+        amount = self.action('addColumn', columnType='number', name='Actual')['addedColumn']
+        plan = self.action('addColumn', columnType='number', name='Plan')['addedColumn']
+        done = self.action('addColumn', columnType='checkbox', name='Done')['addedColumn']
+        self.add_chart_records([
+            {title: 'A', day: '2026-11-02', amount: -10, plan: 20, done: True},
+            {title: 'B', day: '2026-11-03', amount: 0, plan: 10},
+            {title: 'A', day: '2026-11-09', amount: 10, done: False},
+            {title: 'B', day: '2026-11-10', plan: 30, done: True},
+        ])
+        self.action('setNumberFormat', column=amount, format={'unit': 'min', 'decimals': 0, 'percent': False})
+        self.assertEqual(next(c['numberFormat'] for c in self.read()['columns'] if c['id'] == amount),
+                         {'unit': 'min', 'decimals': 0})
+        weekly = {'type': 'column', 'groupBy': day, 'bucket': 'week'}
+        split = self.chart({**weekly, 'seriesBy': title, 'stack': True})
+        self.assertEqual([g['key'] for g in split['groups']], ['2026-11-02', '2026-11-09'])
+        self.assertEqual([s['values'] for s in split['series']],
+                         [{'2026-11-02': 1, '2026-11-09': 1}] * 2)
+        comparison = {**weekly, 'metric': {'op': 'sum', 'column': amount}, 'compare': plan}
+        with self.assertRaises(NotesError):
+            self.chart(comparison)
+        self.action('setNumberFormat', column=plan, format={'unit': 'min'})
+        self.assertEqual([s['values']['2026-11-09'] for s in self.chart(comparison)['series']], [10, 30])
+        metric = {'type': 'number', 'metric': {'op': 'checkedRate', 'column': done}}
+        self.assertEqual(self.chart(metric)['groups'][0]['value'], 0.5)
+        self.assertEqual(self.chart({'type': 'number'}, {'search': 'missing'})['groups'][0]['value'], 0)
+        histogram = {'type': 'histogram', 'groupBy': amount, 'bins': 4}
+        self.assertEqual([p['value'] for p in self.chart(histogram)['groups']], [1, 0, 1, 1])
+        scatter = {'type': 'scatter', 'groupBy': amount, 'metric': {'op': 'value', 'column': plan}}
+        points = self.chart(scatter)['groups']
+        self.assertEqual([(p['x'], p['value']) for p in points], [(-10, 20), (0, 10)])
+        card_id = self.action('setChartCard', operation='add', chart=scatter)['changedChartId']
+        detail = self.database.read_chart('Source.md', TABLE, chart_id=card_id, detail={'key': points[0]['key']})
+        self.assertEqual(detail['total'], 1)
+        self.assertEqual(detail['rows'][0]['values'][title], 'A')
+
+
 class NoteDatabaseHttpTests(unittest.TestCase):
     def test_chart_route_is_read_only_and_notes_owned(self):
         from feature_profile import FEATURES, LaunchProfile

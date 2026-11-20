@@ -18,15 +18,26 @@
     select: ['单标签', 'Single tag'], multiSelect: ['多标签', 'Multiple tags'], status: ['状态', 'Status'],
   };
   const chartTypes = { column: ['柱状图', 'Column chart'], bar: ['横向条形图', 'Horizontal bar chart'],
-    line: ['折线图', 'Line chart'], doughnut: ['环形图', 'Doughnut chart'] };
-  const chartMetrics = { sum: ['求和', 'Sum'], avg: ['平均值', 'Average'], min: ['最小值', 'Minimum'], max: ['最大值', 'Maximum'] };
+    line: ['折线图', 'Line chart'], doughnut: ['环形图', 'Doughnut chart'], number: ['数字卡', 'Number card'],
+    histogram: ['直方图', 'Histogram'], scatter: ['散点图', 'Scatter plot'] };
+  const chartMetrics = { sum: ['求和', 'Sum'], avg: ['平均值', 'Average'], min: ['最小值', 'Minimum'], max: ['最大值', 'Maximum'],
+    checkedRate: ['勾选率', 'Checked rate'] };
   const chartBuckets = { day: ['日', 'Day'], week: ['周', 'Week'], month: ['月', 'Month'] };
-  const chartColorTarget = chart => `${chart.type}:${chart.groupBy}:${chart.bucket || ''}`;
+  const filterNames = { contains: ['包含', 'Contains'], equals: ['等于', 'Equals'], gt: ['大于', 'Greater than'],
+    lt: ['小于', 'Less than'], empty: ['为空', 'Is empty'], notEmpty: ['不为空', 'Is not empty'] };
+  const chartColorTarget = chart => JSON.stringify([chart.type, chart.groupBy, chart.bucket, chart.seriesBy, chart.compare]);
+  const chartTitle = (card, tr) => card.name || tr(chartTypes[card.chart.type] || ['图表', 'Chart']);
+  const chartHasData = model => model?.series
+    ? model.series.some(series => Object.values(series.values).some(Number.isFinite))
+    : model?.groups.some(point => Number.isFinite(point.value));
+  const makeChartQuery = ({ search = '', filters = [] } = {}) => ({ search, filters });
   const chartMessages = {
     loading: ['正在加载图表…', 'Loading chart…'],
     empty: ['没有可绘制的记录。可修改筛选条件，或到数据表添加记录。', 'No chart data. Change the filters or add records in Data.'],
     invalid_chart: ['图表字段已不可用，请重新选择字段。', 'A chart field is unavailable. Choose another field.'],
     chart_group_limit: ['分组太多。请缩小筛选范围，或使用更粗的日期粒度。', 'Too many groups. Narrow the filters or use a larger date interval.'],
+    chart_series_limit: ['系列太多。请缩小筛选范围或更换系列字段。', 'Too many series. Narrow the filters or choose another series field.'],
+    chart_point_limit: ['散点太多。请缩小筛选范围。', 'Too many scatter points. Narrow the filters.'],
     chart_metric_domain: ['环形图需要非负数值且至少一组大于零。可改用记录数或另一种图表。', 'A doughnut chart needs non-negative values with at least one positive group. Try record count or another chart type.'],
     chart_numeric_range: ['汇总数值超出范围。请缩小筛选范围或更换统计方式。', 'The result is out of range. Narrow the filters or change the aggregation.'],
     chart_timeout: ['汇总耗时较长。可缩小筛选范围后重试。', 'Aggregation took too long. Narrow the filters and try again.'],
@@ -42,8 +53,6 @@
   const sameCell = (a, b) => a?.[0] === b?.[0] && a?.[1] === b?.[1];
   const iconPaths = { plus: 'M8 3.5v9M3.5 8h9', search: 'M10.3 10.3l3.1 3.1M11.5 7a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Z',
     view: 'M2.5 4h11m-9 4h7m-5 4h3', more: 'M3.5 8h.2M7.9 8h.2M12.3 8h.2', prev: 'm10 4-4 4 4 4',
-    settings: 'M2 4h12M2 8h12M2 12h12M5 2.5v3m5.5 1v3M6.5 10.5v3',
-    palette: 'M8.1 2.1a5.9 5.9 0 1 0 0 11.8h.8a1.3 1.3 0 0 0 1-2.1 1.1 1.1 0 0 1 .9-1.8h1.3a2 2 0 0 0 2-2.1 5.9 5.9 0 0 0-6-5.8ZM5 6.2h.1M8 4.8h.1M11 6h.1M4.7 9.4h.1',
     next: 'm6 4 4 4-4 4', '×': 'm5 5 6 6m0-6-6 6', check: 'm3.5 8 3 3 6-6',
     date: 'M3 4h10a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1ZM2 7h12M5 2v3m6-3v3',
     file: 'M4 2h5l4 4v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1ZM9 2v4h4',
@@ -161,12 +170,34 @@
     if (choiceType(column.type)) {
       return selectedChoices(value, column).map(option => option.name).join('、');
     }
+    if (column.type === 'number' && column.numberFormat) {
+      const { unit, decimals, percent } = column.numberFormat;
+      const locale = tr(label('zh-CN', 'en'));
+      const config = percent ? { style: 'percent' } : {};
+      if (decimals !== undefined) config.minimumFractionDigits = config.maximumFractionDigits = decimals;
+      else config.maximumSignificantDigits = 15;
+      const formatted = !percent && decimals === undefined ? String(value) : new Intl.NumberFormat(locale, config).format(value);
+      return unit ? formatted + ' ' + unit : formatted;
+    }
     return String(value);
   }
 
   function selectedChoices(value, column) {
     const ids = Array.isArray(value) ? value : value == null ? [] : [value];
     return ids.map(id => column.choices?.find(option => option.id === id)).filter(Boolean);
+  }
+
+  function chartFilterText(card, columns, tr) {
+    const { search, filters } = makeChartQuery(card.query);
+    const parts = search.trim() ? [tr(label(`搜索「${search}」`, `Search “${search}”`))] : [];
+    for (const rule of filters) {
+      const column = columns.find(item => item.id === rule.column);
+      if (column && filterNames[rule.operator]) {
+        const value = display(rule.value, column, tr);
+        parts.push([column.name, tr(filterNames[rule.operator]), value].filter(Boolean).join(' '));
+      }
+    }
+    return parts.join(' · ');
   }
 
   function choiceChip(option, type) {
@@ -264,30 +295,35 @@
   async function readPrintDatabase(path, databaseId) {
     const query = makeQuery();
     const readPage = () => loadPage(path, databaseId, query, AbortSignal.timeout(10000));
-    let page = await readPage();
     for (let attempt = 0; attempt < 2; attempt++) {
-      const view = page.chartView;
-      if (view?.mode !== 'chart' || !view.valid) break;
-      try {
-        const model = await request(chartRoute, { path, databaseId, query, chart: view.chart }, AbortSignal.timeout(10000));
-        if (!model.exists) return { page: model };
-        if (model.revision === page.revision) return { page, model };
-      } catch (_) { break; }
-      if (attempt === 0) page = await readPage();
+      const page = await readPage();
+      if (page.chartView?.mode !== 'chart') return { page, cards: [] };
+      const requests = new Map();
+      const cards = await Promise.all(page.chartCards.filter(card => !card.hidden).map(async card => {
+        if (!card.valid) return { card };
+        const key = JSON.stringify([card.chart, makeChartQuery(card.query)]);
+        if (!requests.has(key)) requests.set(key, request(chartRoute, { path, databaseId, query, chartId: card.id },
+          AbortSignal.timeout(10000)).catch(error => error.status === 409 ? { revision: null } : null));
+        const model = await requests.get(key);
+        return { card, model };
+      }));
+      if (attempt === 0 && cards.some(({ model }) => model && model.revision !== page.revision)) continue;
+      return { page, cards: cards.map(({ card, model }) => ({ card, model: model?.revision === page.revision ? model : null })) };
     }
-    return { page };
   }
 
-  async function printChartFigure(host, page, model, language, runtime) {
-    const { style } = page.chartView;
+  async function printChartFigure(host, page, card, model, language, runtime) {
+    const { style } = card;
     const width = host.clientWidth;
     if (!width) throw new Error('Chart print width unavailable');
     const { svg, description, legendItems } = await runtime.renderPrintChart(model, {
       language, dark: false, palette: style.palette, primary: style.primary, categories: style.categories,
     }, width);
     const figure = element('figure', 'note-database-print-figure');
-    figure.append(element('figcaption', '', page.name || description));
-    if (page.name) figure.append(element('p', 'note-database-print-description', description));
+    figure.append(element('figcaption', '', card.name || page.name || description));
+    if (card.name || page.name) figure.append(element('p', 'note-database-print-description', description));
+    const filters = chartFilterText(card, page.columns, pair => translate(language, pair));
+    if (filters) figure.append(element('p', 'note-database-print-description', filters));
     figure.append(svg);
     if (legendItems.length) {
       const legend = element('ul', 'note-database-print-legend');
@@ -306,20 +342,38 @@
   async function renderPrint(host, path, databaseId, language, duplicates = []) {
     const tr = pair => translate(language, pair);
     try {
-      const { page, model } = await readPrintDatabase(path, databaseId);
+      const { page, cards } = await readPrintDatabase(path, databaseId);
+      const hosts = [host, ...duplicates];
       if (!page.exists) {
         host.textContent = page.deleted ? tr(label('数据库已删除', 'Database deleted')) : tr(label('数据库尚未创建', 'Database not created'));
         return 0;
       }
-      const chartMode = page.chartView?.mode === 'chart';
-      const hasChartData = model?.groups.some(point => Number.isFinite(point.value));
-      if (hasChartData) {
+      const chartMode = page.chartView?.mode === 'chart' && cards.length > 0;
+      let printedCharts = false, warnings = 0;
+      if (cards.some(({ model }) => chartHasData(model))) {
         try {
           const runtime = await loadChartRuntime();
-          const hosts = [host, ...duplicates];
-          const figures = await Promise.all(hosts.map(target => printChartFigure(target, page, model, language, runtime)));
-          hosts.forEach((target, index) => target.replaceChildren(figures[index]));
-          return 0;
+          let failures = 0, drawn = 0;
+          for (const target of hosts) {
+            const figures = [];
+            for (const { card, model } of cards) {
+              if (chartHasData(model)) {
+                try {
+                  figures.push(await printChartFigure(target, page, card, model, language, runtime));
+                  drawn++;
+                  continue;
+                } catch (_) {}
+              }
+              const notice = model && !chartHasData(model) ? tr(label('没有可绘制的数据', 'No plottable data'))
+                : tr(label('图表无法导出', 'Chart could not be exported'));
+              figures.push(element('p', '', chartTitle(card, tr) + ' · ' + notice));
+              failures++;
+            }
+            target.replaceChildren(...figures);
+          }
+          printedCharts = Boolean(drawn);
+          warnings = Math.min(cards.length, failures);
+          if (printedCharts && !page.chartShowData) return warnings;
         } catch (_) { /* Print the data table if the chart cannot be drawn. */ }
       }
       const table = element('table', 'md-table note-database-print-table');
@@ -332,12 +386,19 @@
         const line = body.insertRow();
         for (const column of columns) line.insertCell().textContent = display(row.values[column.id], column, tr);
       }
-      host.replaceChildren(table);
-      if (chartMode) host.prepend(element('p', '', model && !hasChartData
+      const remaining = page.total - page.rows.length;
+      const tableNodes = [table];
+      if (remaining > 0) tableNodes.push(element('p', '', tr(label(`另有 ${remaining} 行`, `${remaining} more rows`))));
+      if (printedCharts) {
+        for (const target of duplicates) target.append(...tableNodes.map(node => node.cloneNode(true)));
+        host.append(...tableNodes);
+        return warnings;
+      }
+      host.replaceChildren(...tableNodes);
+      if (chartMode) host.prepend(element('p', '', cards.some(({ model }) => model && !chartHasData(model))
         ? tr(label('图表没有可绘制的数据，以下为数据表。', 'The chart has no plottable data. The table is shown below.'))
         : tr(label('图表无法导出，以下为数据表。', 'The chart could not be exported. The table is shown below.'))));
-      const remaining = page.total - page.rows.length;
-      if (remaining > 0) host.append(element('p', '', tr(label(`另有 ${remaining} 行`, `${remaining} more rows`))));
+      for (const target of duplicates) target.replaceChildren();
       return Number(chartMode);
     } catch (_) {
       host.textContent = tr(label('数据库读取失败', 'Database unavailable'));
@@ -378,7 +439,7 @@
       const key = sessionKey(path, databaseId);
       if (!sessions.has(key)) sessions.set(key, {
         path, databaseId, page: null, query: makeQuery(), views: new Set(), draft: null, status: '', stale: true,
-        read: null, write: null, timer: 0, undo: [], redo: [],
+        read: null, write: null, timer: 0, undo: [], redo: [], chartJobs: new Map(),
       });
       return sessions.get(key);
     }
@@ -393,8 +454,8 @@
     }
 
     function stopChartRead(session) {
-      session.chartJob?.controller?.abort();
-      session.chartJob = null;
+      for (const job of session.chartJobs.values()) job.controller?.abort();
+      session.chartJobs.clear();
     }
 
     function clearChart(session) {
@@ -414,9 +475,17 @@
       }
     }
 
+    function releaseCharts(view, unobserve = false) {
+      for (const card of view.cards.values()) {
+        releaseChart(card);
+        if (unobserve) stopObserving(card.chartStage);
+      }
+    }
+
     function chartVisible(view) {
       return !!view.chartStage && !view.chartStage.hidden && view.chartStage.isConnected
-        && view.visible && (!view.observe || view.chartIntersecting) && isVisible(view.session);
+        && view.owner.mode === 'chart' && view.owner.visible
+        && (!view.owner.observe || view.chartIntersecting) && isVisible(view.session);
     }
 
     function showChartStatus(view, status) {
@@ -435,18 +504,20 @@
           syncCharts(view.session);
         }, 'chart-retry');
         view.chartStatus.append(retry);
-      } else if (!view.readOnly && ['invalid_chart', 'chart_group_limit', 'chart_metric_domain', 'chart_numeric_range'].includes(status)) {
-        view.chartStatus.append(button(tr(label('图表设置', 'Chart settings')), () => openChartSettings(view, view.chartSettings), 'chart-reconfigure'));
+      } else if (!view.owner.readOnly && ['invalid_chart', 'chart_group_limit', 'chart_series_limit', 'chart_point_limit',
+        'chart_metric_domain', 'chart_numeric_range'].includes(status)) {
+        view.chartStatus.append(button(tr(label('图表设置', 'Chart settings')),
+          () => openChartSettings(view.owner, view.menu, view.model), 'chart-reconfigure'));
       }
     }
 
     function paintChart(view, model) {
       const language = options.language?.() || 'zh';
       const dark = document.documentElement.dataset.startTheme === 'dark' || document.body.dataset.startTheme === 'dark';
-      const style = view.chartStyleDraft ?? view.session.page?.chartView?.style ?? {};
+      const style = view.chartStyleDraft ?? view.model.style;
       const appearance = { language, dark, palette: window.RelatumNoteChartPalette.effective(style.palette),
         ...(model.chart.type !== 'doughnut' && { primary: style.primary }),
-        ...(model.chart.type !== 'line' && { categories: style.categories ?? {} }) };
+        categories: style.categories ?? {} };
       const appearanceKey = JSON.stringify(appearance);
       if (view.chartPaint?.model === model && view.chartPaint.appearanceKey === appearanceKey) return;
       const paint = view.chartPaint = { model, appearanceKey };
@@ -471,7 +542,8 @@
           if (await view.chartRenderer.update(model, appearance) && current()) showChartStatus(view, '');
           return;
         }
-        const renderer = view.chartRenderer = runtime.mount(view.chartCanvas, model, appearance);
+        const renderer = view.chartRenderer = runtime.mount(view.chartCanvas, model, appearance,
+          mark => openChartDetails(view, mark));
         const painted = await renderer.ready;
         if (painted && current()) showChartStatus(view, '');
         // A language or theme update can reuse this instance while its engine is loading.
@@ -495,72 +567,75 @@
       }).catch(failed);
     }
 
-    function requestChart(session, key, revision, chart, query) {
+    function requestChart(session, key, revision, chartId, query) {
       const controller = new AbortController();
-      const job = session.chartJob = { key, controller };
+      const job = { key, controller };
+      session.chartJobs.set(key, job);
       const { path, databaseId } = session;
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]);
-      void request(chartRoute, { path, databaseId, query, chart }, signal).then(async model => {
-        if (session.chartJob !== job) return;
+      void request(chartRoute, { path, databaseId, query, chartId }, signal).then(async model => {
+        if (session.chartJobs.get(key) !== job) return;
         if (!model.exists || model.revision !== revision) {
           session.stale = true;
           await read(session);
-          if (session.chartJob !== job) return;
+          if (session.chartJobs.get(key) !== job) return;
           job.status = 'failed';
-        } else if (model.groups.some(point => Number.isFinite(point.value))) job.model = model;
+        } else if (chartHasData(model)) job.model = model;
         else job.status = 'empty';
         syncCharts(session);
       }).catch(error => {
-        if (session.chartJob !== job) return;
+        if (session.chartJobs.get(key) !== job) return;
         job.status = Object.hasOwn(chartMessages, error.code) ? error.code : 'failed';
+        if (error.status === 409) void refresh(session.path, true, session.databaseId);
         syncCharts(session);
       });
     }
 
     function syncCharts(session) {
-      const chartView = session.page?.chartView;
-      if (chartView?.mode !== 'chart') { clearChart(session); return; }
-      const views = Array.from(session.views).filter(chartVisible);
-      if (!chartView.valid) {
-        clearChart(session);
-        for (const view of views) {
+      if (session.page?.chartView?.mode !== 'chart') { clearChart(session); return; }
+      const { revision } = session.page;
+      const query = makeChartQuery(session.query);
+      const required = new Set();
+      for (const owner of session.views) for (const view of owner.cards.values()) {
+        if (!chartVisible(view)) continue;
+        const card = view.model;
+        if (!card.valid) {
           releaseChart(view);
           showChartStatus(view, 'invalid_chart');
+          continue;
         }
-        return;
-      }
-      if (!views.length) {
-        const job = session.chartJob;
-        if (job?.model && isVisible(session)) offscreenChart = { session, key: job.key, model: job.model };
-        stopChartRead(session);
-        return;
-      }
-      const { search, filters } = session.query;
-      const { revision } = session.page, { chart } = chartView;
-      const key = JSON.stringify([revision, chart, search, filters]);
-      if (session.chartJob?.key !== key) {
-        stopChartRead(session);
-        for (const view of views) {
+        const key = JSON.stringify([revision, card.chart, makeChartQuery(card.query), query]);
+        required.add(key);
+        if (view.job?.key !== key && owner.panel?.kind === 'chart-details' && view.root.contains(owner.panel.anchor)) {
+          owner.panel.close();
+        }
+        let job = session.chartJobs.get(key);
+        if (!job) {
           releaseChart(view);
           showChartStatus(view, session.readFailed ? 'failed' : 'loading');
+          if (session.stale || session.read || session.write || session.readFailed
+              || session.renderedQuery !== JSON.stringify(session.query)) continue;
+          if (offscreenChart?.session === session && offscreenChart.key === key) {
+            session.chartJobs.set(key, offscreenChart);
+            offscreenChart = null;
+          } else requestChart(session, key, revision, card.id, query);
+          job = session.chartJobs.get(key);
         }
-        if (session.stale || session.read || session.write || session.renderedQuery !== JSON.stringify(session.query)) return;
-        if (session.readFailed) return;
-        const cached = offscreenChart?.session === session ? offscreenChart : null;
-        if (cached) offscreenChart = null;
-        if (cached?.key === key) session.chartJob = { key, model: cached.model };
-        else requestChart(session, key, revision, chart, { search, filters });
-      }
-      const job = session.chartJob;
-      for (const view of views) {
-        view.syncChartColorCategories?.(job.model?.groups);
+        view.job = job;
+        view.syncChartColorCategories?.(job.model?.series || job.model?.groups);
         if (job.model) paintChart(view, job.model);
         else showChartStatus(view, job.status || 'loading');
+      }
+      for (const [key, job] of session.chartJobs) {
+        if (required.has(key)) continue;
+        if (job.model && isVisible(session)) offscreenChart = { session, key, model: job.model };
+        job.controller?.abort();
+        session.chartJobs.delete(key);
       }
     }
 
     function repaintChart(view) {
-      const model = view.session.chartJob?.model;
+      const model = view.chartPaint?.model;
       if (model && chartVisible(view)) paintChart(view, model);
     }
 
@@ -575,7 +650,7 @@
     }
 
     function applyPage(session, page, ownWrite = false) {
-      const { inverse, addedId, addedRow, updatedRow, addedColumn, deletedCount, ...snapshot } = page;
+      const { inverse, addedId, addedRow, updatedRow, addedColumn, deletedCount, changedChartId, ...snapshot } = page;
       page = snapshot;
       if (!ownWrite && session.page && session.page.revision !== page.revision) {
         session.undo.length = 0;
@@ -690,7 +765,9 @@
           }
           if (JSON.stringify(session.query) === requestedQuery) applyPage(session, page, true);
           else {
-            if (session.page) session.page = { ...session.page, revision: page.revision, chartView: page.chartView };
+            if (session.page) session.page = { ...session.page, revision: page.revision, chartView: page.chartView,
+              chartCards: page.chartCards, chartShowData: page.chartShowData, chartOrientation: page.chartOrientation,
+              chartHideTitles: page.chartHideTitles };
             session.stale = true;
           }
           markChanged(session.path, session.databaseId);
@@ -854,7 +931,8 @@
         const columns = range.columns.slice(range.c0, range.c1 + 1);
         const encode = value => /["\t\r\n]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
         const text = range.rows.slice(range.r0, range.r1 + 1).map(row =>
-          columns.map(column => encode(display(row.values[column.id], column, tr))).join('\t')).join('\r\n');
+          columns.map(column => encode(column.type === 'number' ? row.values[column.id] ?? ''
+            : display(row.values[column.id], column, tr))).join('\t')).join('\r\n');
         event.clipboardData.setData('text/plain', text);
         event.preventDefault();
         event.stopPropagation();
@@ -1478,12 +1556,14 @@
         controller.abort();
         choices?.dispose();
         panel.remove();
+        if (anchor.hasAttribute('aria-haspopup')) anchor.setAttribute('aria-expanded', 'false');
         if (view.panel?.close === close) view.panel = null;
         if (restore && anchor.isConnected) (returnFocus?.() || anchor).focus({ preventScroll: true });
       };
       view.panel = { anchor, kind, close, choices };
       const initial = content(surface, close, { popup: panel, portal: choicesPortal, signal: controller.signal });
       view.root.append(panel);
+      if (anchor.hasAttribute('aria-haspopup')) anchor.setAttribute('aria-expanded', 'true');
       panel.showPopover?.();
       const rect = anchor.getBoundingClientRect(), width = document.documentElement.clientWidth;
       const height = document.documentElement.clientHeight;
@@ -1886,6 +1966,10 @@
         name.addEventListener('keydown', event => { if (!composing(event) && event.key === 'Enter') rename(); });
         panel.append(name, button(tr(label('重命名', 'Rename')), rename));
         if (choiceType(column.type)) panel.append(button(tr(label('管理选项', 'Manage options')), () => { close(); editChoices(view, anchor, column); }));
+        if (column.type === 'number') panel.append(button(tr(label('数字格式', 'Number format')), () => {
+          close();
+          openNumberFormat(view, anchor, column);
+        }, 'number-format'));
         for (const [offset, msg] of [[-1, label('左移', 'Move left')], [1, label('右移', 'Move right')]]) {
           const item = button(tr(msg), () => { close(true); void moveColumn(view, column.id, columns[index + offset]?.id, offset < 0 ? 'before' : 'after'); });
           item.disabled = !columns[index + offset];
@@ -1903,13 +1987,61 @@
       });
     }
 
+    function openNumberFormat(view, anchor, column) {
+      panelAt(view, anchor, 'number-format', (panel, close, { signal }) => {
+        const current = column.numberFormat || {};
+        const form = element('form', 'note-database-chart-form');
+        const field = (names, control) => {
+          const wrapper = element('label');
+          wrapper.append(element('span', '', tr(names)), control);
+          form.append(wrapper);
+          return control;
+        };
+        const styles = label('显示方式', 'Display as');
+        const style = field(styles, select(tr(styles), [['number', tr(label('数字', 'Number'))],
+          ['percent', tr(label('百分比（0.5 显示为 50%）', 'Percentage (0.5 displays as 50%)'))]], current.percent ? 'percent' : 'number'));
+        const units = label('单位后缀', 'Unit suffix');
+        const unit = field(units, input('text', tr(units), current.unit));
+        unit.maxLength = 16;
+        const precision = label('小数位数', 'Decimal places');
+        field(precision, select(tr(precision), [['', tr(label('自动', 'Automatic'))],
+          ...Array.from({ length: 9 }, (_, value) => [String(value), String(value)])], String(current.decimals ?? '')));
+        const decimals = form.lastElementChild.querySelector('select');
+        const toggle = () => {
+          unit.parentElement.hidden = style.value === 'percent';
+        };
+        style.addEventListener('change', toggle);
+        toggle();
+        const actions = element('div', 'note-database-chart-actions');
+        const save = element('button', 'note-database-chart-confirm', tr(label('确定', 'Confirm')));
+        save.type = 'submit';
+        actions.append(button(tr(label('取消', 'Cancel')), () => close(true)), save);
+        form.append(actions);
+        form.addEventListener('submit', async event => {
+          event.preventDefault();
+          if (save.disabled) return;
+          save.disabled = true;
+          const percent = style.value === 'percent';
+          const format = { percent, unit: percent ? '' : unit.value, decimals: decimals.value === '' ? null : Number(decimals.value) };
+          if (await write(view.session, { type: 'setNumberFormat', column: column.id, format })) close(true);
+          else if (!signal.aborted) save.disabled = false;
+        });
+        panel.append(form);
+        return style;
+      }, { name: tr(label('数字格式', 'Number format')) });
+    }
+
     async function confirmEdit(view, message) {
       const current = () => view.root.isConnected && isVisible(view.session);
       return current() && (options.confirmEdit ? await options.confirmEdit(message, current) : window.confirm(tr(message))) && current();
     }
 
-    function filterForm(view, container, index) {
-      const { page, query } = view.session;
+    function filterForm(view, container, index, query = view.session.query, applyFilters) {
+      const { page } = view.session;
+      const applyRules = applyFilters || (filters => {
+        view.panel?.close(true);
+        changeQuery(view.session, { filters });
+      });
       const panel = element('form', 'note-database-form');
       const current = query.filters[index];
       const column = select(tr(label('筛选列', 'Filter column')), page.columns.map(item => [item.id, item.name]),
@@ -1920,8 +2052,6 @@
         attachment: ['contains', 'empty', 'notEmpty'], select: ['equals', 'empty', 'notEmpty'],
         multiSelect: ['contains', 'empty', 'notEmpty'], status: ['equals', 'empty', 'notEmpty'],
       };
-      const names = { contains: label('包含', 'Contains'), equals: label('等于', 'Equals'), gt: label('大于', 'Greater than'),
-        lt: label('小于', 'Less than'), empty: label('为空', 'Is empty'), notEmpty: label('不为空', 'Is not empty') };
       const operator = select(tr(label('筛选条件', 'Filter condition')), [], '');
       const valueHost = element('span');
       let value;
@@ -1947,7 +2077,7 @@
       function showOperators(initial) {
         operator.replaceChildren();
         const type = page.columns.find(item => item.id === column.value)?.type;
-        for (const key of operators[type] || []) operator.add(new Option(tr(names[key]), key));
+        for (const key of operators[type] || []) operator.add(new Option(tr(filterNames[key]), key));
         if (initial) operator.value = initial.operator;
         showValue(initial?.value);
         if (panel.isConnected) view.panel?.choices?.refresh(operator);
@@ -1958,8 +2088,7 @@
       const apply = element('button', '', tr(label('应用筛选', 'Apply filter')));
       apply.type = 'submit';
       panel.append(column, operator, valueHost, apply, button(tr(label('移除条件', 'Remove rule')), () => {
-        view.panel?.close(true);
-        changeQuery(view.session, { filters: query.filters.filter((_, position) => position !== index) });
+        applyRules(query.filters.filter((_, position) => position !== index));
       }));
       panel.addEventListener('submit', event => {
         event.preventDefault();
@@ -1968,30 +2097,62 @@
         const filterValue = raw === null ? null : type === 'number' ? Number(raw) : type === 'checkbox' ? raw === 'true' : raw;
         const filters = query.filters.slice();
         filters[index] = { column: column.value, operator: operator.value, value: filterValue };
-        view.panel?.close(true);
-        changeQuery(view.session, { filters });
+        applyRules(filters);
       });
       container.append(panel);
       view.panel?.choices?.enhanceAll();
       (view.panel?.choices?.enhance(column).anchor || column).focus();
     }
 
-    function renameDatabase(view, anchor) {
-      panelAt(view, anchor, 'renameDatabase', (panel, close) => {
+    function renameTrigger(role, activate) {
+      const trigger = button('', event => { if (!event.detail) void activate(trigger); }, role);
+      trigger.addEventListener('dblclick', () => void activate(trigger));
+      return trigger;
+    }
+
+    function renamePanel(view, anchor, kind, title, fieldName, initial, action) {
+      panelAt(view, anchor, kind, (panel, close, { signal }) => {
         const { session } = view;
-        const field = input('text', tr(label('数据库名称', 'Database name')), session.page.name);
+        const field = input('text', tr(fieldName), initial);
         field.maxLength = 120;
+        const status = element('p', 'note-database-chart-notice');
+        status.setAttribute('role', 'alert');
+        status.hidden = true;
+        const saveButton = button(tr(label('保存名称', 'Save name')), () => void save());
         const save = async () => {
           const name = field.value.trim();
-          if (session.write || !name) return;
-          if (name === session.page.name || await write(session, { type: 'renameDatabase', name })) close(true);
+          if (saveButton.disabled || session.write || !name) return;
+          if (name === initial) { close(true); return; }
+          status.hidden = true;
+          saveButton.disabled = true;
+          field.readOnly = true;
+          const saved = await write(session, { ...action, name });
+          if (signal.aborted) return;
+          if (saved) { close(true); return; }
+          saveButton.disabled = false;
+          field.readOnly = false;
+          status.textContent = session.status || tr(label('名称保存失败，请重试。', 'Could not save the name. Try again.'));
+          status.hidden = false;
+          field.focus({ preventScroll: true });
         };
         field.addEventListener('keydown', event => {
           if (event.key === 'Enter' && !composing(event)) { event.preventDefault(); void save(); }
         });
-        panel.append(field, button(tr(label('保存名称', 'Save name')), save));
+        panel.append(field, saveButton, status);
         return field;
-      }, { name: tr(label('重命名数据库', 'Rename database')) });
+      }, { name: tr(title) });
+    }
+
+    function renameDatabase(view, anchor) {
+      renamePanel(view, anchor, 'renameDatabase', label('重命名数据库', 'Rename database'),
+        label('数据库名称', 'Database name'), view.session.page.name, { type: 'renameDatabase' });
+    }
+
+    function renameChart(card, anchor) {
+      const { owner, model } = card;
+      renamePanel(owner, anchor, 'chart-rename', label('重命名图表', 'Rename chart'),
+        label('图表名称', 'Chart name'), chartTitle(model, tr),
+        { type: 'setChartCard', operation: 'rename', chartId: model.id });
     }
 
     async function deleteCurrentTable(view) {
@@ -2014,16 +2175,18 @@
       }
     }
 
-    function openChartPalette(view) {
+    function openChartPalette(card, anchor) {
+      const view = card.owner;
       const palette = window.RelatumNoteChartPalette;
-      if (!palette || !view.session.page?.chartView?.valid) return;
-      panelAt(view, view.chartPalette, 'chart-palette', (panel, close, { signal }) => {
+      if (!palette || !card.model.valid) return;
+      panelAt(view, anchor, 'chart-palette', (panel, close, { signal }) => {
         const { session } = view;
-        const current = session.page.chartView;
+        const current = card.model;
         const chart = current.chart;
         const ring = chart.type === 'doughnut';
-        const bar = chart.type === 'column' || chart.type === 'bar';
-        const groupType = session.page.columns.find(column => column.id === chart.groupBy)?.type;
+        const bar = chart.type === 'column' || chart.type === 'bar' || !!chart.seriesBy;
+        const categoryField = chart.seriesBy || chart.groupBy;
+        const groupType = session.page.columns.find(column => column.id === categoryField)?.type;
         const english = (options.language?.() || 'zh').startsWith('en');
         const dates = groupType === 'date' ? palette.dateFormatter(chart.bucket, english) : null;
         const groupName = point => dates ? dates.format(Date.parse(`${point.key}T00:00:00Z`))
@@ -2099,7 +2262,8 @@
         function syncCategories(groups) {
           if (groups === categoryGroups) return;
           categoryGroups = groups;
-          const available = (groups || []).filter(point => point.colorKey && Number.isFinite(point.value));
+          const available = (groups || []).filter(point => point.colorKey &&
+            (point.values ? Object.values(point.values).some(Number.isFinite) : Number.isFinite(point.value)));
           if (target && !available.some(point => point.colorKey === target)) target = null;
           if (targetSelect) {
             const entries = [{ value: '', label: mainColor }, ...available.map(point => ({ value: point.colorKey, label: groupName(point) }))];
@@ -2154,15 +2318,15 @@
           refreshPicker();
           for (const { point, row, chip } of rows) {
             const id = draft.categories[point.colorKey];
-            setChip(chip, palette.categoryColor(effective, false, chart.groupBy, point.key, id),
-              palette.categoryColor(effective, true, chart.groupBy, point.key, id));
+            setChip(chip, palette.categoryColor(effective, false, categoryField, point.key, id),
+              palette.categoryColor(effective, true, categoryField, point.key, id));
             row.setAttribute('aria-pressed', String(target === point.colorKey));
           }
         }
         function preview() {
-          view.chartStyleDraft = copy(draft);
+          card.chartStyleDraft = copy(draft);
           refreshColors();
-          repaintChart(view);
+          repaintChart(card);
         }
         function chooseColor(id) {
           if (saving || (ring && !target)) return;
@@ -2191,7 +2355,7 @@
           preview();
         });
         const reload = button(tr(label('重新载入配色', 'Reload colors')), () => {
-          const saved = session.page.chartView;
+          const saved = card.model;
           revision = saved.styleRevision;
           resetDraft(saved.style);
           reload.hidden = true;
@@ -2207,25 +2371,25 @@
         form.append(picker);
         if (ring) form.append(categories);
         if (ring || bar) {
-          syncCategories(session.chartJob?.model?.groups);
-          view.syncChartColorCategories = syncCategories;
+          syncCategories(card.job?.model?.series || card.job?.model?.groups);
+          card.syncChartColorCategories = syncCategories;
         }
         form.append(status, reload, actions);
         panel.append(form);
         refreshColors();
-        view.refreshChartColors = refreshColors;
-        view.chartStyleTarget = chartColorTarget(chart);
+        card.refreshChartColors = refreshColors;
+        card.chartStyleTarget = chartColorTarget(chart);
         signal.addEventListener('abort', () => {
-          delete view.chartStyleDraft;
-          delete view.refreshChartColors;
-          delete view.syncChartColorCategories;
-          delete view.chartStyleTarget;
-          repaintChart(view);
+          delete card.chartStyleDraft;
+          delete card.refreshChartColors;
+          delete card.syncChartColorCategories;
+          delete card.chartStyleTarget;
+          repaintChart(card);
         }, { once: true });
         form.addEventListener('submit', async event => {
           event.preventDefault();
           if (saving || !isVisible(session) || !view.host.isConnected) return;
-          if (session.page.chartView.styleRevision !== revision) {
+          if (card.model.styleRevision !== revision) {
             showError(tr(label('配色已在其他窗口更改。可载入已保存的配色。', 'Colors changed in another window. Reload the saved colors.')));
             reload.hidden = false;
             return;
@@ -2235,7 +2399,7 @@
           if (targetSelect) targetSelect.disabled = true;
           view.panel?.choices?.sync([preset, targetSelect]);
           showError('');
-          const result = await write(session, { type: 'setChartAppearance', styleRevision: revision, style: copy(draft) });
+          const result = await write(session, { type: 'setChartAppearance', chartId: current.id, styleRevision: revision, style: copy(draft) });
           if (signal.aborted) return;
           if (result) { close(true); return; }
           saving = false;
@@ -2246,23 +2410,27 @@
           save.focus({ preventScroll: true });
         });
         return preset;
-      });
+      }, { name: tr(label('图表配色', 'Chart colors')) });
     }
 
-    function openChartSettings(view, anchor) {
+    function openChartSettings(view, anchor, card) {
       panelAt(view, anchor, 'chart', (panel, close, { signal }) => {
         const { session } = view;
         const { fields = [], suggested } = session.page.chartOptions || {};
-        const compatible = Object.entries(chartTypes).filter(([type]) => fields.some(field => field.groupCharts.includes(type)));
-        if (!compatible.length) {
-          panel.append(element('p', 'note-database-chart-notice', tr(label('先添加可用于分组的字段，例如日期、文本或标签。',
-            'Add a grouping field first, such as a date, text, or tag.'))));
-          const dismiss = button(tr(label('关闭', 'Close')), () => close(true));
-          panel.append(dismiss);
-          return dismiss;
-        }
-        const initial = session.page.chartView?.chart || suggested;
+        const numericFields = fields.filter(field => field.metrics.length);
+        const compatible = Object.entries(chartTypes).filter(([type]) => type === 'number'
+          || type === 'scatter' && numericFields.length >= 2
+          || type !== 'scatter' && fields.some(field => field.groupCharts.includes(type)));
+        const initial = card?.chart || suggested;
         const form = element('form', 'note-database-chart-form');
+        const title = element('label');
+        const titleLabel = tr(label('图表名称', 'Chart name'));
+        const titleInput = input('text', titleLabel, card?.name);
+        titleInput.dataset.dbRole = 'chart-name';
+        titleInput.placeholder = tr(label('使用图表类型作为默认名称', 'Use the chart type as the default name'));
+        titleInput.maxLength = 120;
+        title.append(element('span', '', titleLabel), titleInput);
+        form.append(title);
         const field = (labelPair, role) => {
           const name = tr(labelPair), wrapper = element('label'), input = select(name, [], '');
           input.dataset.dbRole = role;
@@ -2271,10 +2439,26 @@
           return { wrapper, input };
         };
         const type = field(label('图表类型', 'Chart type'), 'chart-type').input;
-        const group = field(label('分组字段', 'Group by'), 'chart-group').input;
-        const measure = field(label('统计值', 'Measure'), 'chart-measure').input;
+        const grouping = field(label('分组字段', 'Group by'), 'chart-group');
+        const group = grouping.input;
+        const measureField = field(label('统计值', 'Measure'), 'chart-measure');
+        const measure = measureField.input;
         const aggregation = field(label('汇总方式', 'Aggregation'), 'chart-aggregation');
         const bucket = field(label('日期粒度', 'Date interval'), 'chart-bucket');
+        const bins = field(label('区间数', 'Number of bins'), 'chart-bins');
+        const series = field(label('按类别拆系列', 'Split series by'), 'chart-series');
+        const comparison = field(label('对比数字字段', 'Compare number field'), 'chart-comparison');
+        const layout = field(label('柱形排列', 'Bar layout'), 'chart-layout');
+        const extra = element('details', 'note-database-chart-extra');
+        extra.open = Boolean(initial?.seriesBy || initial?.compare);
+        const extraFields = element('div');
+        extraFields.append(series.wrapper, comparison.wrapper, layout.wrapper);
+        extra.append(element('summary', '', tr(label('系列选项', 'Series options'))), extraFields);
+        form.append(extra);
+        const failure = element('p', 'note-database-chart-notice');
+        failure.hidden = true;
+        failure.setAttribute('role', 'alert');
+        form.append(failure);
         const actions = element('div', 'note-database-chart-actions');
         const cancel = button(tr(label('取消', 'Cancel')), () => close(true), 'chart-cancel');
         const save = element('button', 'note-database-chart-confirm', tr(label('确定', 'Confirm')));
@@ -2290,32 +2474,86 @@
           }
         };
         const fieldName = field => field.name + (field.hidden ? tr(label('（隐藏）', ' (hidden)')) : '');
-        const updateFields = (groupId = group.value, measureId = measure.value, op = aggregation.input.value) => {
+        const noSeries = tr(label('无', 'None'));
+        fill(bins.input, Array.from({ length: 27 }, (_, i) => [String(i + 4), String(i + 4)]), String(initial?.bins || 10));
+        fill(layout.input, [['grouped', tr(label('并排', 'Grouped'))], ['stacked', tr(label('堆叠', 'Stacked'))]],
+          initial?.stack ? 'stacked' : 'grouped');
+        const unit = field => JSON.stringify([Boolean(field?.numberFormat?.percent), field?.numberFormat?.unit || '']);
+        const updateFields = (groupId = group.value, measureId = measure.value, op = aggregation.input.value,
+          seriesId = series.input.value, compareId = comparison.input.value) => {
+          const numberCard = type.value === 'number';
+          const scatter = type.value === 'scatter';
+          const histogram = type.value === 'histogram';
           const groups = fields.filter(field => field.groupCharts.includes(type.value));
           fill(group, groups.map(field => [field.id, fieldName(field)]), groupId);
+          grouping.wrapper.hidden = numberCard;
+          const groupName = tr(scatter ? label('横轴数字字段', 'X-axis number field')
+            : histogram ? label('数字字段', 'Number field') : label('分组字段', 'Group by'));
+          grouping.wrapper.firstElementChild.textContent = groupName;
+          group.setAttribute('aria-label', groupName);
+          const measureName = tr(scatter ? label('纵轴数字字段', 'Y-axis number field') : label('统计值', 'Measure'));
+          measureField.wrapper.firstElementChild.textContent = measureName;
+          measure.setAttribute('aria-label', measureName);
+          measureField.wrapper.hidden = histogram;
+          bins.wrapper.hidden = !histogram;
           const selected = groups.find(field => field.id === group.value);
-          const numbers = selected?.type === 'multiSelect' ? [] : fields.filter(field => field.metrics.length);
-          fill(measure, [['', tr(label('记录数', 'Record count'))], ...numbers.map(field => [field.id, fieldName(field)])], measureId);
+          const numbers = selected?.type === 'multiSelect' ? [] : numericFields.filter(field => !scatter || field.id !== group.value);
+          const rates = type.value === 'doughnut' || selected?.type === 'multiSelect' ? [] : fields.filter(field => field.type === 'checkbox');
+          const metrics = numbers.map(field => [field.id, fieldName(field)]);
+          fill(measure, scatter ? metrics : [['', tr(label('记录数', 'Record count'))], ...metrics,
+            ...rates.map(field => [field.id, fieldName(field) + ' · ' + tr(chartMetrics.checkedRate)])], measureId);
           const metric = numbers.find(field => field.id === measure.value);
-          aggregation.wrapper.hidden = !metric;
+          aggregation.wrapper.hidden = !metric || scatter || histogram;
           fill(aggregation.input, (metric?.metrics || []).map(key => [key, tr(chartMetrics[key])]), op || 'sum');
           bucket.wrapper.hidden = selected?.type !== 'date';
+          const split = ['line', 'column', 'bar'].includes(type.value) && selected?.type !== 'multiSelect';
+          const seriesFields = split ? fields.filter(field => field.id !== group.value &&
+            ['text', 'select', 'status', 'checkbox'].includes(field.type)) : [];
+          fill(series.input, [['', noSeries], ...seriesFields.map(field => [field.id, fieldName(field)])], seriesId);
+          series.wrapper.hidden = !seriesFields.length;
+          const compareFields = split && metric && !series.input.value
+            ? numbers.filter(field => field !== metric && unit(field) === unit(metric)) : [];
+          fill(comparison.input, [['', noSeries], ...compareFields.map(field => [field.id, fieldName(field)])], compareId);
+          comparison.wrapper.hidden = !compareFields.length;
+          layout.wrapper.hidden = !series.input.value || !['column', 'bar'].includes(type.value)
+            || (measure.value && (!metric || aggregation.input.value !== 'sum'));
+          extra.hidden = series.wrapper.hidden && comparison.wrapper.hidden;
+          view.panel?.choices?.sync([group, measure]);
         };
         fill(type, compatible.map(([key, names]) => [key, tr(names)]), initial?.type);
         fill(bucket.input, Object.entries(chartBuckets).map(([key, names]) => [key, tr(names)]), initial?.bucket || 'day');
-        updateFields(initial?.groupBy, initial?.metric?.column, initial?.metric?.op);
-        for (const control of [type, group, measure]) control.addEventListener('change', () => updateFields());
+        updateFields(initial?.groupBy, initial?.metric?.column, initial?.metric?.op, initial?.seriesBy, initial?.compare);
+        for (const control of [type, group, measure, series.input, aggregation.input]) control.addEventListener('change', () => updateFields());
         form.addEventListener('submit', async event => {
           event.preventDefault();
-          if (save.disabled || !group.value || !isVisible(session) || !view.host.isConnected) return;
-          const chart = { type: type.value, groupBy: group.value, metric: measure.value
-            ? { op: aggregation.input.value, column: measure.value } : { op: 'count' } };
+          if (save.disabled || (!grouping.wrapper.hidden && !group.value) || !isVisible(session) || !view.host.isConnected) return;
+          const chart = { type: type.value, metric: !measureField.wrapper.hidden && measure.value
+            ? { op: type.value === 'scatter' ? 'value' : aggregation.wrapper.hidden ? 'checkedRate' : aggregation.input.value, column: measure.value }
+            : { op: 'count' } };
+          if (!grouping.wrapper.hidden) chart.groupBy = group.value;
           if (!bucket.wrapper.hidden) chart.bucket = bucket.input.value;
+          if (!bins.wrapper.hidden) chart.bins = Number(bins.input.value);
+          if (series.input.value) chart.seriesBy = series.input.value;
+          if (comparison.input.value) chart.compare = comparison.input.value;
+          if (!layout.wrapper.hidden && layout.input.value === 'stacked') chart.stack = true;
           save.disabled = cancel.disabled = true;
-          const result = await write(session, { type: 'setChartView', mode: 'chart', chart });
+          failure.hidden = true;
+          if (!await settleSession(session) || signal.aborted) {
+            save.disabled = cancel.disabled = false;
+            return;
+          }
+          const result = await write(session, { type: 'setChartCard', operation: card ? 'edit' : 'add', chartId: card?.id,
+            chart, name: titleInput.value, show: true });
           if (signal.aborted) return;
-          if (result) close(true);
-          else { save.disabled = cancel.disabled = false; save.focus({ preventScroll: true }); }
+          if (result) {
+            close(true);
+            if (!card && session.page.chartCards.length > 1) jumpToChart(view, result.changedChartId);
+          } else {
+            save.disabled = cancel.disabled = false;
+            failure.textContent = session.status;
+            failure.hidden = false;
+            save.focus({ preventScroll: true });
+          }
         });
         return type;
       }, { name: tr(label('图表设置', 'Chart settings')) });
@@ -2327,7 +2565,8 @@
       session.chartSwitching = true;
       try {
         if (!await settleSession(session) || !view.host.isConnected || !isVisible(session) || !session.page?.exists) return;
-        if (mode === 'chart' && !session.page.chartView?.valid) openChartSettings(view, view.chartMode);
+        const cards = session.page.chartCards;
+        if (mode === 'chart' && !cards.some(card => card.valid)) openChartSettings(view, view.chartMode, cards.length === 1 ? cards[0] : null);
         else {
           view.panel?.close();
           await write(session, { type: 'setChartView', mode });
@@ -2337,10 +2576,316 @@
       }
     }
 
+    function jumpToChart(view, identity) {
+      const card = view.cards.get(identity);
+      if (!card || view.mode !== 'chart') return;
+      card.root.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      card.root.focus({ preventScroll: true });
+    }
+
+    function chartMenu(view) {
+      panelAt(view, view.chartToggle, 'charts', (panel, close, { popup, signal }) => {
+        const { session } = view;
+        const cards = session.page.chartCards;
+        const canAdd = cards.length < session.page.chartOptions.maxCards;
+        const add = button(tr(label('＋ 新建图表', '+ New chart')), () => {
+          if (cards.length && !canNavigate()) return;
+          close();
+          afterCellSave(view, () => openChartSettings(view, view.chartToggle));
+        }, 'new-chart');
+        add.disabled = !canAdd;
+        panel.append(add);
+        if (!cards.length) return add;
+
+        const savedLayout = page => page.chartCards.map(card => ({ id: card.id, hidden: Boolean(card.hidden) }));
+        const savedState = page => JSON.stringify([savedLayout(page), page.chartShowData, page.chartOrientation, page.chartHideTitles]);
+        let baseline = savedState(session.page);
+        let arrangement = { order: cards.map(card => card.id), hidden: cards.filter(card => card.hidden).map(card => card.id) };
+        let saving = false;
+        const makeLayout = () => arrangement.order.map(id => ({ id, hidden: arrangement.hidden.includes(id) }));
+        const dirty = () => JSON.stringify([makeLayout(), showData.checked, orientation.dataset.orientation, hideTitles.checked]) !== baseline;
+        const list = element('div', 'note-database-chart-order');
+        const displayOption = (names, checked) => {
+          const row = element('label', 'note-database-chart-display-option');
+          const caption = tr(names);
+          const control = input('checkbox', caption);
+          control.checked = checked;
+          control.addEventListener('change', () => { clearMessage(); updateControls(); });
+          row.append(control, caption);
+          return { row, control };
+        };
+        const { row: showDataRow, control: showData } = displayOption(
+          label('在图表下显示数据表', 'Show data table below charts'), session.page.chartShowData);
+        const { row: hideTitlesRow, control: hideTitles } = displayOption(
+          label('隐藏图表标题', 'Hide chart titles'), session.page.chartHideTitles);
+        const orientation = element('fieldset', 'note-database-chart-orientation');
+        orientation.setAttribute('aria-label', tr(label('图表排列方式', 'Chart orientation')));
+        orientation.dataset.orientation = session.page.chartOrientation;
+        const slider = element('span', 'note-database-chart-orientation-slider');
+        slider.setAttribute('aria-hidden', 'true');
+        orientation.append(slider);
+        const radioName = `note-chart-orientation-${++listSequence}`;
+        let horizontal;
+        for (const [value, name] of [['vertical', label('纵向', 'Vertical')], ['horizontal', label('横向', 'Horizontal')]]) {
+          const control = input('radio', tr(name), value);
+          control.name = radioName;
+          control.checked = value === orientation.dataset.orientation;
+          control.addEventListener('change', () => {
+            orientation.dataset.orientation = control.value;
+            clearMessage();
+            updateControls();
+          });
+          if (value === 'horizontal') horizontal = control;
+          const option = element('label');
+          option.append(control, element('span', '', tr(name)));
+          orientation.append(option);
+        }
+        const fallback = element('p', 'note-database-chart-notice',
+          tr(label('超过两张可见图表时使用纵向排列。', 'More than two visible charts are arranged vertically.')));
+        const message = element('p', 'note-database-chart-notice');
+        message.setAttribute('role', 'status');
+        const showMessage = text => {
+          message.textContent = text;
+          message.hidden = !text;
+        };
+        const clearMessage = () => showMessage('');
+        const cancel = button(tr(label('取消', 'Cancel')), () => close(true));
+        const save = button(tr(label('保存', 'Save')), async () => {
+          if (saving || !dirty()) return;
+          saving = true;
+          clearMessage();
+          updateControls();
+          try {
+            if (!await settleSession(session) || signal.aborted) return;
+            if (!session.page?.exists || savedState(session.page) !== baseline) {
+              showMessage(tr(label('已保存的图表排列发生变化。关闭下拉后重新打开即可查看最新设置。',
+                'The saved chart arrangement changed. Reopen the list to see the latest settings.')));
+              return;
+            }
+            const result = await write(session, { type: 'setChartCard', operation: 'arrange', layout: makeLayout(),
+              showData: showData.checked, orientation: orientation.dataset.orientation, hideTitles: hideTitles.checked });
+            if (signal.aborted) return;
+            if (result) {
+              baseline = savedState(result);
+              showMessage(tr(label('已保存', 'Saved')));
+            } else showMessage(session.status || tr(label('图表设置保存失败，请重试。', 'Could not save chart settings. Try again.')));
+          } finally {
+            if (!signal.aborted) {
+              saving = false;
+              updateControls();
+              if (popup.contains(document.activeElement) || document.activeElement === document.body) {
+                (save.disabled ? (list.querySelector('[data-order-activate]:not(:disabled)') || cancel) : save)
+                  .focus({ preventScroll: true });
+              }
+            }
+          }
+        }, 'save-chart-order');
+        function updateControls() {
+          const count = arrangement.order.length - arrangement.hidden.length;
+          add.disabled = saving || !canAdd;
+          cancel.disabled = saving;
+          save.disabled = saving || !dirty();
+          showData.disabled = saving;
+          hideTitles.disabled = saving;
+          orientation.disabled = saving;
+          horizontal.disabled = (count === 0 || count > 2) && orientation.dataset.orientation !== 'horizontal';
+          fallback.hidden = count <= 2;
+          list.inert = saving;
+        }
+        function canNavigate() {
+          if (!dirty()) return true;
+          showMessage(tr(label('请先保存或取消图表设置。', 'Save or cancel your chart changes first.')));
+          save.focus({ preventScroll: true });
+          return false;
+        }
+        const names = Object.fromEntries(cards.map(card => {
+          const title = chartTitle(card, tr);
+          return [card.id, [title, title]];
+        }));
+        const orderList = window.RelatumSettingsOrderList.create({
+          ids: arrangement.order, names, available: () => true, read: () => arrangement,
+          commit: next => { arrangement = next; clearMessage(); updateControls(); },
+          activate: async identity => {
+            if (!canNavigate()) return;
+            close();
+            if (view.mode !== 'chart') {
+              if (!await settleSession(session) || !isVisible(session)) return;
+              const current = session.page?.chartCards || [];
+              const card = current.find(item => item.id === identity && !item.hidden);
+              if (!card) return;
+              if (!current.some(item => item.valid)) {
+                openChartSettings(view, view.chartToggle, card);
+                return;
+              }
+              if (!await write(session, { type: 'setChartView', mode: 'chart' })) return;
+            }
+            jumpToChart(view, identity);
+          },
+          language: () => tr(label('zh', 'en')),
+          visibilityLabel: name => tr(label(`显示 ${name}`, `Show ${name}`)),
+          scrollHost: panel, ghostHost: popup,
+        });
+        orderList.initPanel(list);
+        signal.addEventListener('abort', () => orderList.destroy(), { once: true });
+        const actions = element('div', 'note-database-chart-actions');
+        actions.append(cancel, save);
+        const settings = element('div', 'note-database-chart-list-settings');
+        settings.append(orientation, fallback, showDataRow, hideTitlesRow, message, actions);
+        panel.append(list, settings);
+        clearMessage();
+        updateControls();
+      });
+    }
+
+    function openChartFilters(card) {
+      const view = card.owner;
+      panelAt(view, card.menu, 'chart-filters', (panel, close, { signal }) => {
+        const { session } = view;
+        const query = makeChartQuery(card.model.query);
+        const searchText = tr(label('搜索此图表', 'Search this chart'));
+        const search = input('search', searchText, query.search);
+        search.placeholder = searchText;
+        search.maxLength = 256;
+        search.dataset.dbRole = 'chart-filter-search';
+        const rules = element('div', 'note-database-view-rules');
+        const actions = element('div', 'note-database-chart-actions');
+        const cancel = button(tr(label('取消', 'Cancel')), () => close(true));
+        const save = button(tr(label('保存筛选', 'Save filters')), async () => {
+          if (save.disabled) return;
+          save.disabled = true;
+          const result = await write(session, { type: 'setChartCard', operation: 'edit', chartId: card.model.id,
+            query: { search: search.value, filters: query.filters } });
+          if (signal.aborted) return;
+          if (result) close(true);
+          else save.disabled = false;
+        }, 'chart-filter-save');
+        function renderRules() {
+          rules.replaceChildren();
+          const edit = index => {
+            rules.replaceChildren();
+            save.disabled = true;
+            filterForm(view, rules, index, query, filters => {
+              query.filters = filters;
+              save.disabled = false;
+              renderRules();
+            });
+            rules.append(button(tr(label('返回筛选列表', 'Back to filters')), () => {
+              save.disabled = false;
+              renderRules();
+            }));
+          };
+          query.filters.forEach((rule, index) => {
+            const column = session.page.columns.find(item => item.id === rule.column);
+            const description = column ? [column.name, display(rule.value, column, tr)].filter(Boolean).join(' · ')
+              : tr(label('字段已移除', 'Field removed'));
+            rules.append(button(description, () => {
+              if (column) edit(index);
+              else { query.filters = query.filters.filter((_, position) => position !== index); renderRules(); }
+            }));
+          });
+          const add = button(tr(label('＋ 筛选条件', '+ Filter rule')), () => edit(query.filters.length));
+          add.disabled = query.filters.length >= 32;
+          rules.append(add);
+        }
+        renderRules();
+        actions.append(cancel, save);
+        panel.append(search, rules, actions);
+        return search;
+      }, { name: tr(label('图表筛选', 'Chart filters')) });
+    }
+
+    function cardMenu(card) {
+      const view = card.owner, { session } = view;
+      panelAt(view, card.menu, 'chart-card', (panel, close) => {
+        const follow = action => () => { close(); action(); };
+        const edit = button(tr(label('编辑图表', 'Edit chart')), follow(() => openChartSettings(view, card.menu, card.model)), 'chart-settings');
+        const colors = button(tr(label('图表配色', 'Chart colors')), follow(() => openChartPalette(card, card.menu)), 'chart-palette');
+        colors.disabled = !card.model.valid;
+        const filters = button(tr(label('图表筛选', 'Chart filters')), follow(() => openChartFilters(card)), 'chart-filters');
+        const duplicate = button(tr(label('复制图表', 'Duplicate chart')), async () => {
+          close();
+          const name = Array.from(chartTitle(card.model, tr)).slice(0, 110).join('');
+          const result = await write(session, { type: 'setChartCard', operation: 'duplicate',
+            chartId: card.model.id, name: tr(label(name + ' 副本', name + ' copy')) });
+          if (result && isVisible(session)) jumpToChart(view, result.changedChartId);
+        }, 'duplicate-chart');
+        duplicate.disabled = session.page.chartCards.length >= session.page.chartOptions.maxCards;
+        const remove = button(tr(label('删除图表', 'Delete chart')), async () => {
+          close();
+          const name = chartTitle(card.model, tr);
+          if (await confirmEdit(view, label(`删除图表「${name}」？`, `Delete the chart “${name}”?`))) {
+            if (await write(session, { type: 'setChartCard', operation: 'delete', chartId: card.model.id })) {
+              view.chartToggle?.focus({ preventScroll: true });
+            }
+          }
+        }, 'delete-chart');
+        panel.append(edit, filters, colors, duplicate, remove);
+      }, { name: chartTitle(card.model, tr) });
+    }
+
+    function openChartDetails(card, mark) {
+      if (!chartVisible(card)) return;
+      const view = card.owner, { session } = view;
+      const revision = session.page.revision;
+      const query = makeChartQuery(session.query);
+      const rendered = card.chartPaint?.model;
+      const anchor = card.menu || card.root;
+      panelAt(view, anchor, 'chart-details', (panel, close, { popup, signal }) => {
+        popup.classList.add('note-database-panel-details');
+        const title = element('strong', '', [chartTitle(card.model, tr), mark.label].filter(Boolean).join(' · '));
+        const tableHost = element('div', 'note-database-chart-detail-table');
+        const status = element('p', 'note-database-chart-notice');
+        status.setAttribute('role', 'status');
+        const actions = element('div', 'note-database-chart-actions');
+        panel.append(title, status, tableHost, actions);
+        const dismiss = button(tr(label('关闭', 'Close')), () => close(true));
+        let sequence = 0;
+        async function load(page) {
+          const current = ++sequence;
+          status.textContent = tr(label('正在读取记录…', 'Loading records…'));
+          actions.replaceChildren(dismiss);
+          try {
+            const records = await request(chartRoute, { path: session.path, databaseId: session.databaseId, chartId: card.model.id,
+              query, detail: { key: mark.key, series: mark.series || '', page } },
+              AbortSignal.any([signal, AbortSignal.timeout(10000)]));
+            if (signal.aborted || current !== sequence) return;
+            if (!records.exists || records.revision !== revision || chartPaintChanged()) {
+              tableHost.replaceChildren();
+              status.textContent = tr(label('图表已更新，请重新选择数据点。', 'The chart changed. Select a point again.'));
+              return;
+            }
+            status.textContent = tr(label(`共 ${records.total} 条记录`, `${records.total} records`));
+            const table = element('table');
+            const columns = shownColumns(records);
+            const header = table.createTHead().insertRow();
+            for (const column of columns) header.append(element('th', '', column.name));
+            const body = table.createTBody();
+            for (const record of records.rows) {
+              const row = body.insertRow();
+              for (const column of columns) row.insertCell().textContent = display(record.values[column.id], column, tr);
+            }
+            tableHost.replaceChildren(table);
+            const prev = button(tr(label('上一页', 'Previous')), () => void load(records.page - 1));
+            const next = button(tr(label('下一页', 'Next')), () => void load(records.page + 1));
+            prev.disabled = records.page <= 1;
+            next.disabled = records.page * records.pageSize >= records.total;
+            if (!prev.disabled || !next.disabled) actions.prepend(prev, next);
+          } catch (_) {
+            if (signal.aborted || current !== sequence) return;
+            status.textContent = tr(label('读取明细失败', 'Could not load records'));
+            actions.prepend(button(tr(label('重试', 'Retry')), () => void load(page)));
+          }
+        }
+        const chartPaintChanged = () => card.chartPaint?.model !== rendered;
+        void load(1);
+        return dismiss;
+      }, { name: tr(label('图表明细', 'Chart records')) });
+    }
+
     function viewMenu(view, anchor) {
       panelAt(view, anchor, 'view', (panel, close) => {
         const { page, query } = view.session;
-        const chartMode = page.chartView?.mode === 'chart';
+        const chartOnly = page.chartView?.mode === 'chart' && !page.chartShowData;
         if (!view.readOnly) panel.append(button(tr(label('重命名数据库', 'Rename database')), () => {
           close();
           renameDatabase(view, anchor);
@@ -2355,7 +2900,7 @@
           close(true);
           changeQuery(view.session, { sort: column ? { column, direction } : null });
         });
-        if (!chartMode) panel.append(sort);
+        if (!chartOnly) panel.append(sort);
         const rules = element('div', 'note-database-view-rules');
         query.filters.forEach((rule, index) => {
           const column = page.columns.find(item => item.id === rule.column);
@@ -2372,7 +2917,7 @@
         add.disabled = query.filters.length >= 32;
         rules.append(add);
         panel.append(rules);
-        if (chartMode) return add;
+        if (chartOnly) return add;
         const fields = element('fieldset', 'note-database-visible-fields');
         fields.append(element('legend', '', tr(label('显示字段', 'Visible fields'))));
         const visible = shownColumns(page).length;
@@ -2563,9 +3108,7 @@
       const nameSlot = element('div', 'note-database-name-slot');
       if (view.readOnly) view.name = element('span');
       else {
-        const rename = () => afterCellSave(view, () => renameDatabase(view, view.name));
-        view.name = button('', event => { if (!event.detail) void rename(); }, 'rename-database');
-        view.name.addEventListener('dblclick', () => void rename());
+        view.name = renameTrigger('rename-database', anchor => afterCellSave(view, () => renameDatabase(view, anchor)));
       }
       view.name.className = 'note-database-name';
       nameSlot.append(view.name);
@@ -2619,28 +3162,103 @@
         view.modeControls = modes;
         view.dataMode = button('', () => void switchDatabaseMode(view, 'data'), 'data-mode');
         view.chartMode = button('', () => void switchDatabaseMode(view, 'chart'), 'chart-mode');
-        modes.append(view.dataMode, view.chartMode);
+        view.chartToggle = button('▾', () => chartMenu(view), 'chart-menu');
+        view.chartToggle.className = 'note-database-chart-toggle';
+        view.chartToggle.setAttribute('aria-haspopup', 'dialog');
+        view.chartToggle.setAttribute('aria-expanded', 'false');
+        modes.append(view.dataMode, view.chartMode, view.chartToggle);
         view.bar.append(modes);
       }
       view.bar.append(view.search, tools);
       if (!view.readOnly) {
-        view.chartSettings = iconButton('settings', tr(label('图表设置', 'Chart settings')),
-          () => openChartSettings(view, view.chartSettings), 'chart-settings');
-        view.chartPalette = iconButton('palette', tr(label('图表配色', 'Chart colors')),
-          () => openChartPalette(view), 'chart-palette');
-        tools.prepend(view.chartSettings, view.chartPalette);
         view.deleteTable = iconButton('trash', tr(label('删除数据库', 'Delete database')), () =>
           afterCellSave(view, () => deleteCurrentTable(view)), 'delete-database');
         tools.append(view.deleteTable);
       }
       tools.append(view.viewToggle);
-      view.chartStage = element('div', 'note-database-chart-stage');
-      view.chartStage.hidden = true;
-      view.chartCanvas = element('div', 'note-database-chart-canvas');
-      view.chartStatus = element('div', 'note-database-chart-status');
-      view.chartStatus.setAttribute('role', 'status');
-      view.chartStage.append(view.chartCanvas, view.chartStatus);
-      body.append(view.bar, view.chartStage);
+      view.chartArea = element('div', 'note-database-chart-area');
+      view.chartArea.hidden = true;
+      view.chartList = element('div', 'note-database-chart-list');
+      view.chartArea.append(view.chartList);
+      view.noCharts = element('p', 'note-database-chart-notice');
+      body.append(view.bar, view.chartArea);
+    }
+
+    function renderChartCards(view) {
+      const { page } = view.session;
+      const visible = page.chartCards.filter(model => !model.hidden);
+      const horizontal = page.chartOrientation === 'horizontal' && visible.length === 2 && visible.every(model => model.valid);
+      view.chartList.classList.toggle('can-show-side-by-side', horizontal);
+      const retained = new Set();
+      const nodes = [];
+      for (const model of visible) {
+        let card = view.cards.get(model.id);
+        if (!card) {
+          const root = element('section', 'note-database-chart-card');
+          root.dataset.chartId = model.id;
+          root.tabIndex = -1;
+          const tools = element('div', 'note-database-chart-tools');
+          const heading = view.readOnly ? element('strong')
+            : renameTrigger('rename-chart', anchor => afterCellSave(view, () => renameChart(card, anchor)));
+          heading.className = 'note-database-chart-title';
+          const meta = element('span', 'note-database-chart-filter-summary');
+          const chartStage = element('div', 'note-database-chart-stage');
+          const chartCanvas = element('div', 'note-database-chart-canvas');
+          const chartStatus = element('div', 'note-database-chart-status');
+          chartStatus.setAttribute('role', 'status');
+          card = { owner: view, session: view.session, root, tools, heading, meta, chartStage, chartCanvas, chartStatus };
+          tools.append(heading, meta);
+          if (!view.readOnly) {
+            card.menu = iconButton('more', '', () => afterCellSave(view, () => cardMenu(card)), 'chart-card-menu');
+            card.menu.setAttribute('aria-haspopup', 'dialog');
+            card.menu.setAttribute('aria-expanded', 'false');
+            tools.append(card.menu);
+          }
+          chartStage.append(chartCanvas, chartStatus);
+          root.append(tools, chartStage);
+          view.cards.set(model.id, card);
+        }
+        card.model = model;
+        card.root.classList.toggle('is-number-card', model.chart.type === 'number');
+        const title = chartTitle(model, tr);
+        if (card.root.getAttribute('aria-label') !== title) card.root.setAttribute('aria-label', title);
+        if (card.heading.textContent !== title) card.heading.textContent = title;
+        const titleHint = view.readOnly ? title : title + ' · ' + tr(label('双击重命名图表', 'Double-click to rename chart'));
+        if (card.heading.title !== titleHint) card.heading.title = titleHint;
+        card.heading.hidden = page.chartHideTitles;
+        if (card.heading.hidden && view.panel?.anchor === card.heading) view.panel.close();
+        const filters = chartFilterText(model, page.columns, tr);
+        if (card.meta.textContent !== filters) card.meta.textContent = card.meta.title = filters;
+        card.meta.hidden = !filters;
+        card.tools.hidden = card.heading.hidden && card.meta.hidden && !card.menu;
+        if (card.menu) {
+          card.menu.title = tr(label(`${title}的操作`, `Actions for ${title}`));
+          card.menu.setAttribute('aria-label', card.menu.title);
+        }
+        if (card.chartStyleTarget && (!model.valid || chartColorTarget(model.chart) !== card.chartStyleTarget)) {
+          view.panel?.close();
+        }
+        retained.add(model.id);
+        nodes.push(card.root);
+      }
+      for (const [id, card] of view.cards) {
+        if (retained.has(id)) continue;
+        if (card.root.contains(view.panel?.anchor)) view.panel.close();
+        releaseChart(card);
+        stopObserving(card.chartStage);
+        view.cards.delete(id);
+      }
+      if (!nodes.length) {
+        view.noCharts.textContent = tr(label('所有图表已隐藏', 'All charts are hidden'));
+        nodes.push(view.noCharts);
+      }
+      orderNodes(view.chartList, nodes);
+      if (view.observe) for (const card of view.cards.values()) {
+        if (!observed.has(card.chartStage)) {
+          card.chartIntersecting = false;
+          watch(card, card.chartStage);
+        }
+      }
     }
 
     function buildGrid(view) {
@@ -2682,10 +3300,10 @@
       const page = session.page;
       if (!page?.exists) {
         view.panel?.close();
-        releaseChart(view);
-        stopObserving(view.chartStage);
-        view.bar = view.grid = view.table = view.chartStage = null;
-        view.mode = view.chartStatusKey = view.language = null;
+        releaseCharts(view, true);
+        view.cards.clear();
+        view.bar = view.grid = view.table = view.chartArea = view.chartList = null;
+        view.mode = view.language = null;
         body.replaceChildren();
         if (!page && session.status) body.append(button(tr(label('重试', 'Retry')), () => refresh(session.path, false, session.databaseId)));
         if (page?.deleted) body.append(element('span', 'note-database-placeholder', tr(label('数据库已删除', 'Database deleted'))));
@@ -2698,33 +3316,22 @@
       }
       if (!view.bar) buildToolbar(view);
       const chartMode = page.chartView?.mode === 'chart';
+      const showTable = !chartMode || page.chartShowData;
       const previousMode = view.mode;
       view.mode = chartMode ? 'chart' : 'data';
-      if (!chartMode && !view.grid) buildGrid(view);
-      if (view.table) view.table.hidden = chartMode;
-      view.chartStage.hidden = !chartMode;
-      if (view.observe && previousMode !== view.mode) {
-        view.chartIntersecting = false;
-        if (chartMode) watch(view, view.chartStage);
-        else stopObserving(view.chartStage);
-      }
-      if (view.chartSettings) view.chartSettings.hidden = !chartMode;
-      if (view.chartPalette) {
-        view.chartPalette.hidden = !chartMode;
-        view.chartPalette.disabled = !page.chartView?.valid;
-        if (view.panel?.kind === 'chart-palette' && (!chartMode || !page.chartView.valid
-            || chartColorTarget(page.chartView.chart) !== view.chartStyleTarget)) view.panel.close();
-      }
+      if (showTable && !view.grid) buildGrid(view);
+      if (view.table) view.table.hidden = !showTable;
+      view.chartArea.hidden = !chartMode;
+      if (chartMode) renderChartCards(view);
       if (view.modeControls) {
         view.dataMode.setAttribute('aria-pressed', String(!chartMode));
         view.chartMode.setAttribute('aria-pressed', String(chartMode));
       }
       if (previousMode && previousMode !== view.mode) {
         view.modeAnimation?.cancel();
-        if (view.panel?.kind === 'view') view.panel.close();
-        if (chartMode) showChartStatus(view, 'loading');
-        else releaseChart(view);
-        const content = chartMode ? view.chartStage : view.table;
+        if (view.panel?.kind === 'view' || !chartMode && view.panel?.anchor.closest('.note-database-chart-card')) view.panel.close();
+        if (!chartMode) releaseCharts(view, true);
+        const content = chartMode ? view.chartArea : view.table;
         if (view.visible && isVisible(session) && document.documentElement.dataset.noteReducedMotion !== '1'
             && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
           view.modeAnimation = content.animate?.([{ opacity: .55 }, { opacity: 1 }], { duration: 120, easing: 'ease-out' });
@@ -2743,8 +3350,8 @@
           [view.addColumn, label('添加字段', 'Add field')], [view.addRow, label('添加记录', 'Add row')],
           [view.prev, label('上一页', 'Previous')], [view.next, label('下一页', 'Next')]];
         if (view.deleteTable) {
-          controls.push([view.deleteTable, label('删除数据库', 'Delete database')], [view.chartSettings, label('图表设置', 'Chart settings')],
-            [view.chartPalette, label('图表配色', 'Chart colors')]);
+          controls.push([view.deleteTable, label('删除数据库', 'Delete database')],
+            [view.chartToggle, label('展开图表列表', 'Open chart list')]);
           view.name.title = tr(label('双击重命名数据库', 'Double-click to rename database'));
           view.modeControls.setAttribute('aria-label', tr(label('数据库显示方式', 'Database display')));
           view.dataMode.textContent = tr(label('数据', 'Data'));
@@ -2760,8 +3367,8 @@
       view.search.hidden = !(view.searchOpen ?? Boolean(query.search));
       view.searchToggle.setAttribute('aria-expanded', String(!view.search.hidden));
       view.searchToggle.classList.toggle('is-engaged', Boolean(query.search));
-      view.viewToggle.classList.toggle('is-engaged', Boolean(query.filters.length || (!chartMode && (query.sort || page.columns.some(column => column.hidden)))));
-      if (chartMode) return;
+      view.viewToggle.classList.toggle('is-engaged', Boolean(query.filters.length || (showTable && (query.sort || page.columns.some(column => column.hidden)))));
+      if (!showTable) return;
       const activeBefore = document.activeElement;
       const focusedCell = view.grid.contains(activeBefore) && activeBefore.classList.contains('note-database-cell-value');
       const focusedHeader = view.header.contains(activeBefore) && activeBefore.dataset.dbRole;
@@ -2879,8 +3486,8 @@
             draw(current);
             void read(current.session);
           } else {
-            releaseChart(current);
-            if (['chart', 'chart-palette'].includes(current.panel?.kind)) current.panel.close();
+            releaseCharts(current);
+            if (current.panel?.kind?.startsWith('chart')) current.panel.close();
             if (current.session.draft?.view === current) dismissSuggestions(current.session.draft);
           }
           changed.add(current.session);
@@ -2904,11 +3511,11 @@
       root.append(body, status);
       host.append(root);
       observe = observe && !!window.IntersectionObserver;
-      const view = { session, host, root, body, status, readOnly, onLayout, onMoveBlock, observe, visible: !observe };
+      const view = { session, host, root, body, status, readOnly, onLayout, onMoveBlock, observe, visible: !observe, cards: new Map() };
       root.addEventListener('copy', event => clipboard(view, event));
       root.addEventListener('paste', event => clipboard(view, event));
       root.addEventListener('keydown', event => {
-        if (readOnly || view.mode === 'chart' || composing(event) || !(event.ctrlKey || event.metaKey) || event.altKey
+        if (readOnly || (view.mode === 'chart' && !view.table?.contains(event.target)) || composing(event) || !(event.ctrlKey || event.metaKey) || event.altKey
             || event.target.closest('input,textarea,select') || view.panel || session.draft) return;
         const key = event.key.toLowerCase();
         if (key !== 'z' && key !== 'y') return;
@@ -2938,10 +3545,9 @@
       return () => {
         view.panel?.close();
         view.modeAnimation?.cancel();
-        releaseChart(view);
+        releaseCharts(view, true);
         view.stopResize?.(false);
         stopObserving(view.root);
-        stopObserving(view.chartStage);
         view.visible = false;
         session.views.delete(view);
         const draft = session.draft;
@@ -3031,7 +3637,7 @@
         for (const view of previous.views) {
           view.panel?.close();
           view.modeAnimation?.cancel();
-          releaseChart(view);
+          releaseCharts(view);
           view.stopResize?.(false);
           view.pinned = null;
         }
@@ -3051,10 +3657,9 @@
       for (const view of session.views) {
         view.panel?.close();
         view.modeAnimation?.cancel();
-        releaseChart(view);
+        releaseCharts(view, true);
         view.stopResize?.(false);
         stopObserving(view.root);
-        stopObserving(view.chartStage);
         view.visible = false;
         view.root.remove();
       }
@@ -3081,7 +3686,7 @@
         if (moved === path) continue;
         stopRead(session);
         clearChart(session);
-        for (const view of session.views) releaseChart(view);
+        for (const view of session.views) releaseCharts(view);
         if (session.draft) {
           removeAttachmentPicker(session.draft);
           dismissSuggestions(session.draft);
@@ -3107,9 +3712,9 @@
     };
     const paletteEvent = window.RelatumNoteChartPalette?.changed;
     const paletteChange = () => {
-      for (const session of sessionsFor(activePath)) for (const view of session.views) {
-        view.refreshChartColors?.();
-        repaintChart(view);
+      for (const session of sessionsFor(activePath)) for (const view of session.views) for (const card of view.cards.values()) {
+        card.refreshChartColors?.();
+        repaintChart(card);
       }
     };
     window.addEventListener('focus', focus);

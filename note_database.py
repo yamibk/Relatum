@@ -464,6 +464,9 @@ class NoteDatabases:
             'SELECT id,name,type,width,hidden,choices FROM columns WHERE database_id=? ORDER BY COALESCE(display_order,position),position', (database_id,))}
         for column in columns.values():
             column['choices'] = json.loads(column['choices'])
+            if column['type'] == 'number' and isinstance(column['choices'], dict):
+                column['numberFormat'] = column['choices'].get('numberFormat', {})
+                column['choices'] = []
             if column['type'] in CHOICE_TYPES:
                 column['choices'] = _choices_with_tones(column['type'], column['choices'])
                 column['choice_ids'] = {option['id']: option['name'] for option in column['choices']}
@@ -538,10 +541,13 @@ class NoteDatabases:
             sort_args + parameters + [PAGE_SIZE, (page - 1) * PAGE_SIZE])}
         presentation = {}
         if include_values:
-            from note_database_chart import chart_options, read_view
+            from note_database_chart import chart_options, read_views
 
             self._fill_records(connection, directory, database_id, columns, records)
-            presentation = {'chartView': read_view(connection, database_id, columns), 'chartOptions': chart_options(columns)}
+            view, cards, display = read_views(connection, database_id, columns)
+            presentation = {'chartView': view, 'chartCards': cards, 'chartShowData': display['showData'],
+                            'chartOrientation': display['orientation'], 'chartHideTitles': display['hideTitles'],
+                            'chartOptions': chart_options(columns)}
         for column in columns.values():
             column['hidden'] = bool(column['hidden'])
             column.pop('choice_ids', None)
@@ -570,8 +576,8 @@ class NoteDatabases:
         with self._connection(database) as connection:
             return self._snapshot(connection, database.parent, database_id, query)
 
-    def read_chart(self, note, database_id, query=None, chart=None) -> dict:
-        from note_database_chart import QUERY_BUDGET_SECONDS, missing_chart, summarize
+    def read_chart(self, note, database_id, query=None, chart=None, *, chart_id=None, detail=None) -> dict:
+        from note_database_chart import QUERY_BUDGET_SECONDS, configuration, detail_rows, load_card, missing_chart, summarize
 
         database_id = _database_id(database_id)
         _, path, _ = self._note(note)
@@ -588,6 +594,23 @@ class NoteDatabases:
                     return missing_chart(deleted=table is not None)
                 columns = self._columns(connection, database_id)
                 where, parameters = self._query_scope(connection, database_id, columns, {} if query is None else query)
+                if chart_id is not None:
+                    card = load_card(connection, database_id, chart_id)
+                    chart = card['chart']
+                    if card['query']:
+                        saved_where, saved_parameters = self._query_scope(connection, database_id, columns, card['query'])
+                        where += ' AND ' + saved_where.removeprefix(' WHERE ')
+                        parameters += saved_parameters
+                if detail is not None:
+                    if chart_id is None:
+                        raise NotesError('请选择已保存的图表', code='invalid_chart')
+                    spec = configuration(columns, chart)
+                    records, page, total = detail_rows(connection, columns, where, parameters, spec, detail, PAGE_SIZE)
+                    self._fill_records(connection, database.parent, database_id, columns, records)
+                    for column in columns.values():
+                        column.pop('choice_ids', None)
+                    return {'exists': True, 'revision': table['revision'], 'columns': list(columns.values()),
+                            'rows': list(records.values()), 'page': page, 'total': total, 'pageSize': PAGE_SIZE}
                 return {'exists': True, 'revision': table['revision'],
                         **summarize(connection, columns, where, parameters, chart)}
             except sqlite3.OperationalError as err:
@@ -766,6 +789,24 @@ class NoteDatabases:
             column = self._one(connection, 'SELECT id FROM columns WHERE database_id=? AND id=?', action.get('column'), database_id)
             connection.execute('UPDATE columns SET name=? WHERE database_id=? AND id=?',
                                (_text(action.get('name'), 120, required=True).strip(), database_id, column['id']))
+        elif kind == 'setNumberFormat':
+            column = self._one(connection, 'SELECT id,type FROM columns WHERE database_id=? AND id=?',
+                               action.get('column'), database_id)
+            appearance = action.get('format')
+            if (column['type'] != 'number' or not isinstance(appearance, dict)
+                    or not appearance.keys() <= {'unit', 'decimals', 'percent'}):
+                raise NotesError('数字显示格式无效')
+            unit = _text(appearance.get('unit', ''), 16).strip()
+            decimals = appearance.get('decimals')
+            percent = appearance.get('percent', False)
+            if (type(percent) is not bool or (decimals is not None and (type(decimals) is not int or not 0 <= decimals <= 8))
+                    or (percent and unit) or any(ord(char) < 32 for char in unit)):
+                raise NotesError('数字显示格式无效')
+            settings = {key: value for key, value in (('unit', unit), ('decimals', decimals), ('percent', percent))
+                        if value is not None and value is not False and value != ''}
+            payload = {'numberFormat': settings} if settings else []
+            connection.execute('UPDATE columns SET choices=? WHERE database_id=? AND id=?',
+                               (json.dumps(payload, ensure_ascii=False), database_id, column['id']))
         elif kind == 'deleteColumn':
             column = self._one(connection, 'SELECT id,hidden FROM columns WHERE database_id=? AND id=?', action.get('column'), database_id)
             if not column['hidden'] and connection.execute('SELECT count(*) FROM columns WHERE database_id=? AND hidden=0', (database_id,)).fetchone()[0] <= 1:
@@ -1024,17 +1065,26 @@ class NoteDatabases:
                 candidates, token = self._unused(connection, database.parent)
                 return {'count': len(candidates), 'candidateToken': token}
         with self._connection(database, 'rw') as connection:
-            if kind in ('setChartView', 'setChartAppearance'):
-                from note_database_chart import set_appearance, set_view
+            if kind in ('setChartView', 'setChartAppearance', 'setChartCard'):
+                from note_database_chart import set_appearance, set_card, set_view
 
                 connection.execute('BEGIN IMMEDIATE')
                 self._require_revision(connection, database_id, action.get('revision'))
                 columns = self._columns(connection, database_id)
+                chart_id = None
                 if kind == 'setChartAppearance':
                     set_appearance(connection, database_id, columns, action)
+                elif kind == 'setChartCard':
+                    chart_id = set_card(connection, database_id, columns, action,
+                                        lambda config: self._query_scope(connection, database_id, columns, config))
+                    if chart_id is not None or action.get('operation') != 'rename':
+                        self._touch(connection, database_id)
                 elif set_view(connection, database_id, columns, action):
                     self._touch(connection, database_id)
-                return self._snapshot(connection, database.parent, database_id, query)
+                result = self._snapshot(connection, database.parent, database_id, query)
+                if chart_id is not None:
+                    result['changedChartId'] = chart_id
+                return result
             if kind == 'cleanup':
                 candidates, token = self._unused(connection, database.parent)
                 if token != action.get('candidateToken'):

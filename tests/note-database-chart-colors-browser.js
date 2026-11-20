@@ -9,6 +9,10 @@ async function checkChartColors({ page, open, chartRequests, until, restart }) {
   const chartCalls = () => chartRequests.filter(url => url.endsWith('/api/note-database/chart')).length;
   const block = () => page.locator('.note-database-carrier[data-database-id="charts"]:visible').first();
   const tool = role => block().locator(`[data-db-role="${role}"]`);
+  const openColors = async () => {
+    await tool('chart-card-menu').click();
+    await tool('chart-palette').click();
+  };
   const palettePanel = () => block().getByRole('dialog', { name: 'Chart colors', exact: true });
   const selectRole = (scope, name) => scope.getByRole('combobox', { name, exact: true });
   const noteSettings = () => page.locator('#note-settings-dialog');
@@ -84,7 +88,7 @@ async function checkChartColors({ page, open, chartRequests, until, restart }) {
   await openChart();
   await until(() => finishAggregate);
   try {
-    await tool('chart-palette').click();
+    await openColors();
     await palettePanel().waitFor();
     assert.equal(await tool('chart-color-category').count(), 0);
   } finally {
@@ -121,7 +125,7 @@ async function checkChartColors({ page, open, chartRequests, until, restart }) {
       return render.apply(this, args);
     };
   });
-  await tool('chart-palette').click();
+  await openColors();
   await palettePanel().getByRole('button', { name: 'B', exact: true }).click();
   await tool('chart-color-auto').click();
   await confirm();
@@ -130,7 +134,7 @@ async function checkChartColors({ page, open, chartRequests, until, restart }) {
   await checkAppearance(views => views.every(view => view.firstColor === '#397ab9'));
   await globalPalette('High contrast');
   await checkAppearance(views => views.every(view => view.firstColor === '#0056a6'));
-  await tool('chart-palette').click();
+  await openColors();
   await choose(palettePanel(), 'Color preset', 'Soft');
   await palettePanel().getByRole('button', { name: 'B', exact: true }).click();
   await colorButton('Deep').click();
@@ -140,7 +144,7 @@ async function checkChartColors({ page, open, chartRequests, until, restart }) {
   await checkAppearance(views => views.every(view => view.colors.B === original.colors.B));
   assert.deepEqual((await api()).chartView.style, {});
 
-  await tool('chart-palette').click();
+  await openColors();
   await choose(palettePanel(), 'Color preset', 'Deep');
   await palettePanel().getByRole('button', { name: 'B', exact: true }).click();
   await colorButton('Deep').click();
@@ -164,7 +168,7 @@ async function checkChartColors({ page, open, chartRequests, until, restart }) {
   await page.setViewportSize({ width: 805, height: 900 });
   await page.evaluate(() => { document.documentElement.dataset.startTheme = document.body.dataset.startTheme = 'dark'; });
   await checkAppearance(views => views.every(view => view.colors.B === '#f29983' && view.firstColor === '#84b8ec'));
-  await tool('chart-palette').click();
+  await openColors();
   const box = await palettePanel().boundingBox();
   const viewport = await page.evaluate(() => [innerWidth, innerHeight]);
   assert(box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport[0] && box.y + box.height <= viewport[1]);
@@ -181,12 +185,12 @@ async function checkChartColors({ page, open, chartRequests, until, restart }) {
   await openChart();
   await checkAppearance(views => views.every(view => view.total === '55' && view.colors.B === '#be624d'));
 
-  await tool('chart-palette').click();
+  await openColors();
   await palettePanel().getByRole('button', { name: 'B', exact: true }).click();
   await tool('chart-color-auto').click();
   await confirm();
   assert.deepEqual((await api()).chartView.style, { palette: 'deep' });
-  await tool('chart-palette').click();
+  await openColors();
   await tool('chart-color-reset').click();
   await confirm();
   assert.deepEqual((await api()).chartView.style, {});
@@ -207,7 +211,7 @@ async function checkChartColors({ page, open, chartRequests, until, restart }) {
   await checkAppearance(views => views.every(view => view.type === 'bar' && !view.horizontal
     && Object.keys(view.colors).length === 4 && view.firstColor === primary && uniformly(view)));
   const beforeMain = chartCalls();
-  await tool('chart-palette').click();
+  await openColors();
   const swatches = () => palettePanel().locator('[data-db-role="chart-color-swatch"]:visible');
   assert.equal(await swatches().count(), 12);
   await colorButton('Medium').click();
@@ -219,7 +223,7 @@ async function checkChartColors({ page, open, chartRequests, until, restart }) {
   await checkAppearance(views => views.every(view => view.firstColor === '#348a73' && uniformly(view)));
 
   async function pickTransport() {
-    await tool('chart-palette').click();
+    await openColors();
     await selectRole(palettePanel(), 'Color target').click();
     await palettePanel().locator('.review-choice-search').fill('交通');
     await palettePanel().getByRole('option', { name: '交通', exact: true }).click();
@@ -267,7 +271,7 @@ async function checkChartColors({ page, open, chartRequests, until, restart }) {
     { row: null, values: { [category]: `测试 ${i + 1}`, [amount]: 1 } })) });
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await checkAppearance(views => views.every(view => Object.keys(view.colors).length === 204));
-  await tool('chart-palette').click();
+  await openColors();
   await selectRole(palettePanel(), 'Color target').click();
   await palettePanel().locator('.review-choice-search').fill('测试 200');
   await palettePanel().getByRole('option', { name: '测试 200', exact: true }).click();
@@ -283,7 +287,7 @@ async function checkChartColors({ page, open, chartRequests, until, restart }) {
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await checkAppearance(views => views.every(view => view.type === 'line' && view.firstColor === '#348a73'));
   const beforeLine = chartCalls();
-  await tool('chart-palette').click();
+  await openColors();
   await colorButton('Medium').click();
   await colorButton('Medium Apricot').click();
   await confirm();

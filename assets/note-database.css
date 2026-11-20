@@ -89,8 +89,118 @@ body[data-start-theme="dark"] .note-database {
   background: var(--db-paper);
   box-shadow: inset 0 0 0 1px var(--db-line);
 }
+.note-database .note-database-modes .note-database-chart-toggle { min-width: 25px; padding-inline: 4px; }
+.note-database-chart-area { container: note-database-charts / inline-size; min-width: 0; }
+.note-database-chart-list { display: grid; min-width: 0; gap: 12px; --db-chart-column-gap: 12px; }
+.note-database-chart-card { min-width: 0; padding-top: 4px; border-top: 1px solid var(--db-line); scroll-margin: 12px; }
+.note-database-chart-card:focus-visible { outline: 2px solid var(--db-focus); outline-offset: -2px; }
+.note-database-chart-tools { display: flex; justify-content: space-between; align-items: center; min-height: 22px; gap: 8px; padding-inline: 4px; }
+.note-database-chart-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-database button.note-database-chart-title {
+  min-height: 22px;
+  margin-inline-start: -4px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-weight: 700;
+  text-align: start;
+  cursor: text;
+}
+.note-database .note-database-chart-tools .note-database-icon { min-height: 22px; height: 22px; margin-inline-start: auto; }
+.note-database-chart-filter-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: end;
+  color: var(--text-secondary, #686763);
+}
+.note-database-chart-order { display: grid; gap: 3px; }
+.note-database-chart-order .note-sidebar-setting,
+.note-database-panel > .note-sidebar-ghost {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0;
+  padding: 3px;
+  background: var(--db-header);
+  border-radius: 6px;
+}
+.note-database-chart-order .note-sidebar-setting label,
+.note-database-panel > .note-sidebar-ghost label,
+.note-database-chart-display-option { display: flex; flex: 1; align-items: center; overflow-wrap: anywhere; gap: 6px; }
+.note-database-chart-order .note-sidebar-setting label,
+.note-database-panel > .note-sidebar-ghost label { flex: none; }
+.note-database :is(.note-database-chart-order, .note-sidebar-ghost) [data-order-activate] {
+  flex: 1;
+  text-align: start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-database-chart-order input,
+.note-database-chart-display-option input { min-height: 0; accent-color: currentColor; }
+.note-database-chart-order .note-sidebar-grip { cursor: grab; }
+.note-database-chart-order button { flex: none; }
+.note-database-panel > .note-sidebar-ghost { position: fixed; inset: 0 auto auto 0; z-index: 1; pointer-events: none; }
+.note-database-chart-list-settings { display: grid; gap: 4px; margin-top: 5px; padding-top: 6px; border-top: 1px solid var(--db-line); }
+.note-database-chart-display-option { margin: 3px 0; }
+.note-database-chart-orientation {
+  --db-layout-thumb: #191919;
+  --db-layout-selected: #fff;
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  isolation: isolate;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 2px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--db-header);
+}
+body[data-start-theme="dark"] .note-database-chart-orientation { --db-layout-thumb: #f3f3f3; --db-layout-selected: #191919; }
+.note-database-chart-orientation-slider {
+  position: absolute;
+  inset: 2px auto 2px 2px;
+  width: calc(50% - 2px);
+  z-index: -1;
+  border-radius: 6px;
+  background: var(--db-layout-thumb);
+  transition: transform 140ms ease-out;
+}
+.note-database-chart-orientation[data-orientation="horizontal"] .note-database-chart-orientation-slider { transform: translateX(100%); }
+.note-database-chart-orientation label { position: relative; min-width: 0; cursor: pointer; }
+.note-database-chart-orientation input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.note-database-chart-orientation label span { display: block; padding: 4px; border-radius: 6px; text-align: center; }
+.note-database-chart-orientation input:checked + span { color: var(--db-layout-selected); }
+.note-database-chart-orientation input:disabled + span { opacity: .55; }
+.note-database-chart-orientation input:focus-visible + span { outline: 2px solid var(--db-focus); outline-offset: -2px; }
 .note-database-chart-stage { position: relative; width: 100%; min-width: 0; height: clamp(200px, 28vw, 300px); contain: inline-size; }
+.note-database-chart-card.is-number-card .note-database-chart-stage { height: 118px; }
+@container note-database-charts (min-width: 640px) {
+  .note-database-chart-list.can-show-side-by-side {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--db-chart-column-gap);
+    align-items: start;
+  }
+  .note-database-chart-list.can-show-side-by-side .note-database-chart-card:not(.is-number-card) .note-database-chart-stage {
+    height: clamp(200px, calc((100cqw - var(--db-chart-column-gap)) * .375), 300px);
+  }
+}
 .note-database-chart-canvas { width: 100%; height: 100%; }
+.note-database .note-database-panel-details { width: min(560px, calc(100vw - 16px)); }
+.note-database-chart-detail-table { overflow: auto; max-height: 245px; }
+.note-database-chart-detail-table table { width: 100%; border-collapse: collapse; }
+.note-database-chart-detail-table :is(th, td) {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--db-line);
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.note-database-chart-detail-table th { position: sticky; top: 0; background: var(--db-surface); }
 .note-database-chart-status {
   position: absolute;
   inset: 0;
@@ -105,8 +215,10 @@ body[data-start-theme="dark"] .note-database {
   overflow-wrap: anywhere;
 }
 .note-database-chart-form { display: grid; gap: 7px; padding: 3px; }
-.note-database-chart-form > label { display: grid; gap: 3px; min-width: 0; }
-.note-database-chart-form > label > span:first-child,
+.note-database-chart-extra > div { display: grid; gap: 7px; padding-top: 5px; }
+.note-database-chart-extra summary { cursor: pointer; }
+.note-database-chart-form label { display: grid; gap: 3px; min-width: 0; }
+.note-database-chart-form label > span:first-child,
 .note-database-chart-notice { color: var(--text-secondary, #686763); }
 .note-database-chart-notice { margin: 4px 6px; }
 .note-database-chart-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 4px; padding-top: 4px; }
@@ -383,8 +495,9 @@ body[data-start-theme="dark"] .note-database-manager .note-modal-actions button.
 .note-database-visible-fields input { min-height: 0; }
 .note-database-option-list .note-database-form > input { flex: 1; }
 html[data-note-reduced-motion="1"] .note-database :is(button,input,textarea,.note-database-panel,.review-choice-popup,.review-choice-chevron,.review-choice-option) { animation: none; transition: none; }
+html[data-note-reduced-motion="1"] .note-database-chart-orientation-slider { transition: none; }
 @media (prefers-reduced-motion: reduce) {
-  .note-database :is(button,input,textarea,.note-database-panel,.review-choice-popup) { animation: none; transition: none; }
+  .note-database :is(button,input,textarea,.note-database-panel,.review-choice-popup,.note-database-chart-orientation-slider) { animation: none; transition: none; }
 }
 
 .note-database .note-database-suggestions {

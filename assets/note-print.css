@@ -53,6 +53,7 @@ body.note-print {
 .note-print .note-database-carrier tr { break-inside: avoid; }
 .note-print .note-database-carrier :is(th, td) { border: 1px solid #ddd; padding: .25em .45em; overflow-wrap: anywhere; white-space: pre-wrap; }
 .note-print .note-database-print-figure { margin: 0; break-inside: avoid; }
+.note-print .note-database-print-figure + :is(.note-database-print-figure, .note-database-print-table) { margin-block-start: .65em; }
 .note-print .note-database-print-figure figcaption { font-weight: 600; }
 .note-print .note-database-print-figure > svg { display: block; width: 100%; height: auto; }
 .note-print .note-database-print-description { margin: 0; color: var(--text-secondary); font-size: .9em; }

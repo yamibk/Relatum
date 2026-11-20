@@ -11161,7 +11161,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             with _cross_process_mutation_lock(), NOTES_MUTATION_LOCK:
                 result = NOTES_STORE.database.read_chart(body.get('path'), body.get('databaseId'),
-                                                         body.get('query'), body.get('chart'))
+                                                         body.get('query'), body.get('chart'),
+                                                         chart_id=body.get('chartId'), detail=body.get('detail'))
             return self._send_json(200, result)
         except NotesError as err:
             return self._send_notes_error(err)

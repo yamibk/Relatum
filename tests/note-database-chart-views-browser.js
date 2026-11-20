@@ -71,6 +71,10 @@ async function checkChartViews({ page, open, mode, chartRequests, until, restart
   await block().locator('table').waitFor();
   assert.equal(await role('data-mode').getAttribute('aria-pressed'), 'true');
   assert.deepEqual(chartRequests, []);
+  await role('chart-menu').click();
+  assert.equal(await panel().getByRole('button').count(), 1, 'a table without charts only offers creation');
+  await role('new-chart', panel()).waitFor();
+  await page.keyboard.press('Escape');
   const sourceAndSelection = () => page.evaluate(() => {
     const state = __databaseTest.editor.view.state;
     return [state.doc.toString(), state.selection.main.anchor, state.selection.main.head];
@@ -88,11 +92,11 @@ async function checkChartViews({ page, open, mode, chartRequests, until, restart
 
   await role('chart-mode').click();
   const actionPattern = '**/api/note-database/action';
-  const fail = route => route.request().postDataJSON()?.action?.type === 'setChartView'
+  const fail = route => route.request().postDataJSON()?.action?.type === 'setChartCard'
     ? route.fulfill({ status: 503, json: { error: 'Chart save interrupted' } }) : route.continue();
   await page.route(actionPattern, fail);
   await text('Confirm').click();
-  await block().getByText('Chart save interrupted').waitFor();
+  await panel().getByText('Chart save interrupted').waitFor();
   assert.equal(await panel().getByRole('combobox', { name: 'Chart type' }).textContent(), 'Line chart');
   assert.equal((await api('')).chartView.mode, 'data');
   await page.unroute(actionPattern, fail);
@@ -111,6 +115,7 @@ async function checkChartViews({ page, open, mode, chartRequests, until, restart
   await rendered('line', [5, 5, 15, 5]);
 
   for (const [type, series, values] of [['Horizontal bar chart', 'bar', [30]], ['Column chart', 'bar', [30]], ['Doughnut chart', 'pie', [60]]]) {
+    await role('chart-card-menu').click();
     await role('chart-settings').click();
     await choose('Chart type', type);
     await choose('Group by', 'Done');
@@ -232,6 +237,277 @@ async function checkChartViews({ page, open, mode, chartRequests, until, restart
   await block().getByText('A chart field is unavailable. Choose another field.').waitFor();
   assert.equal(await role('chart-mode').getAttribute('aria-pressed'), 'true');
   assert.equal(await role('chart-reconfigure').count(), 1);
+  const card = name => block().getByRole('region', { name, exact: true });
+  const ringName = '类别分布';
+  const defaultTitle = role('rename-chart', card('Doughnut chart'));
+  const nameInput = () => panel().getByRole('textbox', { name: 'Chart name', exact: true });
+  const beforeRename = await api('');
+  await defaultTitle.click();
+  assert.equal(await panel().count(), 0);
+  await defaultTitle.dblclick();
+  assert.equal(await nameInput().inputValue(), 'Doughnut chart');
+  await nameInput().press('Enter');
+  await panel().waitFor({ state: 'hidden' });
+  assert.equal((await api('')).revision, beforeRename.revision);
+  await defaultTitle.dblclick();
+  await nameInput().fill(' ');
+  await nameInput().press('Enter');
+  assert(await nameInput().isVisible());
+  await page.keyboard.press('Escape');
+  await panel().waitFor({ state: 'hidden' });
+  assert.equal((await api('')).revision, beforeRename.revision);
+  await defaultTitle.dblclick();
+  await nameInput().fill(ringName);
+  await nameInput().dispatchEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true });
+  assert(await nameInput().isVisible());
+  assert.equal((await api('')).revision, beforeRename.revision);
+  await nameInput().press('Enter');
+  await panel().waitFor({ state: 'hidden' });
+  assert.equal(await block().locator('[data-db-role="rename-chart"]').first().textContent(), ringName);
+  await blocks().nth(1).getByText(ringName, { exact: true }).waitFor();
+  assert.equal((await api('')).chartCards[0].valid, false, 'renaming a chart works when its fields need repair');
+
+  const createChart = async (name, type) => {
+    await role('chart-menu').click();
+    await role('new-chart', panel()).click();
+    await role('chart-name', panel()).fill(name);
+    await choose('Chart type', type);
+  };
+  await createChart('Weekly status', 'Column chart');
+  await choose('Group by', 'Date');
+  await choose('Date interval', 'Week');
+  await panel().getByText('Series options', { exact: true }).click();
+  await choose('Split series by', 'Done');
+  await choose('Bar layout', 'Stacked');
+  await text('Confirm').click();
+  const weekly = card('Weekly status');
+  await weekly.locator('.note-database-chart-canvas svg').waitFor();
+  assert.deepEqual(await weekly.locator('.note-database-chart-canvas').evaluate(node =>
+    echarts.getInstanceByDom(node).getOption().series.map(item => [item.type, item.stack])), [['bar', 'categories'], ['bar', 'categories']]);
+  await createChart('Completed share', 'Number card');
+  await choose('Measure', 'Done · Checked rate');
+  await text('Confirm').click();
+  const number = card('Completed share');
+  const numberGraphic = number.locator('.note-database-chart-canvas svg');
+  await numberGraphic.waitFor();
+  assert.match(await numberGraphic.textContent(), /54\.5%/);
+  await role('chart-card-menu', number).click();
+  await role('chart-filters', panel()).click();
+  await role('chart-filter-search', panel()).fill('Other');
+  await role('chart-filter-save', panel()).click();
+  await numberGraphic.getByText('100.0%', { exact: true }).waitFor();
+  assert.equal((await api('')).chartCards.find(card => card.name === 'Weekly status').query.search, undefined);
+
+  const arrangement = (name, role) => panel().getByRole(role, { name, exact: true });
+  const show = name => arrangement('Show ' + name, 'checkbox');
+  const saveOrder = () => role('save-chart-order', panel());
+  const names = () => block().locator('.note-database-chart-card').evaluateAll(cards => cards.map(card => card.getAttribute('aria-label')));
+  async function geometry(sideBySide, count = 2) {
+    await page.waitForFunction(({ sideBySide, count }) => {
+      const area = [...document.querySelectorAll('.note-database-chart-area')].find(node => node.clientWidth > 0);
+      const cards = [...area?.querySelectorAll('.note-database-chart-card') || []].map(card => card.getBoundingClientRect());
+      if (cards.length !== count) return false;
+      if (sideBySide) return Math.abs(cards[0].y - cards[1].y) < 1 && cards[0].right < cards[1].left
+        && Math.abs(cards[0].width - cards[1].width) < 1;
+      const width = area.getBoundingClientRect().width;
+      return cards.every((card, index) => Math.abs(card.width - width) < 1 && (!index || cards[index - 1].bottom < card.top));
+    }, { sideBySide, count });
+  }
+  await page.setViewportSize({ width: 1450, height: 920 });
+  await role('chart-menu').click();
+  await panel().getByText('More than two visible charts are arranged vertically.').waitFor();
+  assert(await arrangement('Horizontal', 'radio').isDisabled());
+  assert.equal(await panel().getByRole('button', { name: 'Organize charts' }).count(), 0);
+  await show(ringName).uncheck();
+  await text('Cancel').click();
+  await panel().waitFor({ state: 'hidden' });
+  await geometry(false, 3);
+  await role('chart-menu').click();
+  assert(await show(ringName).isChecked());
+  const sliderColors = await panel().evaluate(node => {
+    const theme = document.body.dataset.startTheme;
+    const thumb = node.querySelector('.note-database-chart-orientation-slider');
+    const selected = node.querySelector('.note-database-chart-orientation input:checked + span');
+    try {
+      return ['light', 'dark'].map(value => {
+        document.body.dataset.startTheme = value;
+        return [getComputedStyle(thumb).backgroundColor, getComputedStyle(selected).color];
+      });
+    } finally {
+      if (theme === undefined) delete document.body.dataset.startTheme;
+      else document.body.dataset.startTheme = theme;
+    }
+  });
+  assert.deepEqual(sliderColors, [['rgb(25, 25, 25)', 'rgb(255, 255, 255)'], ['rgb(243, 243, 243)', 'rgb(25, 25, 25)']]);
+  if (process.env.RELATUM_ARTIFACT_DIR) {
+    await page.screenshot({ path: path.join(process.env.RELATUM_ARTIFACT_DIR, 'relatum-database-chart-order.png') });
+  }
+  await show(ringName).uncheck();
+  await arrangement('Reorder: Completed share', 'button').press('ArrowUp');
+  const dragSource = await panel().getByRole('button', { name: 'Reorder: ' + ringName, exact: true }).boundingBox();
+  const dragTarget = await panel().getByRole('button', { name: 'Reorder: Weekly status', exact: true }).boundingBox();
+  await page.mouse.move(dragSource.x + dragSource.width / 2, dragSource.y + dragSource.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(dragTarget.x + dragTarget.width / 2, dragTarget.y + dragTarget.height - 2, { steps: 8 });
+  await page.mouse.up();
+  await arrangement('Vertical', 'radio').press('ArrowRight');
+  assert(await arrangement('Horizontal', 'radio').isChecked());
+  await arrangement('Show data table below charts', 'checkbox').check();
+  await role('new-chart', panel()).click();
+  await panel().getByText('Save or cancel your chart changes first.').waitFor();
+  await text('Weekly status').click();
+  assert(await panel().getByText('Save or cancel your chart changes first.').isVisible());
+  await geometry(false, 3);
+  const failArrange = route => route.request().postDataJSON()?.action?.operation === 'arrange'
+    ? route.fulfill({ status: 503, json: { error: 'Arrangement save interrupted' } }) : route.continue();
+  await page.route(actionPattern, failArrange);
+  await saveOrder().click();
+  await panel().getByText('Arrangement save interrupted').waitFor();
+  assert(await arrangement('Horizontal', 'radio').isChecked());
+  assert.equal(await show(ringName).isChecked(), false);
+  assert.equal((await api('')).chartOrientation, 'vertical');
+  await page.unroute(actionPattern, failArrange);
+  await saveOrder().click();
+  await panel().getByText('Saved', { exact: true }).waitFor();
+  assert.deepEqual(await panel().locator('[data-order-activate]').allTextContents(), ['Completed share', 'Weekly status', ringName]);
+  assert(await text(ringName).isDisabled());
+  await until(async () => (await names()).join(',') === 'Completed share,Weekly status');
+  await geometry(true);
+  await block().locator('table').waitFor();
+  await text('Weekly status').click();
+  await panel().waitFor({ state: 'hidden' });
+  assert(await weekly.evaluate(node => document.activeElement === node));
+  await weekly.getByText('Weekly status', { exact: true }).waitFor();
+  await weekly.locator('.note-database-chart-canvas svg').waitFor();
+  const plot = weekly.locator('.note-database-chart-stage');
+  const dimensions = await plot.boundingBox();
+  assert(Math.abs(dimensions.height - Math.min(300, dimensions.width * .75)) < 1);
+  await weekly.locator('svg text').filter({ hasText: 'Checked' }).first().waitFor();
+  const chartArea = block().locator('.note-database-chart-area');
+  await chartArea.evaluate(node => { node.style.maxWidth = '639px'; });
+  await geometry(false);
+  await chartArea.evaluate(node => { node.style.maxWidth = '640px'; });
+  await geometry(true);
+  await chartArea.evaluate(node => { node.style.removeProperty('max-width'); });
+  await page.setViewportSize({ width: 770, height: 920 });
+  await geometry(false);
+  assert.equal((await api('')).chartOrientation, 'horizontal');
+  await page.setViewportSize({ width: 1450, height: 920 });
+  await geometry(true);
+  await role('chart-menu').click();
+  await show(ringName).check();
+  await saveOrder().click();
+  await panel().getByText('Saved', { exact: true }).waitFor();
+  await geometry(false, 3);
+  await card(ringName).getByText(ringName, { exact: true }).waitFor();
+  await panel().getByText('More than two visible charts are arranged vertically.').waitFor();
+  await show('Completed share').uncheck();
+  await saveOrder().click();
+  await panel().getByText('Saved', { exact: true }).waitFor();
+  await geometry(false, 2);
+  await show(ringName).uncheck();
+  await saveOrder().click();
+  await panel().getByText('Saved', { exact: true }).waitFor();
+  await geometry(false, 1);
+  assert(await arrangement('Horizontal', 'radio').isChecked());
+  await show('Completed share').check();
+  await saveOrder().click();
+  await panel().getByText('Saved', { exact: true }).waitFor();
+  await geometry(true);
+  await text('Weekly status').click();
+  await panel().waitFor({ state: 'hidden' });
+  const weeklyCanvas = weekly.locator('.note-database-chart-canvas');
+  await weeklyCanvas.scrollIntoViewIfNeeded();
+  await until(() => weeklyCanvas.evaluate(node => {
+    const chart = window.echarts?.getInstanceByDom(node);
+    return chart && chart.getWidth() === node.clientWidth && chart.getHeight() === node.clientHeight
+      && !!node.querySelector('svg path');
+  }));
+  // Use the actual SVG mark through its chart coordinates.
+  const coordinates = await weeklyCanvas.evaluate(node => {
+    const chart = echarts.getInstanceByDom(node), rect = node.getBoundingClientRect();
+    const [x, y] = chart.convertToPixel({ seriesIndex: 0 }, [0, 10]);
+    return [x + rect.left, y + rect.top];
+  });
+  await page.mouse.click(...coordinates);
+  await panel().getByText(/records$/).waitFor();
+  const snapshot = await api('');
+  assert.deepEqual(snapshot.chartCards.map(card => card.hidden), [false, false, true]);
+  assert.equal(snapshot.chartOrientation, 'horizontal');
+  await page.keyboard.press('Escape');
+  const renamedNumber = 'Completion rate';
+  await role('rename-chart', number).press('Enter');
+  assert.equal(await nameInput().inputValue(), 'Completed share');
+  await nameInput().fill(renamedNumber);
+  const failRename = route => route.request().postDataJSON()?.action?.operation === 'rename'
+    ? route.fulfill({ status: 503, json: { error: 'Rename interrupted' } }) : route.continue();
+  await page.route(actionPattern, failRename);
+  await text('Save name').click();
+  await panel().getByText('Rename interrupted').waitFor();
+  assert.equal(await nameInput().inputValue(), renamedNumber);
+  assert(await number.isVisible());
+  await page.unroute(actionPattern, failRename);
+  await nameInput().press('Enter');
+  await panel().waitFor({ state: 'hidden' });
+  await card(renamedNumber).getByText(renamedNumber, { exact: true }).waitFor();
+  assert(await role('rename-chart', card(renamedNumber)).evaluate(node => node === document.activeElement));
+  await role('chart-menu').click();
+  await text(renamedNumber).waitFor();
+  const hideTitles = () => arrangement('Hide chart titles', 'checkbox');
+  assert.equal(await hideTitles().isChecked(), false);
+  await hideTitles().check();
+  assert(await role('rename-chart', card(renamedNumber)).isVisible(), 'title setting takes effect on save');
+  await page.keyboard.press('Escape');
+  await role('chart-menu').click();
+  assert.equal(await hideTitles().isChecked(), false);
+  await hideTitles().check();
+  await saveOrder().click();
+  await panel().getByText('Saved', { exact: true }).waitFor();
+  await text(renamedNumber).waitFor();
+  await page.keyboard.press('Escape');
+  await role('rename-chart', card(renamedNumber)).waitFor({ state: 'hidden' });
+  await role('chart-card-menu', card(renamedNumber)).waitFor();
+  await geometry(true);
+  await mode('reading');
+  await until(async () => (await names()).join(',') === renamedNumber + ',Weekly status');
+  await geometry(true);
+  await card(renamedNumber).locator('.note-database-chart-title').waitFor({ state: 'hidden' });
+  assert.equal(await role('rename-chart', card(renamedNumber)).count(), 0);
+  await block().locator('table').waitFor();
+  const print = await page.evaluate(async note => {
+    const width = '640px';
+    const hosts = Array.from({ length: 2 }, () => {
+      const host = document.createElement('div');
+      Object.assign(host.style, { position: 'fixed', width, visibility: 'hidden' });
+      document.body.append(host);
+      return host;
+    });
+    try {
+      const failures = await RelatumNoteDatabase.renderPrint(hosts[0], note, 'charts', 'en', [hosts[1]]);
+      return { failures, blocks: hosts.map(host => ({
+        titles: [...host.querySelectorAll('figcaption')].map(node => node.textContent),
+        widths: [...host.querySelectorAll('figure svg')].map(svg => svg.getAttribute('width')),
+        tables: host.querySelectorAll('table').length,
+      })) };
+    } finally { hosts.forEach(host => host.remove()); }
+  }, note);
+  assert.deepEqual(print, { failures: 0, blocks: Array.from({ length: 2 }, () => ({
+    titles: [renamedNumber, 'Weekly status'], widths: ['640', '640'], tables: 1,
+  })) });
+  page = await restart();
+  await openNote();
+  await page.setViewportSize({ width: 1450, height: 920 });
+  await until(async () => (await names()).join(',') === renamedNumber + ',Weekly status');
+  await geometry(true);
+  assert.equal((await api('')).chartCards.find(card => card.name === renamedNumber).query.search, 'Other');
+  await block().locator('table').waitFor();
+  await role('rename-chart', card(renamedNumber)).waitFor({ state: 'hidden' });
+  await role('chart-menu').click();
+  assert(await hideTitles().isChecked());
+  await hideTitles().uncheck();
+  await saveOrder().click();
+  await panel().getByText('Saved', { exact: true }).waitFor();
+  await role('rename-chart', card(renamedNumber)).waitFor();
 }
 
 module.exports = { checkChartViews };
