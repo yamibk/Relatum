@@ -89,6 +89,7 @@
       "description": "打开和编辑画布。仅启用编辑器时需要先选择现有文件。",
       "scripts": [
         "canvas.js",
+        "vendor/pdfjs/",
         "editor.js",
         "editor-lazy.js",
         "dual-viewer.js",
@@ -346,6 +347,13 @@
         "note-live-editor.js",
         "note-html-embed.js",
         "note-html-embed.css",
+        "note-embed-resize.js",
+        "note-pdf-reader.js",
+        "note-pdf-reader.css",
+        "note-pdf-annotation-state.js",
+        "note-pdf-annotation-layer.js",
+        "note-pdf-scrollbar.js",
+        "vendor/pdfjs/",
         "note-cards.js",
         "note-cards.css",
         "note-cards-tools.js",
@@ -548,6 +556,7 @@
     }
   ],
   "sharedScripts": {
+    "pdf-runtime.js": ["canvas.editor", "notes"],
     "review-controls.js": [
       "canvas.review",
       "notes",

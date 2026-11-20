@@ -44,7 +44,8 @@ from ai_plan import (
     build_repair_instruction,
     parse_plan,
 )
-from notes_library import MAX_NOTE_BYTES, MAX_NOTE_IMAGE_BYTES, NotesError, NotesStore
+from notes_library import MAX_NOTE_BYTES, MAX_NOTE_IMAGE_BYTES, MAX_NOTE_PDF_BYTES, NotesError, NotesStore
+import note_pdf_annotations
 from research_store import ResearchConflictError, ResearchStoreError, ResearchWorkspaceStore
 from feature_profile import FEATURES, FULL_PROFILE, LaunchProfile, ProfileError, render_html
 from usage_store import UsageStore, CATEGORIES
@@ -9907,6 +9908,7 @@ class RequestBodyError(ValueError):
 # appropriate lock only after the dialog returns, so an open dialog never stalls
 # autosave in another request thread.
 POST_WITHOUT_DATA_LOCK = {
+    "/api/note-pdf/annotations",
     "/api/note-file-colors/query",
     "/api/review-import-preview",
     "/api/review-import",
@@ -9993,7 +9995,7 @@ NOTES_POST_ROUTES = {
 
 
 class _NoteAssetStream:
-    """Detach a Windows image reader only when a move needs its directory."""
+    """Detach a Windows note asset reader only when a move needs its directory."""
     def __init__(self, target: Path):
         self.path = target
         self.lock = threading.Lock()
@@ -10010,9 +10012,9 @@ class _NoteAssetStream:
         with self.lock:
             return self.file.read(size)
 
-    def seek(self, position):
+    def seek(self, position, whence=os.SEEK_SET):
         with self.lock:
-            return self.file.seek(position)
+            return self.file.seek(position, whence)
 
     def detach(self):
         # A socket write never holds this lock. Copying is bounded by one stream
@@ -10243,6 +10245,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         def finish_headers():
             if download_name:
                 self.send_header('Content-Disposition', 'attachment; filename="' + download_name + '"')
+            if media_type == "application/pdf":
+                self.send_header("X-Content-Type-Options", "nosniff")
             if media_type == "image/svg+xml":
                 # Keep direct navigation to an image URL as restricted as its
                 # normal <img> use, even if an external editor changes the file.
@@ -10475,6 +10479,35 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
             except (sqlite3.Error, RuntimeError) as err:
                 return self._send_json(503, {'error': str(err), 'code': 'index_unavailable'})
+        if parsed.path == "/api/note-pdf/annotations":
+            query = urllib.parse.parse_qs(parsed.query)
+            return self._api_note_pdf_annotations(query.get('note', [''])[0], query.get('id', [''])[0],
+                                                  query.get('assetRevision', [''])[0],
+                                                  edit=query.get('edit') == ['1'])
+        if parsed.path in {"/api/note-pdf", "/api/note-pdf/file"}:
+            query = urllib.parse.parse_qs(parsed.query)
+            try:
+                with NOTES_MUTATION_LOCK:
+                    target = NOTES_STORE.resolve_pdf_embed(query.get("note", [""])[0], query.get("id", [""])[0])
+                    stream = _open_note_asset(target)
+                    try:
+                        NOTES_STORE._validate_pdf_stream(stream)
+                        info = stream.stat if isinstance(stream, _NoteAssetStream) else os.fstat(stream.fileno())
+                        version = note_pdf_annotations.asset_revision(info)
+                        if query.get('assetRevision') and query['assetRevision'][0] != version:
+                            note_pdf_annotations.check_asset(info, query['assetRevision'][0])
+                    except BaseException:
+                        stream.close()
+                        raise
+                if parsed.path == "/api/note-pdf":
+                    stream.close()
+                    return self._send_json(200, {"name": target.name, "assetRevision": version})
+                return self._send_local_file(target, "application/pdf", "读取笔记 PDF 失败",
+                                             opened_file=stream, download_name="document.pdf")
+            except NotesError as err:
+                return self._send_notes_error(err)
+            except OSError:
+                return self._send_json(500, {"error": "读取笔记 PDF 失败", "code": "read_failed"})
         if parsed.path == "/api/note-asset":
             q = urllib.parse.parse_qs(parsed.query)
             try:
@@ -10641,17 +10674,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):  # noqa: N802
-        path = urllib.parse.urlparse(self.path).path
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
         if path.startswith("/api/note-ai/") and not self.launch_profile.enabled("notes.ai"):
             self.close_connection = True
             return self._send_json(403, {"error": "本次启动未启用此功能", "code": "feature-disabled"})
         if not self.launch_profile.write_allowed(path):
             self.close_connection = True
             return self._send_json(403, {"error": "本次启动未启用此功能", "code": "feature-disabled"})
+        if path == "/api/note-pdf/import":
+            return self._api_note_pdf_import(urllib.parse.parse_qs(parsed.query))
         if path == "/api/note-database/attachment/download" and self.headers.get_content_type() != "application/json":
             self.close_connection = True
             return self._send_json(415, {"error": "附件下载请求必须为 JSON", "code": "invalid_content_type"})
         raw_length = str(self.headers.get("Content-Length") or "").strip()
+        if path == "/api/note-pdf/annotations":
+            if self.headers.get_content_type() != 'application/json':
+                self.close_connection = True
+                return self._send_json(415, {"error": "PDF 批注请求必须为 JSON", "code": "invalid_content_type"})
+            if raw_length.isdigit() and int(raw_length) > note_pdf_annotations.MAX_BYTES:
+                self.close_connection = True
+                return self._send_json(413, {"error": "PDF 批注请求超过 8 MiB", "code": "too_large"})
         if path == "/api/note-database/chart" and raw_length.isdigit() and int(raw_length) > 64 * 1024:
             self.close_connection = True
             return self._send_json(413, {"error": "图表请求超过 64 KiB", "code": "body-limit"})
@@ -10861,6 +10904,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json(500, {'error': f'移到系统回收站失败：{err}'})
         if path == "/api/note-upload-image":
             return self._api_note_upload_image(body)
+        if path == "/api/note-pdf/annotations":
+            return self._api_note_pdf_annotations(body.get('note'), body.get('id'), body.get('assetRevision'), body=body)
         if path in {"/api/note-database/action", "/api/note-database/attachment/import"}:
             return self._api_note_database(body, upload=path.endswith('/import'))
         if path == "/api/note-database/chart":
@@ -11345,6 +11390,79 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if result.get("revision") != body.get("revision"):
             _usage_event("notes", result["path"], Path(result["path"]).name, "modified", fingerprint=result.get("revision"))
         return self._send_json(200, result)
+
+    def _api_note_pdf_annotations(self, path, identity, version, *, edit=False, body=None):
+        def resolve():
+            pdf = NOTES_STORE.resolve_pdf_embed(path, identity)
+            note_pdf_annotations.check_asset(pdf.stat(), version)
+            return pdf, pdf.with_name(note_pdf_annotations.FILENAME)
+
+        try:
+            with _cross_process_mutation_lock(), NOTES_MUTATION_LOCK:
+                pdf, sidecar = resolve()
+                snapshot = note_pdf_annotations.read(sidecar) if body is None else None
+            if body is not None or edit or snapshot['pdfHash']:
+                # Hash outside the notes lock so a large PDF cannot stall autosave.
+                digest = note_pdf_annotations.fingerprint(pdf, version)
+                with _cross_process_mutation_lock(), NOTES_MUTATION_LOCK:
+                    _, sidecar = resolve()
+                    if body is not None:
+                        snapshot = note_pdf_annotations.read(sidecar)
+                    note_pdf_annotations.check_binding(snapshot, digest)
+                    if body is None:
+                        snapshot['pdfHash'] = digest
+                    else:
+                        if body.get('pdfHash') != digest:
+                            raise NotesError('PDF 文件已变化，请重新打开。', status=409, code='pdf_changed')
+                        snapshot = note_pdf_annotations.save(sidecar, snapshot, digest, body, NOTES_STORE.atomic_bytes)
+            snapshot.pop('lastWrite', None)
+            return self._send_json(200, snapshot)
+        except NotesError as error:
+            return self._send_notes_error(error)
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "PDF 文件不存在", "code": "not_found"})
+        except OSError:
+            return self._send_json(500, {"error": "无法读取或保存 PDF 批注", "code": "annotation_io"})
+
+    def _api_note_pdf_import(self, query: dict):
+        origin = self.headers.get('Origin')
+        host = self.headers.get('Host', '')
+        raw_length = self.headers.get('Content-Length', '')
+        try:
+            if self.headers.get('Sec-Fetch-Site') in ('cross-site', 'same-site') or (origin and origin != 'http://' + host):
+                raise NotesError("PDF 导入请求来源无效", status=403, code="unsafe_origin")
+            if self.headers.get_content_type() != 'application/pdf':
+                raise NotesError("请选择 PDF 文件", status=415, code="invalid_pdf")
+            if not re.fullmatch(r'[0-9]{1,10}', raw_length):
+                raise NotesError("PDF 请求长度无效", code="invalid_pdf")
+            length = int(raw_length)
+            if length > MAX_NOTE_PDF_BYTES:
+                raise NotesError("PDF 超过 100 MiB", status=413, code="too_large")
+            with tempfile.TemporaryFile() as staged:
+                remaining = length
+                while remaining:
+                    chunk = self.rfile.read(min(remaining, FILE_STREAM_CHUNK_BYTES))
+                    if not chunk:
+                        raise NotesError("PDF 传输未完成", code="upload_incomplete")
+                    staged.write(chunk)
+                    remaining -= len(chunk)
+                with _cross_process_mutation_lock(), NOTES_MUTATION_LOCK:
+                    result = NOTES_STORE.import_pdf_embed(query.get('note', [''])[0], query.get('name', [''])[0],
+                                                          staged, query.get('revision', [''])[0])
+            status, response = 200, result
+        except NotesError as err:
+            self.close_connection = True
+            status, response = err.status, {"error": str(err), "code": err.code}
+        except ConnectionError:
+            self.close_connection = True
+            return
+        except OSError:
+            self.close_connection = True
+            status, response = 500, {"error": "保存笔记 PDF 失败", "code": "import_failed"}
+        try:
+            return self._send_json(status, response)
+        except ConnectionError:
+            self.close_connection = True
 
     def _api_note_upload_image(self, body: dict):
         encoded = body.get("data")

@@ -200,6 +200,15 @@
         'In Live Preview, drag the upper-left grip to move the block or the lower-right corner to resize it. Drag the bottom-center grip sideways to zoom the page. Double-click it to restore 100%. The note stores the size and zoom, for example 640x360 zoom=70%. Adjustments and block removal are undoable. Use the file tree menu to recycle unused HTML files.');
       host.append(help, source, detail);
     }
+    function pdfEmbed() {
+      const help = document.createElement('p');
+      help.textContent = text('在笔记正文右键，选择「插入 → PDF」，选取不超过 100 MiB 的本地文件。直接在块里滚动，或点右上角的「在新标签页打开」从当前页继续读。',
+        'Right-click the note body and choose Insert → PDF. Pick a local file up to 100 MiB. Scroll in the block or choose Open in new tab to continue from the current page.');
+      const detail = document.createElement('p');
+      detail.textContent = text('独立标签页中，点「页面」查看缩略图或目录，点「文件」切回笔记树。用 Ctrl+F 查找可选取的文字，或点「批注」划词、手写和添加便签。正文里的 PDF 块也会显示已保存的批注。',
+        'In the PDF tab, choose Pages for thumbnails and the outline, or Files to return to the note tree. Press Ctrl+F to find selectable text, or choose Annotate to highlight, draw and leave sticky notes. Saved annotations also appear in the note’s PDF block.');
+      host.append(help, detail);
+    }
     function show(next) {
       active = true;
       const lang = options.language();
@@ -208,9 +217,9 @@
         sequence++; diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; cardsControl?.destroy(); cardsControl = null; clearTimeout(feedbackTimer);
         topic = next; renderedLanguage = lang; host.replaceChildren(); host.dataset.language = lang; host.dataset.guideTopic = topic;
         const head = document.createElement('header'); head.className = 'note-guide-topic-head';
-        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards', media: 'Media', html: 'HTML' }[topic];
+        const title = document.createElement('h3'); title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards', media: 'Media', html: 'HTML', pdf: 'PDF' }[topic];
         const settings = document.createElement('button'); settings.type = 'button'; settings.dataset.noteAction = 'guide-settings'; settings.textContent = text('切换内容', 'Change topic'); head.append(title, settings); host.append(head);
-        if (topic === 'markdown') markdown(); else if (topic === 'mermaid') mermaid(); else if (topic === 'quiz') quiz(); else if (topic === 'cards') cards(); else if (topic === 'media') media(); else if (topic === 'html') htmlEmbed(); else callouts();
+        if (topic === 'markdown') markdown(); else if (topic === 'mermaid') mermaid(); else if (topic === 'quiz') quiz(); else if (topic === 'cards') cards(); else if (topic === 'media') media(); else if (topic === 'html') htmlEmbed(); else if (topic === 'pdf') pdfEmbed(); else callouts();
         host.scrollTop = positions.get(topic) || 0;
       }
       attachDiagrams(); attachQuizzes();

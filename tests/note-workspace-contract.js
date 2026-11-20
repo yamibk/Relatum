@@ -94,7 +94,7 @@ assert(notes.includes('Select a notebook first') && notes.includes('请先选择
 assert(notes.includes("if (entry.notebook && entry.path) label.addEventListener('dblclick'")
   && notes.includes("if (event.target.closest('input')) return;"), 'only custom notebook labels begin inline rename');
 assert(notes.includes("shell.className = 'note-tree-children-shell'"), 'folder children need a transition shell');
-for (const obsolete of ['revision_conflict', '磁盘版本已变化', '加载磁盘版本', '另存为副本', '尚未打开笔记', 'note-save-state']) {
+for (const obsolete of ['磁盘版本已变化', '加载磁盘版本', '另存为副本', '尚未打开笔记', 'note-save-state']) {
   assert(!notes.includes(obsolete) && !html.includes(obsolete), `obsolete note state remains: ${obsolete}`);
 }
 assert(html.includes('note-live-editor-host') && html.includes('note-editor-fallback'), 'Live Preview and source mode need shared Markdown editing surfaces');

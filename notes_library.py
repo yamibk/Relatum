@@ -52,6 +52,7 @@ NOTEBOOK_CONTAINER = "CustomNotebook"
 NOTEBOOK_COLORS = frozenset(("gray", "blue", "cyan", "green", "yellow", "orange", "red", "purple"))
 MAX_NOTE_BYTES = 4 * 1024 * 1024
 MAX_NOTE_HTML_BYTES = 8 * 1024 * 1024
+MAX_NOTE_PDF_BYTES = 100 * 1024 * 1024
 HTML_EMBED_ID = re.compile(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}')
 MAX_NOTE_IMAGE_BYTES = 40 * 1024 * 1024
 MAX_NOTE_IMAGE_PIXELS = 64 * 1024 * 1024
@@ -1893,12 +1894,62 @@ class NotesStore:
         self._cache_document(normalized, encoded)
         return {"path": normalized, "content": updated, "revision": _revision(encoded)}
 
-    def _html_embed_root(self, note: object) -> Path:
+    def _embed_root(self, note: object, kind: str) -> Path:
         path = self._absolute(self.normalize_path(note))
         if path.suffix.casefold() != NOTE_SUFFIX or not path.is_file():
             raise NotesError("笔记不存在", status=404, code="not_found")
         relative = path.with_suffix('.assets').relative_to(self.root).as_posix()
-        return self._absolute(relative + '/html', allow_assets=True)
+        return self._absolute(relative + '/' + kind, allow_assets=True)
+
+    def _html_embed_root(self, note: object) -> Path:
+        return self._embed_root(note, 'html')
+
+    @staticmethod
+    def _validate_pdf_stream(stream) -> None:
+        size = stream.seek(0, os.SEEK_END)
+        if size > MAX_NOTE_PDF_BYTES:
+            raise NotesError("PDF 超过 100 MiB", status=413, code="too_large")
+        stream.seek(0)
+        if not re.search(rb'%PDF-[12]\.[0-9](?:[\r\n \t]|$)', stream.read(1024)):
+            raise NotesError("文件缺少有效的 PDF 文件头", code="invalid_pdf")
+        stream.seek(0)
+
+    def import_pdf_embed(self, note: object, name: object, stream, revision: object) -> dict:
+        normalized = self.normalize_path(name, allow_assets=True)
+        if '/' in normalized or Path(normalized).suffix.casefold() != '.pdf':
+            raise NotesError("请选择 .pdf 文件", code="invalid_pdf")
+        self._validate_pdf_stream(stream)
+        root = self._embed_root(note, 'pdf')
+        target_note = self._absolute(self.normalize_path(note))
+        if _revision(self._read_note_bytes(target_note)) != revision:
+            raise NotesError("笔记已在磁盘上更改，请同步后重试", status=409, code="revision_conflict")
+        identity = str(uuid.uuid4())
+        directory = root / identity
+        directory.mkdir(parents=True)
+        temporary = directory / ('.tmp-' + uuid.uuid4().hex)
+        try:
+            with temporary.open('xb') as output:
+                shutil.copyfileobj(stream, output, 256 * 1024)
+            os.replace(temporary, directory / normalized)
+        except OSError:
+            temporary.unlink(missing_ok=True)
+            directory.rmdir()
+            raise
+        return {"id": identity, "name": normalized}
+
+    def resolve_pdf_embed(self, note: object, identity: object) -> Path:
+        if not isinstance(identity, str) or not HTML_EMBED_ID.fullmatch(identity):
+            raise NotesError("PDF 嵌入 ID 无效", code="invalid_pdf")
+        root = self._embed_root(note, 'pdf')
+        relative = (root / identity).relative_to(self.root).as_posix()
+        directory = self._absolute(relative, allow_assets=True)
+        if directory.is_dir():
+            candidates = [entry.name for entry in directory.iterdir() if entry.suffix.casefold() == '.pdf']
+            if len(candidates) == 1:
+                target = self._absolute(relative + '/' + candidates[0], allow_assets=True)
+                if target.is_file():
+                    return target
+        raise NotesError("PDF 文件不存在", status=404, code="not_found")
 
     @staticmethod
     def _validate_html_embed(content: bytes) -> None:
@@ -2134,7 +2185,7 @@ class NotesStore:
             directory = Path(base)
             directories[:] = [name for name in directories
                               if name.casefold() not in (DATABASE_DIRECTORY, LEGACY_DATABASE_DIRECTORY)
-                              and not (directory == asset_root and name.casefold() == 'html')
+                              and not (directory == asset_root and name.casefold() in ('html', 'pdf'))
                               and not _is_reparse(directory / name)]
             for name in filenames:
                 path = directory / name

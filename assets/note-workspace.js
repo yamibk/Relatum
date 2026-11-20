@@ -31,6 +31,8 @@
   const tabBar = $('.note-tab-bar');
   const tabActions = $('.note-tab-actions');
   const htmlTabPanel = $('[data-role="note-html-tab-panel"]');
+  const pdfTabPanel = $('[data-role="note-pdf-tab-panel"]');
+  const pdfNavigation = $('[data-role="note-pdf-navigation"]');
   const mobileTreeButton = $('.note-current-copy > .note-mobile-pane-button');
   const newTabButton = $('[data-note-action="new-tab"]');
   const closeAllTabsButton = $('[data-note-action="close-all-tabs"]');
@@ -103,7 +105,7 @@
   const appleSelectionSetting = $('[data-role="note-apple-selection-setting"]');
   const appleSelectionSelect = $('[data-role="note-apple-selection"]');
   const GUIDE_TOPIC_KEY = 'canvas:noteGuideTopic:v1';
-  const GUIDE_TOPICS = ['callout', 'markdown', 'mermaid', 'quiz', 'cards', 'media', 'html'];
+  const GUIDE_TOPICS = ['callout', 'markdown', 'mermaid', 'quiz', 'cards', 'media', 'html', 'pdf'];
   let guideTopic = 'callout';
   try { const saved = localStorage.getItem(GUIDE_TOPIC_KEY); if (GUIDE_TOPICS.includes(saved)) guideTopic = saved; } catch (_) {}
   let liveEditor = null;
@@ -158,25 +160,39 @@
       return () => { disposed = true; unmount?.(); };
     },
   };
-  let noteHtmlEmbeds, noteHtmlLoader, noteHtmlCleaning = false, noteHtmlImporting = false;
+  const attachmentIsCurrent = (path, mode) => state.current?.path === path && mode === state.viewMode && noteWorkspaceVisible()
+    && !state.openingPath && !noteMovePromise && !graphPresentation && !browserResultsActive();
+  let embedStyles;
+  function loadEmbedStyle(file) {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet'; css.href = file;
+    return new Promise((resolve, reject) => {
+      css.onload = resolve;
+      css.onerror = () => { css.remove(); reject(new Error(file)); };
+      document.head.append(css);
+    });
+  }
+  function loadEmbedStyles() {
+    return embedStyles ||= loadEmbedStyle('note-html-embed.css').catch(error => { embedStyles = null; throw error; });
+  }
+  let noteHtmlEmbeds, noteHtmlLoader, noteEmbedCleaning = false, noteHtmlImporting = false;
   function loadNoteHtmlEmbeds() {
     if (noteHtmlLoader) return noteHtmlLoader;
-    const script = document.createElement('script'), css = document.createElement('link');
-    script.src = 'note-html-embed.js'; css.rel = 'stylesheet'; css.href = 'note-html-embed.css';
-    const ready = (element, name) => new Promise((resolve, reject) => {
-      element.onload = resolve;
-      element.onerror = () => reject(new Error(name));
+    const script = document.createElement('script');
+    script.src = 'note-html-embed.js';
+    const ready = new Promise((resolve, reject) => {
+      script.onload = resolve;
+      script.onerror = () => reject(new Error(script.src));
     });
-    noteHtmlLoader = Promise.all([ready(script, script.src), ready(css, css.href)]).then(() => {
-      noteHtmlEmbeds = window.RelatumNoteHtmlEmbed.create({ language, async whenSettled() {
+    noteHtmlLoader = Promise.all([ready, loadEmbedStyles(), import('./note-embed-resize.js')]).then(([, , { startEmbedResize }]) => {
+      noteHtmlEmbeds = window.RelatumNoteHtmlEmbed.create({ language, startEmbedResize, async whenSettled() {
         await whenEditorInputSettled();
         return !editorInputPending();
       },
-        isCurrent: (path, mode) => state.current?.path === path && mode === state.viewMode && noteWorkspaceVisible()
-          && !state.openingPath && !noteMovePromise && !graphPresentation && !browserResultsActive() });
+        isCurrent: attachmentIsCurrent });
       return noteHtmlEmbeds;
-    }).catch(error => { script.remove(); css.remove(); noteHtmlLoader = null; throw error; });
-    document.head.append(css, script);
+    }).catch(error => { script.remove(); noteHtmlLoader = null; throw error; });
+    document.head.append(script);
     return noteHtmlLoader;
   }
   const noteHtmlHost = {
@@ -184,8 +200,35 @@
     mount(element, options) {
       let disposed = false, unmount;
       loadNoteHtmlEmbeds().then(controller => {
-        if (!disposed) unmount = controller.mount(element, { ...options, onOpen: openHtmlAttachment });
+        if (!disposed) unmount = controller.mount(element, { ...options, onOpen: attachment => openAttachment('html', attachment) });
       }).catch(() => { if (!disposed) element.textContent = language() === 'en' ? 'Unable to load HTML preview' : '无法加载 HTML 预览'; });
+      return () => { disposed = true; unmount?.(); };
+    },
+  };
+  let notePdfReader, notePdfLoader, pdfStyles, pdfImport;
+  function loadNotePdfReader() {
+    if (notePdfLoader) return notePdfLoader;
+    pdfStyles ||= loadEmbedStyle('note-pdf-reader.css').catch(error => { pdfStyles = null; throw error; });
+    notePdfLoader = Promise.all([import('./note-pdf-reader.js'), loadEmbedStyles(), pdfStyles]).then(([module]) =>
+      notePdfReader = module.create({
+        language, isCurrent: attachmentIsCurrent, icon: noteIcon,
+        onDirty: () => desktopDirty(hasPendingEdits()), confirmReload: confirmPdfAnnotationReload,
+      })
+    ).catch(error => { notePdfLoader = null; throw error; });
+    return notePdfLoader;
+  }
+  const notePdfHost = {
+    mount(element, options) {
+      let disposed = false, unmount;
+      const mount = () => loadNotePdfReader().then(controller => {
+        if (!disposed) unmount = controller.mount(element, { ...options, onOpen: attachment => openAttachment('pdf', attachment) });
+      }).catch(() => {
+        if (disposed) return;
+        const retry = document.createElement('button');
+        retry.type = 'button'; retry.textContent = language() === 'en' ? 'Retry PDF preview' : '重试 PDF 预览';
+        retry.addEventListener('click', mount, { once: true }); element.replaceChildren(retry); options.onLayout?.();
+      });
+      void mount();
       return () => { disposed = true; unmount?.(); };
     },
   };
@@ -211,9 +254,10 @@
   }
   const GRAPH_TAB = 'relatum:graph-tab:v1';
   const HTML_TAB_PREFIX = 'relatum:html-tab:v1:';
+  const PDF_TAB_PREFIX = 'relatum:pdf-tab:v1:';
   const AUTO_INTERACT_RESTORED_HTML_LIMIT = 3;
-  const htmlTabs = new Map();
-  let htmlTabMount = null, htmlTabIntent = 0;
+  const attachmentTabs = new Map();
+  let attachmentTabMount = null, attachmentTabIntent = 0, pdfTreeState = null;
   const graphHost = $('[data-role="note-graph-panel"]');
   const graphEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.graph');
   let graphPresentation = false, graphSidebar = null;
@@ -232,13 +276,13 @@
     return ok;
   }
   async function waitForNoteMove(path) {
-    const html = htmlTabs.get(path);
+    const html = attachmentTabs.get(path);
     if (html) path = html.path;
     while (noteMovePromise) {
       const operation = noteMovePromise, paths = noteMovePaths;
       if (await operation && paths && typeof path === 'string') path = mapPath(path, paths.source, paths.destination);
     }
-    return html ? htmlTabKey(path, html.id) : path;
+    return html ? attachmentTabKey(html.kind, path, html.id) : path;
   }
   const browserNavigation = $('[data-role="note-browser-navigation"]');
   const browserDisclosure = $('[data-role="note-browser-disclosure"]');
@@ -251,65 +295,102 @@
     else noteGraph?.remap(source, destination);
   }
   function isGraphTab(tab) { return tab === GRAPH_TAB; }
-  function isHtmlTab(tab) { return typeof tab === 'string' && tab.startsWith(HTML_TAB_PREFIX); }
-  function htmlTabKey(path, id) { return HTML_TAB_PREFIX + JSON.stringify([path, id]); }
-  function isSpecialTab(tab) { return isGraphTab(tab) || isBlankTab(tab) || isHtmlTab(tab); }
+  function isAttachmentTab(tab) { return typeof tab === 'string' && (tab.startsWith(HTML_TAB_PREFIX) || tab.startsWith(PDF_TAB_PREFIX)); }
+  function attachmentTabKey(kind, path, id) { return (kind === 'pdf' ? PDF_TAB_PREFIX : HTML_TAB_PREFIX) + JSON.stringify([path, id]); }
+  function isSpecialTab(tab) { return isGraphTab(tab) || isBlankTab(tab) || isAttachmentTab(tab); }
 
-  function releaseHtmlTab() {
-    if (!htmlTabMount) return;
-    htmlTabMount.dispose?.();
-    htmlTabMount = null;
-    htmlTabPanel.replaceChildren();
+  function setPdfNavigation(show, showFiles = false) {
+    if (!pdfNavigation || show === !!pdfTreeState) return;
+    if (show) {
+      pdfTreeState = { scroll: sidebarScroll?.scrollTop || 0, overlay: root.classList.contains('tree-overlay-open') };
+      closeWorkspacePopovers();
+      root.classList.add('tree-overlay-open');
+    }
+    pdfNavigation.hidden = !show;
+    pdfNavigation.inert = !show;
+    pdfNavigation.parentElement.classList.toggle('is-pdf-navigation', show);
+    if (!show) {
+      root.classList.toggle('tree-overlay-open', pdfTreeState.overlay || showFiles && matchMedia('(max-width: 760px)').matches);
+      if (sidebarScroll) sidebarScroll.scrollTop = pdfTreeState.scroll;
+      pdfTreeState = null;
+      if (showFiles) treeEl.focus({ preventScroll: true });
+    }
   }
 
-  function syncHtmlTab() {
+  function releaseAttachmentTab() {
+    if (!attachmentTabMount) return;
+    const mount = attachmentTabMount;
+    attachmentTabMount = null;
+    if (mount.tab.kind === 'pdf') {
+      mount.reader?.dispose();
+      setPdfNavigation(false);
+    } else mount.dispose?.();
+    mount.panel.replaceChildren();
+  }
+
+  function syncAttachmentTab() {
     if (!htmlTabPanel) return;
-    const tab = state.initialized && !browserResultsActive() ? htmlTabs.get(state.activeTab) : null;
+    const tab = state.initialized && !browserResultsActive() ? attachmentTabs.get(state.activeTab) : null;
     const show = !!tab;
+    const pdf = tab?.kind === 'pdf', panel = pdf ? pdfTabPanel : htmlTabPanel;
+    const canMount = tab && !noteMovePromise && !state.openingPath && noteWorkspaceVisible();
+    if (attachmentTabMount && (!canMount || attachmentTabMount.tab !== tab || attachmentTabMount.interactive !== tab.interactive)) {
+      releaseAttachmentTab();
+    }
     root.classList.toggle('note-html-tab-active', show);
-    htmlTabPanel.hidden = !show;
-    htmlTabPanel.inert = !show;
-    if (tab) htmlTabPanel.setAttribute('aria-label', tab.name);
+    htmlTabPanel.hidden = htmlTabPanel.inert = !show || pdf;
+    if (pdfTabPanel) pdfTabPanel.hidden = pdfTabPanel.inert = !pdf;
+    if (tab) panel.setAttribute('aria-label', tab.name);
     if (mobileTreeButton) {
       if (show && mobileTreeButton.parentElement !== tabActions) tabActions?.prepend(mobileTreeButton);
       if (!show && mobileTreeButton.parentElement === tabActions) currentPathEl?.before(mobileTreeButton);
     }
-    if (!tab || noteMovePromise || state.openingPath || !noteWorkspaceVisible()) { releaseHtmlTab(); return; }
-    if (htmlTabMount?.tab === tab && htmlTabMount.interactive === tab.interactive) return;
-    releaseHtmlTab();
-    const mount = { tab, interactive: tab.interactive };
-    htmlTabMount = mount;
-    const isCurrent = () => htmlTabMount === mount && htmlTabs.get(state.activeTab) === tab
+    if (!canMount || attachmentTabMount) return;
+    const mount = { tab, panel, interactive: tab.interactive };
+    attachmentTabMount = mount;
+    const isCurrent = () => attachmentTabMount === mount && attachmentTabs.get(state.activeTab) === tab
       && noteWorkspaceVisible() && !state.openingPath && !noteMovePromise && !browserResultsActive();
-    loadNoteHtmlEmbeds().then(controller => {
+    (pdf ? loadNotePdfReader() : loadNoteHtmlEmbeds()).then(controller => {
       if (!isCurrent()) return;
-      mount.dispose = controller.mountTab(htmlTabPanel, { ...tab, isCurrent, onName(name) {
+      const result = controller.mountTab(panel, { ...tab, isCurrent, onName(name) {
         if (tab.name === name) return;
         tab.name = name;
-        htmlTabPanel.setAttribute('aria-label', name);
+        panel.setAttribute('aria-label', name);
         persistTabs(); renderTabs();
-      } });
+      }, ...(pdf ? {
+        navigation: pdfNavigation, onNavigation: setPdfNavigation,
+        onPosition: position => { tab.resume = position; },
+      } : {}) });
+      if (pdf) mount.reader = result;
+      else mount.dispose = result;
     }).catch(() => {
       if (!isCurrent()) return;
       const status = document.createElement('p');
       status.className = 'note-html-tab-status';
       status.setAttribute('role', 'status');
-      status.textContent = language() === 'en' ? 'Unable to load HTML preview' : '无法加载 HTML 预览';
-      htmlTabPanel.replaceChildren(status);
+      status.textContent = pdf ? (language() === 'en' ? 'Unable to load PDF viewer ' : '无法加载 PDF 阅读器 ')
+        : (language() === 'en' ? 'Unable to load HTML preview' : '无法加载 HTML 预览');
+      if (pdf) {
+        const retry = document.createElement('button');
+        retry.type = 'button'; retry.textContent = language() === 'en' ? 'Retry' : '重试';
+        retry.onclick = () => { releaseAttachmentTab(); syncAttachmentTab(); };
+        status.append(retry);
+      }
+      panel.replaceChildren(status);
     });
   }
 
-  async function activateHtmlTab(key, options, attachment) {
+  async function activateAttachmentTab(key, options, attachment) {
     if (!htmlTabPanel || !noteWorkspaceVisible()) return false;
-    const existing = htmlTabs.get(key);
+    const existing = attachmentTabs.get(key);
     if (!existing && !attachment) return false;
     if (attachment && (state.current?.path !== attachment.path || state.openingPath || noteMovePromise)) return false;
-    const intent = ++htmlTabIntent, previousTab = state.activeTab, previous = state.current;
+    const intent = ++attachmentTabIntent, previousTab = state.activeTab, previous = state.current;
     const openSequence = state.openSeq, visibility = noteVisibilityEpoch;
-    const current = () => intent === htmlTabIntent && state.activeTab === previousTab && state.current === previous
+    const current = () => intent === attachmentTabIntent && state.activeTab === previousTab && state.current === previous
       && state.openSeq === openSequence && visibility === noteVisibilityEpoch && noteWorkspaceVisible()
       && (!attachment || state.current?.path === attachment.path)
-      && !state.openingPath && !noteMovePromise && htmlTabs.get(key) === existing;
+      && !state.openingPath && !noteMovePromise && attachmentTabs.get(key) === existing;
     if (key !== previousTab) {
       if (!(await finishInlineTitle()) || !current() || !(await flushCanvases()) || !current()) return false;
       if (editorInputPending()) await whenEditorInputSettled();
@@ -318,29 +399,33 @@
       rememberEditorState(previous);
     }
     const tab = existing || { ...attachment, interactive: false };
-    if (!existing) { htmlTabs.set(key, tab); state.tabs.push(key); }
-    if (options?.userSelected) tab.interactive = true;
+    if (!existing) { attachmentTabs.set(key, tab); state.tabs.push(key); }
+    if (tab.kind === 'html' && options?.userSelected) tab.interactive = true;
+    if (tab.kind === 'pdf' && attachment?.page) {
+      tab.resume = { ...tab.resume, page: attachment.page, fraction: 0 };
+      if (attachmentTabMount?.tab === tab) attachmentTabMount.reader?.jump(attachment.page);
+    }
     if (noteBrowser) noteBrowser.showDocument();
     if (key !== previousTab) {
       state.activeTab = key;
       clearCurrent({ keepTabs: true, keepActiveTab: true, keepCache: true });
-    } else syncHtmlTab();
-    if (!options?.noFocus && options?.userSelected) htmlTabPanel.focus({ preventScroll: true });
+    } else syncAttachmentTab();
+    if (!options?.noFocus && options?.userSelected) (tab.kind === 'pdf' ? pdfTabPanel : htmlTabPanel).focus({ preventScroll: true });
     return true;
   }
 
-  function openHtmlAttachment(attachment) {
-    return activateHtmlTab(htmlTabKey(attachment.path, attachment.id), { userSelected: true }, attachment);
+  function openAttachment(kind, attachment) {
+    return activateAttachmentTab(attachmentTabKey(kind, attachment.path, attachment.id), { userSelected: true }, { ...attachment, kind });
   }
 
-  function remapHtmlTabs(source, destination) {
+  function remapAttachmentTabs(source, destination) {
     let changed = false;
-    for (const [key, tab] of Array.from(htmlTabs)) {
+    for (const [key, tab] of Array.from(attachmentTabs)) {
       const path = mapPath(tab.path, source, destination);
       if (tab.path === path) continue;
-      const next = htmlTabKey(path, tab.id);
-      htmlTabs.delete(key);
-      htmlTabs.set(next, { ...tab, path });
+      const next = attachmentTabKey(tab.kind, path, tab.id);
+      attachmentTabs.delete(key);
+      attachmentTabs.set(next, { ...tab, path });
       state.tabs[state.tabs.indexOf(key)] = next;
       if (state.activeTab === key) state.activeTab = next;
       changed = true;
@@ -749,20 +834,21 @@
     const stored = JSON.parse(localStorage.getItem(OPEN_TABS_KEY) || '[]');
     if (Array.isArray(stored)) {
       for (const item of stored) {
-        if (typeof item === 'string' && !isHtmlTab(item)) state.tabs.push(item);
-        else if (item?.kind === 'html' && typeof item.path === 'string' && /\.md$/i.test(item.path)
+        if (typeof item === 'string' && !isAttachmentTab(item)) state.tabs.push(item);
+        else if (['html', 'pdf'].includes(item?.kind) && typeof item.path === 'string' && /\.md$/i.test(item.path)
             && typeof item.id === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(item.id)
             && typeof item.name === 'string' && item.name) {
-          const { path, id, name } = item, key = htmlTabKey(path, id);
-          htmlTabs.set(key, { path, id, name, interactive: false });
+          const { kind, path, id, name } = item, key = attachmentTabKey(kind, path, id);
+          attachmentTabs.set(key, { kind, path, id, name, interactive: false });
           state.tabs.push(key);
         }
       }
       state.tabs = Array.from(new Set(state.tabs));
     }
   } catch (error) {}
-  if (htmlTabs.size <= AUTO_INTERACT_RESTORED_HTML_LIMIT) {
-    for (const tab of htmlTabs.values()) tab.interactive = true;
+  const restoredHtmlTabs = Array.from(attachmentTabs.values()).filter(tab => tab.kind === 'html');
+  if (restoredHtmlTabs.length <= AUTO_INTERACT_RESTORED_HTML_LIMIT) {
+    for (const tab of restoredHtmlTabs) tab.interactive = true;
   }
   if (!graphEnabled()) state.tabs = state.tabs.filter(path => !isGraphTab(path));
   try { const stored = localStorage.getItem(ACTIVE_TAB_KEY) || ''; if (state.tabs.includes(stored)) state.activeTab = stored; } catch (error) {}
@@ -1402,6 +1488,7 @@
       cards: ['并列概念、图标与轻量卡片排版', 'Concept cards, icons and lightweight layouts'],
       media: ['左图右文、直接编辑与自动换行', 'Images beside editable, wrapping text'],
       html: ['嵌入单个离线网页', 'Embed a self-contained offline page'],
+      pdf: ['嵌入并阅读本地 PDF', 'Embed and read a local PDF'],
     };
     function translateGuideOptions() {
       const focusedTopic = guide.contains(document.activeElement) ? document.activeElement.value : '';
@@ -1410,7 +1497,7 @@
         const label = document.createElement('label'); label.className = 'relatum-settings-guide-option';
         const input = document.createElement('input'); input.type = 'radio'; input.name = 'note-guide-topic'; input.value = id; input.checked = guideTopic === id;
         const body = document.createElement('span'), title = document.createElement('strong'), description = document.createElement('small');
-        title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards', media: 'Media', html: 'HTML' }[id]; description.textContent = names[language() === 'en' ? 1 : 0];
+        title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid', quiz: 'Quiz', cards: 'Cards', media: 'Media', html: 'HTML', pdf: 'PDF' }[id]; description.textContent = names[language() === 'en' ? 1 : 0];
         body.append(title, description); label.append(input, body); guide.append(label);
       });
       const hint = document.createElement('p'); hint.textContent = language() === 'en' ? 'Choose what the Guide sidebar displays. Changes apply immediately.' : '选择右侧“引导”面板展示的内容，更改立即生效。'; guide.append(hint);
@@ -2317,7 +2404,7 @@
     const documentState = payload || readingPayload();
     if (state.current && normalizeViewport(documentState.viewport) && !noteWorkspaceVisible()) deferredViewportDocument = state.current;
     if (window.RelatumNoteLiveEditor && typeof window.RelatumNoteLiveEditor.renderMarkdown === 'function') {
-      window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', { calloutSession: liveEditor?.calloutSession, onOpenExternal: openMarkdownTarget, database: noteDatabaseHost, htmlEmbed: noteHtmlHost });
+      window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', { calloutSession: liveEditor?.calloutSession, onOpenExternal: openMarkdownTarget, database: noteDatabaseHost, htmlEmbed: noteHtmlHost, pdfEmbed: notePdfHost });
     } else {
       const result = window.MarkdownMini && window.MarkdownMini.renderResult
         ? window.MarkdownMini.renderResult(documentState.value || '', { localImages: true, noteBlocks: true, noteSyntax: true, mermaid: !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid') })
@@ -2396,6 +2483,7 @@
           onImageFiles: (files) => uploadImages(files),
           database: noteDatabaseHost,
           htmlEmbed: noteHtmlHost,
+          pdfEmbed: notePdfHost,
           onDatabaseFiles: importNoteDatabaseFiles,
           clipboardText: clipboardLinkMarkdown,
           onImageSelectionChange: (selection) => updateImageTextTools(selection),
@@ -2868,7 +2956,15 @@
     if (wordCountEl && (statistics || knownWords !== undefined)) wordCountEl.textContent = tr('words', { count: Number.isFinite(words) ? words.toLocaleString() : '—' });
     if (characterCountEl) characterCountEl.textContent = tr('characters', { count: Math.max(0, characters).toLocaleString() });
   }
-  function desktopDirty(value) { if (window.CanvasDesktop && typeof window.CanvasDesktop.setDirty === 'function') window.CanvasDesktop.setDirty(!!value || !!window.RelatumNoteCanvas?.dirty || !!noteDatabase?.dirty); }
+  function desktopDirty(value) {
+    window.CanvasDesktop?.setDirty?.(!!value || !!window.RelatumNoteCanvas?.dirty || !!noteDatabase?.dirty || !!notePdfReader?.dirty());
+  }
+  async function flushPdfAnnotations(options) {
+    if (await notePdfReader?.flush(options) !== false) return true;
+    if (noteWorkspaceVisible()) showToast(language() === 'en' ? 'PDF annotations could not be saved. Open the PDF tab to review your draft.'
+      : 'PDF 批注保存失败，请在 PDF 标签页处理草稿。', 'error');
+    return false;
+  }
   async function request(url, options) {
     let response;
     try { response = await fetch(url, Object.assign({ credentials: 'same-origin' }, options || {})); }
@@ -2881,7 +2977,7 @@
   function treeView(pin) {
     let saved = ''; try { saved = localStorage.getItem(ACTIVE_PATH_KEY) || ''; } catch (error) {}
     return { expanded: Array.from(new Set([state.notebookRoot || '', ...state.expanded, ...state.notebookExpanded])).slice(0, 4096),
-      pins: Array.from(new Set([pin, state.selectedPath, state.selectedFolder, ...state.tabs.map(path => htmlTabs.get(path)?.path || path), saved, state.current?.path || ''].filter(path => path && !isSpecialTab(path)))).slice(0, 256),
+      pins: Array.from(new Set([pin, state.selectedPath, state.selectedFolder, ...state.tabs.map(path => attachmentTabs.get(path)?.path || path), saved, state.current?.path || ''].filter(path => path && !isSpecialTab(path)))).slice(0, 256),
       sort: state.treeSort, ...treeNameSortOptions() };
   }
   function requestTreeView(view, reconcile = false) {
@@ -3232,8 +3328,8 @@
   function persistTabs() {
     try {
       localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(state.tabs.map(key => {
-        const tab = htmlTabs.get(key);
-        return tab ? { kind: 'html', path: tab.path, id: tab.id, name: tab.name } : key;
+        const tab = attachmentTabs.get(key);
+        return tab ? { kind: tab.kind, path: tab.path, id: tab.id, name: tab.name } : key;
       })));
       if (state.activeTab && state.tabs.includes(state.activeTab)) localStorage.setItem(ACTIVE_TAB_KEY, state.activeTab);
       else localStorage.removeItem(ACTIVE_TAB_KEY);
@@ -3249,7 +3345,7 @@
       return false;
     }
     const activeIndex = state.tabs.indexOf(state.activeTab);
-    if (reuseActive && activeIndex >= 0 && !isGraphTab(state.activeTab) && !isHtmlTab(state.activeTab)) {
+    if (reuseActive && activeIndex >= 0 && !isGraphTab(state.activeTab) && !isAttachmentTab(state.activeTab)) {
       const [replaced] = state.tabs.splice(activeIndex, 1, path);
       noteDatabase?.clear(replaced);
     } else state.tabs.push(path);
@@ -3367,7 +3463,7 @@
     cancelTabCloseMotion(); cancelTabScroll();
   }
   function noteTabTitle(path) {
-    if (isHtmlTab(path)) return htmlTabs.get(path)?.name || 'HTML';
+    if (isAttachmentTab(path)) return attachmentTabs.get(path)?.name || (path.startsWith(PDF_TAB_PREFIX) ? 'PDF' : 'HTML');
     return isGraphTab(path) ? (language() === 'en' ? 'Graph' : '关系图谱')
       + ' · ' + (state.notebookRoot ? state.notebookRoot.split('/').pop() : 'notes') : isBlankTab(path) ? tr('newTab') : noteTitle(path);
   }
@@ -3382,7 +3478,7 @@
       else if (state.tabs.some(path => existing.get(path)?.title !== noteTabTitle(path))) motionPositions = captureTabCloseMotion(true);
     }
     state.tabs.forEach((tabPath, index) => {
-      const blank = isBlankTab(tabPath), graph = isGraphTab(tabPath), html = isHtmlTab(tabPath);
+      const blank = isBlankTab(tabPath), graph = isGraphTab(tabPath), attachment = attachmentTabs.get(tabPath);
       const title = noteTabTitle(tabPath);
       let tab = existing.get(tabPath);
       if (!tab) {
@@ -3398,15 +3494,16 @@
       tab.dataset.noteTabPath = tabPath;
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-selected', tabPath === activeTab ? 'true' : 'false');
-      if (graph || html) tab.setAttribute('aria-controls', graph ? 'note-graph-panel' : 'note-html-tab-panel');
+      if (graph || attachment) tab.setAttribute('aria-controls', graph ? 'note-graph-panel' : 'note-' + attachment.kind + '-tab-panel');
       else tab.removeAttribute('aria-controls');
-      if (html) tab.setAttribute('aria-label', title);
+      if (attachment) tab.setAttribute('aria-label', title);
       tab.title = title;
       tab.tabIndex = tabPath === activeTab ? 0 : -1;
       tab.draggable = true;
       const label = tab.querySelector('.note-tab-label');
       if (graph && !tab.querySelector('.note-tab-graph-icon')) tab.insertBefore(noteIcon('graph', 'note-tab-graph-icon'), label);
       if (!graph) tab.querySelector('.note-tab-graph-icon')?.remove();
+      if (attachment?.kind === 'pdf' && !tab.querySelector('.note-tab-pdf-icon')) tab.insertBefore(noteIcon('pdf', 'note-tab-pdf-icon'), label);
       label.textContent = title;
       const close = tab.querySelector('.note-tab-close');
       close.dataset.noteTabClose = tabPath;
@@ -3511,11 +3608,11 @@
     return true;
   }
   async function activateTab(tabPath, options) {
-    if (!isHtmlTab(tabPath)) htmlTabIntent++;
+    if (!isAttachmentTab(tabPath)) attachmentTabIntent++;
     if (noteMovePromise) tabPath = await waitForNoteMove(tabPath);
     if (!tabPath || !state.tabs.includes(tabPath)) return false;
     if (isGraphTab(tabPath)) return activateGraphTab(options);
-    if (isHtmlTab(tabPath)) return activateHtmlTab(tabPath, options);
+    if (isAttachmentTab(tabPath)) return activateAttachmentTab(tabPath, options);
     if (isBlankTab(tabPath)) {
       if (!(await flushCanvases())) return false;
       if (noteBrowser) noteBrowser.showDocument();
@@ -3534,6 +3631,8 @@
     if (noteMovePromise) tabPath = await waitForNoteMove(tabPath);
     if (!(await flushCanvases())) return false;
     if (!state.tabs.includes(tabPath)) return false;
+    const attachment = attachmentTabs.get(tabPath);
+    if (attachment?.kind === 'pdf' && !await flushPdfAnnotations(attachment)) return false;
     const cached = isSpecialTab(tabPath) ? null : state.documentCache.get(tabPath);
     if (!(options && options.skipSave) && cached && !(await flushSave(cached))) return false;
     if (noteDatabase && !(await noteDatabase.whenInputSettled(tabPath))) return false;
@@ -3543,7 +3642,7 @@
     const active = state.activeTab === tabPath;
     tabCloseMotionPending = true;
     state.tabs.splice(index, 1);
-    htmlTabs.delete(tabPath);
+    attachmentTabs.delete(tabPath);
     noteDatabase?.clear(tabPath);
     if (isGraphTab(tabPath)) {
       noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); backgroundTargetChanged(true);
@@ -3552,7 +3651,7 @@
     renderTabs();
     if (!active) return true;
     // Release the closed panel even if opening the next note fails.
-    if (isGraphTab(tabPath) || isHtmlTab(tabPath)) clearCurrent({ keepTabs: true, keepCache: true });
+    if (isGraphTab(tabPath) || isAttachmentTab(tabPath)) clearCurrent({ keepTabs: true, keepCache: true });
     const nextPath = state.tabs[Math.min(index, state.tabs.length - 1)] || state.tabs[index - 1] || '';
     if (nextPath) return activateTab(nextPath, { noFocus: !!(options && options.noFocus) });
     state.activeTab = '';
@@ -3561,6 +3660,7 @@
   }
   async function closeAllTabs() {
     if (!state.tabs.length) return false;
+    if (!await flushPdfAnnotations()) return false;
     const current = state.current;
     if (current && !(await flushSave(current))) return false;
     for (const path of state.tabs) {
@@ -3572,7 +3672,7 @@
     tabCloseMotionPending = true;
     for (const path of state.tabs) noteDatabase?.clear(path);
     state.tabs = [];
-    htmlTabs.clear();
+    attachmentTabs.clear();
     state.activeTab = '';
     noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true });
     backgroundTargetChanged(true);
@@ -3594,7 +3694,8 @@
     index.rows.clear(); index.selectionPaths = new Set(); index.selectionKey = null;
   }
   function updateTreeSelection() {
-    const activePath = state.openingPath || (state.current && state.current.path) || '';
+    const tab = attachmentTabs.get(state.activeTab);
+    const activePath = state.openingPath || state.current?.path || (tab?.kind === 'pdf' ? tab.path : '');
     const key = JSON.stringify([activePath, state.openingPath, state.selectedFolder, state.notebookRoot]);
     if (treeRowIndexes.get(treeEl).selectionKey === key
         && (!notebookTreeEl || treeRowIndexes.get(notebookTreeEl).selectionKey === key)) return;
@@ -4168,7 +4269,7 @@
     const seq = ++state.refreshSeq; if (!state.initialized) treeEl.textContent = tr('loading');
     const current = () => seq === state.refreshSeq && !noteMovePromise
       && (options?.externalSeq === undefined || options.externalSeq === state.externalSeq && noteWorkspaceVisible());
-    const activeHtml = htmlTabs.get(state.activeTab);
+    const activeHtml = attachmentTabs.get(state.activeTab);
     const htmlOwnerWasPresent = activeHtml && !!findEntry(activeHtml.path);
     try {
       indexActivity(noteWorkspaceVisible());
@@ -4223,8 +4324,8 @@
       const previousNotebookRoots = notebookRoots().map(entry => entry.path);
       state.entries = entries;
       rebuildEntryIndex(flat);
-      if (htmlOwnerWasPresent && htmlTabs.get(state.activeTab) === activeHtml && !findEntry(activeHtml.path)) {
-        releaseHtmlTab(); syncHtmlTab();
+      if (htmlOwnerWasPresent && attachmentTabs.get(state.activeTab) === activeHtml && !findEntry(activeHtml.path)) {
+        releaseAttachmentTab(); syncAttachmentTab();
       }
       if (!state.notebookSettingsLoaded) restoreNotebookSettings(result.notebookSettings);
       const previousNotebookRoot = state.notebookRoot;
@@ -4332,8 +4433,10 @@
   }
   function syncEditorExtensions() {
     syncNoteDatabase();
-    syncHtmlTab();
+    syncAttachmentTab();
     noteHtmlEmbeds?.sync();
+    notePdfReader?.sync();
+    if (pdfImport && !pdfImport.current()) pdfImport.abort();
     fileColorHost?.refresh();
     liveEditor?.setExtensionsActive(noteWorkspaceVisible() && !!state.current && state.viewMode !== 'reading'
       && !graphPresentation && !browserResultsActive());
@@ -4343,8 +4446,8 @@
     if (editorHost) editorHost.toggleAttribute('inert', !!active);
     if (fallbackEditor) fallbackEditor.toggleAttribute('inert', !!active);
     if (readingHost) readingHost.toggleAttribute('inert', !!active);
-    if (active) { releaseHtmlTab(); noteHtmlEmbeds?.suspend(); }
-    else { syncHtmlTab(); noteHtmlEmbeds?.sync(); }
+    if (active) { releaseAttachmentTab(); noteHtmlEmbeds?.suspend(); notePdfReader?.suspend(); pdfImport?.abort(); }
+    else { syncAttachmentTab(); noteHtmlEmbeds?.sync(); notePdfReader?.sync(); }
   }
   function setNoteMoveInputLocked(locked) {
     $('.note-document-body')?.toggleAttribute('inert', locked || root.classList.contains('note-browser-showing-results'));
@@ -4613,7 +4716,8 @@
     const operation = performMove(source, destination, quiet, options);
     noteMovePromise = operation;
     noteMovePaths = { source, destination };
-    releaseHtmlTab();
+    releaseAttachmentTab();
+    notePdfReader?.suspend(); pdfImport?.abort();
     try {
       const ok = await operation;
       options?.onResult?.(ok, state.lastMoveCode, state.lastMoveError);
@@ -4623,7 +4727,8 @@
       if (noteMovePromise === operation) {
         noteMovePromise = null; noteMovePaths = null;
         setNoteMoveInputLocked(false);
-        syncHtmlTab();
+        syncAttachmentTab();
+        notePdfReader?.sync();
         refreshTree(false, { silentErrors: true });
         scheduleExternalSync();
         scheduleDocumentPrefetch();
@@ -4667,6 +4772,7 @@
     state.lastMoveError = ''; state.lastMoveCode = '';
     if (options?.guard && !options.guard()) return false;
     if (state.imageTextBusy && !(await imageTextOperationPromise)) return false;
+    if (!await flushPdfAnnotations({ path: source })) { state.lastMoveError = tr('saveFailed'); state.lastMoveCode = 'save_failed'; return false; }
     if (editorInputPending()) await whenEditorInputSettled();
     stopExternalSync(); stopDocumentPrefetch(); state.externalSeq += 1; state.refreshSeq += 1;
     setNoteMoveInputLocked(true);
@@ -4712,7 +4818,7 @@
     // changing the editor's asset base; a later read failure must not undo the UI path.
     window.RelatumNoteCanvas?.remapViews(source, destination, true);
     noteDatabase?.remap?.(source, destination);
-    remapHtmlTabs(source, destination);
+    remapAttachmentTabs(source, destination);
     updateNoteGraphSession(source, destination);
     noteGraph?.invalidate(notebookRootForPath(source));
     if (notebookRootForPath(source) !== notebookRootForPath(destination)) noteGraph?.invalidate(notebookRootForPath(destination));
@@ -4815,6 +4921,7 @@
     const previousExpanded = new Set(state.expanded);
     const affects = !!state.current && (state.current.path === entry.path || state.current.path.startsWith(entry.path + '/'));
     const flushPromise = (async () => {
+      if (!await flushPdfAnnotations({ path: entry.path })) return false;
       if (affects && !(await flushSave())) return false;
       for (const documentState of state.documentCache.values()) {
         if (documentState !== state.current && (documentState.path === entry.path || documentState.path.startsWith(entry.path + '/'))
@@ -4848,9 +4955,9 @@
     try {
       if (!(await flushPromise)) { rollback(); return; }
       const result = await post('/api/note-trash', { path: entry.path });
-      const html = htmlTabs.get(state.activeTab);
+      const html = attachmentTabs.get(state.activeTab);
       if (html && (html.path === entry.path || html.path.startsWith(entry.path + '/'))) {
-        releaseHtmlTab(); syncHtmlTab();
+        releaseAttachmentTab(); syncAttachmentTab();
       }
       updateNoteGraphSession(entry.path); noteGraph?.invalidate(notebookRootForPath(entry.path));
       const serverEntries = result.tree && Array.isArray(result.tree.entries) ? result.tree.entries : state.entries;
@@ -4942,7 +5049,7 @@
     bullet: ['无序列表', 'Bulleted list'], ordered: ['有序列表', 'Numbered list'], task: ['任务列表', 'Task list'],
     body: ['正文', 'Normal text'], quote: ['引用', 'Quote'], table: ['表格', 'Table'], callout: ['标注', 'Callout'],
     rule: ['分隔线', 'Horizontal rule'], 'code-block': ['代码块', 'Code block'], math: ['数学块', 'Math block'],
-    canvas: ['画布', 'Canvas'], cards: ['Cards', 'Cards'], database: ['数据库', 'Database'], 'html-embed': ['HTML', 'HTML'],
+    canvas: ['画布', 'Canvas'], cards: ['Cards', 'Cards'], database: ['数据库', 'Database'], 'html-embed': ['HTML', 'HTML'], 'pdf-embed': ['PDF', 'PDF'],
     cut: ['剪切', 'Cut'], copy: ['复制', 'Copy'], paste: ['粘贴', 'Paste'], 'paste-plain': ['以纯文本形式粘贴', 'Paste as plain text'],
     'select-all': ['全选', 'Select all'], paragraph: ['段落设置', 'Paragraph'], insert: ['插入', 'Insert'],
     'highlight-color': ['高亮颜色', 'Highlight color'],
@@ -5185,9 +5292,9 @@
       dialog.append(input, actions); return input;
     });
   }
-  function confirmNoteDatabase(message, isCurrent, editing = false) {
+  function confirmNoteDatabase(message, isCurrent, editing = false, heading) {
     const english = language() === 'en';
-    return promptNoteModal(english ? 'Database' : '数据库', false, (dialog, finish) => {
+    return promptNoteModal(heading || (english ? 'Database' : '数据库'), false, (dialog, finish) => {
       const description = document.createElement('p');
       description.textContent = message[english ? 1 : 0];
       const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
@@ -5199,6 +5306,19 @@
       dialog.append(description, actions);
       return cancel;
     }, { className: 'note-database-confirm', isCurrent });
+  }
+  function confirmPdfAnnotationReload(isCurrent) {
+    const english = language() === 'en';
+    return promptNoteModal(english ? 'Reload PDF annotations' : '重新载入 PDF 批注', false, (dialog, finish) => {
+      const description = document.createElement('p');
+      description.textContent = english ? 'Reloading will discard the unsaved annotation draft in this window.'
+        : '重新载入将丢弃此窗口中尚未保存的批注草稿。';
+      const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
+      const cancel = contextButton(tr('cancel'), () => finish(false));
+      actions.append(cancel, contextButton(english ? 'Reload' : '重新载入', () => finish(true)));
+      dialog.append(description, actions);
+      return cancel;
+    }, { isCurrent, className: 'note-html-cleanup' });
   }
 
   async function openDatabaseManager(database, path, current) {
@@ -5317,7 +5437,8 @@
       const target = source?.path === path ? source : state.documentCache.get(path);
       if (!current() || target && !(await flushSave(target)) || !current()) return;
       if (action === 'remove') await openDatabaseManager(database, path, current);
-      else await database.cleanup(path, message => current() && confirmNoteDatabase(message, current));
+      else await database.cleanup(path, message => current() && confirmNoteDatabase(message, current, false,
+        language() === 'en' ? 'Clean up unused database attachments' : '清理未使用的数据库附件'));
     } catch (error) {
       if (current()) showToast(error.message || tr('saveFailed'), 'error');
     } finally {
@@ -5326,59 +5447,135 @@
     }
   }
 
-  async function cleanupUnusedHtml(path) {
-    if (noteHtmlCleaning || noteHtmlImporting || state.assetCleanupBusy || state.imageTextBusy || noteMovePromise || !noteWorkspaceVisible()) return;
+  async function cleanupUnusedEmbed(path, kind) {
+    const pdf = kind === 'pdf', type = pdf ? 'PDF' : 'HTML';
     const api = window.pywebview?.api;
-    if (typeof api?.note_html !== 'function') return;
+    if (typeof (pdf ? api?.note_pdf_cleanup : api?.note_html) !== 'function'
+        || noteEmbedCleaning || noteHtmlImporting || pdfImport || state.assetCleanupBusy
+        || state.imageTextBusy || noteMovePromise || !noteWorkspaceVisible()) return;
     const source = state.current, tab = state.activeTab, epoch = noteVisibilityEpoch;
     const current = () => state.current === source && state.activeTab === tab && noteVisibilityEpoch === epoch
       && noteWorkspaceVisible() && !noteMovePromise;
     const text = (zh, en) => language() === 'en' ? en : zh;
-    noteHtmlCleaning = true;
+    const protectedIds = () => Array.from(attachmentTabs.values())
+      .filter(item => item.kind === 'pdf' && item.path === path).map(item => item.id);
+    const run = (action, token) => pdf ? api.note_pdf_cleanup(action, path, token || null, protectedIds())
+      : api.note_html(action, path, token);
+    const title = text('清理未使用的 ' + type, 'Clean up unused ' + type);
+    noteEmbedCleaning = true;
     try {
       if (editorInputPending()) await whenEditorInputSettled();
-      const target = source?.path === path ? source : state.documentCache.get(path);
       if (!current() || editorInputPending()) return;
-      if (target && !(await flushSave(target))) throw new Error(tr('saveFailed'));
-      if (!current()) return;
-      const plan = await api.note_html('plan-cleanup', path);
-      if (!current()) return;
-      if (plan.status !== 'ok') throw new Error(text('无法读取 HTML 附件。', 'Unable to read HTML attachments.'));
-      if (!plan.names.length) { showToast(text('没有需要清理的 HTML 文件。', 'No unused HTML files to clean up.')); return; }
-      const confirmed = await promptNoteModal(text('清理未使用的 HTML', 'Clean up unused HTML'), false, (dialog, finish) => {
-        const list = document.createElement('ul'); list.className = 'note-html-cleanup-list';
-        for (const name of plan.names) {
-          const item = document.createElement('li'); item.textContent = name; list.append(item);
-        }
-        const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
-        const cancel = contextButton(tr('cancel'), () => finish(false));
-        const recycle = contextButton(text('移到系统回收站', 'Move to Recycle Bin'), () => finish(true));
-        recycle.className = 'note-html-cleanup-primary';
-        actions.append(cancel, recycle);
-        dialog.append(list, actions);
-        return cancel;
-      }, { isCurrent: current, className: 'note-html-cleanup' });
-      if (!confirmed || !current()) return;
-      if (editorInputPending() || (target && hasPendingEdits(target))) throw new Error(text('笔记已更改，请重新打开清理。', 'The note changed. Reopen cleanup to review the files.'));
-      const result = await api.note_html('recycle-cleanup', path, plan.token);
-      const html = htmlTabs.get(state.activeTab);
-      if (html?.path === path && result.recycledIds?.includes(html.id)) {
-        releaseHtmlTab(); syncHtmlTab();
+      const target = source?.path === path ? source : state.documentCache.get(path);
+      const relevant = pdf ? new Set([state.current, ...state.documentCache.values()]) : [target];
+      for (const note of relevant) {
+        if (note && hasPendingEdits(note) && (!current() || !await flushSave(note))) throw new Error(tr('saveFailed'));
       }
-      if (!current()) return;
-      if (result.status !== 'ok') throw new Error(result.code === 'note_changed'
-        ? text('笔记或附件已更改，请重新打开清理。', 'The note or attachments changed. Reopen cleanup to review the files.')
-        : text('无法回收 HTML 附件。', 'Unable to recycle HTML attachments.'));
-      const { recycledCount, failedCount } = result;
-      showToast(failedCount ? text(`已回收 ${recycledCount} 个 HTML 文件，${failedCount} 个未能回收。`, `Recycled ${recycledCount} HTML file(s). ${failedCount} could not be recycled.`)
-        : text(`已回收 ${recycledCount} 个 HTML 文件。`, `Moved ${recycledCount} HTML file(s) to the Recycle Bin.`), failedCount ? 'warning' : '');
+      if (pdf && !await flushPdfAnnotations({ path })) return;
+      while (current()) {
+        const plan = await run('plan-cleanup');
+        if (!current()) return;
+        if (plan.status !== 'ok') throw new Error(text('无法读取 ' + type + ' 附件。', 'Unable to read ' + type + ' attachments.'));
+        if (!plan.names.length) {
+          showToast(text('没有需要清理的 ' + type + ' 文件。', 'No unused ' + type + ' files to clean up.'));
+          return;
+        }
+        const confirmed = await promptNoteModal(title, false, (dialog, finish) => {
+          const list = document.createElement('ul'); list.className = 'note-html-cleanup-list';
+          const files = pdf ? plan.files : plan.names.map(name => ({ name }));
+          for (const file of files) {
+            const item = document.createElement('li'); item.textContent = file.name;
+            if (file.annotated) {
+              const badge = document.createElement('small'); badge.className = 'note-pdf-cleanup-annotated';
+              badge.textContent = text('含批注', 'Annotated'); item.append(badge);
+            }
+            list.append(item);
+          }
+          const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
+          const cancel = contextButton(tr('cancel'), () => finish(false));
+          const recycle = contextButton(text('移到系统回收站', 'Move to Recycle Bin'), () => finish(true));
+          recycle.className = 'note-html-cleanup-primary';
+          actions.append(cancel, recycle);
+          dialog.append(list, actions);
+          return cancel;
+        }, { isCurrent: current, className: 'note-html-cleanup' });
+        if (!confirmed || !current()) return;
+        if (editorInputPending() || Array.from(relevant).some(note => note && hasPendingEdits(note))) {
+          throw new Error(text('笔记已更改，请重新打开清理。', 'The note changed. Reopen cleanup to review the files.'));
+        }
+        const result = await run('recycle-cleanup', plan.token);
+        const attachment = attachmentTabs.get(state.activeTab);
+        if (attachment?.kind === kind && attachment.path === path && result.recycledIds?.includes(attachment.id)) {
+          releaseAttachmentTab(); syncAttachmentTab();
+        }
+        if (!current()) return;
+        if (result.status !== 'ok') {
+          if (pdf && result.code === 'note_changed') {
+            showToast(text('附件或引用已变化，请确认更新后的列表。', 'Attachments or references changed. Review the updated list.'));
+            continue;
+          }
+          throw new Error(result.code === 'note_changed'
+            ? text('笔记或附件已更改，请重新打开清理。', 'The note or attachments changed. Reopen cleanup to review the files.')
+            : text('无法回收 ' + type + ' 附件。', 'Unable to recycle ' + type + ' attachments.'));
+        }
+        const { recycledCount, failedCount } = result;
+        showToast(failedCount
+          ? text('已回收 ' + recycledCount + ' 个 ' + type + ' 文件，' + failedCount + ' 个未能回收。',
+            'Recycled ' + recycledCount + ' ' + type + ' file(s). ' + failedCount + ' could not be recycled.')
+          : text('已回收 ' + recycledCount + ' 个 ' + type + ' 文件。',
+            'Moved ' + recycledCount + ' ' + type + ' file(s) to the Recycle Bin.'), failedCount ? 'warning' : '');
+        return;
+      }
     } catch (error) {
       if (current()) showToast(error.message, 'error');
-    } finally { noteHtmlCleaning = false; }
+    } finally { noteEmbedCleaning = false; }
+  }
+
+  async function importPdfEmbed(context) {
+    if (pdfImport || noteEmbedCleaning || !state.current) return;
+    const note = state.current, path = note.path, mode = state.viewMode, visibility = noteVisibilityEpoch;
+    const openSequence = state.openSeq, command = 'insert:pdf-embed';
+    const current = () => state.current === note && note.path === path && state.viewMode === mode
+      && state.openSeq === openSequence && visibility === noteVisibilityEpoch && noteWorkspaceVisible()
+      && !state.openingPath && !noteMovePromise && liveEditor?.queryCommand(command, context).enabled;
+    const controller = new AbortController(), { signal } = controller;
+    pdfImport = { current, abort: () => controller.abort() };
+    const picker = document.createElement('input');
+    picker.type = 'file'; picker.accept = '.pdf,application/pdf'; picker.hidden = true;
+    root.append(picker);
+    const bilingual = (zh, en) => language() === 'en' ? en : zh;
+    try {
+      const file = await new Promise(resolve => {
+        picker.addEventListener('change', () => resolve(picker.files[0]), { once: true, signal });
+        picker.addEventListener('cancel', () => resolve(null), { once: true, signal });
+        signal.addEventListener('abort', () => resolve(null), { once: true });
+        picker.click();
+      });
+      picker.remove();
+      if (!file || !current()) return;
+      if (!/\.pdf$/i.test(file.name)) throw new Error(bilingual('请选择 .pdf 文件。', 'Choose a .pdf file.'));
+      if (file.size > 100 * 1024 * 1024) throw new Error(bilingual('PDF 超过 100 MiB。', 'The PDF exceeds 100 MiB.'));
+      if (!await flushSave(note) || !current()) return;
+      const query = new URLSearchParams({ note: path, name: file.name, revision: note.revision });
+      const response = await fetch('/api/note-pdf/import?' + query, {
+        method: 'POST', headers: { 'Content-Type': 'application/pdf' }, body: file, signal,
+      });
+      const result = await response.json();
+      if (!current()) return;
+      if (!response.ok) throw new Error(result.error);
+      if (liveEditor.executeCommand(command, context, result.id)) {
+        if (bodyMenuContext === context) closeContextMenu();
+        await flushSave(note);
+      }
+    } catch (error) {
+      if (current() && !signal.aborted) showToast(error.message || bilingual('无法插入 PDF。', 'Unable to insert the PDF.'), 'error');
+    } finally {
+      picker.remove(); controller.abort(); pdfImport = null;
+    }
   }
 
   async function importHtmlEmbed(context) {
-    if (noteHtmlImporting || noteHtmlCleaning || !state.current) return;
+    if (noteHtmlImporting || noteEmbedCleaning || !state.current) return;
     const note = state.current, path = note.path, mode = state.viewMode, visibility = noteVisibilityEpoch;
     const command = 'insert:html-embed';
     const current = () => state.current === note && note.path === path && state.viewMode === mode
@@ -5598,6 +5795,8 @@
         if (rawText) liveEditor.executeCommand(name, context, rawText, clipboardHtml);
       } else if (name === 'insert:html-embed') {
         await importHtmlEmbed(context);
+      } else if (name === 'insert:pdf-embed') {
+        await importPdfEmbed(context);
       } else if (name === 'insert:database') {
         const target = state.current;
         if (liveEditor.executeCommand(name, context)) {
@@ -5643,6 +5842,7 @@
       : ['table', 'database', 'callout', 'cards', 'rule', 'code-block', 'math'];
     if (!paragraph && !highlight && canvasEnabled()) commands.splice(4, 0, 'canvas');
     if (!paragraph && !highlight && noteHtmlHost.native()) commands.splice(commands.indexOf('rule'), 0, 'html-embed');
+    if (!paragraph && !highlight) commands.splice(commands.indexOf('rule'), 0, 'pdf-embed');
     const submenu = document.createElement('div'); submenu.className = 'note-context-menu note-context-submenu';
     submenu.setAttribute('role', 'menu'); submenu.setAttribute('aria-label', parent.textContent);
     (highlight ? window.MarkdownMini.noteSyntax.highlightColors.map(item => item.id) : commands).forEach((kind, index) => {
@@ -5930,12 +6130,18 @@
       cleanup.disabled = !!(state.assetCleanupBusy || state.imageTextBusy);
       items.push(contextButton(tr('assets'), () => reveal(entry.path, true)), cleanup);
       if (options?.fileTree && noteHtmlHost.native()) {
-        const cleanupHtml = contextButton(language() === 'en' ? 'Clean up unused HTML' : '清理未使用的 HTML', () => cleanupUnusedHtml(entry.path));
+        const cleanupHtml = contextButton(language() === 'en' ? 'Clean up unused HTML' : '清理未使用的 HTML', () => cleanupUnusedEmbed(entry.path, 'html'));
         cleanupHtml.dataset.noteAction = 'cleanup-unused-html';
-        cleanupHtml.disabled = !!(noteHtmlCleaning || noteHtmlImporting || state.assetCleanupBusy || state.imageTextBusy || noteMovePromise);
+        cleanupHtml.disabled = !!(noteEmbedCleaning || noteHtmlImporting || pdfImport || state.assetCleanupBusy || state.imageTextBusy || noteMovePromise);
         items.push(cleanupHtml);
       }
-      const cleanupAttachments = contextButton(language() === 'en' ? 'Clean up unused attachments' : '清理未使用的附件', () => manageNoteDatabase(entry.path, 'cleanup'));
+      if (options?.fileTree && typeof window.pywebview?.api?.note_pdf_cleanup === 'function') {
+        const cleanupPdf = contextButton(language() === 'en' ? 'Clean up unused PDF' : '清理未使用的 PDF', () => cleanupUnusedEmbed(entry.path, 'pdf'));
+        cleanupPdf.dataset.noteAction = 'cleanup-unused-pdf';
+        cleanupPdf.disabled = !!(noteEmbedCleaning || noteHtmlImporting || pdfImport || state.assetCleanupBusy || state.imageTextBusy || noteMovePromise);
+        items.push(cleanupPdf);
+      }
+      const cleanupAttachments = contextButton(language() === 'en' ? 'Clean up unused database attachments' : '清理未使用的数据库附件', () => manageNoteDatabase(entry.path, 'cleanup'));
       const deleteDatabase = contextButton(language() === 'en' ? 'Delete database' : '删除数据库', () => manageNoteDatabase(entry.path, 'remove'), true);
       cleanupAttachments.dataset.noteAction = 'cleanup-unused-database-attachments';
       deleteDatabase.dataset.noteAction = 'delete-database';
@@ -6624,7 +6830,10 @@
       const entry = findEntry(state.current.path) || { kind: 'note', path: state.current.path, name: noteTitle(state.current.path) };
       const rect = action.getBoundingClientRect();
       openContextMenu(entry, rect.right - 220, rect.bottom + 6, { viewModes: true, source: 'current-menu' });
-    } else if (name === 'toggle-tree') root.classList.toggle('tree-overlay-open');
+    } else if (name === 'toggle-tree') {
+      if (pdfTreeState) attachmentTabMount?.reader?.closeNavigation();
+      else root.classList.toggle('tree-overlay-open');
+    }
     else if (name === 'toggle-notebooks') setSideOpen(!root.classList.contains('links-overlay-open'));
     else if (name === 'side-notebooks') setSideMode('notebooks');
     else if (name === 'side-links') setSideMode('links');
@@ -6705,7 +6914,7 @@
     });
     tabsEl.addEventListener('keydown', (event) => {
       const tab = event.target.dataset.noteTabPath;
-      if (!isHtmlTab(tab) || (event.key !== 'Enter' && event.key !== ' ')) return;
+      if (!isAttachmentTab(tab) || (event.key !== 'Enter' && event.key !== ' ')) return;
       event.preventDefault();
       activateTab(tab, { userSelected: true });
     });
@@ -6825,10 +7034,15 @@
     else if (event.ctrlKey && event.key === 'Tab') { event.preventDefault(); switchTab(event.shiftKey ? -1 : 1); }
     else if (mod && /^[1-9]$/.test(event.key) && state.tabs.length) { event.preventDefault(); const index = event.key === '9' ? state.tabs.length - 1 : Math.min(Number(event.key) - 1, state.tabs.length - 1); activateTab(state.tabs[index], { userSelected: true }); }
     else if (event.key === 'F2' && (state.selectedPath || state.current)) { event.preventDefault(); if (!browserResultsActive()) { const path = state.selectedPath || state.current.path; beginInlineRename(path, notebookTreeEl?.contains(event.target) || isNotebookRoot(path) ? notebookTreeEl : treeEl); } }
-    else if (event.key === 'Escape') { closeContextMenu(); root.classList.remove('tree-overlay-open'); }
+    else if (event.key === 'Escape') {
+      closeContextMenu();
+      if (pdfTreeState) attachmentTabMount?.reader?.closeNavigation();
+      else root.classList.remove('tree-overlay-open');
+    }
   });
   function flushWorkspaceState(keepalive) {
     const save = (async () => {
+      if (!(await flushPdfAnnotations({ keepalive }))) return false;
       if (!(await flushCanvases())) return false;
       if (state.current && !(await flushSave())) return false;
       for (const cached of state.documentCache.values()) if (cached !== state.current && hasPendingEdits(cached) && !(await flushSave(cached))) return false;
@@ -6895,11 +7109,14 @@
     }
   }
   document.addEventListener('visibilitychange', syncNotePageVisibility);
-  window.addEventListener('pagehide', () => { clearNoteTreeDrag(); aiPageHiding = true; noteDatabase?.setActive('', false); releaseHtmlTab(); noteHtmlEmbeds?.suspend(); closeNoteModal(); guideSequence++; guideController?.suspend(); aiSequence++; aiController?.suspend(true); indexActivity(false, true); });
+  window.addEventListener('pagehide', () => { clearNoteTreeDrag(); aiPageHiding = true; noteDatabase?.setActive('', false); releaseAttachmentTab(); noteHtmlEmbeds?.suspend(); notePdfReader?.suspend(); pdfImport?.abort(); closeNoteModal(); guideSequence++; guideController?.suspend(); aiSequence++; aiController?.suspend(true); indexActivity(false, true); });
   window.addEventListener('canvasdesktop:visibility', syncNotePageVisibility);
   window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeWorkspacePopovers(); cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0; stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
   window.addEventListener('pageshow', () => { aiPageHiding = false; state.linksRefreshSuspended = false; syncNotePageVisibility(); });
-  window.addEventListener('beforeunload', () => { cancelTabCloseMotion(); cancelTabScroll(); cancelLinksRefresh(); stopExternalSync(); flushWorkspaceState(true); });
+  window.addEventListener('beforeunload', event => {
+    cancelTabCloseMotion(); cancelTabScroll(); cancelLinksRefresh(); stopExternalSync(); flushWorkspaceState(true);
+    if (notePdfReader?.dirty()) { event.preventDefault(); event.returnValue = ''; }
+  });
   document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); noteGraph?.setLanguage(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.current?.path || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeSettingsDialog();

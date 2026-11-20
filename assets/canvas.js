@@ -5663,8 +5663,6 @@
 
     // ── 附件渲染：PDF（本地化 PDF.js）/ Markdown（MarkdownMini + MathJax）─────
     // PDF.js、cmaps、字体均离线打包在 assets/vendor/pdfjs/，封进 EXE 也照常工作。
-    const PDFJS_BASE = 'vendor/pdfjs/';
-    let pdfjsLibPromise = null;
     const attachPdfState = new Map();   // node.id -> { doc, src, ratio, observer, token }
     // 画布附件只在外层视口附近激活。PDF 页仍由正文自己的 observer 做第二层懒渲染。
     // runtime 不保存正文结果；离开预加载区后只留下外壳和轻量批注状态。
@@ -5725,22 +5723,10 @@
       return s.length + ':' + (h >>> 0).toString(36);
     }
 
-    function loadPdfjs() {
-      if (global.pdfjsLib) return Promise.resolve(global.pdfjsLib);
-      if (pdfjsLibPromise) return pdfjsLibPromise;
-      pdfjsLibPromise = new Promise((resolve, reject) => {
-        const s = document.createElement('script');
-        s.src = PDFJS_BASE + 'pdf.min.js';
-        s.onload = () => {
-          const lib = global.pdfjsLib;
-          if (!lib) { reject(new Error('PDF.js 未就绪')); return; }
-          lib.GlobalWorkerOptions.workerSrc = PDFJS_BASE + 'pdf.worker.min.js';
-          resolve(lib);
-        };
-        s.onerror = () => { pdfjsLibPromise = null; reject(new Error('PDF.js 加载失败')); };
-        document.head.appendChild(s);
-      });
-      return pdfjsLibPromise;
+    async function loadPdfjs() {
+      const runtime = await import('./pdf-runtime.js');
+      const library = await runtime.loadPdfLibrary();
+      return url => runtime.openPdfDocument(library, url);
     }
 
     function cancelPdfRenderTask(holder) {
@@ -6401,15 +6387,10 @@
       body.innerHTML = attachmentLoadingHtml('pdf');
       const id = node.id;
       let state = null;
-      loadPdfjs().then((lib) => {
+      loadPdfjs().then((openPdf) => {
         // PDF.js 脚本本身可能比节点生命周期更慢；已换资源时不再启动文档任务。
         if (!isCurrentAttachmentBody(id, body, src, generation)) return null;
-        const loadingTask = lib.getDocument({
-          url: src,
-          cMapUrl: PDFJS_BASE + 'cmaps/',
-          cMapPacked: true,
-          standardFontDataUrl: PDFJS_BASE + 'standard_fonts/',
-        });
+        const loadingTask = openPdf(src);
         state = {
           loadingTask: loadingTask, doc: null, src: src, ratio: 1.414, token: 0,
           observer: null, body: body, generation: generation,
@@ -20698,14 +20679,11 @@
       let loadingTask = null;
       let loadCancelled = false;
       Promise.all([
-        loadPdfjs().then(function (lib) {
+        loadPdfjs().then(function (openPdf) {
           if (loadCancelled || token !== indexPanePdfToken || indexReaderTargetId !== node.id) {
             throw new Error('PDF load superseded');
           }
-          loadingTask = lib.getDocument({
-            url: decorationAssetUrl(node), cMapUrl: PDFJS_BASE + 'cmaps/', cMapPacked: true,
-            standardFontDataUrl: PDFJS_BASE + 'standard_fonts/',
-          });
+          loadingTask = openPdf(decorationAssetUrl(node));
           indexPanePdfLoadingTask = loadingTask;
           return loadingTask.promise;
         }),
@@ -22653,14 +22631,11 @@
       let loadingTask = null;
       let loadCancelled = false;
       Promise.all([
-        loadPdfjs().then((lib) => {
+        loadPdfjs().then((openPdf) => {
           if (loadCancelled || !pdfReaderOpen || token !== pdfReaderToken || pdfReaderNodeId !== node.id) {
             throw new Error('PDF load superseded');
           }
-          loadingTask = lib.getDocument({
-            url: decorationAssetUrl(node), cMapUrl: PDFJS_BASE + 'cmaps/', cMapPacked: true,
-            standardFontDataUrl: PDFJS_BASE + 'standard_fonts/',
-          });
+          loadingTask = openPdf(decorationAssetUrl(node));
           pdfReaderLoadingTask = loadingTask;
           return loadingTask.promise;
         }),

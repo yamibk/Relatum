@@ -1323,6 +1323,7 @@ body.start-page[data-start-theme="dark"] .note-context-separator { background: r
 .note-modal-field input:focus { border-color: rgba(80, 95, 70, 0.46); box-shadow: 0 0 0 3px rgba(95,113,84,.11); }
 .note-modal-actions { display: flex; justify-content: flex-end; gap: 7px; }
 .note-html-cleanup-list { max-height: min(36vh, 240px); overflow: auto; padding-inline-start: 1.35em; overflow-wrap: anywhere; }
+.note-pdf-cleanup-annotated { margin-inline-start: .55em; color: var(--text-secondary); font-size: .82em; }
 .note-html-cleanup { --note-cleanup-ink: #000; --note-cleanup-surface: #fff; }
 body[data-start-theme="dark"] .note-html-cleanup { --note-cleanup-ink: #fff; --note-cleanup-surface: #000; }
 .note-html-cleanup .note-modal-actions { flex-wrap: wrap; }
@@ -30746,6 +30747,7 @@ html.dark-semantic-ui {
 .note-html-tab-panel { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: clip; border-radius: var(--note-theme-paper-radius, 0px); }
 .note-html-tab-panel[hidden] { display: none; }
 .note-html-tab-panel:focus { outline: none; }
+.note-tab .note-tab-pdf-icon { flex: none; width: 14px; height: 14px; opacity: .68; }
 .note-html-tab-status { margin: 20px; color: var(--text-secondary); }
 @media (max-width: 760px) {
   .note-html-tab-active .note-tab-actions > .note-mobile-pane-button { display: grid; }

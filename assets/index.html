@@ -1325,6 +1325,7 @@
         <symbol id="note-icon-rotate-ccw" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></symbol>
         <symbol id="note-icon-panel-left" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" /></symbol>
         <symbol id="note-icon-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></symbol>
+        <symbol id="note-icon-pdf" viewBox="0 0 24 24"><path d="M5 8V4a1.5 1.5 0 0 1 1.5-1.5H14l5 5V9m-5-6.5v5h5M5 17v3a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 20v-3"/><path d="M3 15.5v-5h2.5a1.3 1.3 0 0 1 0 2.6H3m7 2.4v-5h1.5a2.5 2.5 0 0 1 0 5H10zm7 0v-5h4m-4 2.5h3" stroke-width="1.5"/></symbol>
         <symbol id="note-icon-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
         <symbol id="note-icon-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></symbol>
         <symbol id="note-icon-panel-right-frame" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/></symbol>
@@ -1423,6 +1424,7 @@
         <span>本地目录 · notes/</span>
         <button type="button" data-note-action="reveal-root">在资源管理器中打开</button>
       </footer>
+      <section class="note-pdf-navigation" id="note-pdf-navigation" data-role="note-pdf-navigation" aria-label="PDF 页面导航" hidden inert></section>
     </aside>
 
     <section class="note-document-pane">
@@ -1438,6 +1440,8 @@
         </div>
       </nav>
       <section class="note-html-tab-panel" id="note-html-tab-panel" data-role="note-html-tab-panel"
+        role="tabpanel" tabindex="0" hidden inert></section>
+      <section class="note-html-tab-panel note-pdf-tab-panel" id="note-pdf-tab-panel" data-role="note-pdf-tab-panel"
         role="tabpanel" tabindex="0" hidden inert></section>
       <section class="note-graph-panel" id="note-graph-panel" data-role="note-graph-panel" data-feature="notes.graph"
         role="tabpanel" tabindex="0" hidden inert>

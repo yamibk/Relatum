@@ -93,9 +93,12 @@
   const blockLayoutEffect = StateEffect.define();
   let databaseBlocksEnabled;
   let htmlEmbedsEnabled;
+  let pdfEmbedsEnabled;
   const databaseOpener = /^```database[\t ]+([a-z0-9][a-z0-9-]{0,47})[\t ]*$/m;
   const htmlEmbedOpener = /^```html-embed[\t ]+([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})(?:[\t ]+(auto|[1-9][0-9]{2,3})x([1-9][0-9]{2,3}))?(?:[\t ]+zoom=([1-9][0-9]{1,2})%)?[\t ]*$/m;
   const htmlEmbedLimits = { minWidth: 240, maxWidth: 1600, minHeight: 160, maxHeight: 1200, minZoom: 50, maxZoom: 100 };
+  const pdfEmbedOpener = /^```pdf-embed[\t ]+([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})(?:[\t ]+(auto|[1-9][0-9]{2,3})x([1-9][0-9]{2,3}))?[\t ]*$/m;
+  const attachmentOpeners = { 'html-embed': htmlEmbedOpener, 'pdf-embed': pdfEmbedOpener };
 
   function htmlEmbedSize(match) {
     const width = !match[2] || match[2] === 'auto' ? null : Number(match[2]);
@@ -1187,8 +1190,8 @@
     if (opener.from !== node.from || closer.number <= opener.number || closer.to - opener.from > RICH_BLOCK_LIMIT
         || !match || !/^```[\t ]*$/.test(closer.text)
         || !/^[\t \n]*$/.test(doc.sliceString(opener.to + 1, closer.from))) return null;
-    const size = pattern === htmlEmbedOpener ? htmlEmbedSize(match) : null;
-    if (pattern === htmlEmbedOpener && !size) return null;
+    const size = pattern !== databaseOpener ? htmlEmbedSize(match) : null;
+    if (pattern !== databaseOpener && !size) return null;
     return { id: match[1], to: closer.to, source: doc.sliceString(opener.from, closer.to), size };
   }
 
@@ -1294,6 +1297,7 @@
     const seen = new Set();
     const databaseEnabled = databaseBlocksEnabled && state.field(databaseBlocksEnabled, false);
     const htmlEnabled = htmlEmbedsEnabled && state.field(htmlEmbedsEnabled, false);
+    const pdfEnabled = pdfEmbedsEnabled && state.field(pdfEmbedsEnabled, false);
     let referencePositions;
     let reusableMedia;
     const protectedBlocks = [];
@@ -1337,12 +1341,13 @@
           const quote = window.MarkdownMini.quoteLine(firstLine.text);
           const opener = fenceStart(quote.text);
           if (!opener) return false;
-          if (opener.language === 'database' && databaseEnabled || opener.language === 'html-embed' && htmlEnabled) {
+          if (opener.language === 'database' && databaseEnabled || opener.language === 'html-embed' && htmlEnabled
+              || opener.language === 'pdf-embed' && pdfEnabled) {
             const database = opener.language === 'database';
-            const marker = referenceFence(doc, node.node, database ? databaseOpener : htmlEmbedOpener);
+            const marker = referenceFence(doc, node.node, database ? databaseOpener : attachmentOpeners[opener.language]);
             if (marker && (database || node.from >= (metadata?.to || 0))) {
               (referencePositions ||= new Set()).add(node.from);
-              const identity = database ? { databaseId: marker.id } : { htmlEmbedId: marker.id, htmlEmbedSize: marker.size };
+              const identity = database ? { databaseId: marker.id } : { embedId: marker.id, embedSize: marker.size };
               push({ from: node.from, to: marker.to, kind: opener.language, source: marker.source, ...identity });
             }
             return false;
@@ -1411,7 +1416,7 @@
       excludeReferenceMath(doc, referencePositions, protectedBlocks, sourceStart);
       for (let index = raw.length - 1; index >= 0; index--) {
         const spec = raw[index];
-        if ((spec.kind === 'database' || spec.kind === 'html-embed')
+        if ((spec.kind === 'database' || Object.hasOwn(attachmentOpeners, spec.kind))
             && (!referencePositions.has(spec.from) || comments.some(range => range.from <= spec.from && range.to > spec.from))) raw.splice(index, 1);
       }
     }
@@ -3299,6 +3304,8 @@
     delete host.__relatumReadingDatabases;
     host.__relatumReadingHtmlEmbeds?.forEach(dispose => dispose());
     delete host.__relatumReadingHtmlEmbeds;
+    host.__relatumReadingPdfEmbeds?.forEach(dispose => dispose());
+    delete host.__relatumReadingPdfEmbeds;
     if (host.__relatumReadingCode) host.__relatumReadingCode.destroy();
     delete host.__relatumReadingCode;
     host.querySelectorAll('[data-canvas-source]').forEach(frame => frame.__noteCanvas?.destroy());
@@ -3335,10 +3342,12 @@
     const hasCallouts = />\s*\[!/.test(renderedSource);
     const hasDatabaseCandidate = (printing || safeOptions.database) && databaseOpener.test(original);
     const hasHtmlCandidate = (printing || safeOptions.htmlEmbed) && htmlEmbedOpener.test(original);
+    const hasPdfCandidate = (printing || safeOptions.pdfEmbed) && pdfEmbedOpener.test(original);
     // Headings need original offsets; Callout ranges follow the rendered source.
-    const initialTree = hasDatabaseCandidate || hasHtmlCandidate || hasCallouts && !canvasRefs.length ? headingParser().parse(original) : null;
+    const initialTree = hasDatabaseCandidate || hasHtmlCandidate || hasPdfCandidate || hasCallouts && !canvasRefs.length ? headingParser().parse(original) : null;
     const databasePositions = hasDatabaseCandidate ? databaseBlockPositions(original, initialTree) : null;
     const htmlPositions = hasHtmlCandidate ? referenceBlockPositions(original, initialTree, htmlEmbedOpener) : null;
+    const pdfPositions = hasPdfCandidate ? referenceBlockPositions(renderedSource, canvasRefs.length ? null : initialTree, pdfEmbedOpener) : null;
     let canvasShift = 0, canvasIndex = 0;
     const noteHeadings = noteHeadingsFromString(original, { initialTree }).map(heading => {
       while (canvasIndex < canvasRefs.length && canvasRefs[canvasIndex].to <= heading.from) {
@@ -3372,6 +3381,12 @@
           if (printing) return '<p class="note-html-embed-print">' + label + '</p>';
           const marker = htmlPositions.get(block.from);
           return '<div class="note-html-embed" data-html-embed-id="' + marker.id + '" style="' + htmlEmbedStyle(marker.size) + '">' + label + '</div>';
+        }
+        if (block.language === 'pdf-embed' && pdfPositions?.has(block.from)) {
+          const label = document.documentElement.lang === 'en' ? 'PDF attachment' : 'PDF 附件';
+          if (printing) return '<p class="note-pdf-embed-print">' + label + '</p>';
+          const marker = pdfPositions.get(block.from);
+          return '<div class="note-html-embed note-pdf-embed" data-pdf-embed-id="' + marker.id + '" style="' + htmlEmbedStyle(marker.size) + '">' + label + '</div>';
         }
         return printing && block.language === 'quiz' ? null : noteFence(block);
       },
@@ -3528,6 +3543,10 @@
     if (htmlPositions?.size) {
       host.__relatumReadingHtmlEmbeds = Array.from(content.querySelectorAll('[data-html-embed-id]'), element =>
         safeOptions.htmlEmbed.mount(element, { path: notePath, id: element.dataset.htmlEmbedId, mode: 'reading', onLayout: readingLayout }));
+    }
+    if (pdfPositions?.size && safeOptions.pdfEmbed && !printing) {
+      host.__relatumReadingPdfEmbeds = Array.from(content.querySelectorAll('[data-pdf-embed-id]'), element =>
+        safeOptions.pdfEmbed.mount(element, { path: notePath, id: element.dataset.pdfEmbedId, mode: 'reading', onLayout: readingLayout }));
     }
     host.__relatumReadingCode = prepareReadingCode(content, current);
     if (result.features && result.features.mermaid && mermaidEnabled()) {
@@ -4116,7 +4135,7 @@
   }
 
   function blockIsProjected(spec, activeIds) {
-    return usesBlockReplacement(spec) && (spec.kind === 'database' || spec.kind === 'html-embed' || spec.kind === 'media' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'table' || !activeIds.has(spec.id));
+    return usesBlockReplacement(spec) && (spec.kind === 'database' || Object.hasOwn(attachmentOpeners, spec.kind) || spec.kind === 'media' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'table' || !activeIds.has(spec.id));
   }
 
   class DatabaseBlockWidget extends WidgetType {
@@ -4146,44 +4165,46 @@
     destroy(element) { element.__relatumDatabaseDispose?.(); }
   }
 
-  class HtmlEmbedWidget extends WidgetType {
+  class AttachmentEmbedWidget extends WidgetType {
     constructor(spec, path, options) { super(); this.spec = spec; this.path = path; this.options = options; }
-    get estimatedHeight() { return this.options.htmlEmbed.native() ? this.spec.htmlEmbedSize.height + 48 : 42; }
-    matches(other) { return other && this.spec.id === other.spec.id && this.spec.htmlEmbedId === other.spec.htmlEmbedId && this.path === other.path && this.options === other.options; }
+    get pdf() { return this.spec.kind === 'pdf-embed'; }
+    get estimatedHeight() { return this.pdf || this.options.htmlEmbed.native() ? this.spec.embedSize.height + 48 : 42; }
+    matches(other) { return other && this.spec.kind === other.spec.kind && this.spec.id === other.spec.id && this.spec.embedId === other.spec.embedId && this.path === other.path && this.options === other.options; }
     eq(other) {
-      return this.matches(other) && this.spec.htmlEmbedSize.width === other.spec.htmlEmbedSize.width
-        && this.spec.htmlEmbedSize.height === other.spec.htmlEmbedSize.height
-        && this.spec.htmlEmbedSize.zoom === other.spec.htmlEmbedSize.zoom;
+      return this.matches(other) && this.spec.embedSize.width === other.spec.embedSize.width
+        && this.spec.embedSize.height === other.spec.embedSize.height
+        && this.spec.embedSize.zoom === other.spec.embedSize.zoom;
     }
     applySize(element) {
-      const size = this.spec.htmlEmbedSize;
+      const size = this.spec.embedSize;
       element.style.cssText = htmlEmbedStyle(size);
       element.querySelector('.note-html-zoom')?.setAttribute('aria-valuenow', String(size.zoom));
     }
     toDOM(view) {
       const element = document.createElement('div');
-      element.className = 'note-html-embed'; element.contentEditable = 'false';
-      element.dataset.htmlEmbedId = this.spec.htmlEmbedId;
+      element.className = 'note-html-embed' + (this.pdf ? ' note-pdf-embed' : ''); element.contentEditable = 'false';
+      element.dataset[this.pdf ? 'pdfEmbedId' : 'htmlEmbedId'] = this.spec.embedId;
       this.applySize(element);
       const holder = element.__relatumHtmlEmbed = { widget: this };
       const controls = view.state.readOnly ? null : {
-        move: (event, canMove) => this.options.onMoveHtmlEmbed(event, this.spec.id, this.path, canMove),
-        remove: () => this.options.onRemoveHtmlEmbed(this.spec.id, this.path),
-        resize: () => this.options.onResizeHtmlEmbed(this.spec.id, this.path),
-        getSize: () => holder.widget.spec.htmlEmbedSize,
+        move: (event, canMove) => this.options.onMoveAttachmentEmbed(event, this.spec.id, this.path, this.spec.kind, canMove),
+        remove: () => this.options.onRemoveAttachmentEmbed(this.spec.id, this.path, this.spec.kind),
+        resize: () => this.options.onResizeAttachmentEmbed(this.spec.id, this.path, this.spec.kind),
+        getSize: () => holder.widget.spec.embedSize,
         limits: htmlEmbedLimits,
       };
-      holder.dispose = this.options.htmlEmbed.mount(element, { path: this.path, id: this.spec.htmlEmbedId, mode: 'live', controls,
+      const host = this.pdf ? this.options.pdfEmbed : this.options.htmlEmbed;
+      holder.dispose = host.mount(element, { path: this.path, id: this.spec.embedId, mode: 'live', controls,
         onLayout: () => { if (element.isConnected) view.requestMeasure(); } });
       return element;
     }
     updateDOM(element, view) {
       const holder = element.__relatumHtmlEmbed;
       if (!this.matches(holder?.widget)) return false;
-      const previous = holder.widget.spec.htmlEmbedSize;
+      const previous = holder.widget.spec.embedSize;
       holder.widget = this;
       this.applySize(element);
-      if (previous.width !== this.spec.htmlEmbedSize.width || previous.height !== this.spec.htmlEmbedSize.height) view.requestMeasure();
+      if (previous.width !== this.spec.embedSize.width || previous.height !== this.spec.embedSize.height) view.requestMeasure();
       return true;
     }
     ignoreEvent(event) {
@@ -4392,7 +4413,7 @@
     }
     if (spec.kind === 'quiz') return new QuizBlockWidget(spec, path, options, coordinator, selected);
     if (spec.kind === 'database') return new DatabaseBlockWidget(spec, path, options.database, options.onMoveDatabaseBlock);
-    if (spec.kind === 'html-embed') return new HtmlEmbedWidget(spec, path, options);
+    if (Object.hasOwn(attachmentOpeners, spec.kind)) return new AttachmentEmbedWidget(spec, path, options);
     if (spec.kind === 'canvas') return new CanvasBlockWidget(spec, path, options, coordinator, selected);
     const widget = spec.kind === 'table' && options.tableController && spec.tableModel
       ? options.tableController.widget(spec, path, coordinator)
@@ -4405,7 +4426,7 @@
     // to deliver native input without a keydown to the selected image text box.
     const imageTextInput = spec.kind === 'image' && spec.from === 0 && spec.to === state.doc.length
       && options.imageTextController?.active;
-    return !imageTextInput && (spec.kind === 'media' || spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz' || spec.kind === 'table' || spec.kind === 'database' || spec.kind === 'html-embed' || editableFence(spec));
+    return !imageTextInput && (spec.kind === 'media' || spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz' || spec.kind === 'table' || spec.kind === 'database' || Object.hasOwn(attachmentOpeners, spec.kind) || editableFence(spec));
   }
 
   function blockAtomicRange(spec, state) {
@@ -6232,7 +6253,7 @@
     const trailing = after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
     const insert = leading + '```' + kind + ' ' + identity + '\n```' + trailing;
     view.dispatch({ changes: { from: at, insert }, userEvent: 'input.note-command',
-      ...(kind === 'html-embed' ? { annotations: CM.isolateHistory.of('full') } : {}),
+      ...(Object.hasOwn(attachmentOpeners, kind) ? { annotations: CM.isolateHistory.of('full') } : {}),
       ...(moveSelection ? { selection: EditorSelection.cursor(Math.min(at + insert.length + Number(after.startsWith('\n')), doc.length + insert.length)), scrollIntoView: true } : {}) });
     return true;
   }
@@ -6349,8 +6370,8 @@
     const position = changes.mapPos(at, -1) + leading.length;
     // An unfinished fence, comment or math block can consume a seemingly valid drop.
     const database = spec.kind === 'database';
-    const pattern = database ? databaseOpener : htmlEmbedOpener;
-    const id = database ? spec.databaseId : spec.htmlEmbedId;
+    const pattern = database ? databaseOpener : attachmentOpeners[spec.kind];
+    const id = database ? spec.databaseId : spec.embedId;
     if (referenceBlockPositions(changes.apply(doc).toString(), null, pattern).get(position)?.id !== id) return null;
     return { changes, position };
   }
@@ -6537,9 +6558,9 @@
       imageTextDefaults: { size: 'md', color: 'white' },
     }, options);
     safeOptions.onMoveDatabaseBlock = (event, id, path, canMove) => startReferenceMove(event, id, path, 'database', canMove);
-    safeOptions.onMoveHtmlEmbed = (event, id, path, canMove) => startReferenceMove(event, id, path, 'html-embed', canMove);
-    safeOptions.onRemoveHtmlEmbed = removeHtmlEmbed;
-    safeOptions.onResizeHtmlEmbed = prepareHtmlEmbedResize;
+    safeOptions.onMoveAttachmentEmbed = startReferenceMove;
+    safeOptions.onRemoveAttachmentEmbed = removeAttachmentEmbed;
+    safeOptions.onResizeAttachmentEmbed = prepareAttachmentEmbedResize;
     let imagePreviewPointer = null;
     const inputSession = {
       phase: 'idle',
@@ -7512,6 +7533,7 @@
         noteSyntaxField,
         ...(options.database ? [databaseBlocksEnabled ||= StateField.define({ create: () => true, update: value => value })] : []),
         ...(options.htmlEmbed ? [htmlEmbedsEnabled ||= StateField.define({ create: () => true, update: value => value })] : []),
+        ...(options.pdfEmbed ? [pdfEmbedsEnabled ||= StateField.define({ create: () => true, update: value => value })] : []),
         extensionCompartment.of(extensionHost ? extensionHost.configuration() : []),
         codeHighlighting,
         livePreviewCompartment.of(livePreviewExtensions()),
@@ -7876,37 +7898,37 @@
 
     const view = new EditorView({ state: makeState(options.value || '', EditorSelection.cursor(0)), parent: host });
 
-    function editableHtmlEmbed(id, path) {
+    function editableAttachmentEmbed(id, path, kind) {
       if (destroyed || sourceMode || view.state.readOnly || path !== currentPath || inputPending()
         || imageTextController.active || !noteRenderForeground(view) || cancelReferenceMove) return null;
       const spec = view.state.field(blockField, false)?.byId.get(id);
-      return spec?.kind === 'html-embed' ? spec : null;
+      return spec?.kind === kind ? spec : null;
     }
 
-    function removeHtmlEmbed(id, path) {
-      const spec = editableHtmlEmbed(id, path);
+    function removeAttachmentEmbed(id, path, kind) {
+      const spec = editableAttachmentEmbed(id, path, kind);
       if (!spec) return false;
       view.dispatch({ changes: { from: spec.from, to: spec.to }, selection: EditorSelection.cursor(spec.from),
-        userEvent: 'delete.html-embed', annotations: CM.isolateHistory.of('full') });
+        userEvent: 'delete.' + kind, annotations: CM.isolateHistory.of('full') });
       view.focus();
       return true;
     }
 
-    function prepareHtmlEmbedResize(id, path) {
-      const spec = editableHtmlEmbed(id, path);
+    function prepareAttachmentEmbedResize(id, path, kind) {
+      const spec = editableAttachmentEmbed(id, path, kind);
       if (!spec) return null;
       const { doc } = view.state;
       return ({ width, height, zoom }, keepFocus = false) => {
-        if (doc !== view.state.doc || !editableHtmlEmbed(id, path)) return false;
+        if (doc !== view.state.doc || !editableAttachmentEmbed(id, path, kind)) return false;
         const line = doc.lineAt(spec.from);
-        const opener = '```html-embed ' + spec.htmlEmbedId
+        const opener = '```' + kind + ' ' + spec.embedId
           + (width === null && height === 480 ? '' : ' ' + (width ?? 'auto') + 'x' + height)
-          + (zoom === 100 ? '' : ' zoom=' + zoom + '%');
-        const match = htmlEmbedOpener.exec(opener);
+          + (kind === 'html-embed' && zoom !== 100 ? ' zoom=' + zoom + '%' : '');
+        const match = attachmentOpeners[kind].exec(opener);
         if (!match || !htmlEmbedSize(match)) return false;
-        if (width === spec.htmlEmbedSize.width && height === spec.htmlEmbedSize.height && zoom === spec.htmlEmbedSize.zoom) return false;
+        if (width === spec.embedSize.width && height === spec.embedSize.height && zoom === spec.embedSize.zoom) return false;
         view.dispatch({ changes: { from: line.from, to: line.to, insert: opener },
-          userEvent: 'input.html-embed-size', annotations: CM.isolateHistory.of('full') });
+          userEvent: 'input.' + kind + '-size', annotations: CM.isolateHistory.of('full') });
         if (!keepFocus) view.focus();
         return true;
       };
@@ -8567,6 +8589,7 @@
       if (name === 'insert:canvas' && !canvasEnabled()) return { enabled: false, checked: false };
       if (name === 'insert:database') return { enabled: !!options.database && !view.state.readOnly && view.state.selection.ranges.length === 1, checked: false };
       if (name === 'insert:html-embed') return { enabled: !!options.htmlEmbed?.native() && !view.state.readOnly && view.state.selection.ranges.length === 1, checked: false };
+      if (name === 'insert:pdf-embed') return { enabled: !!options.pdfEmbed && !view.state.readOnly && view.state.selection.ranges.length === 1, checked: false };
       if (name === 'insert:cards-template') return { enabled: cardsTemplateAllowed(view.state), checked: false };
       if (name === 'insert:cards') return { enabled: view.state.selection.ranges.length === 1 && !protectedParagraph(view.state, paragraphLines(view.state)), checked: false };
       if (name === 'insert:table' || name === 'insert:rule' || name === 'insert:canvas') {
@@ -8605,9 +8628,10 @@
       if (name.startsWith('highlight-color:')) done = applyHighlightColor(view, name.slice(16));
       else if (name.startsWith('paragraph:')) done = paragraphCommand(view, name.slice(10));
       else if (name === 'insert:database') done = insertDatabaseBlock(view, view.state.selection.main.to, true);
-      else if (name === 'insert:html-embed') {
-        if (typeof text !== 'string' || htmlEmbedOpener.exec('```html-embed ' + text)?.[1] !== text) return false;
-        done = insertReferenceBlock(view, view.state.selection.main.to, true, 'html-embed', text);
+      else if (name === 'insert:html-embed' || name === 'insert:pdf-embed') {
+        const kind = name.slice(7);
+        if (typeof text !== 'string' || attachmentOpeners[kind].exec('```' + kind + ' ' + text)?.[1] !== text) return false;
+        done = insertReferenceBlock(view, view.state.selection.main.to, true, kind, text);
       }
       else if (name.startsWith('insert:')) done = insertBlockCommand(view, name.slice(7), document.documentElement.lang === 'en', text);
       else if (name === 'cut' && selectedMermaid(view)) done = deleteSelectedMermaid(view);

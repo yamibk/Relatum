@@ -482,6 +482,7 @@ class DesktopBridge:
         self._note_html_origin = ''
         self._note_html_runtime = None
         self._note_html_cleanup_plan = None
+        self._note_pdf_cleanup_plan = None
         self._geometry_lock = threading.RLock()
         self._geometry_timer = None
         self._geometry_closed = False
@@ -597,32 +598,62 @@ class DesktopBridge:
         return {"status": "error"}
 
     def _note_html_cleanup(self, action, path, identity):
+        return self._note_attachment_cleanup('html', action, path, identity)
+
+    def note_pdf_cleanup(self, action, path=None, identity=None, protected=None):
+        from notes_library import NotesError
+
+        if (not self._note_html_origin or self._window is None or sys.platform != 'win32'
+                or action not in ('plan-cleanup', 'recycle-cleanup')):
+            return {"status": "unavailable"}
+        try:
+            return self._note_attachment_cleanup('pdf', action, path, identity, protected)
+        except NotesError as error:
+            return {"status": "error", "code": error.code}
+        except OSError:
+            logging.getLogger(__name__).exception('Note PDF cleanup failed')
+            return {"status": "error", "code": "cleanup_failed"}
+
+    def _note_attachment_cleanup(self, kind, action, path, identity, protected=None):
+        from note_pdf_annotations import identifier, unused
+
+        plan_field = '_note_pdf_cleanup_plan' if kind == 'pdf' else '_note_html_cleanup_plan'
         with app._cross_process_mutation_lock(), app.NOTES_MUTATION_LOCK:
             store = app.NOTES_STORE
             path = store.normalize_path(path)
+            if kind == 'pdf':
+                if not isinstance(protected, list) or not all(identifier(key) for key in protected):
+                    return {"status": "error", "code": "invalid_pdf"}
+                skip = frozenset(protected)
+                scan = lambda: unused(store, path, skip)
+            else:
+                scan = lambda: store.unused_html_embeds(path)
             if action == 'plan-cleanup':
-                self._note_html_cleanup_plan = None
-                revision, candidates = store.unused_html_embeds(path)
+                setattr(self, plan_field, None)
+                revision, candidates = scan()
                 if not candidates:
                     return {"status": "ok", "names": []}
                 token = secrets.token_urlsafe(24)
-                self._note_html_cleanup_plan = (token, path, revision, candidates, time.monotonic() + 300)
-                return {"status": "ok", "token": token, "names": sorted(item[1] for item in candidates.values())}
+                setattr(self, plan_field, (token, path, revision, candidates, time.monotonic() + 300))
+                items = sorted(candidates.values(), key=lambda item: item[1])
+                return {"status": "ok", "token": token, "names": [item[1] for item in items],
+                        **({"files": [{"name": item[1], "annotated": item[3]} for item in items]} if kind == 'pdf' else {})}
 
-            plan = self._note_html_cleanup_plan
+            plan = getattr(self, plan_field)
             if not plan or (identity, path) != plan[:2]:
                 return {"status": "error", "code": "note_changed"}
-            self._note_html_cleanup_plan = None
+            setattr(self, plan_field, None)
             _, _, revision, candidates, expires = plan
-            current_revision, current = store.unused_html_embeds(path)
+            current_revision, current = scan()
             if (time.monotonic() >= expires or current_revision != revision
+                    or (kind == 'pdf' and current != candidates)
                     or any(current.get(key) != entry for key, entry in candidates.items())):
                 return {"status": "error", "code": "note_changed"}
             targets = [entry[0] for entry in candidates.values()]
             try:
                 app._recycle_note_media(targets)
             except OSError:
-                logging.getLogger(__name__).exception('Could not recycle all unused HTML attachments')
+                logging.getLogger(__name__).exception('Could not recycle all unused %s attachments', kind.upper())
             recycled = [key for key, entry in candidates.items() if not os.path.lexists(entry[0])]
             return {"status": "ok", "recycledCount": len(recycled), "failedCount": len(targets) - len(recycled),
                     "recycledIds": recycled}
