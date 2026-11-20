@@ -552,6 +552,7 @@ export function create({ language, isCurrent, icon, onDirty, confirmReload }) {
   }
 
   function mount(host, options) {
+    host.setAttribute('data-ui-tooltip-disabled', '');
     const bar = element('div', 'note-html-embed-bar');
     const title = element('span', '', 'PDF');
     const pageLabel = element('span', 'note-pdf-page-label');

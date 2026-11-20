@@ -338,6 +338,7 @@
       releaseAttachmentTab();
     }
     root.classList.toggle('note-html-tab-active', show);
+    tabActions?.toggleAttribute('data-ui-tooltip-disabled', show);
     htmlTabPanel.hidden = htmlTabPanel.inert = !show || pdf;
     if (pdfTabPanel) pdfTabPanel.hidden = pdfTabPanel.inert = !pdf;
     if (tab) panel.setAttribute('aria-label', tab.name);
@@ -3497,6 +3498,7 @@
       if (graph || attachment) tab.setAttribute('aria-controls', graph ? 'note-graph-panel' : 'note-' + attachment.kind + '-tab-panel');
       else tab.removeAttribute('aria-controls');
       if (attachment) tab.setAttribute('aria-label', title);
+      tab.toggleAttribute('data-ui-tooltip-disabled', !!attachment);
       tab.title = title;
       tab.tabIndex = tabPath === activeTab ? 0 : -1;
       tab.draggable = true;
@@ -5840,7 +5842,7 @@
     const highlight = parent.dataset.noteSubmenu === 'highlight-color';
     const commands = paragraph ? ['bullet', 'ordered', 'task', 'heading-1', 'heading-2', 'heading-3', 'heading-4', 'heading-5', 'heading-6', 'body', 'quote']
       : ['table', 'database', 'callout', 'cards', 'rule', 'code-block', 'math'];
-    if (!paragraph && !highlight && canvasEnabled()) commands.splice(4, 0, 'canvas');
+    if (!paragraph && !highlight && canvasEnabled()) commands.splice(commands.indexOf('cards'), 0, 'canvas');
     if (!paragraph && !highlight && noteHtmlHost.native()) commands.splice(commands.indexOf('rule'), 0, 'html-embed');
     if (!paragraph && !highlight) commands.splice(commands.indexOf('rule'), 0, 'pdf-embed');
     const submenu = document.createElement('div'); submenu.className = 'note-context-menu note-context-submenu';

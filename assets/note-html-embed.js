@@ -239,6 +239,7 @@
     }
 
     function mount(host, { path, id, mode, onLayout, controls, onOpen }) {
+      host.setAttribute('data-ui-tooltip-disabled', '');
       const bar = document.createElement('div'), title = document.createElement('span');
       const status = document.createElement('span'), button = document.createElement('button');
       const stage = document.createElement('div');

@@ -2,6 +2,7 @@
   'use strict';
 
   const TOOLTIP_SELECTOR = '[data-ui-tooltip]';
+  const DISABLED_SELECTOR = '[data-ui-tooltip-disabled]';
   const TITLE_SELECTOR = '[title]';
   const FOCUS_DELAY = 80;
   const VIEWPORT_GAP = 10;
@@ -50,7 +51,7 @@
   }
 
   function tooltipText(element) {
-    return element && String(element.dataset.uiTooltip || '').trim();
+    return element && !element.closest(DISABLED_SELECTOR) ? String(element.dataset.uiTooltip || '').trim() : '';
   }
 
   function migrateTitle(element) {
@@ -73,7 +74,7 @@
     }
     element.removeAttribute('title');
     if (activeElement === element) {
-      if (!text) hide(true);
+      if (!tooltipText(element)) hide(true);
       else if (tooltip) {
         tooltip.querySelector('.ui-tooltip-copy').textContent = text;
         positionTooltip(element);
@@ -205,7 +206,8 @@
     const observer = new MutationObserver((records) => {
       records.forEach((record) => {
         if (record.type === 'attributes') {
-          migrateTitle(record.target);
+          if (record.attributeName === 'title') migrateTitle(record.target);
+          else if (activeElement && !tooltipText(activeElement)) hide(true);
           return;
         }
         record.addedNodes.forEach((node) => {
@@ -217,7 +219,7 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['title']
+      attributeFilter: ['title', 'data-ui-tooltip-disabled']
     });
 
     document.addEventListener('pointerover', (event) => {
