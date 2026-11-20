@@ -615,7 +615,7 @@
     const target = event.target;
     if (!(target instanceof Element)) return;
     if (target.closest('input, textarea, [contenteditable]:not([contenteditable="false"])')) return;
-    if (target.closest('.calendar-date-range-summary, .calendar-date-range-list')) return;
+    if (target.closest('.calendar-date-range-summary, .calendar-date-range-list, .note-pdf-text')) return;
     event.preventDefault();
   });
 

@@ -206,13 +206,29 @@
     },
   };
   let notePdfReader, notePdfLoader, pdfStyles, pdfImport;
+  let noteChoicesLoader;
+  function loadNoteChoices() {
+    if (noteChoicesLoader) return noteChoicesLoader;
+    const script = window.RelatumReviewControls ? null : document.createElement('script');
+    const ready = script && new Promise((resolve, reject) => {
+      script.src = 'review-controls.js';
+      script.onload = resolve;
+      script.onerror = () => reject(new Error(script.src));
+      document.head.append(script);
+    });
+    const styles = document.querySelector('link[href="review-controls.css"]')?.sheet || loadEmbedStyle('review-controls.css');
+    noteChoicesLoader = Promise.all([ready, styles]).catch(error => {
+      script?.remove(); noteChoicesLoader = null; throw error;
+    });
+    return noteChoicesLoader;
+  }
   function loadNotePdfReader() {
     if (notePdfLoader) return notePdfLoader;
     pdfStyles ||= loadEmbedStyle('note-pdf-reader.css').catch(error => { pdfStyles = null; throw error; });
     notePdfLoader = Promise.all([import('./note-pdf-reader.js'), loadEmbedStyles(), pdfStyles]).then(([module]) =>
       notePdfReader = module.create({
         language, isCurrent: attachmentIsCurrent, icon: noteIcon,
-        onDirty: () => desktopDirty(hasPendingEdits()), confirmReload: confirmPdfAnnotationReload,
+        onDirty: () => desktopDirty(hasPendingEdits()), confirmReload: confirmPdfAnnotationReload, notify: showToast,
       })
     ).catch(error => { notePdfLoader = null; throw error; });
     return notePdfLoader;
@@ -351,7 +367,8 @@
     attachmentTabMount = mount;
     const isCurrent = () => attachmentTabMount === mount && attachmentTabs.get(state.activeTab) === tab
       && noteWorkspaceVisible() && !state.openingPath && !noteMovePromise && !browserResultsActive();
-    (pdf ? loadNotePdfReader() : loadNoteHtmlEmbeds()).then(controller => {
+    const ready = pdf ? Promise.all([loadNotePdfReader(), loadNoteChoices()]).then(([reader]) => reader) : loadNoteHtmlEmbeds();
+    ready.then(controller => {
       if (!isCurrent()) return;
       const result = controller.mountTab(panel, { ...tab, isCurrent, onName(name) {
         if (tab.name === name) return;
@@ -6236,8 +6253,8 @@
           openSettings: trigger => setNoteSettingsOpen(true, { category: 'ai', trigger }), notify: showToast });
         resolve(aiController);
       };
-      function load(name, css, ready) {
-        if (ready?.() || css && document.querySelector('link[href="' + name + '"]')?.sheet) return Promise.resolve();
+      function load(name, css) {
+        if (css && document.querySelector('link[href="' + name + '"]')?.sheet) return Promise.resolve();
         return new Promise((done, failed) => {
           const element = document.createElement(css ? 'link' : 'script');
           if (css) { element.rel = 'stylesheet'; element.href = name; } else element.src = name;
@@ -6246,7 +6263,7 @@
           element.onload = () => finish(false); element.onerror = () => finish(true); document.head.append(element);
         });
       }
-      Promise.all([load('review-controls.js', false, () => !!window.RelatumReviewControls), load('review-controls.css', true),
+      Promise.all([loadNoteChoices(),
         load('note-ai.js', false, () => !!window.RelatumNoteAI), load('note-ai.css', true)]).then(create).catch(reject);
     }).catch(error => { aiLoader = null; throw error; });
     return aiLoader;

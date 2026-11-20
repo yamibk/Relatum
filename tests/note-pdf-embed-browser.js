@@ -157,6 +157,32 @@ async function waitFor(check, description = 'the test host') {
     const pageNumber = panel.getByRole('textbox', { name: 'Go to page' });
     const tree = page.locator('.note-sidebar-scroll');
     const tab = page.getByRole('tab', { name: filename });
+    async function dragPdfText(span) {
+      await span.waitFor();
+      const { start, end } = await span.evaluate(node => {
+        const text = node.firstChild;
+        const caret = document.createRange();
+        const position = offset => {
+          caret.setStart(text, offset);
+          caret.collapse(true);
+          const rect = caret.getBoundingClientRect();
+          return [rect.x + rect.width / 2, rect.y + rect.height / 2];
+        };
+        const between = (left, right, fraction) => left.map((value, axis) => value + (right[axis] - value) * fraction);
+        return {
+          start: between(position(0), position(1), .2),
+          end: between(position(text.length - 1), position(text.length), .8),
+        };
+      });
+      await page.mouse.move(...start);
+      await page.mouse.down();
+      try {
+        await page.mouse.move(...end, { steps: 12 });
+        return await page.evaluate(() => window.getSelection().toString());
+      } finally {
+        await page.mouse.up();
+      }
+    }
     assert.equal(await open('Lab.md'), true);
     assert.equal(await page.evaluate(() => Boolean(window.pdfjsLib)), false);
     const menu = page.locator('[data-role="note-context-menu"]');
@@ -195,6 +221,8 @@ async function waitFor(check, description = 'the test host') {
     await chooser.setFiles(fixture);
     await block.locator('.note-pdf-page canvas').first().waitFor();
     await page.waitForFunction(value => document.querySelector('.note-pdf-page-label')?.textContent === '1 / ' + value, pageCount);
+    const firstInlineText = block.locator('.note-pdf-page[data-page="1"] .note-pdf-text > span').first();
+    assert.equal(await dragPdfText(firstInlineText), 'Circuit page 1', 'mouse selects text in the live Markdown PDF block');
     const source = await waitFor(() => {
       const value = fs.readFileSync(path.join(notes, 'Lab.md'), 'utf8');
       return value.includes('pdf-embed') && value;
@@ -297,15 +325,38 @@ async function waitFor(check, description = 'the test host') {
     }), [], 'mixed-size pages rasterize only into corrected geometry');
     const annotations = panel.getByRole('toolbar', { name: 'PDF annotation tools' });
     const tool = name => annotations.getByRole('button', { name, exact: true });
+    const thickness = annotations.getByRole('slider', { name: 'Stroke width' });
+    const removeAnnotation = tool('Delete selected annotation');
+    const geometry = () => stage.evaluate(node => {
+      const { x, y, width, height } = node.getBoundingClientRect();
+      return { x, y, width, height };
+    });
+    const readingGeometry = await geometry();
+    assert.equal(await thickness.isVisible(), true);
+    assert.equal(await thickness.isDisabled(), true);
+    assert.equal(await removeAnnotation.isVisible(), true);
+    assert.equal(await removeAnnotation.isDisabled(), true);
+    assert.equal(await tool('Pen').locator('svg').count(), 1);
     const goTo = async number => {
       await pageNumber.fill(String(number));
       await pageNumber.press('Enter');
       await page.waitForFunction(value => document.querySelector('.note-pdf-page-input')?.value === String(value), number);
     };
     const sheet = number => panel.locator('.note-pdf-page[data-page="' + number + '"]');
+    const rotatedText = sheet(4).locator('.note-pdf-text > span').first();
+    assert.equal(await dragPdfText(rotatedText), 'Circuit page 4', 'mouse selects actual PDF text in reading mode');
+    assert.equal(await rotatedText.evaluate(node => getComputedStyle(node).cursor), 'text');
+    const selectionMark = sheet(4).locator('.note-pdf-selection path[d^="M"]');
+    await selectionMark.waitFor();
+    assert.equal(await selectionMark.evaluate(node => getComputedStyle(node).fill), 'rgba(87, 151, 208, 0.48)');
+    assert.equal(await sheet(4).evaluate(node => {
+      const { left, top } = node.getBoundingClientRect();
+      return getComputedStyle(document.elementFromPoint(left + 10, top + 10)).cursor;
+    }), 'default', 'blank paper has the arrow cursor');
     async function brush(name, number, from, to = from) {
       const button = tool(name);
       if (await button.getAttribute('aria-pressed') !== 'true') await button.click();
+      assert.deepEqual(await geometry(), readingGeometry, 'switching annotation tools preserves the reading area');
       const vector = sheet(number).locator('.note-pdf-annotations > svg');
       await vector.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       const box = await vector.boundingBox();
@@ -318,6 +369,7 @@ async function waitFor(check, description = 'the test host') {
     }
     await panel.getByRole('button', { name: 'Annotate', exact: true }).click();
     await waitFor(() => tool('Pen').isEnabled());
+    assert.deepEqual(await geometry(), readingGeometry, 'entering annotation mode preserves the reading area');
     const metadata = await (await fetch(appUrl + '/api/note-pdf?' + relative('Lab.md'))).json();
     const params = relative('Lab.md');
     params.set('assetRevision', metadata.assetRevision);
@@ -330,17 +382,9 @@ async function waitFor(check, description = 'the test host') {
     const savedMarks = async () => (await savedSnapshot()).annotations;
     for (const name of ['Highlight text', 'Underline']) {
       await tool(name).click();
-      const text = sheet(4).locator('.note-pdf-text > span').first();
-      await text.waitFor();
-      await text.evaluate(span => {
-        span.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
-        const range = document.createRange();
-        range.selectNodeContents(span);
-        const selection = window.getSelection();
-        selection.removeAllRanges(); selection.addRange(range);
-        span.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
-      });
+      if (name === 'Underline') assert.equal(await dragPdfText(rotatedText), 'Circuit page 4', 'tool-first drag selects the text');
       const mark = await waitFor(async () => (await savedMarks()).find(mark => mark.kind === (name === 'Underline' ? 'underline' : 'highlight')), name);
+      assert.equal(mark.text, 'Circuit page 4');
       const [, , end, start] = mark.quads[0];
       assert.ok(Math.abs(end[1] - start[1]) < .1 && end[0] - start[0] > 50,
         name + ' follows the text direction in PDF space: ' + JSON.stringify(mark.quads[0]));
@@ -381,8 +425,28 @@ async function waitFor(check, description = 'the test host') {
     await tool('Undo annotation').click();
     await tool('Eraser').click();
     await sheet(4).getByRole('button', { name: 'Open sticky note' }).click();
-    await annotations.getByRole('combobox', { name: 'Annotation color' }).selectOption('#3aa66e');
+    const color = annotations.getByRole('combobox', { name: 'Annotation color' });
+    await color.click();
+    const palette = page.getByRole('listbox', { name: 'Annotation color' });
+    await palette.waitFor();
+    const green = palette.getByRole('option', { name: 'Green', exact: true });
+    assert.equal(await green.evaluate(node => getComputedStyle(node, '::before').backgroundColor), 'rgb(58, 166, 110)');
+    if (process.env.RELATUM_ARTIFACT_DIR && !native) {
+      await page.screenshot({ path: path.join(process.env.RELATUM_ARTIFACT_DIR, 'note-pdf-toolbar.png'), scale: 'css' });
+    }
+    await color.press('Escape');
+    await palette.waitFor({ state: 'detached' });
+    assert.equal(await color.getAttribute('aria-expanded'), 'false');
+    await color.click();
+    await green.click();
     await waitFor(async () => (await savedMarks()).some(mark => mark.id === sticky.id && mark.color === '#3aa66e'), 'sticky note color');
+    await removeAnnotation.click();
+    await page.getByText('Annotation deleted. Undo is available.', { exact: true }).waitFor();
+    await waitFor(async () => !(await savedMarks()).some(mark => mark.id === sticky.id), 'removing the selected sticky note');
+    assert.equal(await removeAnnotation.isDisabled(), true);
+    await tool('Undo annotation').click();
+    await waitFor(async () => (await savedMarks()).some(mark => mark.id === sticky.id), 'undo the deletion');
+    assert.deepEqual(await geometry(), readingGeometry, 'saving and deleting annotations preserve reading geometry');
     const polygon = sheet(4).locator('[data-annotation-id="' + boxMark.id + '"] polygon');
     const position = () => polygon.evaluate(node => {
       const { width, height } = node.ownerSVGElement.viewBox.baseVal;
@@ -441,6 +505,7 @@ async function waitFor(check, description = 'the test host') {
     }), { times: 1 });
     await brush('Highlighter', 8, [180, 155], [225, 176]);
     await panel.getByText('Unable to save or read annotations.').waitFor();
+    assert.deepEqual(await geometry(), readingGeometry, 'save failure is displayed without shifting the paper');
     assert.equal((await savedMarks()).length, countBeforeRetry);
     await panel.getByRole('button', { name: 'Retry', exact: true }).click();
     await waitFor(async () => (await savedMarks()).length === countBeforeRetry + 1, 'saving on retry');
@@ -460,6 +525,7 @@ async function waitFor(check, description = 'the test host') {
     await panel.getByRole('button', { name: 'Annotate', exact: true }).click();
     await panel.getByRole('button', { name: 'Fit width' }).click();
     await page.keyboard.press('Control+f');
+    assert.deepEqual(await geometry(), readingGeometry, 'finding text does not shift the paper');
     await panel.getByRole('searchbox').fill('Circuit page 11');
     await panel.locator('.note-pdf-match span').first().waitFor();
     assert.equal(await pageNumber.inputValue(), '11');
@@ -476,6 +542,8 @@ async function waitFor(check, description = 'the test host') {
     await block.getByRole('button', { name: 'Open in new tab' }).waitFor();
     await block.locator('.note-pdf-scroll').evaluate(node => { node.scrollTop = 0; });
     await block.locator('.note-pdf-page[data-page="1"] .note-pdf-annotations [data-annotation-id]').first().waitFor();
+    assert.equal(await dragPdfText(block.locator('.note-pdf-page[data-page="1"] .note-pdf-text > span').first()),
+      'Circuit page 1', 'mouse selects text in the read-only Markdown PDF block');
     assert.equal(await block.getByRole('button', { name: 'Remove PDF block' }).count(), 0);
     await block.getByRole('button', { name: 'Open in new tab' }).click();
     assert.equal(await tab.count(), 1);

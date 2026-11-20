@@ -1,5 +1,22 @@
 const endpoint = '/api/note-pdf/annotations';
 const maximumUndo = 60;
+const expandedNotesKey = 'canvas:notePdfOpenSticky:v1';
+
+function stickyPreferences() {
+  let expanded = {};
+  try {
+    const data = JSON.parse(localStorage.getItem(expandedNotesKey));
+    if (data && typeof data === 'object' && !Array.isArray(data)) expanded = data;
+  } catch {}
+  return {
+    read(id) { return new Set(Array.isArray(expanded[id]) ? expanded[id] : []); },
+    write(id, notes) {
+      if (notes.size) expanded[id] = [...notes];
+      else delete expanded[id];
+      try { localStorage.setItem(expandedNotesKey, JSON.stringify(expanded)); } catch {}
+    },
+  };
+}
 
 async function request(url, options) {
   const response = await fetch(url, options);
@@ -8,7 +25,7 @@ async function request(url, options) {
   return data;
 }
 
-function createSession(path, id, assetRevision, onDirty) {
+function createSession(path, id, assetRevision, onDirty, sticky) {
   const records = new Map(), pages = new Map(), pending = new Map(), subscribers = new Set();
   const undo = [], redo = [];
   let pdfHash, revision, loading, saving, timer, firstEdit = 0, loaded = false, error = '';
@@ -31,6 +48,10 @@ function createSession(path, id, assetRevision, onDirty) {
       records.clear(); pages.clear(); pending.clear();
       inFlight = null;
       result.annotations.forEach(record => put(record.id, record));
+      const expanded = sticky.read(id);
+      const count = expanded.size;
+      for (const key of expanded) if (records.get(key)?.kind !== 'note') expanded.delete(key);
+      if (expanded.size !== count) sticky.write(id, expanded);
       pdfHash = result.pdfHash;
       revision = result.revision;
       lastRead = Date.now();
@@ -62,14 +83,20 @@ function createSession(path, id, assetRevision, onDirty) {
 
   function apply(changes) {
     const affected = new Set();
+    let expanded, expansionChanged = false;
     for (const [key, value] of changes) {
       const previous = records.get(key);
       if (previous) affected.add(previous.page);
       if (value) affected.add(value.page);
+      if (!value && previous?.kind === 'note') {
+        expanded ??= sticky.read(id);
+        if (expanded.delete(key)) expansionChanged = true;
+      }
       put(key, value);
       // Distinct queue entries prevent a late acknowledgement clearing a newer edit.
       pending.set(key, { value });
     }
+    if (expansionChanged) sticky.write(id, expanded);
     if (!firstEdit) firstEdit = Date.now();
     clearTimeout(timer);
     if (!error && !saving) timer = setTimeout(() => void flush(), Math.max(0, Math.min(600, 3000 - (Date.now() - firstEdit))));
@@ -168,6 +195,16 @@ function createSession(path, id, assetRevision, onDirty) {
     get canUndo() { return !!undo.length; },
     get canRedo() { return !!redo.length; },
     get: key => records.get(key),
+    expandedNotes: () => sticky.read(id),
+    setNoteExpanded(key, open) {
+      const record = records.get(key);
+      if (record?.kind !== 'note') return;
+      const expanded = sticky.read(id);
+      if (expanded.has(key) === open) return;
+      if (open) expanded.add(key); else expanded.delete(key);
+      sticky.write(id, expanded);
+      notify(new Set([record.page]));
+    },
     onPage: number => (replacementVersion ? null : pages.get(number))?.values() || [],
     undo: () => moveHistory(undo, redo, 'before'),
     redo: () => moveHistory(redo, undo, 'after'),
@@ -177,6 +214,7 @@ function createSession(path, id, assetRevision, onDirty) {
 
 export function createAnnotationStore(onDirty) {
   const sessions = new Map();
+  const sticky = stickyPreferences();
   const dirty = () => Array.from(sessions.values()).some(session => session.dirty);
   let lastDirty = false;
   const notify = () => {
@@ -189,7 +227,7 @@ export function createAnnotationStore(onDirty) {
       let session = sessions.get(key);
       if (session && session.assetRevision !== version && session.dirty) session.replaced(version);
       else if (!session || session.assetRevision !== version) {
-        session = createSession(path, id, version, notify);
+        session = createSession(path, id, version, notify, sticky);
       }
       sessions.delete(key);
       sessions.set(key, session);

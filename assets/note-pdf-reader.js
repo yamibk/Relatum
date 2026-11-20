@@ -1,7 +1,7 @@
 import { loadPdfLibrary, openPdfDocument } from './pdf-runtime.js';
 import { startEmbedResize } from './note-embed-resize.js';
 import { createAnnotationStore } from './note-pdf-annotation-state.js';
-import { createAnnotationTools, mountAnnotationPage } from './note-pdf-annotation-layer.js';
+import { createAnnotationTools, mountAnnotationPage, mountTextSelection } from './note-pdf-annotation-layer.js';
 import { wrapPdfScroll } from './note-pdf-scrollbar.js';
 
 const PAGE_GAP = 12, THUMB_HEIGHT = 136;
@@ -55,6 +55,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
   let lastPosition = target;
   let searchSequence = 0, match, revealMatch = false, thumbnailEvents, onThumbnailJump;
   let annotations;
+  let selectionFrame = 0, hasTextSelection = false;
 
   const alive = () => !signal.aborted && current();
   const stageResize = new ResizeObserver(() => {
@@ -63,6 +64,21 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
   });
   stageResize.observe(stage);
   stage.addEventListener('scroll', schedule, { passive: true, signal });
+  document.addEventListener('selectionchange', scheduleSelection, { signal });
+
+  function scheduleSelection() {
+    if (selectionFrame || !alive()) return;
+    const selection = window.getSelection();
+    if (!hasTextSelection && (!selection?.rangeCount || selection.isCollapsed || !selection.getRangeAt(0).intersectsNode(stack))) return;
+    selectionFrame = requestAnimationFrame(() => {
+      selectionFrame = 0;
+      if (!alive()) return;
+      const currentSelection = window.getSelection();
+      const range = currentSelection?.rangeCount && !currentSelection.isCollapsed ? currentSelection.getRangeAt(0) : null;
+      hasTextSelection = !!range?.intersectsNode(stack);
+      for (const item of pages.values()) item.drawSelection?.(hasTextSelection ? range : null);
+    });
+  }
 
   function schedule() {
     if (pdf && alive() && !frame) frame = requestAnimationFrame(paint);
@@ -171,6 +187,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
     item.page?.cleanup();
     item.page = null;
     item.render = item.textRender = item.textDivs = item.marker = null;
+    item.drawSelection = null;
     if (item.canvas) item.canvas.width = item.canvas.height = 0;
     item.canvas = null;
     item.host.replaceChildren();
@@ -245,6 +262,8 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
       if (!valid()) return;
       item.textRender = null;
       item.textDivs = textDivs;
+      item.drawSelection = mountTextSelection(item.host, layer, viewport);
+      scheduleSelection();
       if (match?.page === number) mark(item);
     } catch (error) {
       if (valid() && error?.name !== 'RenderingCancelledException') {
@@ -440,7 +459,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
     },
     dispose() {
       lifetime.abort();
-      cancelAnimationFrame(frame); stageResize.disconnect();
+      cancelAnimationFrame(frame); cancelAnimationFrame(selectionFrame); stageResize.disconnect();
       thumbnailEvents?.abort(); clearThumbnails();
       for (const item of pages.values()) resetPage(item);
       pages.clear(); stack.remove();
@@ -451,7 +470,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
   };
 }
 
-export function create({ language, isCurrent, icon, onDirty, confirmReload }) {
+export function create({ language, isCurrent, icon, onDirty, confirmReload, notify }) {
   const entries = new Map();
   const copy = (zh, en) => language() === 'en' ? en : zh;
   const store = createAnnotationStore(onDirty);
@@ -600,8 +619,9 @@ export function create({ language, isCurrent, icon, onDirty, confirmReload }) {
     const scroll = wrapPdfScroll(stage, copy, true);
     const entry = { ...options, host, stage, scroll, visible: true };
     const annotationTools = entry.annotationTools = createAnnotationTools({
-      copy, button, confirmReload, signal, current: () => entry.ready && present(entry),
+      copy, button, confirmReload, notify, signal, current: () => entry.ready && present(entry),
     });
+    stage.addEventListener('contextmenu', annotationTools.switchToSelection, { signal });
     let navigationOpen = false, outline, outlineIntent = 0, findIntent = 0, matches = [], selected = -1, timer = 0;
     const pageInput = element('input', 'note-pdf-page-input');
     pageInput.type = 'text'; pageInput.inputMode = 'numeric';
@@ -698,7 +718,8 @@ export function create({ language, isCurrent, icon, onDirty, confirmReload }) {
     const outlineContent = element('div');
     outlineList.append(outlineContent); outlineScroll.content(outlineContent);
     navigation.replaceChildren(navigationHead, thumbScroll.wrapper, outlineScroll.wrapper);
-    const pages = button(copy('页面', 'Pages'), () => showNavigation(!navigationOpen, true));
+    const pages = button(copy('页面', 'Pages'), () => showNavigation(!navigationOpen, true), '', 'panel-left');
+    pages.append(copy('页面', 'Pages'));
     pages.setAttribute('aria-controls', navigation.id);
     function afterNavigate() {
       if (matchMedia('(max-width: 760px)').matches) {
@@ -758,7 +779,8 @@ export function create({ language, isCurrent, icon, onDirty, confirmReload }) {
     const actions = element('div', 'note-pdf-tool-group');
     actions.append(annotationTools.toggle, findButton);
     toolbar.append(pages, middle, actions);
-    host.replaceChildren(toolbar, annotationTools.bar, annotationTools.status, find, scroll.wrapper);
+    scroll.wrapper.append(find, annotationTools.status);
+    host.replaceChildren(toolbar, annotationTools.bar, scroll.wrapper);
     pages.setAttribute('aria-expanded', 'false'); findButton.setAttribute('aria-expanded', 'false');
     previous.disabled = next.disabled = true; setTools(false);
     entries.set(host, entry); syncEntry(entry);

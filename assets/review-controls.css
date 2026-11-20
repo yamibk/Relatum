@@ -67,6 +67,10 @@
 .review-choice-list { position: relative; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .review-choice-option { box-sizing: border-box; display: flex; gap: 10px; align-items: center; min-height: 36px; padding: 8px 10px; border-radius: 7px; cursor: pointer; transition: background 110ms ease; }
 .review-choice-option > span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-choice-option.has-swatch::before {
+  content: ''; flex: none; width: 11px; height: 11px; border-radius: 50%;
+  background: var(--review-choice-swatch); box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent);
+}
 .review-choice-option small { flex: none; color: var(--text-tertiary); font-size: 10px; }
 .review-choice-option.is-selected::after { content: '✓'; flex: none; font-size: 11px; }
 .review-choice-option.is-highlighted { background: color-mix(in srgb, currentColor 7%, transparent); }

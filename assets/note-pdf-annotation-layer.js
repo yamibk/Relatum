@@ -5,11 +5,13 @@ const palette = [
   ['#ef8a3c', '橙', 'Orange'], ['#9aa0a6', '灰', 'Gray'], ['#1a1a1a', '墨', 'Ink'],
 ];
 const modes = [
-  ['highlight', '划词高亮', 'Highlight text'], ['underline', '下划线', 'Underline'],
-  ['pen', '钢笔', 'Pen'], ['highlighter', '荧光笔', 'Highlighter'], ['box', '框选', 'Box'],
-  ['note', '便签', 'Sticky note'], ['eraser', '橡皮', 'Eraser'],
+  ['', '选择批注', 'Select annotations', 'pdf-select'],
+  ['highlight', '划词高亮', 'Highlight text', 'pdf-highlight-text'], ['underline', '下划线', 'Underline', 'pdf-underline'],
+  ['pen', '钢笔', 'Pen', 'pdf-pen'], ['highlighter', '荧光笔', 'Highlighter', 'pdf-marker'],
+  ['box', '框选', 'Box', 'pdf-box'], ['note', '便签', 'Sticky note', 'pdf-sticky'], ['eraser', '橡皮', 'Eraser', 'pdf-eraser'],
 ];
 const drawModes = new Set(['pen', 'highlighter', 'box', 'eraser', 'note']);
+const textModes = new Set(['highlight', 'underline']);
 const clamp = (n, max) => Math.min(max, Math.max(0, n));
 const round = n => Math.round(n * 1000) / 1000;
 const distance = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -28,7 +30,7 @@ function shape(tag, attributes) {
   return node;
 }
 
-function selectionQuads(range, textLayer, toPdf) {
+function selectionQuads(range, textLayer, project, skipBlank = false) {
   const quads = [], walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT);
   const caret = document.createRange();
   const layerTransform = getComputedStyle(textLayer).transform;
@@ -37,7 +39,7 @@ function selectionQuads(range, textLayer, toPdf) {
     if (!range.intersectsNode(node)) continue;
     const from = range.startContainer === node ? range.startOffset : 0;
     const to = range.endContainer === node ? range.endOffset : node.length;
-    if (from >= to) continue;
+    if (from >= to || (skipBlank && !node.data.slice(from, to).trim())) continue;
     caret.setStart(node, from); caret.collapse(true);
     const start = caret.getBoundingClientRect();
     caret.setStart(node, to); caret.collapse(true);
@@ -50,11 +52,79 @@ function selectionQuads(range, textLayer, toPdf) {
     // when the browser reports only axis-aligned rectangles for rotated text.
     function edge(rect, direction) {
       const half = direction * Math.hypot(rect.width, rect.height) / (2 * length);
-      return toPdf(rect.x + rect.width / 2 - b * half, rect.y + rect.height / 2 + a * half);
+      return project(rect.x + rect.width / 2 - b * half, rect.y + rect.height / 2 + a * half);
     }
     quads.push([edge(start, -1), edge(end, -1), edge(end, 1), edge(start, 1)]);
   }
   return quads;
+}
+
+function selectionPath(quads) {
+  const directions = new Map();
+  for (const points of quads) {
+    const [start, end] = points;
+    const angle = Math.atan2(end[1] - start[1], end[0] - start[0]);
+    const key = (Math.round(angle * 180 / Math.PI) + 180) % 180;
+    if (!directions.has(key)) directions.set(key, { angle, fragments: [] });
+    const { angle: basis, fragments } = directions.get(key);
+    const cos = Math.cos(basis), sin = Math.sin(basis);
+    const along = points.map(([x, y]) => x * cos + y * sin);
+    const across = points.map(([x, y]) => y * cos - x * sin);
+    const top = Math.min(...across), bottom = Math.max(...across);
+    fragments.push({ start: Math.min(...along), end: Math.max(...along), center: (top + bottom) / 2, height: bottom - top });
+  }
+  const path = [];
+  for (const { angle, fragments } of directions.values()) {
+    const lines = [];
+    for (const fragment of fragments.sort((a, b) => a.center - b.center)) {
+      const line = lines.at(-1), reference = line?.[0];
+      if (reference && fragment.center - reference.center <= Math.max(reference.height, fragment.height) * .3) line.push(fragment);
+      else lines.push([fragment]);
+    }
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    const project = (x, y) => round(x * cos - y * sin) + ' ' + round(x * sin + y * cos);
+    for (const line of lines) {
+      line.sort((a, b) => a.start - b.start);
+      let index = 0;
+      while (index < line.length) {
+        const first = line[index++];
+        let end = first.end;
+        const heights = [first.height], centers = [first.center];
+        while (index < line.length && line[index].start - end <= Math.min(first.height, line[index].height) / 3) {
+          const next = line[index++];
+          end = Math.max(end, next.end);
+          heights.push(next.height); centers.push(next.center);
+        }
+        const middle = heights.length >> 1;
+        const height = heights.sort((a, b) => a - b)[middle];
+        const center = centers.sort((a, b) => a - b)[middle];
+        const top = center - height / 2, bottom = center + height / 2;
+        path.push('M' + project(first.start, top) + 'L' + project(end, top)
+          + 'L' + project(end, bottom) + 'L' + project(first.start, bottom) + 'Z');
+      }
+    }
+  }
+  return path.join('');
+}
+
+export function mountTextSelection(host, textLayer, viewport) {
+  const overlay = shape('svg', { class: 'note-pdf-selection', 'aria-hidden': 'true',
+    viewBox: '0 0 ' + viewport.width + ' ' + viewport.height });
+  const highlight = shape('path', {});
+  overlay.append(highlight); host.append(overlay);
+  textLayer.classList.add('has-selection-overlay');
+  return range => {
+    let path = '';
+    if (range?.intersectsNode(textLayer)) {
+      const bounds = host.getBoundingClientRect();
+      if (bounds.width && bounds.height) {
+        path = selectionPath(selectionQuads(range, textLayer, (x, y) => [
+          (x - bounds.left) * viewport.width / bounds.width, (y - bounds.top) * viewport.height / bounds.height,
+        ], true));
+      }
+    }
+    if (highlight.getAttribute('d') !== path) highlight.setAttribute('d', path);
+  };
 }
 
 function smooth(points) {
@@ -109,28 +179,31 @@ function draw(record, viewport, group) {
   }
 }
 
-export function createAnnotationTools({ copy, button, current, confirmReload, signal }) {
-  const toggle = button(copy('批注', 'Annotate'), () => changeOpen(!open));
-  toggle.setAttribute('aria-expanded', 'false');
+export function createAnnotationTools({ copy, button, current, confirmReload, notify, signal }) {
+  const toggle = button(copy('批注', 'Annotate'), () => chooseTool(!open), '', 'file-pen-line');
+  toggle.append(copy('批注', 'Annotate'));
   const bar = html('div', 'note-pdf-annotation-tools');
   bar.setAttribute('role', 'toolbar'); bar.setAttribute('aria-label', copy('PDF 批注工具', 'PDF annotation tools'));
   const status = html('div', 'note-pdf-annotation-status');
   status.setAttribute('role', 'status');
   const message = html('span');
-  const listeners = new Set();
-  let open = false, tool = '', selected = '', session, unsubscribe, working = false, draft;
+  const listeners = new Set(), textSelections = new Set();
+  const locks = ['pdf_changed', 'annotation_conflict', 'annotation_unreadable'];
+  let open = false, tool = '', selected = '', session, unsubscribe, working = false, draft, toolIntent = 0;
+  const canChoose = () => !!session && !locks.includes(session.error);
+  const canEdit = () => canChoose() && session.ready && !session.loading;
   function update(affected) {
     const error = session?.error;
-    toggle.setAttribute('aria-expanded', String(open));
-    bar.hidden = !open;
-    const enabled = session?.ready && !session.loading && !['pdf_changed', 'annotation_conflict', 'annotation_unreadable'].includes(error);
+    toggle.setAttribute('aria-pressed', String(open));
     buttons.forEach(([mode, control]) => {
-      control.disabled = !enabled;
-      control.setAttribute('aria-pressed', String(mode === tool));
+      control.disabled = !canChoose();
+      control.setAttribute('aria-pressed', String(open && mode === tool));
     });
-    undo.disabled = !enabled || !session?.canUndo; redo.disabled = !enabled || !session?.canRedo;
-    remove.disabled = !enabled || !session?.get(selected);
-    thickness.hidden = tool !== 'pen' && tool !== 'highlighter';
+    undo.disabled = !canEdit() || !session.canUndo; redo.disabled = !canEdit() || !session.canRedo;
+    remove.disabled = !canEdit() || !session.get(selected);
+    thickness.disabled = !canChoose() || !open || (tool !== 'pen' && tool !== 'highlighter');
+    color.disabled = !canChoose();
+    colorControl.sync();
     colors.style.setProperty('--pdf-annotation-color', palette[color.selectedIndex][0]);
     retry.hidden = !error || (error === 'pdf_changed' && !session.dirty) || error === 'annotation_unreadable';
     retry.disabled = working;
@@ -144,30 +217,45 @@ export function createAnnotationTools({ copy, button, current, confirmReload, si
       annotation_unreadable: copy('无法读取批注文件，原有数据已保留。', 'The annotation file could not be read. Its data was kept.'),
       too_large: copy('批注已达到大小上限。请删减批注后重试。', 'Annotations exceeded the size limit. Remove some and retry.'),
     };
-    message.textContent = error ? messages[error] || copy('批注暂时无法保存或读取。', 'Unable to save or read annotations.')
-      : open && session?.loading ? copy('正在载入批注…', 'Loading annotations…')
-        : session?.dirty ? copy('正在保存批注…', 'Saving annotations…') : '';
+    message.textContent = error ? messages[error] || copy('批注暂时无法保存或读取。', 'Unable to save or read annotations.') : '';
     status.hidden = !message.textContent;
     listeners.forEach(listener => listener(affected));
   }
-  async function changeOpen(show) {
+  async function chooseTool(show, next = '') {
+    const intent = ++toolIntent;
     settle();
-    open = show; tool = ''; selected = '';
+    open = show; tool = next; selected = '';
+    if (!show) choices.close();
     update();
-    if (show) await session?.load({ edit: true });
+    if (show && !canEdit()) await session?.load({ edit: true });
+    if (intent === toolIntent && current() && open && textModes.has(tool)) {
+      for (const annotate of textSelections) if (annotate(tool)) break;
+    }
   }
-  function select(id) { selected = id; update(); }
+  function select(id) {
+    selected = id;
+    const value = session?.get(id)?.color;
+    if (palette.some(([hex]) => hex === value)) color.value = value;
+    update();
+  }
   function settle() { draft?.(); }
-  const buttons = modes.map(([key, zh, en]) => [key, button(copy(zh, en), () => {
-    settle(); tool = tool === key ? '' : key; selected = ''; update();
-  }, 'note-pdf-annotation-tool')]);
-  const colors = html('label', 'note-pdf-annotation-colors');
+  const modesGroup = html('div', 'note-pdf-annotation-group');
+  const buttons = modes.map(([key, zh, en, glyph]) => [key, button(copy(zh, en),
+    () => chooseTool(true, open && tool === key ? '' : key), 'note-pdf-annotation-tool', glyph)]);
+  modesGroup.append(...buttons.map(([, control]) => control));
+  const optionsGroup = html('div', 'note-pdf-annotation-group note-pdf-annotation-options');
+  const colors = html('div', 'note-pdf-annotation-colors');
+  const portal = html('div', 'note-pdf-color-portal');
+  portal.setAttribute('data-ui-tooltip-disabled', '');
+  document.body.append(portal);
+  const choices = window.RelatumReviewControls.createManager(bar, portal);
   const color = html('select');
   color.setAttribute('aria-label', copy('批注颜色', 'Annotation color'));
   color.append(...palette.map(([hex, zh, en]) => {
     const item = html('option', '', copy(zh, en)); item.value = hex; return item;
   }));
   colors.append(color);
+  const colorControl = choices.enhance(color, { searchable: false, swatch: value => value });
   color.onchange = () => {
     settle();
     const record = session?.get(selected);
@@ -177,14 +265,15 @@ export function createAnnotationTools({ copy, button, current, confirmReload, si
   const thickness = html('input', 'note-pdf-annotation-width');
   thickness.type = 'range'; thickness.min = 1; thickness.max = 5; thickness.step = 1; thickness.value = 2;
   thickness.title = copy('笔画粗细', 'Stroke width'); thickness.setAttribute('aria-label', thickness.title);
-  const undo = button(copy('撤销批注', 'Undo annotation'), () => { settle(); session?.undo(); });
-  const redo = button(copy('重做批注', 'Redo annotation'), () => { settle(); session?.redo(); });
-  undo.textContent = '↶'; redo.textContent = '↷';
+  const undo = button(copy('撤销批注', 'Undo annotation'), () => { settle(); session?.undo(); }, '', 'pdf-undo');
+  const redo = button(copy('重做批注', 'Redo annotation'), () => { settle(); session?.redo(); }, '', 'pdf-redo');
   const remove = button(copy('删除选中批注', 'Delete selected annotation'), () => {
     settle();
-    if (selected) session?.commit(new Map([[selected, null]]));
-    select('');
-  }, '', 'trash');
+    if (!selected || !session?.get(selected) || !session.commit(new Map([[selected, null]]))) return;
+    select(''); undo.focus({ preventScroll: true });
+    notify?.(copy('已删除批注，可撤销', 'Annotation deleted. Undo is available.'));
+  }, 'note-pdf-annotation-delete', 'trash');
+  remove.append(copy('删除', 'Delete'));
   const retry = button(copy('重试', 'Retry'), async () => {
     const active = session;
     if (!active || working) return;
@@ -198,14 +287,17 @@ export function createAnnotationTools({ copy, button, current, confirmReload, si
       else await active.load({ edit: open, reload: true });
     } finally { working = false; update(); }
   });
-  bar.append(...buttons.map(([, control]) => control), colors, thickness, undo, redo, remove);
+  optionsGroup.append(colors, thickness);
+  const historyGroup = html('div', 'note-pdf-annotation-group note-pdf-annotation-history');
+  historyGroup.append(undo, redo, remove);
+  bar.append(modesGroup, optionsGroup, historyGroup);
   status.append(message, retry);
   window.addEventListener('keydown', event => {
-    if (!current() || !open || event.defaultPrevented || event.isComposing || editable(event.target)
+    if (!current() || !open || colorControl.isOpen || event.defaultPrevented || event.isComposing || editable(event.target)
         || event.target?.closest?.('[role="dialog"]')) return;
     const key = event.key.toLowerCase();
     if (key === 'escape') {
-      event.preventDefault(); event.stopPropagation(); void changeOpen(false); toggle.focus();
+      event.preventDefault(); event.stopPropagation(); void chooseTool(false); toggle.focus();
     } else if ((event.ctrlKey || event.metaKey) && !event.altKey && /^[zy]$/.test(key)) {
       event.preventDefault(); event.stopPropagation();
       if (key === 'y' || event.shiftKey) { if (!redo.disabled) redo.click(); }
@@ -214,17 +306,25 @@ export function createAnnotationTools({ copy, button, current, confirmReload, si
       event.preventDefault(); event.stopPropagation(); remove.click();
     }
   }, { signal, capture: true });
+  signal.addEventListener('abort', () => { choices.dispose(); portal.remove(); }, { once: true });
   update();
   return {
     toggle, bar, status, settle, select,
+    switchToSelection(event) {
+      if (event.button !== 2 || event.defaultPrevented || editable(event.target)
+          || !current() || !open || !tool || !canChoose()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void chooseTool(true);
+    },
     attach(value) {
       settle(); unsubscribe?.(); session = value;
       unsubscribe = session?.subscribe(update);
       if (open && session) void session.load({ edit: true });
       update();
     },
-    reset() { void changeOpen(false); this.attach(null); },
-    get active() { return open && session?.ready && !session.loading && !['annotation_conflict', 'pdf_changed', 'annotation_unreadable'].includes(session.error); },
+    reset() { void chooseTool(false); this.attach(null); },
+    get active() { return open && canEdit(); },
     get mode() { return this.active ? tool : ''; },
     get color() { return color.value; },
     get width() { return Number(thickness.value); },
@@ -232,6 +332,7 @@ export function createAnnotationTools({ copy, button, current, confirmReload, si
     setDraft(commit) { settle(); draft = commit; },
     clearDraft(commit) { if (draft === commit) draft = null; },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    onTextSelection(annotate) { textSelections.add(annotate); return () => textSelections.delete(annotate); },
   };
 }
 
@@ -242,82 +343,146 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
   const saved = shape('g', {}), preview = shape('g', { 'pointer-events': 'none' });
   const notes = html('div', 'note-pdf-sticky-layer');
   vector.append(saved, preview); layer.append(vector, notes); host.append(layer);
-  let gesture, frame, notePopup, commitDraft, textPointer;
+  const stickyViews = new Map();
+  let gesture, frame, textPointer, noteDrag, draggedHandle;
+  const selecting = () => !!tools?.active && !tools.mode;
+  const editingNote = () => selecting() || (tools?.active && tools.mode === 'note');
 
-  function hideNote() {
-    commitDraft?.();
-    notePopup?.remove();
-    notePopup = null;
+  function positionNote(view, x, y, paper) {
+    const popup = view.popup;
+    if (popup) {
+      const visible = host.closest('.note-pdf-scroll').getBoundingClientRect();
+      paper ??= host.getBoundingClientRect();
+      const anchorVisible = paper.left + x >= visible.left && paper.left + x <= visible.right
+        && paper.top + y >= visible.top && paper.top + y <= visible.bottom;
+      const place = (pin, start, end, size, pageSize) => {
+        const available = Math.max(0, pageSize - size);
+        const min = clamp(start, available);
+        const max = Math.max(min, clamp(end - size, available));
+        const position = pin + 10 <= max ? pin + 10 : pin - 10 - size;
+        return Math.max(min, Math.min(max, position)) + 'px';
+      };
+      const left = place(x, anchorVisible ? visible.left - paper.left + 4 : 0,
+        anchorVisible ? visible.right - paper.left - 4 : host.clientWidth, popup.offsetWidth, host.clientWidth);
+      const top = place(y, anchorVisible ? visible.top - paper.top + 4 : 0,
+        anchorVisible ? visible.bottom - paper.top - 4 : host.clientHeight, popup.offsetHeight, host.clientHeight);
+      popup.style.left = left; popup.style.top = top;
+    }
+    view.pin.style.left = x + 'px'; view.pin.style.top = y + 'px';
   }
 
-  function openNote(record, editing) {
-    hideNote();
-    if (editing) tools.select(record.id);
-    const popup = notePopup = html('div', 'note-pdf-sticky');
-    popup.setAttribute('aria-label', copy('PDF 便签', 'PDF sticky note'));
-    const [x, y] = viewport.convertToViewportPoint(...record.point);
-    popup.style.setProperty('--pdf-annotation-color', record.color);
-    const label = copy('关闭便签', 'Close note');
-    const done = button(label, () => hideNote(), '', 'x');
-    if (!editing) {
-      popup.append(done, html('p', '', record.text));
-    } else {
-      const input = html('textarea');
-      input.value = record.text; input.maxLength = 64_000;
-      input.setAttribute('aria-label', copy('便签内容', 'Sticky note text'));
-      const group = Symbol('sticky note input');
-      const updateText = () => {
-        const previous = session.get(record.id);
-        if (previous && input.value !== previous.text) session.commit(new Map([[record.id, { ...previous, text: input.value }]]), group);
-      };
-      input.oninput = event => { if (!event.isComposing) updateText(); };
-      input.oncompositionend = updateText;
-      commitDraft = () => {
-        tools.clearDraft(commitDraft);
-        commitDraft = null;
-        input.blur();
-        updateText();
-        popup.remove();
-        if (notePopup === popup) notePopup = null;
-      };
-      tools.setDraft(commitDraft);
-      popup.append(done, input);
-      input.onkeydown = event => {
-        if (event.key === 'Escape' && !event.isComposing) { event.stopPropagation(); hideNote(); }
-      };
-      queueMicrotask(() => { if (popup.isConnected) input.focus({ preventScroll: true }); });
+  function toggleNote(id, open, focusText = false) {
+    const view = stickyViews.get(id);
+    if (!view) return;
+    if (editingNote()) {
+      tools.settle();
+      tools.select(id);
     }
-    layer.append(popup);
-    const view = host.closest('.note-pdf-scroll').getBoundingClientRect();
-    const paper = host.getBoundingClientRect();
-    const place = (pin, start, end, size, pageSize) => {
-      const available = Math.max(0, pageSize - size);
-      const min = clamp(start, available);
-      const max = Math.max(min, clamp(end - size, available));
-      const position = pin + 10 <= max ? pin + 10 : pin - 10 - size;
-      return Math.max(min, Math.min(max, position)) + 'px';
+    session.setNoteExpanded(id, open);
+    if (open && focusText) view.input?.focus({ preventScroll: true });
+    if (!open) view.pin.focus({ preventScroll: true });
+  }
+
+  function mountNote(view, record) {
+    const popup = view.popup = html('div', 'note-pdf-sticky');
+    popup.setAttribute('aria-label', copy('PDF 便签', 'PDF sticky note'));
+    popup.dataset.annotationId = record.id;
+    const header = html('div', 'note-pdf-sticky-head');
+    header.append(button(copy('关闭便签', 'Close note'), () => toggleNote(record.id, false), '', 'x'));
+    header.onclick = event => {
+      if (selecting() && !event.target.closest('button')) toggleNote(record.id, false);
     };
-    popup.style.left = place(x, view.left - paper.left + 4, view.right - paper.left - 4, popup.offsetWidth, host.clientWidth);
-    popup.style.top = place(y, view.top - paper.top + 4, view.bottom - paper.top - 4, popup.offsetHeight, host.clientHeight);
+    popup.append(header);
+    if (!tools) {
+      view.content = html('p', '', record.text);
+    } else {
+      const input = view.content = view.input = html('textarea');
+      input.maxLength = 64_000;
+      input.setAttribute('aria-label', copy('便签内容', 'Sticky note text'));
+      function writeText(group) {
+        const previous = session.get(record.id);
+        if (previous && input.value !== previous.text) commit({ ...previous, text: input.value }, group);
+      }
+      const finishEdit = view.finishEdit = () => {
+        const group = view.editGroup;
+        if (!group) return;
+        view.editGroup = null;
+        tools.clearDraft(finishEdit);
+        if (document.activeElement === input) input.blur();
+        writeText(group);
+      };
+      input.onfocus = () => {
+        if (input.readOnly) return;
+        tools.setDraft(finishEdit);
+        view.editGroup = Symbol('sticky note input');
+        tools.select(record.id);
+      };
+      input.onblur = finishEdit;
+      input.oninput = event => { if (view.editGroup && !event.isComposing) writeText(view.editGroup); };
+      input.oncompositionend = () => { if (view.editGroup) writeText(view.editGroup); };
+      input.onkeydown = event => {
+        if (event.key === 'Escape' && !event.isComposing) { event.stopPropagation(); toggleNote(record.id, false); }
+      };
+    }
+    popup.append(view.content);
+    notes.append(popup);
+  }
+
+  function closeNote(view) {
+    view.finishEdit?.();
+    view.popup?.remove();
+    view.popup = view.content = view.input = view.finishEdit = null;
+  }
+
+  function syncNote(record, expanded) {
+    let view = stickyViews.get(record.id);
+    if (!view) {
+      const pin = button(copy('查看便签', 'Open sticky note'), () => {
+        if (!drawModes.has(tools?.mode) || tools.mode === 'note') toggleNote(record.id, !view.popup, editingNote());
+      }, 'note-pdf-sticky-pin', 'file-text');
+      pin.dataset.annotationId = record.id;
+      view = { pin }; stickyViews.set(record.id, view);
+      notes.append(pin);
+    }
+    const opening = expanded && !view.popup;
+    if (opening) mountNote(view, record);
+    else if (!expanded && view.popup) closeNote(view);
+    if (view.expanded !== expanded) {
+      view.expanded = expanded;
+      const label = expanded ? copy('收起便签', 'Collapse sticky note') : copy('查看便签', 'Open sticky note');
+      view.pin.setAttribute('aria-label', label);
+      view.pin.setAttribute('aria-expanded', String(expanded));
+    }
+    if (view.color !== record.color) view.pin.style.setProperty('--pdf-annotation-color', record.color);
+    if (view.popup) {
+      if (opening || view.color !== record.color) view.popup.style.setProperty('--pdf-annotation-color', record.color);
+      if (view.input) {
+        view.input.readOnly = !editingNote();
+        if (!view.editGroup && view.input.value !== record.text) view.input.value = record.text;
+      } else if (view.content.textContent !== record.text) view.content.textContent = record.text;
+    }
+    if (opening || view.point !== record.point) {
+      view.point = record.point;
+      if (noteDrag?.view !== view || !noteDrag.moved) positionNote(view, ...viewport.convertToViewportPoint(...record.point));
+    }
+    view.color = record.color;
+    view.pin.classList.toggle('is-selected', record.id === tools?.selected);
   }
 
   function render(affected) {
     if (affected && !affected.has(page)) return;
-    saved.replaceChildren(); notes.replaceChildren();
+    saved.replaceChildren();
     const mode = tools?.mode || '';
+    if (noteDrag && !selecting()) finishNoteDrag(null, false);
+    if (gesture && mode !== gesture.kind) finish(null, false);
     layer.dataset.tool = mode;
     layer.classList.toggle('is-drawing', drawModes.has(mode));
-    layer.classList.toggle('is-selecting', !!tools?.active && !mode);
+    layer.classList.toggle('is-selecting', selecting());
+    const expanded = session.expandedNotes(), present = new Set();
     for (const record of session.onPage(page)) {
       if (record.kind === 'note') {
-        const pin = button(copy('查看便签', 'Open sticky note'), () => {
-          if (!drawModes.has(tools?.mode) || tools.mode === 'note') openNote(record, !!tools?.active);
-        }, 'note-pdf-sticky-pin', 'file-text');
-        const [x, y] = viewport.convertToViewportPoint(...record.point);
-        pin.style.left = x + 'px'; pin.style.top = y + 'px';
-        pin.style.setProperty('--pdf-annotation-color', record.color);
-        pin.dataset.annotationId = record.id;
-        notes.append(pin);
+        present.add(record.id);
+        syncNote(record, expanded.has(record.id));
       } else {
         const group = shape('g', {});
         group.dataset.annotationId = record.id;
@@ -325,9 +490,12 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
         saved.append(group);
       }
     }
-    for (const item of layer.querySelectorAll('[data-annotation-id]')) {
-      item.classList.toggle('is-selected', item.dataset.annotationId === tools?.selected);
+    for (const [id, view] of stickyViews) {
+      if (present.has(id)) continue;
+      if (noteDrag?.view === view) finishNoteDrag(null, false);
+      closeNote(view); view.pin.remove(); stickyViews.delete(id);
     }
+    for (const item of saved.children) item.classList.toggle('is-selected', item.dataset.annotationId === tools?.selected);
   }
   const offSession = tools ? () => {} : session.subscribe(render);
   const offTools = tools?.subscribe(render);
@@ -349,31 +517,89 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
       Math.max(start.clientX, end.clientX), Math.max(start.clientY, end.clientY)];
   }
   function fresh(kind) { return { id: crypto.randomUUID(), page, kind, color: tools.color }; }
-  function commit(record) { return session.commit(new Map([[record.id, record]])); }
+  function commit(record, group) { return session.commit(new Map([[record.id, record]]), group); }
+
+  function beginNoteDrag(event, handle) {
+    if (noteDrag) return;
+    const id = handle.closest('[data-annotation-id]').dataset.annotationId;
+    const view = stickyViews.get(id);
+    if (!view) return;
+    const paper = host.getBoundingClientRect();
+    const [x, y] = viewport.convertToViewportPoint(...view.point);
+    const offset = [x - (event.clientX - paper.left) * viewport.width / paper.width,
+      y - (event.clientY - paper.top) * viewport.height / paper.height];
+    tools.settle();
+    tools.select(id);
+    draggedHandle = null;
+    noteDrag = { id, view, handle, pointer: event.pointerId, offset,
+      start: [event.clientX, event.clientY], last: null, moved: false, frame: 0 };
+    handle.setPointerCapture(event.pointerId);
+  }
+
+  function sampleNoteDrag(drag, event) {
+    drag.last = [event.clientX, event.clientY];
+    if (!drag.moved && distance(drag.start, drag.last) >= 4) {
+      drag.moved = true;
+      layer.classList.add('is-moving-sticky');
+    }
+  }
+
+  function paintNoteDrag(drag) {
+    drag.frame = 0;
+    const paper = host.getBoundingClientRect();
+    const within = (value, extent) => {
+      const inset = Math.min(11, extent / 2);
+      return Math.min(extent - inset, Math.max(inset, value));
+    };
+    const x = within((drag.last[0] - paper.left) * viewport.width / paper.width + drag.offset[0], viewport.width);
+    const y = within((drag.last[1] - paper.top) * viewport.height / paper.height + drag.offset[1], viewport.height);
+    positionNote(drag.view, x, y, paper);
+    return point(x, y);
+  }
+
+  function finishNoteDrag(event, accept) {
+    const drag = noteDrag;
+    if (!drag || (event && drag.pointer !== event.pointerId)) return;
+    if (accept) sampleNoteDrag(drag, event);
+    cancelAnimationFrame(drag.frame);
+    noteDrag = null;
+    layer.classList.remove('is-moving-sticky');
+    if (drag.handle.hasPointerCapture(drag.pointer)) drag.handle.releasePointerCapture(drag.pointer);
+    if (!drag.moved) return;
+    draggedHandle = drag.handle;
+    const record = session.get(drag.id);
+    if (accept && selecting() && record?.kind === 'note') {
+      const destination = paintNoteDrag(drag);
+      if (destination.some((part, axis) => part !== record.point[axis]) && commit({ ...record, point: destination })) return;
+    }
+    positionNote(drag.view, ...viewport.convertToViewportPoint(...drag.view.point));
+  }
+
   function ownsText(node) {
     const textLayer = (node?.nodeType === Node.TEXT_NODE ? node.parentElement : node)?.closest?.('.note-pdf-text');
     return textLayer?.parentElement === host;
   }
+  function annotateSelection(kind) {
+    if (signal.aborted || tools.mode !== kind) return false;
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !ownsText(selection.anchorNode) || !ownsText(selection.focusNode)) return false;
+    const bounds = host.getBoundingClientRect();
+    const quads = selectionQuads(selection.getRangeAt(0), host.querySelector('.note-pdf-text'),
+      (x, y) => fromClient(x, y, bounds));
+    if (!quads.length || !commit({ ...fresh(kind), quads, text: selection.toString().slice(0, 64_000) })) return false;
+    selection.removeAllRanges();
+    return true;
+  }
+  const offSelection = tools.onTextSelection(annotateSelection);
   host.addEventListener('pointerdown', event => {
-    if (event.button === 0 && ownsText(event.target) && /^(highlight|underline)$/.test(tools.mode)) textPointer = event.pointerId;
-    if (!layer.contains(event.target)) hideNote();
+    if (event.button === 0 && ownsText(event.target) && textModes.has(tools.mode)) textPointer = event.pointerId;
   }, { signal });
   window.addEventListener('pointerup', event => {
     if (textPointer !== event.pointerId) return;
     textPointer = undefined;
     const kind = tools.mode;
-    if (!/^(highlight|underline)$/.test(kind)) return;
-    requestAnimationFrame(() => {
-      if (signal.aborted || tools.mode !== kind) return;
-      const selection = window.getSelection();
-      if (!selection || selection.isCollapsed || !ownsText(selection.anchorNode) || !ownsText(selection.focusNode)) return;
-      const bounds = host.getBoundingClientRect();
-      const quads = selectionQuads(selection.getRangeAt(0), host.querySelector('.note-pdf-text'),
-        (x, y) => fromClient(x, y, bounds));
-      if (!quads.length) return;
-      if (commit({ ...fresh(kind), quads, text: selection.toString().slice(0, 64_000) })) selection.removeAllRanges();
-    });
-  }, { signal });
+    if (textModes.has(kind)) requestAnimationFrame(() => annotateSelection(kind));
+  }, { capture: true, signal });
   window.addEventListener('pointercancel', event => { if (textPointer === event.pointerId) textPointer = undefined; }, { signal });
 
   function sample(event, bounds) {
@@ -417,18 +643,25 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
     commit(current.record);
   }
   layer.addEventListener('pointerdown', event => {
-    if (event.target.closest('.note-pdf-sticky')) return;
     if (!event.isPrimary || event.button !== 0 || gesture) return;
     const kind = tools.mode;
+    const pin = event.target.closest('.note-pdf-sticky-pin');
+    const header = event.target.closest('.note-pdf-sticky-head');
+    draggedHandle = null;
+    if (selecting() && (pin || (header && !event.target.closest('button')))) {
+      beginNoteDrag(event, pin || header);
+      return;
+    }
+    if (event.target.closest('.note-pdf-sticky') || (pin && kind === 'note')) return;
     if (!drawModes.has(kind)) {
       if (tools.active && vector.contains(event.target)) tools.select(event.target.closest('[data-annotation-id]')?.dataset.annotationId || '');
       return;
     }
     event.preventDefault();
-    hideNote(); tools.settle();
+    tools.settle();
     if (kind === 'note') {
       const record = { ...fresh(kind), point: fromClient(event.clientX, event.clientY), text: '' };
-      if (commit(record)) openNote(record, true);
+      if (commit(record)) toggleNote(record.id, true, true);
       return;
     }
     const record = kind === 'eraser' ? null : fresh(kind);
@@ -449,10 +682,28 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
   }, { signal });
   vector.addEventListener('pointerup', event => finish(event, true), { signal });
   for (const name of ['pointercancel', 'lostpointercapture']) vector.addEventListener(name, event => finish(event, false), { signal });
-  window.addEventListener('blur', () => { textPointer = undefined; finish(null, false); }, { signal });
+  layer.addEventListener('pointermove', event => {
+    const drag = noteDrag;
+    if (!drag || drag.pointer !== event.pointerId) return;
+    sampleNoteDrag(drag, event);
+    if (drag.moved && !drag.frame) drag.frame = requestAnimationFrame(() => paintNoteDrag(drag));
+  }, { signal });
+  layer.addEventListener('pointerup', event => finishNoteDrag(event, true), { signal });
+  layer.addEventListener('click', event => {
+    if (!event.detail || !draggedHandle?.contains(event.target)) return;
+    draggedHandle = null;
+    event.preventDefault();
+    event.stopPropagation();
+  }, { capture: true, signal });
+  for (const name of ['pointercancel', 'lostpointercapture']) layer.addEventListener(name, event => finishNoteDrag(event, false), { signal });
+  window.addEventListener('blur', () => {
+    textPointer = undefined; finish(null, false); finishNoteDrag(null, false);
+  }, { signal });
   return () => {
-    hideNote();
+    offSelection(); offTools?.(); offSession();
     finish(null, false);
-    lifetime.abort(); offTools?.(); offSession(); layer.remove();
+    finishNoteDrag(null, false);
+    for (const view of stickyViews.values()) closeNote(view);
+    lifetime.abort(); layer.remove();
   };
 }

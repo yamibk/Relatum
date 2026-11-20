@@ -110,6 +110,12 @@
         const selected = item.value === value;
         attr(row, 'aria-selected', selected); toggleClass(row, 'is-selected', selected);
         text(row.firstElementChild, item.label); attr(row.firstElementChild, 'title', item.label);
+        if (source.swatch) {
+          const color = source.swatch(item.value);
+          toggleClass(row, 'has-swatch', !!color);
+          if (color) row.style.setProperty('--review-choice-swatch', color);
+          else row.style.removeProperty('--review-choice-swatch');
+        }
         const hint = item.create ? ((typeof source.createHint === 'function' ? source.createHint() : source.createHint) || ui('保存时创建', 'Created when saved')) : '';
         if (hint) {
           if (!row.querySelector('small')) row.append(element('small'));
@@ -209,7 +215,7 @@
         listbox = element('div', 'review-choice-list'); listbox.id = id; attr(listbox, 'role', 'listbox');
         attr(listbox, 'aria-label', source.label()); host = element('div'); empty = element('p', 'review-choice-empty', ui('没有匹配项', 'No matches')); empty.hidden = true;
         listbox.append(host, empty);
-        if (!source.input && (source.searchable || choices.length > 8)) {
+        if (!source.input && (source.searchable ?? choices.length > 8)) {
           search = element('input', 'review-choice-search'); search.type = 'search'; search.autocomplete = 'off'; search.spellcheck = false;
           search.placeholder = source.allowCreate ? ui('搜索或输入新卡组', 'Search or enter a new deck') : ui('搜索选项', 'Search options');
           attr(search, 'aria-label', search.placeholder); attr(search, 'role', 'combobox'); attr(search, 'aria-autocomplete', 'list');
