@@ -212,6 +212,20 @@ function draw(record, viewport, group) {
   group.append(shape('polygon', { points, fill: 'none', stroke: record.color, 'stroke-width': 2 }));
 }
 
+function drawAnnotationOutline(kind, group, selection) {
+  const mark = group.firstElementChild;
+  let border;
+  if (kind === 'highlight' || kind === 'box') {
+    border = mark.cloneNode();
+  } else {
+    const { x, y, width, height } = group.getBBox();
+    const padding = 3 + Number(mark.getAttribute('stroke-width')) / 2;
+    border = shape('rect', { x: x - padding, y: y - padding, width: width + 2 * padding,
+      height: height + 2 * padding, rx: 3 });
+  }
+  selection.append(border.cloneNode(), border);
+}
+
 export function createAnnotationTools({ copy, button, current, confirmReload, notify, signal }) {
   const toggle = button(copy('批注', 'Annotate'), () => chooseTool(!open), '', 'file-pen-line');
   toggle.append(copy('批注', 'Annotate'));
@@ -383,8 +397,9 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
   textVector.append(highlights, underlines);
   const vector = shape('svg', svgAttributes);
   const saved = shape('g', {}), preview = shape('g', { 'pointer-events': 'none' });
+  const selection = shape('g', { class: 'note-pdf-annotation-selection', 'pointer-events': 'none' });
   const notes = html('div', 'note-pdf-sticky-layer');
-  markup.append(textVector); vector.append(saved, preview); layer.append(markup, vector, notes); host.append(layer);
+  markup.append(textVector); vector.append(saved, preview, selection); layer.append(markup, vector, notes); host.append(layer);
   const stickyViews = new Map();
   const stage = host.closest('.note-pdf-scroll');
   let gesture, frame, textPointer, noteDrag, noteResize, draggedHandle;
@@ -544,6 +559,7 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
     saved.replaceChildren();
     highlights.replaceChildren();
     underlines.replaceChildren();
+    selection.replaceChildren();
     const mode = tools?.mode || '';
     if (noteDrag && !selecting()) finishNoteDrag(null, false);
     if (gesture && mode !== gesture.kind) finish(null, false);
@@ -559,9 +575,9 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
         const group = shape('g', {});
         group.dataset.annotationId = record.id;
         draw(record, viewport, group);
-        group.classList.toggle('is-selected', record.id === tools?.selected);
         const target = record.kind === 'highlight' ? highlights : record.kind === 'underline' ? underlines : saved;
         target.append(group);
+        if (record.id === tools?.selected) drawAnnotationOutline(record.kind, group, selection);
       }
     }
     for (const [id, view] of stickyViews) {

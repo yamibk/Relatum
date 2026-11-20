@@ -274,7 +274,18 @@ body.start-page[data-start-theme="dark"] :is(.note-pdf-embed, .note-pdf-tab-pane
 .note-pdf-annotations.is-drawing > svg { pointer-events: auto; touch-action: none; cursor: crosshair; }
 .note-pdf-annotations:is(.is-selecting, [data-tool="eraser"]) svg [data-annotation-id] { pointer-events: visiblePainted; }
 .note-pdf-annotations.is-selecting svg [data-annotation-id] { cursor: pointer; }
-.note-pdf-annotations .is-selected { filter: drop-shadow(0 0 2px #2373b8); }
+.note-pdf-annotations { --pdf-annotation-focus: #1766c4; --pdf-annotation-focus-edge: #fff; }
+.note-pdf-annotation-selection > * {
+  fill: none;
+  stroke: var(--pdf-annotation-focus);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.note-pdf-annotation-selection > :first-child { stroke: var(--pdf-annotation-focus-edge); stroke-width: 4; }
+@media (forced-colors: active) {
+  .note-pdf-annotations { --pdf-annotation-focus: Highlight; --pdf-annotation-focus-edge: Canvas; }
+}
 .note-pdf-annotations .is-erasing { opacity: .12; }
 .note-pdf-sticky-pin {
   position: absolute;
@@ -292,6 +303,11 @@ body.start-page[data-start-theme="dark"] :is(.note-pdf-embed, .note-pdf-tab-pane
   pointer-events: auto;
 }
 .note-pdf-sticky-pin svg { width: 14px; height: 14px; }
+.note-pdf-sticky-pin.is-selected {
+  outline: 2px solid var(--pdf-annotation-focus);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 1px var(--pdf-annotation-focus-edge);
+}
 .note-pdf-annotations.is-drawing:not([data-tool="eraser"], [data-tool="note"]) .note-pdf-sticky-pin { pointer-events: none; }
 .note-pdf-annotations.is-selecting :is(.note-pdf-sticky-pin, .note-pdf-sticky-head) { cursor: grab; touch-action: none; }
 .note-pdf-annotations.is-moving-sticky :is(.note-pdf-sticky-pin, .note-pdf-sticky-head) { cursor: grabbing; }
