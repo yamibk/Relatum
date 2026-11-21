@@ -3188,6 +3188,8 @@ html[data-note-reduced-motion="1"] body[data-start-workspace="notes"] > .top-bar
   stroke-width: 1.7;
   opacity: 1;
 }
+.tree-page-route-panel .study-route-edge.is-visual-merge-branch { stroke-width: 1.15; }
+.tree-page-route-panel .study-route-edge[data-merge-part] { stroke-linecap: round; }
 .tree-page-route-panel #tree-page-visual-arrow path { fill: #59675d; }
 .tree-page-route-panel #tree-page-visual-remove-arrow path { fill: #e35d52; }
 .tree-page-route-panel .study-route-edge.is-visual.is-link-preview {

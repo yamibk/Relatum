@@ -1891,8 +1891,11 @@
     });
   }
   function appendVisualEdges(next) {
-    var placements = new Map((next.nodes || []).map(function (placement) { return [placement.id, placement]; }));
-    var visualEdges = activeVisualLinks().filter(function (link) {
+    var links = activeVisualLinks();
+    next.drawEdges = next.edges;
+    if (!links.length) return;
+    var placements = new Map(next.nodes.map(function (placement) { return [placement.id, placement]; }));
+    var visualEdges = links.filter(function (link) {
       return placements.has(link.from) && placements.has(link.to);
     }).map(function (link) {
       var from = placements.get(link.from), to = placements.get(link.to);
@@ -1915,8 +1918,189 @@
     });
     assignVisualPortOffsets(outgoing, placements, 'from', 'to', 'fromPortOffset');
     assignVisualPortOffsets(incoming, placements, 'to', 'from', 'toPortOffset');
-    next.edges = (next.edges || []).concat(visualEdges);
-    return next;
+    next.edges = next.edges.concat(visualEdges);
+    projectVisualMerges(next, placements, incoming, links);
+  }
+  function cardColumns(placements) {
+    var columns = new Map();
+    placements.forEach(function (card) {
+      var center = card.x + card.width / 2;
+      if (!columns.has(center)) columns.set(center, { left: card.x, right: card.x + card.width, halfHeight: 0, cards: [] });
+      var column = columns.get(center);
+      column.left = Math.min(column.left, card.x);
+      column.right = Math.max(column.right, card.x + card.width);
+      column.halfHeight = Math.max(column.halfHeight, card.height / 2);
+      column.cards.push(card);
+    });
+    columns.forEach(function (column) { column.cards.sort(function (a, b) { return a.y - b.y; }); });
+    return columns;
+  }
+  function cardInArea(columns, x1, y1, x2, y2, fromId, toId, clearance) {
+    var left = Math.min(x1, x2) - clearance, right = Math.max(x1, x2) + clearance;
+    var top = Math.min(y1, y2) - clearance, bottom = Math.max(y1, y2) + clearance;
+    return columns.some(function (column) {
+      if (column.right <= left || column.left >= right) return false;
+      var lo = 0, hi = column.cards.length;
+      while (lo < hi) {
+        var mid = (lo + hi) >>> 1;
+        if (column.cards[mid].y <= top - column.halfHeight) lo = mid + 1;
+        else hi = mid;
+      }
+      for (var index = lo; index < column.cards.length; index++) {
+        var card = column.cards[index];
+        if (card.y >= bottom + column.halfHeight) break;
+        if (card.id !== fromId && card.id !== toId && card.x < right && card.x + card.width > left
+            && card.y - card.height / 2 < bottom && card.y + card.height / 2 > top) return true;
+      }
+      return false;
+    });
+  }
+  function mergeGeometry(merge, placements) {
+    var target = placements.get(merge.to), dir = merge.side === 'left' ? 1 : -1;
+    if (!target) return null;
+    var targetX = dir === 1 ? target.x : target.x + target.width;
+    var targetY = target.y + merge.offset, nearest = -Infinity;
+    var top = targetY, bottom = targetY;
+    // View anchoring can briefly draw the new routes with the previous frame's cards.
+    for (var index = 0; index < merge.members.length; index++) {
+      var source = placements.get(merge.members[index].from);
+      if (!source) return null;
+      nearest = Math.max(nearest, dir * (dir === 1 ? source.x + source.width : source.x));
+      top = Math.min(top, source.y);
+      bottom = Math.max(bottom, source.y);
+    }
+    var gap = dir * targetX - nearest;
+    if (gap < 24) return null;
+    return { x: targetX - dir * gap / 3, targetX: targetX, y: targetY, top: top, bottom: bottom, dir: dir };
+  }
+  function mergeHasClearance(merge, placements, columns) {
+    var geometry = mergeGeometry(merge, placements);
+    if (!geometry || cardInArea(columns, geometry.x, geometry.top, geometry.x, geometry.bottom, '', '', 3)
+        || cardInArea(columns, geometry.x, geometry.y, geometry.targetX, geometry.y, '', merge.to, 3)) return false;
+    return merge.members.every(function (edge) {
+      var source = placements.get(edge.from);
+      return !cardInArea(columns, geometry.dir === 1 ? source.x + source.width : source.x, source.y,
+        geometry.x, mergeJoinY(source.y, geometry.y), edge.from, '', 3);
+    });
+  }
+  function mergeJoinY(y, targetY) {
+    return y + Math.max(-10, Math.min(10, (targetY - y) * .12));
+  }
+  function routeHasClearance(edge, placements, columns) {
+    var from = placements.get(edge.from), to = placements.get(edge.to);
+    var reverse = to.x + to.width / 2 < from.x + from.width / 2;
+    var x1 = (edge.fromSide ? edge.fromSide === 'left' : reverse) ? from.x : from.x + from.width;
+    var x2 = (edge.toSide ? edge.toSide === 'right' : reverse) ? to.x + to.width : to.x;
+    var y1 = from.y + (edge.fromPortOffset || 0), y2 = to.y + (edge.toPortOffset || 0);
+    // Both coordinates of the regular route curve are monotone. Test successively tighter boxes.
+    function clear(leftT, rightT, leftX, leftY, rightX, rightY, depth) {
+      if (!cardInArea(columns, leftX, leftY, rightX, rightY, edge.from, edge.to, 3)) return true;
+      if (!depth) return false;
+      var t = (leftT + rightT) / 2, inverse = 1 - t;
+      var x = x1 + (x2 - x1) * (t * t * t + 1.44 * inverse * t);
+      var y = y1 + (y2 - y1) * t * t * (3 - 2 * t);
+      return clear(leftT, t, leftX, leftY, x, y, depth - 1)
+        && clear(t, rightT, x, y, rightX, rightY, depth - 1);
+    }
+    return clear(0, 1, x1, y1, x2, y2, 7);
+  }
+  function projectVisualMerges(next, placements, incoming, links) {
+    next.drawEdges = next.edges;
+    if (!incoming.size) return;
+    var inbound = new Map(), outgoing = new Set(), visualCounts = new Map();
+    links.forEach(function (link) {
+      visualCounts.set(link.to, (visualCounts.get(link.to) || 0) + 1);
+      outgoing.add(link.from);
+    });
+    next.edges.forEach(function (edge) {
+      if (edge.type !== 'visual' && visualCounts.has(edge.to)) {
+        if (!inbound.has(edge.to)) inbound.set(edge.to, []);
+        inbound.get(edge.to).push(edge);
+      }
+      if (edge.type === 'requires') outgoing.add(edge.from);
+    });
+    var columns, columnList;
+    var merges = [];
+    incoming.forEach(function (visuals) {
+      var first = visuals[0], target = placements.get(first.to);
+      var side = first.toSide, center = target.x + target.width / 2;
+      var routes = (inbound.get(first.to) || []).filter(function (edge) {
+        var source = placements.get(edge.from);
+        return (source.x + source.width / 2 < center ? 'left' : 'right') === side;
+      });
+      var primary = routes.find(function (edge) { return edge.type === 'requires' && edge.primary; });
+      if (visuals.length < 2 && !primary) return;
+      if (!columns) {
+        columns = cardColumns(placements);
+        columnList = Array.from(columns.values());
+      }
+      var merge = { id: 'merge|' + first.to + '|' + side, to: first.to, side: side, offset: 0 };
+      function setPrimary(edge) {
+        merge.primary = edge;
+        merge.members = edge ? visuals.concat(edge) : visuals;
+        merge.offset = routes.some(function (route) { return route !== edge; }) ? Math.min(12, target.height * .18) : 0;
+      }
+      setPrimary(primary);
+      if (mergeHasClearance(merge, placements, columnList)) merges.push(merge);
+      else if (primary && visuals.length >= 2) {
+        setPrimary(null);
+        if (mergeHasClearance(merge, placements, columnList)) merges.push(merge);
+      }
+    });
+    if (!merges.length) return;
+    var mergesByTarget = new Map();
+    merges.forEach(function (merge) {
+      mergesByTarget.set(merge.to, mergesByTarget.has(merge.to) ? null : merge);
+    });
+    var centered = new Map();
+    columns.forEach(function (column) {
+      column.cards.forEach(function (card, index) {
+        var merge = mergesByTarget.get(card.id);
+        if (!merge || outgoing.has(card.id) || next.model.children.has(card.id)
+            || (card.kind === 'task' && GoalTree.milestonesForTask(next.model.byTask.get(card.node.taskId)).length)) return;
+        if (merge.members.length - Number(!!merge.primary) !== visualCounts.get(card.id)) return;
+        var top = Infinity, bottom = -Infinity;
+        merge.members.forEach(function (edge) {
+          var y = placements.get(edge.from).y;
+          top = Math.min(top, y); bottom = Math.max(bottom, y);
+        });
+        var y = (top + bottom) / 2, halfHeight = card.height / 2;
+        var above = column.cards[index - 1], below = column.cards[index + 1];
+        var minY = above ? Math.max(above.y, centered.get(above.id) ?? above.y) + above.height / 2 + 12 : 0;
+        var maxY = below ? below.y - below.height / 2 - 12 : next.bounds.height;
+        if (Math.abs(y - card.y) < .5 || y - halfHeight < minY || y + halfHeight > maxY) return;
+        var original = card.y;
+        if (cardInArea(columnList, card.x, Math.min(y, original) - halfHeight, card.x + card.width,
+          Math.max(y, original) + halfHeight, '', card.id, 3)) return;
+        card.y = y;
+        var routes = inbound.get(card.id) || [];
+        if (mergeHasClearance(merge, placements, columnList) && routes.every(function (edge) {
+          return edge === merge.primary || routeHasClearance(edge, placements, columnList);
+        })) centered.set(card.id, original);
+        else card.y = original;
+      });
+    });
+    // A shifted card can also obstruct another target's routes. Preserve those clear routes.
+    if (centered.size && merges.some(function (merge) { return !mergeHasClearance(merge, placements, columnList); })) {
+      centered.forEach(function (original, id) { placements.get(id).y = original; });
+    }
+    var groupsByEdge = new Map();
+    next.visualMerges = new Map();
+    merges.forEach(function (merge) {
+      merge.members.forEach(function (edge) { groupsByEdge.set(edge, merge); });
+      next.visualMerges.set(merge.to + '|' + merge.side, merge);
+    });
+    next.drawEdges = next.edges.map(function (edge) {
+      var merge = groupsByEdge.get(edge);
+      return merge ? Object.assign({}, edge, { merge: merge, part: 'branch' }) : edge;
+    });
+    merges.forEach(function (merge) {
+      var type = merge.primary ? 'requires' : 'visual';
+      next.drawEdges.push({ id: merge.id + '|spine', to: merge.to, type: type,
+        primary: !!merge.primary, merge: merge, part: 'spine' });
+      next.drawEdges.push({ id: merge.id + '|trunk', to: merge.to, type: type,
+        primary: !!merge.primary, merge: merge, part: 'trunk' });
+    });
   }
   function branchMarkup(placement, model) {
     var metrics = placement.metrics || { count: 0, progress: 0 };
@@ -2275,6 +2459,51 @@
     return new Map((items || []).map(function (item) { return [item.id, Object.assign({}, item)]; }));
   }
   function edgeKey(edge) { return edge.id || edge.from + '>' + edge.to; }
+  function affectedDrawEdges(edges, nodeIds) {
+    var dirtyMerges = new Map();
+    return edges.filter(function (edge) {
+      if (!edge.merge) return nodeIds.has(edge.from) || nodeIds.has(edge.to);
+      if (!dirtyMerges.has(edge.merge)) {
+        dirtyMerges.set(edge.merge, nodeIds.has(edge.to) || edge.merge.members.some(function (member) {
+          return nodeIds.has(member.from);
+        }));
+      }
+      return dirtyMerges.get(edge.merge);
+    });
+  }
+  function mergeBranchPath(source, geometry) {
+    var x = geometry.dir === 1 ? source.x + source.width : source.x;
+    var joinY = mergeJoinY(source.y, geometry.y);
+    var bend = Math.min(Math.abs(joinY - source.y), Math.abs(geometry.x - x) / 2);
+    return 'M' + x + ',' + source.y + ' H' + (geometry.x - geometry.dir * bend)
+      + ' Q' + geometry.x + ',' + source.y + ' ' + geometry.x + ',' + joinY;
+  }
+  function writeDrawEdges(edges, placements) {
+    var geometries = new Map();
+    edges.forEach(function (edge) {
+      var path = edgeElements.get(edgeKey(edge));
+      if (!path) return;
+      if (edge.merge && !geometries.has(edge.merge)) geometries.set(edge.merge, mergeGeometry(edge.merge, placements));
+      var geometry = geometries.get(edge.merge), d = '', marker = '';
+      if (geometry && edge.part === 'branch') d = mergeBranchPath(placements.get(edge.from), geometry);
+      else if (geometry && edge.part === 'spine') {
+        d = 'M' + geometry.x + ',' + mergeJoinY(geometry.top, geometry.y)
+          + ' V' + mergeJoinY(geometry.bottom, geometry.y);
+      } else if (geometry && edge.part === 'trunk') {
+        d = 'M' + geometry.x + ',' + geometry.y + ' H' + geometry.targetX;
+      } else if (edge.from) {
+        var from = placements.get(edge.from), to = placements.get(edge.to);
+        if (from && to) d = edge.type === 'visual' ? visualEdgePath(from, to, edge) : edgePath(from, to);
+      }
+      if (d && (!geometry || edge.part === 'trunk')) {
+        if (edge.type === 'visual') marker = 'url(#tree-page-visual-arrow)';
+        else if (edge.type === 'requires') marker = 'url(#study-route-arrow)';
+      }
+      if (path.getAttribute('d') !== d) path.setAttribute('d', d);
+      if (marker && path.getAttribute('marker-end') !== marker) path.setAttribute('marker-end', marker);
+      else if (!marker && path.hasAttribute('marker-end')) path.removeAttribute('marker-end');
+    });
+  }
   function syncEdgeElements(next, options) {
     options = options || {};
     if (!edgesHost.querySelector('#study-route-arrow')) {
@@ -2284,27 +2513,28 @@
         + '<marker id="tree-page-visual-remove-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L8,4 L0,8 z"></path></marker>';
       edgesHost.appendChild(defs);
     }
-    var wanted = new Set(next.edges.map(edgeKey));
+    var wanted = new Set(next.drawEdges.map(edgeKey));
     edgeElements.forEach(function (path, id) {
       if (wanted.has(id)) return;
       path.remove(); edgeElements.delete(id);
     });
-    next.edges.forEach(function (edge) {
+    next.drawEdges.forEach(function (edge) {
       var id = edgeKey(edge), path = edgeElements.get(id), isNewPath = !path;
       if (!path) {
         path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.dataset.edgeId = id;
-        path.dataset.from = edge.from; path.dataset.to = edge.to;
+        if (edge.from) path.dataset.from = edge.from;
+        path.dataset.to = edge.to;
         edgesHost.appendChild(path); edgeElements.set(id, path);
         if (!options.suppressEntrance && !prefersReduced) {
           requestAnimationFrame(function () { if (path.isConnected) path.classList.remove('is-entering'); });
         }
       }
+      if (edge.part) path.dataset.mergePart = edge.part;
+      else delete path.dataset.mergePart;
       path.setAttribute('class', 'study-route-edge is-' + edge.type + (edge.primary ? ' is-primary' : ' is-secondary')
+        + (edge.part === 'branch' && edge.type === 'visual' && edge.merge.primary ? ' is-visual-merge-branch' : '')
         + (isNewPath && !options.suppressEntrance && !prefersReduced ? ' is-entering' : ''));
-      if (edge.type === 'visual') path.setAttribute('marker-end', 'url(#tree-page-visual-arrow)');
-      else if (edge.type === 'requires') path.setAttribute('marker-end', 'url(#study-route-arrow)');
-      else path.removeAttribute('marker-end');
     });
   }
   function writeNodePosition(element, placement) {
@@ -2324,14 +2554,7 @@
       if (!element) return;
       writeNodePosition(element, placement);
     });
-    (edgeWork || next.edges).forEach(function (edge) {
-      var path = edgeElements.get(edgeKey(edge));
-      var from = placements.get(edge.from), to = placements.get(edge.to);
-      if (path && from && to) {
-        var d = edge.type === 'visual' ? visualEdgePath(from, to, edge) : edgePath(from, to);
-        if (path.getAttribute('d') !== d) path.setAttribute('d', d);
-      }
-    });
+    writeDrawEdges(edgeWork || next.drawEdges, placements);
   }
   function animateLayout(previous, next, duration, excluded, newNodesAtDestination) {
     if (layoutFrame) cancelAnimationFrame(layoutFrame);
@@ -2372,7 +2595,7 @@
         work.push({ id: id, from: from, to: to, live: item }); nodeWork.set(id, item);
       }
     });
-    var edgeWork = next.edges.filter(function (edge) { return nodeWork.has(edge.from) || nodeWork.has(edge.to); });
+    var edgeWork = affectedDrawEdges(next.drawEdges, nodeWork);
     applyLayoutFrame(next, live);
     var started = performance.now();
     function frame(now) {
@@ -3884,7 +4107,7 @@
     },
     {
       title: '箭头、解锁与高级编辑',
-      body: '<p>只有需要“做完 A 才能做 B”时，才需要关心解锁条件。</p><ul><li>浅灰无箭头线表示“收纳在某阶段”；深色箭头线表示“完成后解锁下一项”。</li><li>虚线是附加条件；有多个条件时，必须全部满足才算解锁。</li><li>从任务或阶段卡片任意位置右键拖到另一张卡片可建立同色视觉关系；按原方向再拖一次即可删除。视觉关系只用于说明，不参与解锁、进度或排版。</li><li>默认只把解锁关系作为路线提示，任务仍可自由完成和修改进度；在起步页齿轮开启“强制按解锁顺序”后，未解锁任务才会被限制。</li><li>如需添加附加解锁条件，请在起步页齿轮中关闭“精简目标树编辑”；这不会修改已有路线。</li></ul>',
+      body: '<p>只有需要“做完 A 才能做 B”时，才需要关心解锁条件。</p><ul><li>浅灰无箭头线表示“收纳在某阶段”；深色主路线表示“完成后解锁下一项”。</li><li>虚线是附加条件；有多个条件时，必须全部满足才算解锁。</li><li>从任务或阶段卡片任意位置右键拖到另一张卡片可建立视觉关系；按原方向再拖一次即可拆除这一条。视觉关系只用于说明，不参与解锁或进度。</li><li>同侧连线可以共用一个箭头，汇入主路线时视觉支线较细。末端卡片有空位时会在原列居中。</li><li>默认只把解锁关系作为路线提示，任务仍可自由完成和修改进度；在起步页齿轮开启“强制按解锁顺序”后，未解锁任务才会被限制。</li><li>如需添加附加解锁条件，请在起步页齿轮中关闭“精简目标树编辑”；这不会修改已有路线。</li></ul>',
     },
   ];
   function renderGuidePage() {
@@ -4386,8 +4609,11 @@
     setCollapseControlExpanded(nodeId, false);
     var nodeIds = collapseVisibleDescendants(nodeId);
     var edgeIds = new Set();
-    (layout && layout.edges || []).forEach(function (edge) {
-      if (nodeIds.has(edge.from) || nodeIds.has(edge.to)) edgeIds.add(edgeKey(edge));
+    (layout && layout.drawEdges || []).forEach(function (edge) {
+      if (nodeIds.has(edge.from) || nodeIds.has(edge.to)
+          || (edge.merge && !edge.from && edge.merge.members.every(function (member) { return nodeIds.has(member.from); }))) {
+        edgeIds.add(edgeKey(edge));
+      }
     });
     nodeIds.forEach(function (id) {
       var element = nodeElements.get(id);
@@ -4968,6 +5194,25 @@
     var target = relation.valid && targetId ? visualLinkPlacement(targetId) : null;
     var point = routeScenePoint(clientX, clientY);
     var endpoint = target || { x: point.x, y: point.y, width: 0, height: 0 };
+    var reverse = endpoint.x + endpoint.width / 2 < source.x + source.width / 2;
+    var preview = ensureVisualLinkPreview();
+    preview.classList.toggle('is-removing', visualLinkDrag.removing);
+    preview.classList.toggle('is-invalid', !!targetId && !relation.valid);
+    var merge = target && layout && layout.visualMerges && layout.visualMerges.get(targetId + (reverse ? '|right' : '|left'));
+    var geometry = merge && mergeGeometry(merge, visualPlacements);
+    if (geometry) {
+      var sourceX = reverse ? source.x : source.x + source.width;
+      if (geometry.dir * (geometry.x - sourceX) > 6) {
+        var d = mergeBranchPath(source, geometry);
+        var joinY = mergeJoinY(source.y, geometry.y);
+        var top = mergeJoinY(geometry.top, geometry.y), bottom = mergeJoinY(geometry.bottom, geometry.y);
+        if (joinY < top) d += ' V' + top;
+        else if (joinY > bottom) d += ' V' + bottom;
+        preview.removeAttribute('marker-end');
+        preview.setAttribute('d', d);
+        return;
+      }
+    }
     var previewEdge = null;
     if (target && relation.removing && layout) {
       previewEdge = layout.edges.find(function (edge) {
@@ -4975,7 +5220,6 @@
       }) || null;
     }
     if (!previewEdge) {
-      var reverse = endpoint.x + endpoint.width / 2 < source.x + source.width / 2;
       var delta = endpoint.y - source.y;
       previewEdge = {
         fromSide: reverse ? 'left' : 'right', toSide: reverse ? 'right' : 'left',
@@ -4983,9 +5227,6 @@
         toPortOffset: target ? (delta > 0 ? -1 : 1) * Math.min(12, Math.max(0, target.height * .25)) : 0,
       };
     }
-    var preview = ensureVisualLinkPreview();
-    preview.classList.toggle('is-removing', visualLinkDrag.removing);
-    preview.classList.toggle('is-invalid', !!targetId && !relation.valid);
     preview.setAttribute('marker-end', visualLinkDrag.removing
       ? 'url(#tree-page-visual-remove-arrow)' : 'url(#tree-page-visual-arrow)');
     preview.setAttribute('d', visualEdgePath(source, endpoint, previewEdge));
@@ -5023,7 +5264,7 @@
     syncActiveTreeReference();
     syncStudyCacheFromState();
     render({
-      animateLayout: false,
+      duration: 180,
       suppressEntrance: true,
       suppressProgressAnimation: true,
       suppressSummaryAnimation: true,
@@ -5047,7 +5288,7 @@
           if (state.activeTreeId === treeId) state.tree = tree;
           syncStudyCacheFromState();
           if (open && state.activeTreeId === treeId) render({
-            animateLayout: false,
+            duration: 180,
             suppressEntrance: true,
             suppressProgressAnimation: true,
             suppressSummaryAnimation: true,
@@ -5110,6 +5351,7 @@
   function onVisualLinkEnd(event) {
     if (!visualLinkDrag || visualLinkDrag.id !== event.pointerId) return;
     if (visualLinkDrag.active) event.preventDefault();
+    visualLinkDrag.latestX = event.clientX; visualLinkDrag.latestY = event.clientY;
     finishVisualLinkDrag(false);
   }
   function onVisualLinkCancel(event) {
@@ -5119,6 +5361,7 @@
   function onVisualLinkMouseUp(event) {
     if (!visualLinkDrag || event.button !== 2) return;
     if (visualLinkDrag.active) event.preventDefault();
+    visualLinkDrag.latestX = event.clientX; visualLinkDrag.latestY = event.clientY;
     finishVisualLinkDrag(false);
   }
   function onVisualLinkLostCapture(event) {
@@ -5223,9 +5466,7 @@
     drag.baseLayout.nodes.forEach(function (placement) {
       if (drag.dragIds.has(placement.id)) drag.starts.set(placement.id, Object.assign({}, placement));
     });
-    drag.affectedEdges = drag.baseLayout.edges.filter(function (edge) {
-      return drag.dragIds.has(edge.from) || drag.dragIds.has(edge.to);
-    });
+    drag.affectedEdges = affectedDrawEdges(drag.baseLayout.drawEdges, drag.dragIds);
     drag.dragIds.forEach(function (id) {
       var element = nodeElements.get(id);
       if (element) element.classList.add(id === drag.nodeId ? 'is-drag-anchor' : 'is-subtree-dragging');
@@ -5257,12 +5498,7 @@
       var element = nodeElements.get(id);
       if (element) element.style.transform = 'translate3d(' + dx + 'px,' + dy + 'px,0)';
     });
-    drag.affectedEdges.forEach(function (edge) {
-      var path = edgeElements.get(edgeKey(edge));
-      var from = drag.livePlacements.get(edge.from), to = drag.livePlacements.get(edge.to);
-      if (path && from && to) path.setAttribute('d', edge.type === 'visual'
-        ? visualEdgePath(from, to, edge) : edgePath(from, to));
-    });
+    writeDrawEdges(drag.affectedEdges, drag.livePlacements);
   }
   function updateDragCandidate(clientX, clientY) {
     if (!drag || !drag.active) return;

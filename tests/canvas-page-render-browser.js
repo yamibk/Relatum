@@ -397,6 +397,263 @@ async function checkTreeFreeItemComposition(browser, url) {
   }
 }
 
+function mergeFixture(scenario) {
+  const tasks = [], nodes = [], links = [];
+  function add(id, title, from, { task = false, requires = false } = {}) {
+    const taskId = 'task-' + id;
+    if (task) tasks.push({ id: taskId, title, status: 'active', progress: { current: 0, target: 1 } });
+    nodes.push(task ? { id, kind: 'task', taskId } : { id, kind: 'branch', title });
+    links.push({ id: 'link-' + id, from, to: id, order: links.length, primary: true,
+      type: requires ? 'requires' : 'contains',
+      ...(requires ? { trigger: { kind: 'complete' } } : {}),
+      ...(!from ? { side: 'right' } : {}) });
+  }
+  add('year', '大二', null);
+  add('math', '数学', 'year');
+  add('electrical', '电气', 'year');
+  add('probability', '概率论', 'math', { task: true });
+  add('complex', '复变函数', 'math', { task: true });
+  add('magnetism', '电磁场', 'electrical', { task: true });
+  add('circuits', '电路', 'electrical', { task: true });
+  if (scenario === 'blocked' || scenario === 'fallback') {
+    add('neighbor', '同列卡片', 'magnetism', { requires: true });
+  }
+  const sources = ['probability', 'complex', 'circuits'];
+  if (scenario === 'visual-only') {
+    add('carrier', '父阶段', 'electrical');
+    add('target', '大二下学期', 'carrier');
+    sources.push('magnetism');
+  } else {
+    add('target', '大二下学期', 'magnetism', { requires: true });
+  }
+  if (scenario === 'fallback') sources.push('neighbor');
+  if (scenario === 'split') {
+    add('another', '另一条路线', 'year');
+    add('mid', '后续阶段', 'another');
+    add('far', '后续节点', 'mid');
+    add('one', '右侧来源一', 'far', { task: true });
+    add('two', '右侧来源二', 'far', { task: true });
+    add('prerequisite', '附加条件', 'math', { task: true });
+    links.push({ id: 'require-prerequisite', from: 'prerequisite', to: 'target', type: 'requires',
+      primary: false, trigger: { kind: 'complete' } });
+    sources.push('one', 'two');
+  }
+  const visualLinks = sources.map(from => ({ from, to: 'target' }));
+  const goalTrees = [{ version: 2, id: 'merge-tree', title: '大二', nodes, links, visualLinks },
+    { version: 2, id: 'empty-tree', title: '另一棵树', nodes: [], links: [], visualLinks: [] }];
+  return { version: 2, tasks, goalTrees, activeTreeId: 'merge-tree' };
+}
+
+async function checkTreeVisualMerges(browser, url, dataRoot, scenario) {
+  const filename = path.join(dataRoot, 'data', 'tree-page.json');
+  const fixture = mergeFixture(scenario);
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  fs.writeFileSync(filename, JSON.stringify(fixture));
+  const reducedMotion = scenario === 'blocked' ? 'reduce' : 'no-preference';
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion });
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.setDefaultTimeout(12000);
+  try {
+    await page.addInitScript(() => {
+      localStorage.setItem('canvas:startWorkspace:v1', 'canvas');
+      localStorage.setItem('canvas:startTheme', 'light');
+      localStorage.setItem('canvas:globalSystem:v1', JSON.stringify({ preload: false, dailyRetention: 'immediate' }));
+    });
+    await page.goto(url + '/index.html');
+    const open = async () => {
+      await page.evaluate(() => CanvasTreePage.prefetch());
+      await click(page, '.left-spine [data-action="tree-page-view"]');
+    };
+    await open();
+    const scope = page.locator('.tree-page-embedded');
+    const node = id => scope.locator('.study-route-node[data-node-id="' + id + '"]');
+    await node('target').waitFor();
+    const edges = scope.locator('path[data-to="target"]');
+    const arrows = edges.locator('xpath=self::*[@marker-end]');
+    const trunk = edges.locator('xpath=self::*[@data-merge-part="trunk"]');
+    const arrowCount = scenario === 'fallback' ? 5 : scenario === 'split' ? 3 : 1;
+    await page.waitForFunction(count => document.querySelectorAll(
+      '.tree-page-embedded path[data-to="target"][marker-end]').length === count, arrowCount);
+    if (scenario === 'fallback') {
+      assert.equal(await trunk.count(), 0, 'overlapping columns preserve individual paths');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    assert.equal(await trunk.count(), scenario === 'split' ? 2 : 1);
+    assert.equal(await edges.locator('xpath=self::*[@data-merge-part="branch"]').count(), scenario === 'split' ? 6 : 4);
+    assert.equal(await edges.locator('xpath=self::*[@data-from="magnetism"]').getAttribute('marker-end'), null);
+    assert.equal(await edges.locator('xpath=self::*[@data-from="probability"]').evaluate(edge =>
+      parseFloat(getComputedStyle(edge).strokeWidth)), scenario === 'visual-only' ? 1.7 : 1.15);
+
+    const xy = id => node(id).evaluate(card => ({ x: card.__layoutX, y: card.__layoutY + card.offsetHeight / 2 }));
+    const centerBetween = async (first, last) => ((await xy(first)).y + (await xy(last)).y) / 2;
+    const baselineY = (await xy('magnetism')).y;
+    if (scenario === 'visual-only') {
+      assert.equal((await xy('target')).y, await centerBetween('probability', 'circuits'));
+      assert.equal(await trunk.getAttribute('marker-end'), 'url(#tree-page-visual-arrow)');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (scenario === 'blocked') {
+      const targetY = (await xy('target')).y;
+      const candidateY = await centerBetween('probability', 'circuits');
+      assert(Math.abs(targetY - candidateY) > 20, 'collision keeps the target in its original slot');
+      assert(candidateY < targetY && candidateY < baselineY, 'the proposed move would cross the preceding card');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (scenario === 'split') {
+      assert.equal((await xy('target')).y, baselineY, 'sources on both sides keep tree placement');
+      const directions = await trunk.evaluateAll(paths => paths.map(path => {
+        const length = path.getTotalLength();
+        return Math.sign(path.getPointAtLength(length).x - path.getPointAtLength(0).x);
+      }).sort());
+      assert.deepEqual(directions, [-1, 1], 'each side has a single inward arrow');
+      const dashed = edges.locator('xpath=self::*[@data-from="prerequisite"]');
+      assert.equal(await dashed.getAttribute('data-merge-part'), null);
+      assert.equal(await dashed.evaluate(edge => getComputedStyle(edge).strokeDasharray), '5px, 5px');
+      assert.deepEqual(errors, []);
+      return;
+    }
+
+    const target = await xy('target');
+    assert.equal(target.y, await centerBetween('probability', 'circuits'));
+    assert.notEqual(target.y, baselineY, 'terminal card leaves primary source height when there is room');
+    const endpoint = await trunk.evaluate(path => {
+      const point = path.getPointAtLength(path.getTotalLength());
+      return { x: point.x, y: point.y };
+    });
+    assert.deepEqual(endpoint, target, 'the shared arrow meets the left center of the moved card');
+
+    const fold = node('math').locator('[data-route-action="collapse"]');
+    await fold.click();
+    await node('probability').waitFor({ state: 'detached' });
+    assert.equal(await arrows.count(), 1, 'remaining sources still share an arrow');
+    assert.equal(await edges.locator('xpath=self::*[@data-from="probability"]').count(), 0);
+    await fold.click();
+    await node('probability').waitFor();
+    async function waitForCenteredTarget() {
+      const centered = await page.waitForFunction(() => {
+        function y(id) {
+          const card = document.querySelector('.tree-page-embedded [data-node-id="' + id + '"]');
+          return card && card.__layoutY + card.offsetHeight / 2;
+        }
+        return y('probability') != null && Math.abs(y('target') - (y('probability') + y('circuits')) / 2) < .03;
+      }, undefined, { timeout: 2000 }).then(() => true, () => false);
+      if (!centered) {
+        const points = await Promise.all(['target', 'probability', 'complex', 'magnetism', 'circuits'].map(xy));
+        assert.fail('target failed to recenter: ' + JSON.stringify(points));
+      }
+    }
+    await waitForCenteredTarget();
+
+    const mousePoint = async id => {
+      const box = await node(id).boundingBox();
+      return { x: box.x + box.width * .43, y: box.y + box.height / 2 };
+    };
+    const sourcePoint = await mousePoint('probability');
+    const sourceBranch = edges.locator('xpath=self::*[@data-from="probability"]');
+    const branchBefore = await sourceBranch.getAttribute('d');
+    await page.mouse.move(sourcePoint.x, sourcePoint.y);
+    await page.mouse.down();
+    await page.mouse.move(sourcePoint.x + 18, sourcePoint.y + 30, { steps: 5 });
+    await settleFrames(page);
+    assert.notEqual(await sourceBranch.getAttribute('d'), branchBefore, 'branch follows real structural drag');
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await page.mouse.up();
+    await page.waitForFunction(({ d, selector }) => document.querySelector(selector)?.getAttribute('d') === d, {
+      d: branchBefore, selector: '.tree-page-embedded path[data-from="probability"][data-to="target"]',
+    });
+
+    async function toggleProbability() {
+      const from = await mousePoint('probability'), to = await mousePoint('target');
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down({ button: 'right' });
+      await page.mouse.move(to.x, to.y, { steps: 10 });
+      await scope.locator('.is-visual-unlink-target .study-route-collapse').waitFor();
+      const preview = scope.locator('path.is-link-preview.is-removing');
+      assert.equal(await preview.getAttribute('marker-end'), null, 'only the removed branch is highlighted');
+      await page.mouse.up({ button: 'right' });
+    }
+    let rejectSave;
+    const pending = new Promise(resolve => { rejectSave = resolve; });
+    const rejectCommand = async route => {
+      rejectSave(route);
+    };
+    await page.route('**/api/tree-page-command', rejectCommand, { times: 1 });
+    await Promise.all([
+      page.waitForRequest(request => request.url().endsWith('/api/tree-page-command')),
+      toggleProbability(),
+    ]);
+    const rejected = await pending;
+    assert.equal(rejected.request().postDataJSON().command, 'set-visual-link');
+    assert.equal(rejected.request().postDataJSON().active, false);
+    assert.equal(await sourceBranch.count(), 0, 'branch is removed before the save response');
+    assert.equal(await arrows.count(), 1);
+    await rejected.fulfill({ status: 500, json: { error: '模拟写入失败' } });
+    await sourceBranch.waitFor();
+    await waitForCenteredTarget();
+    assert.equal(JSON.parse(fs.readFileSync(filename, 'utf8')).goalTrees[0].visualLinks.length, 3);
+
+    const saved = page.waitForResponse(response => response.url().endsWith('/api/tree-page-command'));
+    await toggleProbability();
+    assert((await saved).ok());
+    const persisted = JSON.parse(fs.readFileSync(filename, 'utf8'));
+    assert.deepEqual(persisted.goalTrees[0].visualLinks, fixture.goalTrees[0].visualLinks.slice(1));
+    assert.equal(persisted.goalTrees[0].links.find(link => link.to === 'target').from, 'magnetism');
+    assert.equal(await arrows.count(), 1);
+
+    const added = page.waitForResponse(response => response.url().endsWith('/api/tree-page-command'));
+    const from = await mousePoint('probability'), to = await mousePoint('target');
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down({ button: 'right' });
+    await page.mouse.move(to.x, to.y, { steps: 10 });
+    await node('target').and(scope.locator('.is-visual-link-target')).waitFor();
+    assert.equal(await scope.locator('path.is-link-preview').getAttribute('marker-end'), null);
+    await page.mouse.up({ button: 'right' });
+    assert((await added).ok());
+    await sourceBranch.waitFor();
+    await page.setViewportSize({ width: 900, height: 650 });
+    await page.locator('[data-action="start-theme-toggle"]').first().evaluate(element => element.click());
+    assert.equal(await trunk.evaluate(path => getComputedStyle(path).stroke), 'rgb(255, 255, 255)');
+    assert.equal(await arrows.count(), 1);
+    await page.reload();
+    await open();
+    await sourceBranch.waitFor();
+    assert.equal(await arrows.count(), 1, 'reload builds the merge from persisted individual links');
+    const viewport = scope.locator('[data-role="study-route-viewport"]');
+    const scene = scope.locator('[data-role="study-route-scene"]');
+    const beforeZoom = await scene.evaluate(element => element.style.transform);
+    const beforePath = await trunk.getAttribute('d');
+    const viewportBox = await viewport.boundingBox();
+    await page.mouse.move(viewportBox.x + viewportBox.width * .62, viewportBox.y + viewportBox.height * .4);
+    await page.mouse.wheel(0, -180);
+    await page.waitForFunction(transform => document.querySelector(
+      '.tree-page-embedded [data-role="study-route-scene"]').style.transform !== transform, beforeZoom);
+    assert.equal(await trunk.getAttribute('d'), beforePath, 'zoom moves the scene without recomputing the shared path');
+
+    const switchTo = async id => {
+      const [response] = await Promise.all([
+        page.waitForResponse(response => response.url().endsWith('/api/tree-page-command')
+          && response.request().postDataJSON().treeId === id),
+        scope.locator('[data-route-tree-id="' + id + '"]').evaluate(button => button.click()),
+      ]);
+      assert(response.ok());
+      await settleFrames(page);
+    };
+    await switchTo('empty-tree');
+    await node('target').waitFor({ state: 'detached' });
+    assert.equal(await scope.locator('path[data-merge-part]').count(), 0, 'switching trees clears merge paths');
+    await switchTo('merge-tree');
+    await sourceBranch.waitFor();
+    assert.equal(await arrows.count(), 1, 'returning to the first tree rebuilds just one arrow');
+    assert.deepEqual(errors, []);
+  } finally {
+    await page.close();
+  }
+}
+
 async function main() {
   const socket = net.createServer();
   await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
@@ -419,6 +676,13 @@ async function main() {
       headless: true,
       executablePath: process.env.RELATUM_EDGE_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
     });
+    if (process.argv.includes('--tree-visual-merges')) {
+      for (const scenario of ['basic', 'visual-only', 'blocked', 'split', 'fallback']) {
+        await checkTreeVisualMerges(browser, url, dataRoot, scenario);
+        console.log('tree-page visual merge passed: ' + scenario);
+      }
+      return;
+    }
     await checkTreeFreeItemComposition(browser, url);
     console.log('tree-page free item composition passed');
     for (const host of routeHosts) console.log(JSON.stringify(await checkRoute(browser, url, host)));

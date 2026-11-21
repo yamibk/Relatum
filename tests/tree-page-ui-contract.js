@@ -116,14 +116,16 @@ assert(syncNodeElementsSource.includes("replayClass(element, 'is-completion-rest
   'cancelTreeSwitchMotion', 'requestTreeSwitchFrame',
   'collapseVisibleDescendants',
   'cleanupCollapseMotion', 'cancelCollapseMotion', 'finishCollapseMotion',
-  'setCollapseControlExpanded', 'toggleBranchCollapse', 'clearDropPreview', 'showDropPreview',
+  'setCollapseControlExpanded', 'clearDropPreview', 'showDropPreview',
   // activateDrag is intentionally Tree-specific because its rollback snapshot must retain visualLinks/freeItems.
   'dragHitId', 'autoPanDrag', 'updateDragCandidate', 'flushDragFrame',
   'onDragMove', 'onDragEnd', 'onDragCancel', 'endPan',
 ].forEach((name) => {
   const source = functionSource(tree, name)
     .replace('    if (!open || !railList || deferWorkspaceRender()) return;', '    if (!railList) return;')
-    .replace('    if (!open || workspaceReturn) return;\n', '');
+    .replace('    if (!open || workspaceReturn) return;\n', '')
+    .replace('affectedDrawEdges(next.drawEdges, nodeWork)',
+      'next.edges.filter(function (edge) { return nodeWork.has(edge.from) || nodeWork.has(edge.to); })');
   assert.strictEqual(source, functionSource(route, name),
     'goal-tree runtime drifted in critical function: ' + name);
 });
@@ -236,7 +238,7 @@ assert(!css.includes('.tree-page-reference'), 'removed Alt-reference styles must
 ].forEach((needle) => assert(tree.includes(needle), 'missing visual-link gesture contract: ' + needle));
 assert(functionSource(tree, 'setVisualLinkOptimistic').includes('applyVisualLinkLocally(fromNodeId, toNodeId, active)')
   && functionSource(tree, 'setVisualLinkOptimistic').includes('{ skipRender: true }')
-  && functionSource(tree, 'applyVisualLinkLocally').includes('animateLayout: false'),
+  && functionSource(tree, 'applyVisualLinkLocally').includes('suppressEntrance: true'),
   'visual-link add/remove must render optimistically and reconcile without a second visible render');
 const visualPointerStart = tree.indexOf("nodesHost.addEventListener('pointerdown', function (event)");
 const visualPointerEnd = tree.indexOf('function routeScenePoint', visualPointerStart);
@@ -267,7 +269,8 @@ assert(css.includes('.study-route-edge.is-visual')
   && css.includes('.tree-page-shape-diamond.is-visual-link-target')
   && css.includes('.study-route-edge.is-visual.is-link-preview.is-removing'),
   'visual links need route-colored, target, and removal feedback in the Tree page');
-assert(tree.includes('右键拖到另一张卡片') && tree.includes('视觉关系只用于说明，不参与解锁、进度或排版'),
+assert(tree.includes('右键拖到另一张卡片') && tree.includes('视觉关系只用于说明，不参与解锁或进度')
+  && tree.includes('同侧连线可以共用一个箭头'),
   'the existing four-page help must explain visual-link creation, removal, and semantics');
 assert(tree.includes("window.addEventListener('mouseup', onDragMouseUp, true)"),
   'task drag must capture on pointerdown and keep a mouseup fallback');
@@ -392,9 +395,10 @@ assert(renderSource.indexOf('GoalTree.layout') < renderSource.indexOf('appendVis
 assert(visualPortsSource.includes('Math.min(24, Math.max(0, placement.height * .25))')
   && visualPortsSource.includes('other && other.y > placement.y ? 1 : -1')
   && visualPortsSource.includes('Math.abs(offset) < 6')
-  && functionSource(tree, 'positionDraggedSubtree').includes("edge.type === 'visual'")
-  && functionSource(tree, 'positionDraggedSubtree').includes('visualEdgePath(from, to, edge)'),
-  'visual-only ports must be stable, bounded away from center, and follow structural dragging');
+  && functionSource(tree, 'writeDrawEdges').includes('visualEdgePath(from, to, edge)')
+  && functionSource(tree, 'positionDraggedSubtree').includes('writeDrawEdges(drag.affectedEdges, drag.livePlacements)')
+  && functionSource(tree, 'toggleBranchCollapse').includes('layout.drawEdges'),
+  'separate visual ports and shared paths must follow structural dragging');
 assert(functionSource(tree, 'activateDrag').includes('drag.baseTree = preserveTreeExtensions(state.tree, {')
   && functionSource(tree, 'finishDrag').includes('preserveTreeExtensions(current.baseTree,'),
   'structural drag previews and rollback must retain Tree-page visual links and other extensions');
