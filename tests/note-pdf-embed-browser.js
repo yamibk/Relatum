@@ -396,7 +396,7 @@ async function waitFor(check, description = 'the test host') {
       assert.ok(Math.abs(end[1] - start[1]) < .1 && end[0] - start[0] > 50,
         name + ' follows the text direction in PDF space: ' + JSON.stringify(mark.quads[0]));
     }
-    let formulaHighlight;
+    let formulaHighlight, formulaUnderlineX;
     for (const [name, kind] of [['Highlight text', 'highlight'], ['Underline', 'underline']]) {
       await tool('Select annotations').click();
       await sheet(4).locator('.note-pdf-text').evaluate(layer => {
@@ -422,6 +422,7 @@ async function waitFor(check, description = 'the test host') {
         formulaHighlight = { id: mark.id, center: [(x + oppositeX) / 2, (y + oppositeY) / 2], band: [x, oppositeX] };
       } else {
         assert.equal(await path.getAttribute('fill'), 'none');
+        formulaUnderlineX = Number((await path.getAttribute('d')).match(/-?[\d.]+/)[0]);
       }
     }
     await tool('Select annotations').click();
@@ -431,19 +432,25 @@ async function waitFor(check, description = 'the test host') {
     assert.equal(await removeAnnotation.isEnabled(), true, 'the blended highlight remains selectable');
     await brush('Eraser', 4, formulaHighlight.center);
     await waitFor(async () => !(await savedMarks()).some(mark => mark.id === formulaHighlight.id), 'erasing the blended highlight');
-    await tool('Select annotations').click();
-    await sheet(4).locator('.note-pdf-text').evaluate(layer => {
-      const exponent = [...layer.querySelectorAll('span')].find(node => node.textContent.trim() === '2');
-      const range = document.createRange();
-      range.selectNodeContents(exponent);
-      const selection = window.getSelection();
-      selection.removeAllRanges(); selection.addRange(range);
-    });
-    await tool('Highlight text').click();
-    const shortHighlight = await waitFor(async () => (await savedMarks()).find(mark => mark.kind === 'highlight' && mark.text.trim() === '2'), 'highlighting one glyph');
-    const shortPath = sheet(4).locator('.note-pdf-text-marks [data-annotation-id="' + shortHighlight.id + '"] > path');
-    const coords = (await shortPath.getAttribute('d')).match(/-?[\d.]+/g).map(Number);
-    assert.deepEqual([coords[0], coords[4]], formulaHighlight.band, 'one glyph and a multiline selection use the same band on that row');
+    for (const [name, kind] of [['Highlight text', 'highlight'], ['Underline', 'underline']]) {
+      await tool('Select annotations').click();
+      await sheet(4).locator('.note-pdf-text').evaluate(layer => {
+        const exponent = [...layer.querySelectorAll('span')].find(node => node.textContent.trim() === '2');
+        const range = document.createRange();
+        range.selectNodeContents(exponent);
+        const selection = window.getSelection();
+        selection.removeAllRanges(); selection.addRange(range);
+      });
+      await tool(name).click();
+      const short = await waitFor(async () => (await savedMarks()).find(mark => mark.kind === kind && mark.text.trim() === '2'), name + ' for one glyph');
+      const path = sheet(4).locator('.note-pdf-text-marks [data-annotation-id="' + short.id + '"] > path');
+      const coords = (await path.getAttribute('d')).match(/-?[\d.]+/g).map(Number);
+      if (kind === 'highlight') {
+        assert.deepEqual([coords[0], coords[4]], formulaHighlight.band, 'one glyph and a multiline selection share the same band');
+      } else {
+        assert.deepEqual([coords[0], coords[2]], [formulaUnderlineX, formulaUnderlineX], 'one glyph and a multiline selection share the same underline');
+      }
+    }
     await brush('Pen', 4, [110, 145], [180, 175]);
     await brush('Highlighter', 4, [200, 145], [260, 163]);
     await brush('Box', 4, [105, 210], [195, 280]);

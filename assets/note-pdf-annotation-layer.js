@@ -133,14 +133,18 @@ function matchingTextRow(row, candidates) {
   return closest;
 }
 
-function textLineQuads(quads, heightScale = 1, referenceRows) {
+function textLineQuads(quads, { heightScale = 1, referenceRows, underline = false } = {}) {
   const bands = [];
   for (const [key, { angle, rows }] of textRows(quads, heightScale, referenceRows)) {
     const cos = Math.cos(angle), sin = Math.sin(angle);
     const project = (x, y) => [x * cos - y * sin, x * sin + y * cos];
     const candidates = referenceRows?.get(key)?.rows;
     for (const row of rows) {
-      const { top, bottom } = candidates ? matchingTextRow(row, candidates) : row;
+      const reference = candidates ? matchingTextRow(row, candidates) : row;
+      const { top, center, height } = reference;
+      // Native text bounds include extra space below the glyphs. Use the
+      // untrimmed line metrics so nearby selected rows do not move the stroke.
+      const bottom = underline ? center + height * .35 : reference.bottom;
       const { runs } = row;
       for (const { start, end } of runs) bands.push([project(start, top), project(end, top), project(end, bottom), project(start, bottom)]);
     }
@@ -221,21 +225,20 @@ function stroke(record, viewport, group) {
   }
 }
 
-function annotationTextBands(record, viewport, referenceRows) {
+function annotationTextPath(record, viewport, referenceRows) {
   const quads = record.quads.map(quad => quad.map(point => viewport.convertToViewportPoint(...point)));
-  return textLineQuads(quads, record.kind === 'highlight' ? .8 : 1, referenceRows);
+  const underline = record.kind === 'underline';
+  const bands = textLineQuads(quads, { heightScale: .8, referenceRows, underline });
+  return underline ? bands.map(([, , end, start]) => smooth([start.map(round), end.map(round)])).join('') : quadsPath(bands);
 }
 
 function draw(record, viewport, group, referenceRows) {
   if (record.points) { stroke(record, viewport, group); return; }
   if (record.quads) {
-    const bands = annotationTextBands(record, viewport, referenceRows);
-    if (record.kind === 'underline') {
-      const d = bands.map(([, , end, start]) => smooth([start.map(round), end.map(round)])).join('');
-      group.append(shape('path', { d, fill: 'none', stroke: record.color, 'stroke-width': viewport.scale }));
-    } else {
-      group.append(shape('path', { d: quadsPath(bands), fill: record.color }));
-    }
+    const d = annotationTextPath(record, viewport, referenceRows);
+    const style = record.kind === 'underline' ? { fill: 'none', stroke: record.color, 'stroke-width': viewport.scale }
+      : { fill: record.color };
+    group.append(shape('path', { d, ...style }));
     return;
   }
   const points = record.quad.map(point => viewport.convertToViewportPoint(...point).join(',')).join(' ');
@@ -596,7 +599,7 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
     view.pin.classList.toggle('is-selected', record.id === tools?.selected);
   }
 
-  function highlightRows() {
+  function annotationRows() {
     if (!referenceRows && textLayer) {
       const bounds = host.getBoundingClientRect();
       if (bounds.width && bounds.height) {
@@ -627,7 +630,7 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
       } else {
         const group = shape('g', {});
         group.dataset.annotationId = record.id;
-        draw(record, viewport, group, record.kind === 'highlight' ? highlightRows() : undefined);
+        draw(record, viewport, group, textModes.has(record.kind) ? annotationRows() : undefined);
         const target = record.kind === 'highlight' ? highlights : record.kind === 'underline' ? underlines : saved;
         target.append(group);
         if (record.id === tools?.selected) drawAnnotationOutline(record.kind, group, selection);
@@ -650,13 +653,13 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
   }
   function setTextLayer(value) {
     textLayer = value;
-    if (!highlights.childElementCount) return;
-    const rows = highlightRows();
+    if (!highlights.childElementCount && !underlines.childElementCount) return;
+    const rows = annotationRows();
     if (!rows) return;
-    for (const group of highlights.children) {
+    for (const group of textVector.querySelectorAll('[data-annotation-id]')) {
       const record = session.get(group.dataset.annotationId);
       if (!record) continue;
-      group.firstElementChild.setAttribute('d', quadsPath(annotationTextBands(record, viewport, rows)));
+      group.firstElementChild.setAttribute('d', annotationTextPath(record, viewport, rows));
       if (record.id === tools?.selected) {
         selection.replaceChildren();
         drawAnnotationOutline(record.kind, group, selection);
