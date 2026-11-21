@@ -65,6 +65,15 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
   stageResize.observe(stage);
   stage.addEventListener('scroll', schedule, { passive: true, signal });
   document.addEventListener('selectionchange', scheduleSelection, { signal });
+  stage.addEventListener('pointerdown', event => {
+    if (!alive() || !event.isPrimary || (event.button !== 0 && event.button !== 2)
+        || event.target.closest('.note-pdf-text span, [data-annotation-id]')) return;
+    const selection = window.getSelection();
+    if (selection?.rangeCount && !selection.isCollapsed && selection.getRangeAt(0).intersectsNode(stack)) {
+      selection.removeAllRanges();
+      scheduleSelection();
+    }
+  }, { capture: true, signal });
 
   function scheduleSelection() {
     if (selectionFrame || !alive()) return;
