@@ -38,9 +38,9 @@ function selectionQuads(range, textLayer, project) {
   const layerTransform = getComputedStyle(textLayer).transform;
   const view = new DOMMatrixReadOnly(layerTransform === 'none' ? undefined : layerTransform);
   for (let node = walker.nextNode(); node && quads.length < 4096; node = walker.nextNode()) {
-    if (!range.intersectsNode(node)) continue;
-    const from = range.startContainer === node ? range.startOffset : 0;
-    const to = range.endContainer === node ? range.endOffset : node.length;
+    if (range && !range.intersectsNode(node)) continue;
+    const from = range?.startContainer === node ? range.startOffset : 0;
+    const to = range?.endContainer === node ? range.endOffset : node.length;
     if (from >= to || !node.data.slice(from, to).trim()) continue;
     caret.setStart(node, from); caret.collapse(true);
     const start = caret.getBoundingClientRect();
@@ -61,14 +61,14 @@ function selectionQuads(range, textLayer, project) {
   return quads;
 }
 
-function textLineQuads(quads, heightScale = 1) {
+function textRows(quads, heightScale, referenceRows) {
   const directions = new Map();
   for (const points of quads) {
     const [top, , , base] = points;
     // Use the side edge to keep the same baseline for LTR and RTL fragments.
     const angle = Math.atan2(top[0] - base[0], base[1] - top[1]);
     const key = (Math.round(angle * 180 / Math.PI) + 360) % 360;
-    if (!directions.has(key)) directions.set(key, { angle, fragments: [] });
+    if (!directions.has(key)) directions.set(key, { angle: referenceRows?.get(key)?.angle ?? angle, fragments: [] });
     const { angle: basis, fragments } = directions.get(key);
     const cos = Math.cos(basis), sin = Math.sin(basis);
     const along = points.map(([x, y]) => x * cos + y * sin);
@@ -77,8 +77,8 @@ function textLineQuads(quads, heightScale = 1) {
     const min = Math.min(...across), max = Math.max(...across);
     if (end > start && max > min) fragments.push({ start, end, center: (min + max) / 2, height: max - min });
   }
-  const bands = [];
-  for (const { angle, fragments } of directions.values()) {
+  const groups = new Map();
+  for (const [key, { angle, fragments }] of directions) {
     const lines = [];
     for (const fragment of fragments.sort((a, b) => a.center - b.center)) {
       const line = lines.at(-1), reference = line?.[0];
@@ -93,8 +93,6 @@ function textLineQuads(quads, heightScale = 1) {
       }
       lines.push([fragment]);
     }
-    const cos = Math.cos(angle), sin = Math.sin(angle);
-    const project = (x, y) => [x * cos - y * sin, x * sin + y * cos];
     const rows = [];
     for (const line of lines) {
       const { center, height } = line[0];
@@ -118,7 +116,32 @@ function textLineQuads(quads, heightScale = 1) {
       upper.bottom = Math.min(upper.bottom, middle - halfGap);
       lower.top = Math.max(lower.top, middle + halfGap);
     }
-    for (const { top, bottom, runs } of rows) {
+    groups.set(key, { angle, rows });
+  }
+  return groups;
+}
+
+function matchingTextRow(row, candidates) {
+  let closest = row, distance = Infinity;
+  for (const candidate of candidates) {
+    const offset = Math.abs(candidate.center - row.center);
+    if (offset >= distance || offset > Math.max(row.height, candidate.height) * .5
+        || !overlapRuns(row.runs, candidate.runs)) continue;
+    closest = candidate;
+    distance = offset;
+  }
+  return closest;
+}
+
+function textLineQuads(quads, heightScale = 1, referenceRows) {
+  const bands = [];
+  for (const [key, { angle, rows }] of textRows(quads, heightScale, referenceRows)) {
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    const project = (x, y) => [x * cos - y * sin, x * sin + y * cos];
+    const candidates = referenceRows?.get(key)?.rows;
+    for (const row of rows) {
+      const { top, bottom } = candidates ? matchingTextRow(row, candidates) : row;
+      const { runs } = row;
       for (const { start, end } of runs) bands.push([project(start, top), project(end, top), project(end, bottom), project(start, bottom)]);
     }
   }
@@ -139,6 +162,11 @@ function quadsPath(quads) {
   return quads.map(points => 'M' + points.map(point => point.map(round).join(' ')).join('L') + 'Z').join('');
 }
 
+function viewportProjection(bounds, viewport) {
+  const xScale = viewport.width / bounds.width, yScale = viewport.height / bounds.height;
+  return (x, y) => [(x - bounds.left) * xScale, (y - bounds.top) * yScale];
+}
+
 export function mountTextSelection(host, textLayer, viewport) {
   const overlay = shape('svg', { class: 'note-pdf-selection', 'aria-hidden': 'true',
     viewBox: '0 0 ' + viewport.width + ' ' + viewport.height });
@@ -150,9 +178,7 @@ export function mountTextSelection(host, textLayer, viewport) {
     if (range?.intersectsNode(textLayer)) {
       const bounds = host.getBoundingClientRect();
       if (bounds.width && bounds.height) {
-        path = quadsPath(textLineQuads(selectionQuads(range, textLayer, (x, y) => [
-          (x - bounds.left) * viewport.width / bounds.width, (y - bounds.top) * viewport.height / bounds.height,
-        ])));
+        path = quadsPath(textLineQuads(selectionQuads(range, textLayer, viewportProjection(bounds, viewport))));
       }
     }
     if (highlight.getAttribute('d') !== path) highlight.setAttribute('d', path);
@@ -195,11 +221,15 @@ function stroke(record, viewport, group) {
   }
 }
 
-function draw(record, viewport, group) {
+function annotationTextBands(record, viewport, referenceRows) {
+  const quads = record.quads.map(quad => quad.map(point => viewport.convertToViewportPoint(...point)));
+  return textLineQuads(quads, record.kind === 'highlight' ? .8 : 1, referenceRows);
+}
+
+function draw(record, viewport, group, referenceRows) {
   if (record.points) { stroke(record, viewport, group); return; }
-  const project = quad => quad.map(point => viewport.convertToViewportPoint(...point));
   if (record.quads) {
-    const bands = textLineQuads(record.quads.map(project), record.kind === 'highlight' ? .8 : 1);
+    const bands = annotationTextBands(record, viewport, referenceRows);
     if (record.kind === 'underline') {
       const d = bands.map(([, , end, start]) => smooth([start.map(round), end.map(round)])).join('');
       group.append(shape('path', { d, fill: 'none', stroke: record.color, 'stroke-width': viewport.scale }));
@@ -208,7 +238,7 @@ function draw(record, viewport, group) {
     }
     return;
   }
-  const points = project(record.quad).map(point => point.join(',')).join(' ');
+  const points = record.quad.map(point => viewport.convertToViewportPoint(...point).join(',')).join(' ');
   group.append(shape('polygon', { points, fill: 'none', stroke: record.color, 'stroke-width': 2 }));
 }
 
@@ -415,6 +445,7 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
   const stickyViews = new Map();
   const stage = host.closest('.note-pdf-scroll');
   let gesture, frame, textPointer, noteDrag, noteResize, draggedHandle;
+  let textLayer, referenceRows;
   const selecting = () => !!tools?.active && !tools.mode;
   const editingNote = () => selecting() || (tools?.active && tools.mode === 'note');
 
@@ -565,6 +596,16 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
     view.pin.classList.toggle('is-selected', record.id === tools?.selected);
   }
 
+  function highlightRows() {
+    if (!referenceRows && textLayer) {
+      const bounds = host.getBoundingClientRect();
+      if (bounds.width && bounds.height) {
+        referenceRows = textRows(selectionQuads(null, textLayer, viewportProjection(bounds, viewport)), .8);
+      }
+    }
+    return referenceRows;
+  }
+
   function render(affected) {
     if (noteResize && !selecting()) finishNoteResize(null, false);
     if (affected && !affected.has(page)) return;
@@ -586,7 +627,7 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
       } else {
         const group = shape('g', {});
         group.dataset.annotationId = record.id;
-        draw(record, viewport, group);
+        draw(record, viewport, group, record.kind === 'highlight' ? highlightRows() : undefined);
         const target = record.kind === 'highlight' ? highlights : record.kind === 'underline' ? underlines : saved;
         target.append(group);
         if (record.id === tools?.selected) drawAnnotationOutline(record.kind, group, selection);
@@ -607,8 +648,23 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
       if (view.popup) positionNote(view, ...viewport.convertToViewportPoint(...view.point), paper);
     }
   }
+  function setTextLayer(value) {
+    textLayer = value;
+    if (!highlights.childElementCount) return;
+    const rows = highlightRows();
+    if (!rows) return;
+    for (const group of highlights.children) {
+      const record = session.get(group.dataset.annotationId);
+      if (!record) continue;
+      group.firstElementChild.setAttribute('d', quadsPath(annotationTextBands(record, viewport, rows)));
+      if (record.id === tools?.selected) {
+        selection.replaceChildren();
+        drawAnnotationOutline(record.kind, group, selection);
+      }
+    }
+  }
   render();
-  if (!tools) return { layout, dispose() { offSession(); lifetime.abort(); layer.remove(); } };
+  if (!tools) return { layout, setTextLayer, dispose() { offSession(); lifetime.abort(); layer.remove(); } };
 
   function point(x, y) {
     return viewport.convertToPdfPoint(clamp(x, viewport.width), clamp(y, viewport.height)).map(round);
@@ -868,7 +924,7 @@ export function mountAnnotationPage(host, page, viewport, session, tools, copy, 
   window.addEventListener('blur', () => {
     textPointer = undefined; finish(null, false); finishNoteDrag(null, false); finishNoteResize(null, false);
   }, { signal });
-  return { layout, dispose() {
+  return { layout, setTextLayer, dispose() {
     offSelection(); offTools?.(); offSession();
     finish(null, false);
     finishNoteDrag(null, false);

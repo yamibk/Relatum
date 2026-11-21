@@ -50,6 +50,7 @@ body.start-page[data-start-theme="dark"] :is(.note-pdf-embed, .note-pdf-tab-pane
 .note-pdf-scroll-rail.is-dragging > span { background: var(--note-scroll-thumb-active, rgba(125, 125, 125, .8)); }
 .note-pdf-scroll-rail:focus-visible { outline: 1px solid var(--note-control-focus, currentColor); }
 .note-pdf-scroll:focus-visible { outline: 2px solid var(--note-control-focus, currentColor); outline-offset: -2px; }
+.note-pdf-tab-panel .note-pdf-scroll:focus { outline: none; }
 .note-pdf-pages { position: relative; margin-inline: auto; }
 .note-pdf-page {
   position: absolute;
@@ -79,7 +80,11 @@ body.start-page[data-start-theme="dark"] :is(.note-pdf-embed, .note-pdf-tab-pane
   fill: rgba(87, 151, 208, .48);
 }
 @media (forced-colors: none) {
-  .pdf-text-layer.note-pdf-text.has-selection-overlay ::selection { background: transparent; color: transparent; }
+  .pdf-text-layer.note-pdf-text.has-selection-overlay ::selection {
+    /* CodeMirror forces the native selection background inside its widgets. */
+    background-color: transparent !important;
+    color: transparent;
+  }
 }
 @media (forced-colors: active) {
   .note-pdf-selection { display: none; }

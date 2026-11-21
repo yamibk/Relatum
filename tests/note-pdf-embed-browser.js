@@ -225,6 +225,9 @@ async function waitFor(check, description = 'the test host') {
     await page.waitForFunction(value => document.querySelector('.note-pdf-page-label')?.textContent === '1 / ' + value, pageCount);
     const firstInlineText = block.locator('.note-pdf-page[data-page="1"] .note-pdf-text > span').first();
     assert.equal(await dragPdfText(firstInlineText), 'Circuit page 1', 'mouse selects text in the live Markdown PDF block');
+    await block.locator('.note-pdf-selection path[d^="M"]').first().waitFor();
+    assert.equal(await firstInlineText.evaluate(node => getComputedStyle(node, '::selection').backgroundColor),
+      'rgba(0, 0, 0, 0)', 'CodeMirror does not paint a solid native selection over the PDF');
     const source = await waitFor(() => {
       const value = fs.readFileSync(path.join(notes, 'Lab.md'), 'utf8');
       return value.includes('pdf-embed') && value;
@@ -316,6 +319,8 @@ async function waitFor(check, description = 'the test host') {
     await pageNumber.fill('4');
     await pageNumber.press('Enter');
     await page.waitForFunction(() => document.querySelector('.note-pdf-page-input')?.value === '4');
+    assert.deepEqual(await stage.evaluate(node => [document.activeElement === node, getComputedStyle(node).outlineStyle]),
+      [true, 'none'], 'the PDF tab reader receives keyboard focus without drawing a frame');
     const width = await panel.locator('.note-pdf-page[data-page="4"]').evaluate(node => node.offsetWidth);
     await panel.getByRole('button', { name: 'Zoom in' }).click();
     await page.waitForFunction(value => document.querySelector('#note-pdf-tab-panel .note-pdf-page[data-page="4"]')?.offsetWidth > value, width);
@@ -414,7 +419,7 @@ async function waitFor(check, description = 'the test host') {
         assert.ok(bands[0][6] > bands[1][0], 'rotated highlight bands leave a gap');
         assert.equal(await path.evaluate(node => getComputedStyle(node.closest('.note-pdf-text-marks')).mixBlendMode), 'multiply');
         const [x, y, , , oppositeX, oppositeY] = bands[0];
-        formulaHighlight = { id: mark.id, center: [(x + oppositeX) / 2, (y + oppositeY) / 2] };
+        formulaHighlight = { id: mark.id, center: [(x + oppositeX) / 2, (y + oppositeY) / 2], band: [x, oppositeX] };
       } else {
         assert.equal(await path.getAttribute('fill'), 'none');
       }
@@ -426,6 +431,19 @@ async function waitFor(check, description = 'the test host') {
     assert.equal(await removeAnnotation.isEnabled(), true, 'the blended highlight remains selectable');
     await brush('Eraser', 4, formulaHighlight.center);
     await waitFor(async () => !(await savedMarks()).some(mark => mark.id === formulaHighlight.id), 'erasing the blended highlight');
+    await tool('Select annotations').click();
+    await sheet(4).locator('.note-pdf-text').evaluate(layer => {
+      const exponent = [...layer.querySelectorAll('span')].find(node => node.textContent.trim() === '2');
+      const range = document.createRange();
+      range.selectNodeContents(exponent);
+      const selection = window.getSelection();
+      selection.removeAllRanges(); selection.addRange(range);
+    });
+    await tool('Highlight text').click();
+    const shortHighlight = await waitFor(async () => (await savedMarks()).find(mark => mark.kind === 'highlight' && mark.text.trim() === '2'), 'highlighting one glyph');
+    const shortPath = sheet(4).locator('.note-pdf-text-marks [data-annotation-id="' + shortHighlight.id + '"] > path');
+    const coords = (await shortPath.getAttribute('d')).match(/-?[\d.]+/g).map(Number);
+    assert.deepEqual([coords[0], coords[4]], formulaHighlight.band, 'one glyph and a multiline selection use the same band on that row');
     await brush('Pen', 4, [110, 145], [180, 175]);
     await brush('Highlighter', 4, [200, 145], [260, 163]);
     await brush('Box', 4, [105, 210], [195, 280]);

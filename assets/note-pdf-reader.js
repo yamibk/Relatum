@@ -272,6 +272,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
       if (!valid()) return;
       item.textRender = null;
       item.textDivs = textDivs;
+      item.annotation.setTextLayer(layer);
       item.drawSelection = mountTextSelection(item.host, layer, viewport);
       scheduleSelection();
       if (match?.page === number) mark(item);
