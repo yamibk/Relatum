@@ -622,6 +622,7 @@ export function create({ language, isCurrent, icon, onDirty, confirmReload, noti
     const annotationTools = entry.annotationTools = createAnnotationTools({
       copy, button, confirmReload, notify, signal, current: () => entry.ready && present(entry),
     });
+    stage.addEventListener('pointerdown', annotationTools.clearSelectionOnBlank, { capture: true, signal });
     stage.addEventListener('contextmenu', annotationTools.switchToSelection, { signal });
     let navigationOpen = false, outline, outlineIntent = 0, findIntent = 0, matches = [], selected = -1, timer = 0;
     const pageInput = element('input', 'note-pdf-page-input');

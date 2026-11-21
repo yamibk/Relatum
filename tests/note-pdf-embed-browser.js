@@ -461,6 +461,16 @@ async function waitFor(check, description = 'the test host') {
       } finally { await page.mouse.up(); }
     }
     await tool('Select annotations').click();
+    for (const button of ['left', 'right']) {
+      await stickyInput.focus();
+      assert.equal(await stickyInput.evaluate(node => getComputedStyle(node).outlineStyle), 'none');
+      assert.ok(await stickyPin.evaluate(node => node.classList.contains('is-selected')));
+      await page.mouse.click(paperBounds.x + 20, paperBounds.y + 20, { button });
+      assert.equal(await removeAnnotation.isDisabled(), true, button + ' click clears the selected annotation');
+      assert.ok(!(await stickyPin.evaluate(node => node.classList.contains('is-selected'))));
+      assert.equal(await stickyPin.getAttribute('aria-expanded'), 'true', 'deselecting leaves the sticky note open');
+      assert.ok(await stickyInput.evaluate(node => document.activeElement !== node));
+    }
     assert.equal(await stickyCard.locator('.note-pdf-sticky-resize:visible').count(), 8);
     const defaultCard = await cardRect();
     const pinBeforeResize = await stickyPin.boundingBox();

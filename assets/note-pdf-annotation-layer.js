@@ -285,6 +285,10 @@ export function createAnnotationTools({ copy, button, current, confirmReload, no
     if (palette.some(([hex]) => hex === value)) color.value = value;
     update();
   }
+  function clearSelection() {
+    settle();
+    select('');
+  }
   function settle() { cancelResize?.(); draft?.(); }
   const modesGroup = html('div', 'note-pdf-annotation-group');
   const buttons = modes.map(([key, zh, en, glyph]) => [key, button(copy(zh, en),
@@ -359,12 +363,20 @@ export function createAnnotationTools({ copy, button, current, confirmReload, no
   update();
   return {
     toggle, bar, status, settle, select,
+    clearSelectionOnBlank(event) {
+      if (!selected || !current() || !event.isPrimary || event.button !== 0 || event.defaultPrevented
+          || event.target?.closest?.('[data-annotation-id]')) return;
+      clearSelection();
+    },
     switchToSelection(event) {
       if (event.button !== 2 || event.defaultPrevented || editable(event.target)
-          || !current() || !open || !tool || !canChoose()) return;
+          || !current() || !open) return;
+      const switching = tool && canChoose();
+      if (!switching && !selected) return;
       event.preventDefault();
       event.stopPropagation();
-      void chooseTool(true);
+      if (switching) void chooseTool(true);
+      else clearSelection();
     },
     attach(value) {
       settle(); unsubscribe?.(); session = value;

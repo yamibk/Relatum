@@ -341,6 +341,7 @@ body.start-page[data-start-theme="dark"] :is(.note-pdf-embed, .note-pdf-tab-pane
   color: inherit; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .note-pdf-sticky textarea { resize: none; border-color: rgba(50, 46, 38, .2); border-radius: 4px; background: #ffffffb0; }
+.note-pdf-sticky textarea:focus { outline: none; }
 .note-pdf-sticky .note-pdf-sticky-measure {
   position: absolute; inset: 0 auto auto 0; height: 0; max-width: none;
   visibility: hidden; pointer-events: none; overflow: hidden;
