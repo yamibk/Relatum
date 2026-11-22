@@ -50,6 +50,7 @@
   var viewportSize = { width: 0, height: 0 };
   var pan = null, drag = null, dragEndedAt = 0, pointerDownInPopover = false;
   var visualLinkDrag = null, visualLinkEndedAt = -Infinity, visualLinkPreviewPath = null;
+  var visualLinkSharedPreviewPath = null;
   var collapseMotion = null;
   var nodeElements = new Map(), edgeElements = new Map(), visualPlacements = new Map();
   var freeItemElements = new Map();
@@ -731,14 +732,16 @@
       persistProgressPanelPreferences();
     }
   }
-  function syncProgressTaskSelection() {
-    nodeElements.forEach(function (element) {
+  function syncProgressTaskSelection(placements) {
+    function sync(element) {
       var selected = element.dataset.kind === 'task'
         && element.dataset.taskId === selectedProgressTaskId;
       element.classList.toggle('is-progress-selected', selected);
       if (selected) element.setAttribute('aria-current', 'true');
       else element.removeAttribute('aria-current');
-    });
+    }
+    if (placements) placements.forEach(function (item) { sync(nodeElements.get(item.id)); });
+    else nodeElements.forEach(sync);
   }
   function selectProgressTask(taskId, persist) {
     taskId = String(taskId || '');
@@ -2615,7 +2618,9 @@
         path.dataset.edgeId = id;
         if (edge.from) path.dataset.from = edge.from;
         path.dataset.to = edge.to;
-        edgesHost.appendChild(path); edgeElements.set(id, path);
+        var beforePreview = visualLinkPreviewPath && visualLinkPreviewPath.parentNode === edgesHost
+          ? visualLinkPreviewPath : null;
+        edgesHost.insertBefore(path, beforePreview); edgeElements.set(id, path);
         if (!options.suppressEntrance && !prefersReduced) {
           requestAnimationFrame(function () { if (path.isConnected) path.classList.remove('is-entering'); });
         }
@@ -2623,7 +2628,6 @@
       if (edge.part) path.dataset.mergePart = edge.part;
       else delete path.dataset.mergePart;
       path.setAttribute('class', 'study-route-edge is-' + edge.type + (edge.primary ? ' is-primary' : ' is-secondary')
-        + (edge.part === 'branch' && edge.type === 'visual' && edge.merge.primary ? ' is-visual-merge-branch' : '')
         + (isNewPath && !options.suppressEntrance && !prefersReduced ? ' is-entering' : ''));
     });
   }
@@ -2645,6 +2649,9 @@
       writeNodePosition(element, placement);
     });
     writeDrawEdges(edgeWork || next.drawEdges, placements);
+    if (visualLinkDrag && visualLinkDrag.active && !visualLinkFrame) {
+      updateVisualLinkPreview(visualLinkDrag.latestX, visualLinkDrag.latestY);
+    }
   }
   function animateLayout(previous, next, duration, excluded, newNodesAtDestination) {
     if (layoutFrame) cancelAnimationFrame(layoutFrame);
@@ -2743,11 +2750,14 @@
   function syncNodeElements(seed, options) {
     options = options || {};
     var model = seed.model;
-    var wanted = new Set(seed.nodes.map(function (item) { return item.id; })), created = [];
-    nodeElements.forEach(function (element, id) {
-      if (wanted.has(id)) return;
-      element.remove(); nodeElements.delete(id);
-    });
+    var created = [];
+    if (!seed.partial) {
+      var wanted = new Set(seed.nodes.map(function (item) { return item.id; }));
+      nodeElements.forEach(function (element, id) {
+        if (wanted.has(id)) return;
+        element.remove(); nodeElements.delete(id);
+      });
+    }
     seed.nodes.forEach(function (placement) {
       var element = nodeElements.get(placement.id), isNew = !element;
       var wasExistingTask = !!element && element.dataset.kind === 'task';
@@ -2925,6 +2935,35 @@
     viewTarget.y -= dy * viewTarget.zoom;
     applyView();
   }
+  function progressRenderNodes(previous, next, taskId) {
+    if (!taskId || !previous || previous.model.tree.id !== next.model.tree.id
+        || previous.nodes.length !== next.nodes.length) return null;
+    var changed = [];
+    for (var index = 0; index < next.nodes.length; index++) {
+      var before = previous.nodes[index], after = next.nodes[index];
+      if (before.id !== after.id || before.kind !== after.kind || before.collapsed !== after.collapsed
+          || before.hiddenCount !== after.hiddenCount || !nodeElements.has(after.id)) return null;
+      if ((after.kind === 'task' && after.node.taskId === taskId)
+          || before.metrics.progress !== after.metrics.progress || before.metrics.count !== after.metrics.count
+          || before.metrics.complete !== after.metrics.complete
+          || before.availability.available !== after.availability.available) changed.push(after);
+    }
+    return changed;
+  }
+  function measureRenderedNodes(placements) {
+    var sizesChanged = false;
+    function measure(element, id) {
+      var measured = { width: element.offsetWidth, height: element.offsetHeight };
+      var cached = nodeSizeCache.get(id);
+      nodeSizeCache.set(id, measured);
+      if (!cached || Math.abs(cached.width - measured.width) > .5 || Math.abs(cached.height - measured.height) > .5) {
+        sizesChanged = true;
+      }
+    }
+    if (placements) placements.forEach(function (item) { measure(nodeElements.get(item.id), item.id); });
+    else nodeElements.forEach(measure);
+    return sizesChanged;
+  }
   function render(options) {
     if (!open || deferWorkspaceRender()) return;
     options = options || {};
@@ -2942,36 +2981,43 @@
       model: model, sizes: nodeSizeCache, collapsedIds: collapsedIds,
       showMilestones: progressBranchesVisible,
     });
-    syncNodeElements(first, options);
-    var sizesChanged = false;
-    nodeElements.forEach(function (element, id) {
-      var measured = { width: element.offsetWidth, height: element.offsetHeight };
-      var cached = nodeSizeCache.get(id);
-      nodeSizeCache.set(id, measured);
-      if (!cached || Math.abs(cached.width - measured.width) > .5 || Math.abs(cached.height - measured.height) > .5) {
-        sizesChanged = true;
-      }
-    });
-    var retainedSizeIds = new Set(['root']);
-    state.tree.nodes.forEach(function (node) { retainedSizeIds.add(node.id); });
-    first.nodes.forEach(function (node) { retainedSizeIds.add(node.id); });
-    nodeSizeCache.forEach(function (_size, id) { if (!retainedSizeIds.has(id)) nodeSizeCache.delete(id); });
-    var next = sizesChanged ? GoalTree.layout(state.tree, state.tasks, {
-      model: model, sizes: nodeSizeCache, collapsedIds: collapsedIds,
-      showMilestones: progressBranchesVisible,
-    }) : first;
-    appendVisualEdges(next);
-    layout = next;
-    scene.style.width = next.bounds.width + 'px'; scene.style.height = next.bounds.height + 'px';
-    edgesHost.setAttribute('viewBox', '0 0 ' + next.bounds.width + ' ' + next.bounds.height);
-    syncEdgeElements(next, options);
-    syncFreeItemElements();
-    if (options.preserveViewAnchor) preserveViewAnchor(previous, next, options.preserveViewAnchor);
-    syncSummary(next.model, !!previous && !options.suppressSummaryAnimation);
-    var layoutDuration = options.animateLayout === false ? 0 : (Number(options.duration) || 320);
-    animateLayout(previous, next, layoutDuration, null, !!options.expandEntrance);
-    applyView();
-    syncProgressTaskSelection();
+    var progressNodes = progressRenderNodes(previous, first, options.progressTaskId);
+    syncNodeElements(progressNodes ? { nodes: progressNodes, model: model, partial: true } : first, options);
+    var sizesChanged = measureRenderedNodes(progressNodes);
+    var geometryChanged = !progressNodes || sizesChanged;
+    if (geometryChanged) {
+      var retainedSizeIds = new Set(['root']);
+      state.tree.nodes.forEach(function (node) { retainedSizeIds.add(node.id); });
+      first.nodes.forEach(function (node) { retainedSizeIds.add(node.id); });
+      nodeSizeCache.forEach(function (_size, id) { if (!retainedSizeIds.has(id)) nodeSizeCache.delete(id); });
+      var next = sizesChanged ? GoalTree.layout(state.tree, state.tasks, {
+        model: model, sizes: nodeSizeCache, collapsedIds: collapsedIds,
+        showMilestones: progressBranchesVisible,
+      }) : first;
+      appendVisualEdges(next);
+      layout = next;
+      scene.style.width = next.bounds.width + 'px'; scene.style.height = next.bounds.height + 'px';
+      edgesHost.setAttribute('viewBox', '0 0 ' + next.bounds.width + ' ' + next.bounds.height);
+      syncEdgeElements(next, options);
+      syncFreeItemElements();
+      if (options.preserveViewAnchor) preserveViewAnchor(previous, next, options.preserveViewAnchor);
+    } else {
+      // Keep the aligned coordinates and SVG while publishing the refreshed progress model.
+      layout.model = model;
+      first.nodes.forEach(function (item, index) {
+        var current = layout.nodes[index];
+        current.node = item.node;
+        current.metrics = item.metrics;
+        current.availability = item.availability;
+      });
+    }
+    syncSummary(model, !!previous && !options.suppressSummaryAnimation);
+    if (geometryChanged) {
+      var layoutDuration = options.animateLayout === false ? 0 : (Number(options.duration) || 320);
+      animateLayout(previous, layout, layoutDuration, null, !!options.expandEntrance);
+      applyView();
+    }
+    syncProgressTaskSelection(progressNodes);
     syncProgressPanelContent();
     if (!treeGoalBreathTimer) scheduleTreeGoalBreath(1400);
   }
@@ -3862,7 +3908,21 @@
       throw error;
     }).finally(function () { busy = false; });
   }
+  function sameProgressSnapshotValue(before, after, ignoreUpdatedAt) {
+    if (before === after) return true;
+    if (!before || !after || typeof before !== 'object' || typeof after !== 'object'
+        || Array.isArray(before) !== Array.isArray(after)) return false;
+    var keys = Object.keys(before), nextKeys = Object.keys(after);
+    if (ignoreUpdatedAt) {
+      keys = keys.filter(function (key) { return key !== 'updatedAt'; });
+      nextKeys = nextKeys.filter(function (key) { return key !== 'updatedAt'; });
+    }
+    return keys.length === nextKeys.length && keys.every(function (key) {
+      return Object.prototype.hasOwnProperty.call(after, key) && sameProgressSnapshotValue(before[key], after[key]);
+    });
+  }
   function applyProgressCommandPayload(json, context) {
+    var beforeTasks = state.tasks, beforeTree = state.tree;
     if (Array.isArray(json.tasks)) {
       state.tasks = json.tasks;
     } else if (json.task) {
@@ -3870,6 +3930,10 @@
     }
     applyTreeSnapshot(json, context.treeId);
     syncStudyCacheFromState();
+    if (layout && sameProgressSnapshotValue(beforeTree, state.tree, true)
+        && beforeTasks.length === state.tasks.length && beforeTasks.every(function (task, index) {
+          return sameProgressSnapshotValue(task, state.tasks[index], true);
+        })) return;
     render({ duration: 180, preserveViewAnchor: 'root', suppressEntrance: true });
   }
   function finishProgressCommands(error) {
@@ -3987,7 +4051,7 @@
     });
     state.tasks = state.tasks.map(function (item) { return item.id === updated.id ? updated : item; });
     syncStudyCacheFromState();
-    render({ duration: 180, preserveViewAnchor: 'root', suppressEntrance: true });
+    render({ duration: 180, preserveViewAnchor: 'root', suppressEntrance: true, progressTaskId: updated.id });
     var queuedProgress = progressCommandQueue[progressCommandQueue.length - 1];
     if (queuedProgress && queuedProgress.taskId === updated.id) {
       queuedProgress.delta += delta;
@@ -4197,7 +4261,7 @@
     },
     {
       title: '箭头、解锁与高级编辑',
-      body: '<p>只有需要“做完 A 才能做 B”时，才需要关心解锁条件。</p><ul><li>浅灰无箭头线表示“收纳在某阶段”；深色主路线表示“完成后解锁下一项”。</li><li>虚线是附加条件；有多个条件时，必须全部满足才算解锁。</li><li>从任务或阶段卡片任意位置右键拖到另一张卡片可建立视觉关系；按原方向再拖一次即可拆除这一条。视觉关系只用于说明，不参与解锁或进度。</li><li>同侧连线可以共用一个箭头，汇入主路线时视觉支线较细。末端卡片有空位时会在原列居中。</li><li>默认只把解锁关系作为路线提示，任务仍可自由完成和修改进度；在起步页齿轮开启“强制按解锁顺序”后，未解锁任务才会被限制。</li><li>如需添加附加解锁条件，请在起步页齿轮中关闭“精简目标树编辑”；这不会修改已有路线。</li></ul>',
+      body: '<p>只有需要“做完 A 才能做 B”时，才需要关心解锁条件。</p><ul><li>浅灰无箭头线表示“收纳在某阶段”；深色主路线表示“完成后解锁下一项”。</li><li>虚线是附加条件；有多个条件时，必须全部满足才算解锁。</li><li>从任务或阶段卡片任意位置右键拖到另一张卡片可建立视觉关系；按原方向再拖一次即可拆除这一条。视觉关系只用于说明，不参与解锁或进度。</li><li>同侧连线可以共用一个箭头。拆线时，红实线标出待拆支线，红虚线沿共用段指向目标。有空位时，目标和后续子树会在原列居中。</li><li>默认只把解锁关系作为路线提示，任务仍可自由完成和修改进度；在起步页齿轮开启“强制按解锁顺序”后，未解锁任务才会被限制。</li><li>如需添加附加解锁条件，请在起步页齿轮中关闭“精简目标树编辑”；这不会修改已有路线。</li></ul>',
     },
   ];
   function renderGuidePage() {
@@ -4264,7 +4328,7 @@
   function finishRouteCloseVisuals() {
     cancelRouteCloseWait();
     if (open) return;
-    if (visualLinkPreviewPath) { visualLinkPreviewPath.remove(); visualLinkPreviewPath = null; }
+    clearVisualLinkPreview();
     document.body.classList.remove('tree-page-visual-linking');
     nodesHost.innerHTML = '';
     edgesHost.innerHTML = '';
@@ -5273,6 +5337,25 @@
     edgesHost.appendChild(visualLinkPreviewPath);
     return visualLinkPreviewPath;
   }
+  function setVisualLinkSharedPreview(d) {
+    if (!d) {
+      if (visualLinkSharedPreviewPath) visualLinkSharedPreviewPath.remove();
+      visualLinkSharedPreviewPath = null;
+      return;
+    }
+    if (!visualLinkSharedPreviewPath || !visualLinkSharedPreviewPath.isConnected) {
+      visualLinkSharedPreviewPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      visualLinkSharedPreviewPath.setAttribute('class', 'study-route-edge is-visual is-link-preview-shared');
+      visualLinkSharedPreviewPath.setAttribute('aria-hidden', 'true');
+      edgesHost.appendChild(visualLinkSharedPreviewPath);
+    }
+    if (visualLinkSharedPreviewPath.getAttribute('d') !== d) visualLinkSharedPreviewPath.setAttribute('d', d);
+  }
+  function clearVisualLinkPreview() {
+    if (visualLinkPreviewPath) visualLinkPreviewPath.remove();
+    visualLinkPreviewPath = null;
+    setVisualLinkSharedPreview('');
+  }
   function clearVisualLinkTarget() {
     if (!visualLinkDrag || !visualLinkDrag.targetElement) return;
     visualLinkDrag.targetElement.classList.remove('is-visual-link-target', 'is-visual-unlink-target');
@@ -5281,7 +5364,12 @@
   function updateVisualLinkPreview(clientX, clientY) {
     if (!visualLinkDrag || !visualLinkDrag.active) return;
     var source = visualLinkPlacement(visualLinkDrag.sourceId);
-    if (!source) return;
+    if (!source) {
+      clearVisualLinkTarget();
+      clearVisualLinkPreview();
+      visualLinkDrag.targetId = '';
+      return;
+    }
     var targetId = visualLinkHitId(clientX, clientY);
     var relation = targetId ? visualLinkRelation(visualLinkDrag.sourceId, targetId) : { valid: false, removing: false };
     var targetElement = targetId && nodeElements.get(targetId);
@@ -5301,20 +5389,30 @@
     preview.classList.toggle('is-removing', visualLinkDrag.removing);
     preview.classList.toggle('is-invalid', !!targetId && !relation.valid);
     var merge = target && layout && layout.visualMerges && layout.visualMerges.get(targetId + (reverse ? '|right' : '|left'));
+    if (merge && relation.removing && !merge.members.some(function (edge) { return edge.from === source.id; })) merge = null;
     var geometry = merge && mergeGeometry(merge, visualPlacements);
     if (geometry) {
       var sourceX = reverse ? source.x : source.x + source.width;
       if (geometry.dir * (geometry.x - sourceX) > 6) {
         var d = mergeBranchPath(source, geometry);
         var joinY = mergeJoinY(source.y, geometry.y);
-        var top = mergeJoinY(geometry.top, geometry.y), bottom = mergeJoinY(geometry.bottom, geometry.y);
-        if (joinY < top) d += ' V' + top;
-        else if (joinY > bottom) d += ' V' + bottom;
+        if (relation.removing) {
+          // The marker occupies about 7.5 scene units before its tip.
+          var arrowSpace = Math.min(Math.abs(geometry.targetX - geometry.x), 8);
+          var endX = geometry.targetX - geometry.dir * arrowSpace;
+          setVisualLinkSharedPreview('M' + geometry.x + ',' + joinY + ' V' + geometry.y + ' H' + endX);
+        } else {
+          var top = mergeJoinY(geometry.top, geometry.y), bottom = mergeJoinY(geometry.bottom, geometry.y);
+          if (joinY < top) d += ' V' + top;
+          else if (joinY > bottom) d += ' V' + bottom;
+          setVisualLinkSharedPreview('');
+        }
         preview.removeAttribute('marker-end');
         preview.setAttribute('d', d);
         return;
       }
     }
+    setVisualLinkSharedPreview('');
     var previewEdge = null;
     if (target && relation.removing && layout) {
       previewEdge = layout.edges.find(function (edge) {
@@ -5422,7 +5520,7 @@
     var current = visualLinkDrag;
     if (visualLinkFrame) cancelAnimationFrame(visualLinkFrame);
     visualLinkFrame = 0;
-    if (current.active && Number.isFinite(current.latestX) && Number.isFinite(current.latestY)) {
+    if (!cancelled && current.active && Number.isFinite(current.latestX) && Number.isFinite(current.latestY)) {
       updateVisualLinkPreview(current.latestX, current.latestY);
     }
     var targetId = current.targetId;
@@ -5439,16 +5537,16 @@
     if (current.targetElement) current.targetElement.classList.remove('is-visual-link-target', 'is-visual-unlink-target');
     document.body.classList.remove('tree-page-visual-linking');
     if (!current.active) {
-      if (visualLinkPreviewPath) { visualLinkPreviewPath.remove(); visualLinkPreviewPath = null; }
+      clearVisualLinkPreview();
       return;
     }
     visualLinkEndedAt = performance.now();
     if (cancelled || !targetId) {
-      if (visualLinkPreviewPath) { visualLinkPreviewPath.remove(); visualLinkPreviewPath = null; }
+      clearVisualLinkPreview();
       return;
     }
     setVisualLinkOptimistic(current.sourceId, targetId, !removing).catch(ignoreBusy);
-    if (visualLinkPreviewPath) { visualLinkPreviewPath.remove(); visualLinkPreviewPath = null; }
+    clearVisualLinkPreview();
   }
   function onVisualLinkEnd(event) {
     if (!visualLinkDrag || visualLinkDrag.id !== event.pointerId) return;

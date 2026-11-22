@@ -628,19 +628,77 @@ async function checkTreeVisualMerges(browser, url, dataRoot, scenario) {
     const edges = scope.locator('path[data-to="target"]');
     const arrows = edges.locator('xpath=self::*[@marker-end]');
     const trunk = edges.locator('xpath=self::*[@data-merge-part="trunk"]');
+    const preview = scope.locator('path.is-link-preview');
+    const sharedPreview = scope.locator('path.is-link-preview-shared');
+    const mousePoint = async id => {
+      const box = await node(id).boundingBox();
+      return { x: box.x + box.width * .43, y: box.y + box.height / 2 };
+    };
+    async function dragLink(fromId) {
+      const from = await mousePoint(fromId), to = await mousePoint('target');
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down({ button: 'right' });
+      await page.mouse.move(to.x, to.y, { steps: 10 });
+    }
+    async function cancelLink() {
+      await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+      await page.mouse.up({ button: 'right' });
+      assert.equal(await preview.count(), 0);
+      assert.equal(await sharedPreview.count(), 0);
+    }
+    async function checkGroupStyle(stroke) {
+      const styles = await edges.locator('xpath=self::*[@data-merge-part]').evaluateAll(paths =>
+        paths.map(path => [getComputedStyle(path).stroke, getComputedStyle(path).strokeWidth].join(' ')));
+      assert.deepEqual([...new Set(styles)], [stroke + ' 1.7px']);
+    }
+    async function checkMergedRemoval(fromId, side, red, arrowColor) {
+      await sharedPreview.waitFor();
+      assert.equal(await preview.getAttribute('marker-end'), null);
+      assert.equal(await sharedPreview.getAttribute('marker-end'), null);
+      await page.waitForFunction(color => {
+        const host = document.querySelector('.tree-page-embedded');
+        return ['.is-link-preview.is-removing', '.is-link-preview-shared'].every(selector =>
+          getComputedStyle(host.querySelector(selector)).stroke === color);
+      }, red);
+      assert.equal(await sharedPreview.evaluate(path => getComputedStyle(path).strokeDasharray), '5px, 4px');
+      const aligned = await sharedPreview.evaluate((path, { fromId, side, arrowColor }) => {
+        const svg = path.ownerSVGElement;
+        const branch = svg.querySelector('path[data-from="' + fromId + '"][data-to="target"]');
+        const solid = svg.querySelector('.is-link-preview.is-removing');
+        const trunk = svg.querySelector('path[data-edge-id="merge|target|' + side + '|trunk"]');
+        const join = branch.getPointAtLength(branch.getTotalLength());
+        const start = path.getPointAtLength(0), end = path.getPointAtLength(path.getTotalLength());
+        const elbow = trunk.getPointAtLength(0), tip = trunk.getPointAtLength(trunk.getTotalLength());
+        const corner = path.getPointAtLength(Math.abs(start.y - elbow.y));
+        const dir = Math.sign(tip.x - elbow.x), pocket = dir * (tip.x - end.x);
+        const arrow = svg.querySelector(trunk.getAttribute('marker-end').slice(4, -1) + ' path');
+        return solid.getAttribute('d') === branch.getAttribute('d')
+          && Math.hypot(start.x - join.x, start.y - join.y) < .1
+          && Math.hypot(corner.x - elbow.x, corner.y - elbow.y) < .1
+          && Math.abs(end.y - tip.y) < .1
+          && Math.abs(pocket - Math.min(8, Math.abs(tip.x - elbow.x))) < .1
+          && getComputedStyle(arrow).fill === arrowColor;
+      }, { fromId, side, arrowColor });
+      assert(aligned, 'the dashed preview traces the shared route up to the original arrowhead');
+    }
     const arrowCount = scenario === 'fallback' ? 5 : scenario === 'split' ? 3 : 1;
     await page.waitForFunction(count => document.querySelectorAll(
       '.tree-page-embedded path[data-to="target"][marker-end]').length === count, arrowCount);
     if (scenario === 'fallback') {
       assert.equal(await trunk.count(), 0, 'overlapping columns preserve individual paths');
+      await dragLink('probability');
+      await node('target').and(scope.locator('.is-visual-unlink-target')).waitFor();
+      assert.equal(await preview.getAttribute('marker-end'), 'url(#tree-page-visual-remove-arrow)');
+      assert.equal(await preview.getAttribute('d'), await edges.locator('xpath=self::*[@data-from="probability"]').getAttribute('d'));
+      assert.equal(await sharedPreview.count(), 0, 'a single edge retains its red arrow without a dashed overlay');
+      await cancelLink();
       assert.deepEqual(errors, []);
       return;
     }
     assert.equal(await trunk.count(), scenario === 'split' ? 2 : 1);
     assert.equal(await edges.locator('xpath=self::*[@data-merge-part="branch"]').count(), scenario === 'split' ? 6 : 4);
     assert.equal(await edges.locator('xpath=self::*[@data-from="magnetism"]').getAttribute('marker-end'), null);
-    assert.equal(await edges.locator('xpath=self::*[@data-from="probability"]').evaluate(edge =>
-      parseFloat(getComputedStyle(edge).strokeWidth)), scenario === 'visual-only' ? 1.7 : 1.15);
+    await checkGroupStyle('rgb(89, 103, 93)');
 
     const xy = id => node(id).evaluate(card => ({ x: card.__layoutX, y: card.__layoutY + card.offsetHeight / 2 }));
     const centerBetween = async (first, last) => ((await xy(first)).y + (await xy(last)).y) / 2;
@@ -678,6 +736,10 @@ async function checkTreeVisualMerges(browser, url, dataRoot, scenario) {
       const dashed = edges.locator('xpath=self::*[@data-from="prerequisite"]');
       assert.equal(await dashed.getAttribute('data-merge-part'), null);
       assert.equal(await dashed.evaluate(edge => getComputedStyle(edge).strokeDasharray), '5px, 5px');
+      await dragLink('one');
+      await checkMergedRemoval('one', 'right', 'rgb(227, 93, 82)', 'rgb(89, 103, 93)');
+      assert.equal(await arrows.count(), 3);
+      await cancelLink();
       assert.deepEqual(errors, []);
       return;
     }
@@ -713,10 +775,6 @@ async function checkTreeVisualMerges(browser, url, dataRoot, scenario) {
     }
     await waitForCenteredTarget();
 
-    const mousePoint = async id => {
-      const box = await node(id).boundingBox();
-      return { x: box.x + box.width * .43, y: box.y + box.height / 2 };
-    };
     const sourcePoint = await mousePoint('probability');
     const sourceBranch = edges.locator('xpath=self::*[@data-from="probability"]');
     const branchBefore = await sourceBranch.getAttribute('d');
@@ -731,15 +789,24 @@ async function checkTreeVisualMerges(browser, url, dataRoot, scenario) {
       d: branchBefore, selector: '.tree-page-embedded path[data-from="probability"][data-to="target"]',
     });
 
-    async function toggleProbability() {
-      const from = await mousePoint('probability'), to = await mousePoint('target');
-      await page.mouse.move(from.x, from.y);
-      await page.mouse.down({ button: 'right' });
+    for (const id of ['complex', 'circuits']) {
+      await dragLink(id);
+      await checkMergedRemoval(id, 'left', 'rgb(227, 93, 82)', 'rgb(89, 103, 93)');
+      await page.mouse.move(100, 75);
+      await sharedPreview.waitFor({ state: 'detached' });
+      const to = await mousePoint('target');
       await page.mouse.move(to.x, to.y, { steps: 10 });
-      await scope.locator('.is-visual-unlink-target .study-route-collapse').waitFor();
-      const preview = scope.locator('path.is-link-preview.is-removing');
-      assert.equal(await preview.getAttribute('marker-end'), null, 'only the removed branch is highlighted');
+      await sharedPreview.waitFor();
+      await cancelLink();
+    }
+    assert.deepEqual(JSON.parse(fs.readFileSync(filename, 'utf8')).goalTrees[0].visualLinks, fixture.goalTrees[0].visualLinks);
+
+    async function toggleProbability() {
+      await dragLink('probability');
+      await checkMergedRemoval('probability', 'left', 'rgb(227, 93, 82)', 'rgb(89, 103, 93)');
       await page.mouse.up({ button: 'right' });
+      assert.equal(await sharedPreview.count(), 0);
+      assert.equal(await preview.count(), 0);
     }
     let rejectSave;
     const pending = new Promise(resolve => { rejectSave = resolve; });
@@ -770,18 +837,21 @@ async function checkTreeVisualMerges(browser, url, dataRoot, scenario) {
     assert.equal(await arrows.count(), 1);
 
     const added = page.waitForResponse(response => response.url().endsWith('/api/tree-page-command'));
-    const from = await mousePoint('probability'), to = await mousePoint('target');
-    await page.mouse.move(from.x, from.y);
-    await page.mouse.down({ button: 'right' });
-    await page.mouse.move(to.x, to.y, { steps: 10 });
+    await dragLink('probability');
     await node('target').and(scope.locator('.is-visual-link-target')).waitFor();
-    assert.equal(await scope.locator('path.is-link-preview').getAttribute('marker-end'), null);
+    assert.equal(await preview.getAttribute('marker-end'), null);
+    assert.equal(await sharedPreview.count(), 0);
     await page.mouse.up({ button: 'right' });
     assert((await added).ok());
     await sourceBranch.waitFor();
-    await page.setViewportSize({ width: 900, height: 650 });
     await page.locator('[data-action="start-theme-toggle"]').first().evaluate(element => element.click());
-    assert.equal(await trunk.evaluate(path => getComputedStyle(path).stroke), 'rgb(255, 255, 255)');
+    await page.waitForFunction(() => getComputedStyle(document.querySelector(
+      '.tree-page-embedded path[data-to="target"][data-merge-part="trunk"]')).stroke === 'rgb(255, 255, 255)');
+    await checkGroupStyle('rgb(255, 255, 255)');
+    await dragLink('complex');
+    await checkMergedRemoval('complex', 'left', 'rgb(255, 117, 105)', 'rgb(255, 255, 255)');
+    await cancelLink();
+    await page.setViewportSize({ width: 900, height: 650 });
     assert.equal(await arrows.count(), 1);
     await page.reload();
     await open();
@@ -819,6 +889,105 @@ async function checkTreeVisualMerges(browser, url, dataRoot, scenario) {
   }
 }
 
+async function checkTreeProgressUpdates(browser, url, dataRoot) {
+  const fixture = mergeFixture('branch');
+  const tree = fixture.goalTrees[0];
+  tree.nodes.find(node => node.id === 'target').independentProgress = true;
+  const first = fixture.tasks.find(task => task.id === 'task-probability');
+  first.progress.target = 3;
+  first.progress.milestones = [{ id: 'checkpoint', at: 1, name: '阶段题' }];
+  tree.links.push({ id: 'unlock-digital', from: 'probability', to: 'digital',
+    type: 'requires', primary: false, trigger: { kind: 'milestone', milestoneId: 'checkpoint' } });
+  const filename = path.join(dataRoot, 'data', 'tree-page.json');
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  fs.writeFileSync(filename, JSON.stringify(fixture));
+
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.setDefaultTimeout(12000);
+  try {
+    await installProbes(page);
+    await page.addInitScript(() => localStorage.setItem('canvas:goalTreeEnforceUnlock:v1', '1'));
+    await page.goto(url + '/index.html');
+    await page.evaluate(() => CanvasTreePage.prefetch());
+    await click(page, '.left-spine [data-action="tree-page-view"]');
+    const scope = page.locator('.tree-page-embedded');
+    const card = id => scope.locator('[data-node-id="' + id + '"]');
+    const task = card('probability');
+    const plus = task.locator('[data-delta="1"]');
+    const current = () => task.locator('.study-route-task-value').textContent();
+    const root = scope.locator('.tree-page-root-progress-value');
+    const trunk = scope.locator('path[data-to="target"][data-merge-part="trunk"]');
+    const digitalCheck = card('digital').locator('[data-route-action="complete"]');
+    await plus.waitFor();
+    await trunk.waitFor({ state: 'attached' });
+    assert.equal(await current(), '0 / 3');
+    assert.equal(await digitalCheck.getAttribute('aria-disabled'), 'true');
+    assert.equal(await root.textContent(), '20%');
+
+    const untouched = card('circuits').locator('.study-route-task-value');
+    await untouched.focus();
+    await untouched.evaluate(element => { window.__treeUntouchedButton = element; });
+    await trunk.evaluate(element => { window.__treeUntouchedTrunk = element; });
+    const originalPath = await trunk.getAttribute('d');
+    const commandPath = '/api/tree-page-command';
+    async function takeProgressWrite() {
+      let capture;
+      const held = new Promise(resolve => { capture = resolve; });
+      await page.route('**' + commandPath, route => { capture(route); }, { times: 1 });
+      await Promise.all([
+        page.waitForRequest(request => request.url().endsWith(commandPath)),
+        plus.evaluate(button => button.click()),
+      ]);
+      return held;
+    }
+    async function reply(route, options) {
+      const seen = await page.evaluate(key => __pageRenderProbe.parsed[key] || 0, commandPath);
+      await route.fulfill(options);
+      await page.waitForFunction(({ key, seen }) => __pageRenderProbe.parsed[key] > seen, { key: commandPath, seen });
+    }
+    const rendersBefore = (await renderTimes(page, 'tree-page')).length;
+    const firstWrite = await takeProgressWrite();
+    assert.equal(await current(), '1 / 3', 'quantity is updated before the save');
+    assert.equal(await root.textContent(), '27%');
+    assert.equal(await card('math').locator('[data-route-action="progress-breakdown"]').textContent(), '17% · 2 项任务');
+    assert.equal(await digitalCheck.getAttribute('aria-disabled'), null, 'an affected dependency is refreshed');
+    assert(await scope.locator('[data-milestone-id="checkpoint"]').evaluate(element => element.classList.contains('is-complete')));
+    assert(await untouched.evaluate(element => element === window.__treeUntouchedButton && element === document.activeElement));
+    assert(await trunk.evaluate(element => element === window.__treeUntouchedTrunk));
+    assert.equal(await trunk.getAttribute('d'), originalPath);
+    const firstResponse = await firstWrite.fetch();
+    assert(firstResponse.ok());
+    await reply(firstWrite, { response: firstResponse });
+    assert.equal((await renderTimes(page, 'tree-page')).length, rendersBefore + 1, 'matching authority needs no second render');
+    assert.equal(JSON.parse(fs.readFileSync(filename, 'utf8')).tasks.find(task => task.id === first.id).progress.current, 1);
+
+    await page.addStyleTag({ content: '.tree-page-embedded [data-node-id="probability"][data-progress="67"] { width: 520px !important; }' });
+    const secondWrite = await takeProgressWrite();
+    assert.equal(await current(), '2 / 3');
+    assert.equal(await task.evaluate(element => element.offsetWidth), 520);
+    assert.notEqual(await trunk.getAttribute('d'), originalPath, 'a measured width change recomputes the merged route');
+    const secondResponse = await secondWrite.fetch();
+    assert(secondResponse.ok());
+    const authority = await secondResponse.json();
+    authority.tasks.find(task => task.id === 'task-circuits').title = '外部更新';
+    await reply(secondWrite, { json: authority });
+    assert.equal(await card('circuits').locator('strong').textContent(), '外部更新', 'different authority still refreshes other cards');
+
+    const rejected = await takeProgressWrite();
+    assert.equal(await current(), '3 / 3');
+    await reply(rejected, { status: 500, json: { error: '模拟写入失败' } });
+    assert.equal(await current(), '2 / 3');
+    assert.equal(await root.textContent(), '33%');
+    assert.equal(await task.evaluate(element => element.offsetWidth), 520);
+    assert.equal(await card('circuits').locator('strong').textContent(), '外部更新');
+    assert.deepEqual(errors, []);
+  } finally {
+    await page.close();
+  }
+}
+
 async function main() {
   const socket = net.createServer();
   await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
@@ -846,6 +1015,11 @@ async function main() {
         await checkTreeVisualMerges(browser, url, dataRoot, scenario);
         console.log('tree-page visual merge passed: ' + scenario);
       }
+      return;
+    }
+    if (process.argv.includes('--tree-progress-updates')) {
+      await checkTreeProgressUpdates(browser, url, dataRoot);
+      console.log('tree-page progress updates passed');
       return;
     }
     await checkTreeFreeItemComposition(browser, url);

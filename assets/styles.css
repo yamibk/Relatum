@@ -3188,7 +3188,6 @@ html[data-note-reduced-motion="1"] body[data-start-workspace="notes"] > .top-bar
   stroke-width: 1.7;
   opacity: 1;
 }
-.tree-page-route-panel .study-route-edge.is-visual-merge-branch { stroke-width: 1.15; }
 .tree-page-route-panel .study-route-edge[data-merge-part] { stroke-linecap: round; }
 .tree-page-route-panel #tree-page-visual-arrow path { fill: #59675d; }
 .tree-page-route-panel #tree-page-visual-remove-arrow path { fill: #e35d52; }
@@ -3198,7 +3197,13 @@ html[data-note-reduced-motion="1"] body[data-start-workspace="notes"] > .top-bar
   stroke-width: 1.7;
   opacity: 1;
 }
-.tree-page-route-panel .study-route-edge.is-visual.is-link-preview.is-removing { stroke: #e35d52; }
+.tree-page-route-panel .study-route-edge.is-visual.is-link-preview-shared {
+  pointer-events: none;
+  stroke-dasharray: 5 4;
+  stroke-linejoin: round;
+}
+.tree-page-route-panel .study-route-edge.is-visual.is-link-preview.is-removing,
+.tree-page-route-panel .study-route-edge.is-visual.is-link-preview-shared { stroke: #e35d52; }
 .tree-page-route-panel .study-route-edge.is-visual.is-link-preview.is-invalid { opacity: .36; }
 .tree-page-route-panel .study-route-node[data-node-id].is-visual-link-target {
   border-color: #8ea595;
@@ -3862,7 +3867,8 @@ body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-edg
 body.start-page[data-start-theme="dark"] .tree-page-route-panel #tree-page-visual-arrow path { fill: #ffffff; }
 body.start-page[data-start-theme="dark"] .tree-page-route-panel #tree-page-visual-remove-arrow path { fill: #ff7569; }
 body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-edge.is-visual.is-link-preview { stroke: #ffffff; }
-body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-edge.is-visual.is-link-preview.is-removing { stroke: #ff7569; }
+body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-edge.is-visual.is-link-preview.is-removing,
+body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-edge.is-visual.is-link-preview-shared { stroke: #ff7569; }
 body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-node[data-node-id].is-visual-link-target {
   border-color: #90aa98;
   box-shadow: 0 0 0 3px rgba(144,170,152,.18), 0 9px 27px rgba(0,0,0,.22);
