@@ -3260,6 +3260,17 @@ body.tree-page-visual-linking .tree-page-route-panel * { cursor: crosshair !impo
   transition: none;
   will-change: transform;
 }
+.tree-page-route-panel .tree-page-drag-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  pointer-events: none;
+  will-change: transform;
+}
+.tree-page-route-panel .tree-page-drag-layer > .study-route-node {
+  pointer-events: none;
+  will-change: auto;
+}
 .study-route-node.is-drop-target { border-color: #66836d; box-shadow: 0 0 0 4px rgba(91,127,98,.16), 0 12px 30px rgba(35,42,35,.09); }
 .study-route-node.is-drop-parent { box-shadow: 0 0 0 3px rgba(91,127,98,.10), 0 12px 30px rgba(35,42,35,.09); }
 .study-route-node.is-reparent-target { border-color: #66836d; box-shadow: 0 0 0 5px rgba(91,127,98,.17), 0 15px 34px rgba(35,42,35,.12); transform: scale(1.018); }

@@ -75,7 +75,19 @@ async function checkTree(page, url) {
   assert.equal(await page.locator(freeItems).count(), 40);
   await page.waitForFunction(() => document.querySelector('.tree-page-embedded .is-goal-breathing'));
 
-  await desktopVisibility(page, true);
+  const minimizedCamera = await page.evaluate(async () => {
+    const viewport = document.querySelector('.tree-page-embedded [data-role="study-route-viewport"]');
+    const scene = viewport.querySelector('[data-role="study-route-scene"]');
+    const rect = viewport.getBoundingClientRect();
+    const before = scene.style.transform;
+    viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2, ctrlKey: true, bubbles: true, cancelable: true }));
+    document.documentElement.dataset.desktopMinimized = '1';
+    window.dispatchEvent(new CustomEvent('canvasdesktop:visibility', { detail: { minimized: true } }));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return { before, after: scene.style.transform };
+  });
+  assert.equal(minimizedCamera.after, minimizedCamera.before, 'minimizing discards pending zoom inputs');
   assert.equal(await page.locator(tree + ' .is-goal-breathing').count(), 0);
   await assertQuiet(page);
   assert.equal(await page.locator(freeItems).count(), 40, 'native minimize keeps the active scene mounted');

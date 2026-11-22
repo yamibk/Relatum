@@ -49,6 +49,9 @@
   var view = { x: 42, y: 42, zoom: 1 };
   var viewTarget = Object.assign({}, view), viewTickAt = 0;
   var viewportSize = { width: 0, height: 0 };
+  var viewportRect = null, stageRect = null;
+  var wheelZoomInputs = [], panFrame = 0;
+  var appliedSceneTransform = '';
   var pan = null, drag = null, dragEndedAt = 0, pointerDownInPopover = false;
   var visualLinkDrag = null, visualLinkEndedAt = -Infinity, visualLinkPreviewPath = null;
   var visualLinkSharedPreviewPath = null;
@@ -66,7 +69,7 @@
   // 复用上次几何，避免每次都用两轮完整树模型和布局来确认相同尺寸。
   var nodeSizeCache = new Map();
   var layoutFrame = 0, summaryFrame = 0, rootProgressFrame = 0, rootTitleSizeFrame = 0, viewFrame = 0, panInertiaFrame = 0, dragFrame = 0, visualLinkFrame = 0;
-  var dropSlot = null, reparentBadge = null, viewSaveTimer = 0;
+  var dropSlot = null, reparentBadge = null, dropHighlight = null, viewSaveTimer = 0;
   var GOAL_TREE_ROUTE_VIEW_KEY = 'relatum.tree-page.view';
   var TREE_MODEL_OPTIONS = { allowBlankTitle: true, independentProgress: true };
   var legacyViewClaimed = false;
@@ -1521,6 +1524,7 @@
     if (!open) return false;
     var target = state.trees.find(function (tree) { return tree.id === treeId; });
     if (!target) return false;
+    if (drag) finishDrag(true);
     if (visualLinkDrag) finishVisualLinkDrag(true);
     if (progressPointEdit) finishProgressPointEdit(true);
     flushProgressPointNames();
@@ -1626,8 +1630,10 @@
   function sceneTransform(offsetX) {
     return 'translate3d(' + (view.x + (Number(offsetX) || 0)) + 'px,' + view.y + 'px,0) scale(' + view.zoom + ')';
   }
-  function applyView() {
-    scene.style.transform = sceneTransform(0);
+  function applyView(offsetX) {
+    var transform = sceneTransform(offsetX);
+    if (appliedSceneTransform === transform) return;
+    scene.style.transform = appliedSceneTransform = transform;
   }
   function viewKeyFor(treeId) {
     return GOAL_TREE_ROUTE_VIEW_KEY + '.' + (treeId || 'default');
@@ -1701,16 +1707,17 @@
     if (viewFrame) cancelAnimationFrame(viewFrame);
     viewFrame = 0;
     viewTickAt = 0;
+    wheelZoomInputs.length = 0;
   }
   function stopPanInertia() {
     if (panInertiaFrame) cancelAnimationFrame(panInertiaFrame);
     panInertiaFrame = 0;
   }
-  function freezeViewForPageWheel() {
+  function freezeViewForInteraction() {
     var wasMoving = !!(viewFrame || panInertiaFrame);
     stopViewAnimation();
     stopPanInertia();
-    // 切页接管后保留实际显示的镜头，不能补到旧缩放目标造成跳变。
+    // 手势交接从屏幕上的镜头开始，避免补到尚未显示的缩放目标。
     viewTarget = Object.assign({}, view);
     if (wasMoving) saveViewSoon();
   }
@@ -1748,26 +1755,25 @@
     panInertiaFrame = requestAnimationFrame(step);
   }
   function requestViewAnimation() {
-    if (prefersReduced) {
-      view = Object.assign({}, viewTarget);
-      applyView();
-      return;
-    }
     if (!viewFrame) viewFrame = requestAnimationFrame(tickView);
   }
   function tickView(timestamp) {
     viewFrame = 0;
-    if (!open) return;
-    var dt = viewTickAt ? Math.min(34, timestamp - viewTickAt) : 16.667;
+    if (!open) { wheelZoomInputs.length = 0; return; }
+    applyWheelZoomInputs();
+    var dt = viewTickAt ? Math.max(0, Math.min(34, timestamp - viewTickAt)) : 1000 / 60;
     viewTickAt = timestamp;
-    var factor = 1 - Math.pow(1 - .155, dt / 16.667);
     var dx = viewTarget.x - view.x, dy = viewTarget.y - view.y, dz = viewTarget.zoom - view.zoom;
-    if (Math.abs(dx) < .25 && Math.abs(dy) < .25 && Math.abs(dz) < .0007) {
+    if (prefersReduced || (Math.abs(dx) < .25 && Math.abs(dy) < .25 && Math.abs(dz) < .0007)) {
       view = Object.assign({}, viewTarget);
       viewTickAt = 0;
-      applyView();
+      if (dx || dy || dz) {
+        applyView();
+        saveViewSoon();
+      }
       return;
     }
+    var factor = 1 - Math.pow(1 - .32, dt / (1000 / 60));
     view.x += dx * factor;
     view.y += dy * factor;
     view.zoom += dz * factor;
@@ -1775,6 +1781,7 @@
     viewFrame = requestAnimationFrame(tickView);
   }
   function setViewTarget(next, immediate) {
+    stopViewAnimation();
     stopPanInertia();
     viewTarget = {
       x: Number(next.x) || 0,
@@ -1782,15 +1789,14 @@
       zoom: Math.max(.38, Math.min(1.6, Number(next.zoom) || 1)),
     };
     if (immediate || prefersReduced) {
-      stopViewAnimation();
       view = Object.assign({}, viewTarget);
       applyView();
+      saveViewSoon();
     } else requestViewAnimation();
-    saveViewSoon();
   }
   function fit(immediate) {
     if (!layout) return;
-    var rect = viewport.getBoundingClientRect(), bounds = layout.bounds;
+    var rect = cachedViewportRect(), bounds = layout.bounds;
     if (!rect.width || !rect.height || !bounds.width || !bounds.height) return;
     var zoom = Math.max(.42, Math.min(1.08, Math.min((rect.width - 92) / bounds.width, (rect.height - 92) / bounds.height)));
     setViewTarget({
@@ -1816,21 +1822,37 @@
     return true;
   }
   function setZoom(next, anchorX, anchorY) {
-    var rect = viewport.getBoundingClientRect(), old = viewTarget.zoom;
     var zoom = Math.max(.38, Math.min(1.6, next));
-    var ax = Number.isFinite(anchorX) ? anchorX - rect.left : rect.width / 2;
-    var ay = Number.isFinite(anchorY) ? anchorY - rect.top : rect.height / 2;
-    setViewTarget({
-      x: ax - (ax - viewTarget.x) * (zoom / old),
-      y: ay - (ay - viewTarget.y) * (zoom / old),
+    if (zoom === viewTarget.zoom) return;
+    var rect = cachedViewportRect(), ratio = zoom / viewTarget.zoom;
+    var ax = anchorX - rect.left, ay = anchorY - rect.top;
+    viewTarget = {
+      x: ax - (ax - viewTarget.x) * ratio,
+      y: ay - (ay - viewTarget.y) * ratio,
       zoom: zoom,
+    };
+  }
+  function applyWheelZoomInputs() {
+    wheelZoomInputs.forEach(function (input) {
+      setZoom(viewTarget.zoom * input.factor, input.x, input.y);
     });
+    wheelZoomInputs.length = 0;
+  }
+  function invalidateRouteRects() {
+    viewportRect = stageRect = null;
+  }
+  function cachedViewportRect() {
+    return viewportRect || (viewportRect = viewport.getBoundingClientRect());
+  }
+  function cachedStageRect() {
+    return stageRect || (stageRect = stageEl.getBoundingClientRect());
   }
   function readViewportSize() {
-    var rect = viewport.getBoundingClientRect();
+    var rect = cachedViewportRect();
     return { width: Math.max(0, rect.width), height: Math.max(0, rect.height) };
   }
   function preserveViewOnResize() {
+    invalidateRouteRects();
     if (!open) return;
     closePopover(false);
     var next = readViewportSize();
@@ -3010,6 +3032,7 @@
   }
   function render(options) {
     if (!open || deferWorkspaceRender()) return;
+    if (drag) finishDrag(true, true);
     options = options || {};
     syncDimmedStageTree();
     if (progressPanelSelectionTreeId !== state.activeTreeId) restoreProgressPanelSelection();
@@ -3645,6 +3668,8 @@
   // 树命令前先把镜头动画停掉、钉到目标值再落盘：
   // 保存的是用户意图的最终镜头，而不是缓动中间帧（与 closeRoute 同款处理）。
   function settleViewThenSave() {
+    endPan();
+    applyWheelZoomInputs();
     stopViewAnimation();
     stopPanInertia();
     view = Object.assign({}, viewTarget);
@@ -3702,7 +3727,7 @@
     motion.currentOpacity = opacity;
     motion.currentOffset = offset;
     scene.style.opacity = String(opacity);
-    scene.style.transform = sceneTransform(offset);
+    applyView(offset);
     if (p < 1) {
       requestTreeSwitchFrame(motion);
       return;
@@ -3718,7 +3743,7 @@
       motion.startedAt = null;
       motion.currentOpacity = 0;
       motion.currentOffset = motion.direction * TREE_SWITCH_ENTER_PX;
-      scene.style.transform = sceneTransform(motion.direction * TREE_SWITCH_ENTER_PX);
+      applyView(motion.direction * TREE_SWITCH_ENTER_PX);
       requestTreeSwitchFrame(motion);
       return;
     }
@@ -3771,6 +3796,7 @@
     options = options || {};
     if (busy) return Promise.reject(new Error(T('请稍候')));
     if (treeId === state.activeTreeId) return Promise.resolve(null);
+    if (drag) finishDrag(true);
     if (visualLinkDrag) finishVisualLinkDrag(true);
     if (editingFreeItemId) commitFreeItemEdit();
     if (progressPointEdit) finishProgressPointEdit(true);
@@ -4367,6 +4393,7 @@
     endTreeTransition();
     void overlay.offsetWidth;
     overlay.classList.add('is-visible');
+    invalidateRouteRects();
     viewportSize = readViewportSize();
   }
   function cancelRouteCloseWait() {
@@ -4605,11 +4632,8 @@
     cancelRouteCloseWait();
     if (drag) finishDrag(true);
     cancelCollapseMotion();
-    if (pan) {
-      try { viewport.releasePointerCapture(pan.id); } catch (error) {}
-    }
-    pan = null;
-    viewport.classList.remove('is-panning');
+    endPan();
+    applyWheelZoomInputs();
     stopViewAnimation();
     stopPanInertia();
     resetViewPending = false;
@@ -4661,6 +4685,7 @@
   }
   function resumeTreePage(resume) {
     if (!resume || document.body.dataset.startWorkspace !== 'canvas') return;
+    invalidateRouteRects();
     if (!overlay.closest('.book-view.tree-page-active')
         || window.RelatumPageLayout?.isVisible('canvas', 'tree') === false) {
       if (open) closeRoute(false, true);
@@ -5333,16 +5358,17 @@
     openPopover(anchor, appearancePaletteHTML(appearance.color, appearance.shape));
   });
   nodesHost.addEventListener('pointerdown', function (event) {
+    if (pan || drag || visualLinkDrag || treeSwitchMotion) return;
     var anchor = event.target.closest('.study-route-node');
     if (event.button === 2) {
-      if (busy || drag || visualLinkDrag || !anchor || !['task', 'branch'].includes(anchor.dataset.kind)) return;
+      if (busy || !anchor || !['task', 'branch'].includes(anchor.dataset.kind)) return;
       beginVisualLinkDrag(anchor, event);
       return;
     }
     if (event.button === 0 && anchor && anchor.dataset.kind === 'task') {
       selectProgressTask(anchor.dataset.taskId, true);
     }
-    if (event.button !== 0 || drag || !anchor || anchor.dataset.kind === 'milestone' || event.target.closest('button')) return;
+    if (event.button !== 0 || !anchor || anchor.dataset.kind === 'milestone' || event.target.closest('button')) return;
     if (anchor.dataset.kind === 'root') return;
     drag = {
       id: event.pointerId, source: anchor, nodeId: anchor.dataset.nodeId,
@@ -5358,7 +5384,7 @@
     try { anchor.setPointerCapture(event.pointerId); } catch (error) {}
   }, true);
   function routeScenePoint(clientX, clientY) {
-    var rect = viewport.getBoundingClientRect(), zoom = Math.max(.001, view.zoom);
+    var rect = cachedViewportRect(), zoom = Math.max(.001, view.zoom);
     return { x: (clientX - rect.left - view.x) / zoom, y: (clientY - rect.top - view.y) / zoom };
   }
   function visualLinkRelation(sourceId, targetId) {
@@ -5507,7 +5533,7 @@
   }
   function activateVisualLinkDrag() {
     if (!visualLinkDrag || visualLinkDrag.active) return;
-    stopViewAnimation(); stopPanInertia(); closePopover(false);
+    freezeViewForInteraction(); closePopover(false);
     visualLinkDrag.active = true;
     document.body.classList.add('tree-page-visual-linking');
     ensureVisualLinkPreview();
@@ -5647,17 +5673,12 @@
     if (drag) finishDrag(true);
     if (visualLinkDrag) finishVisualLinkDrag(true);
     cancelFreeItemPointerGestures();
-    if (pan) {
-      try { viewport.releasePointerCapture(pan.id); } catch (error) {}
-      pan = null;
-      viewport.classList.remove('is-panning');
-      stopPanInertia();
-    }
+    endPan();
+    freezeViewForInteraction();
   }
   function clearDropPreview() {
-    nodesHost.querySelectorAll('.is-drop-target,.is-drop-parent,.is-reparent-target').forEach(function (item) {
-      item.classList.remove('is-drop-target', 'is-drop-parent', 'is-reparent-target');
-    });
+    if (dropHighlight) dropHighlight.classList.remove('is-drop-parent', 'is-reparent-target');
+    dropHighlight = null;
     if (dropSlot) dropSlot.hidden = true;
     if (reparentBadge) reparentBadge.hidden = true;
   }
@@ -5665,14 +5686,14 @@
     clearDropPreview();
     if (!candidate) return;
     if (candidate.type === 'reparent') {
-      var target = nodeElements.get(candidate.targetId);
-      if (target) target.classList.add('is-reparent-target');
+      dropHighlight = nodeElements.get(candidate.targetId);
+      if (dropHighlight) dropHighlight.classList.add('is-reparent-target');
       if (!reparentBadge) {
         reparentBadge = document.createElement('div');
         reparentBadge.className = 'study-route-reparent-badge'; reparentBadge.textContent = '+';
         reparentBadge.setAttribute('aria-hidden', 'true'); scene.appendChild(reparentBadge);
       }
-      var placement = drag && drag.baseLayout && drag.baseLayout.nodes.find(function (item) { return item.id === candidate.targetId; });
+      var placement = drag.dropContext.byPlacement.get(candidate.targetId);
       if (placement) {
         reparentBadge.style.left = ((candidate.direction === 'left' ? placement.x : placement.x + placement.width) - 9) + 'px';
         reparentBadge.style.top = (placement.y - placement.height / 2 - 9) + 'px';
@@ -5684,11 +5705,9 @@
       dropSlot = document.createElement('div'); dropSlot.className = 'study-route-drop-slot';
       dropSlot.setAttribute('aria-hidden', 'true'); scene.appendChild(dropSlot);
     }
-    var parent = nodeElements.get(candidate.parentId || 'root');
-    if (parent) parent.classList.add('is-drop-parent');
-    var sourcePlacement = drag && drag.baseLayout && drag.baseLayout.nodes.find(function (item) {
-      return item.id === drag.nodeId;
-    });
+    dropHighlight = nodeElements.get(candidate.parentId || 'root');
+    if (dropHighlight) dropHighlight.classList.add('is-drop-parent');
+    var sourcePlacement = drag.starts.get(drag.nodeId);
     var centerNudge = sourcePlacement ? Math.max(0, (sourcePlacement.width - 84) / 2) : 0;
     dropSlot.style.left = (candidate.depthCoord + centerNudge - 42) + 'px';
     dropSlot.style.top = (candidate.slotCoord - 1.5) + 'px';
@@ -5705,10 +5724,69 @@
     }
     return '';
   }
+  function prepareDraggedEdges(gesture) {
+    var moving = gesture.dragIds, rigidMerges = new Map(), boundaryIds = new Set();
+    var group = null;
+    gesture.affectedEdges = affectedDrawEdges(gesture.baseLayout.drawEdges, moving);
+    gesture.boundaryEdges = [];
+    gesture.rigidGroups = [];
+    gesture.affectedEdges.forEach(function (edge) {
+      var rigid = moving.has(edge.from) && moving.has(edge.to);
+      if (edge.merge) {
+        if (!rigidMerges.has(edge.merge)) {
+          rigidMerges.set(edge.merge, moving.has(edge.to) && edge.merge.members.every(function (member) {
+            return moving.has(member.from);
+          }));
+        }
+        rigid = rigidMerges.get(edge.merge);
+      }
+      if (rigid) {
+        var path = edgeElements.get(edgeKey(edge));
+        if (path) {
+          // Group only adjacent paths so the drawing order stays the same.
+          if (!group || group.nextSibling !== path) {
+            group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            group.setAttribute('data-tree-drag-edges', '');
+            edgesHost.insertBefore(group, path);
+            gesture.rigidGroups.push(group);
+          }
+          group.appendChild(path);
+        }
+      } else {
+        gesture.boundaryEdges.push(edge);
+        if (moving.has(edge.from)) boundaryIds.add(edge.from);
+        if (moving.has(edge.to)) boundaryIds.add(edge.to);
+      }
+    });
+    // Each merged source has a branch entry in drawEdges, so the mixed group's moving sources are included.
+    gesture.boundaryIds = boundaryIds;
+  }
+  function prepareDraggedCards(gesture) {
+    // Keep the pointer-capture owner and any focused card in place while moving the other cards.
+    var focused = document.activeElement;
+    gesture.cardOrder = Array.from(nodesHost.children);
+    gesture.directCards = [];
+    gesture.cardOrder.forEach(function (element) {
+      var id = element.dataset.nodeId;
+      if (!gesture.starts.has(id)) return;
+      element.classList.remove('is-entering', 'is-expanding');
+      element.classList.add(id === gesture.nodeId ? 'is-drag-anchor' : 'is-subtree-dragging');
+      if (element === gesture.source || element.contains(focused)) {
+        gesture.directCards.push(element);
+        return;
+      }
+      if (!gesture.cardLayer) {
+        gesture.cardLayer = document.createElement('div');
+        gesture.cardLayer.className = 'tree-page-drag-layer';
+        gesture.cardLayer.setAttribute('role', 'presentation');
+        nodesHost.appendChild(gesture.cardLayer);
+      }
+      gesture.cardLayer.appendChild(element);
+    });
+  }
   function activateDrag() {
     if (!drag || drag.active || !layout) return;
-    stopViewAnimation();
-    viewTarget = Object.assign({}, view);
+    freezeViewForInteraction();
     drag.startPoint = routeScenePoint(drag.x, drag.y);
     if (layoutFrame) cancelAnimationFrame(layoutFrame);
     layoutFrame = 0;
@@ -5726,17 +5804,16 @@
     drag.dragIds = new Set(drag.dropContext.structuralExcluded || []);
     drag.livePlacements = placementMap(drag.baseLayout.nodes);
     drag.baseLayout.nodes.forEach(function (placement) {
-      if (drag.dragIds.has(placement.id)) drag.starts.set(placement.id, Object.assign({}, placement));
+      if (placement.kind === 'milestone' && drag.dragIds.has(placement.node.parentNodeId)) drag.dragIds.add(placement.id);
+      if (drag.dragIds.has(placement.id)) drag.starts.set(placement.id, placement);
     });
-    drag.affectedEdges = affectedDrawEdges(drag.baseLayout.drawEdges, drag.dragIds);
-    drag.dragIds.forEach(function (id) {
-      var element = nodeElements.get(id);
-      if (element) element.classList.add(id === drag.nodeId ? 'is-drag-anchor' : 'is-subtree-dragging');
-    });
+    prepareDraggedEdges(drag);
+    prepareDraggedCards(drag);
+    drag.dx = drag.dy = 0;
     document.body.classList.add('study-route-node-dragging'); drag.active = true;
   }
   function autoPanDrag(clientX, clientY, elapsedMs) {
-    var rect = viewport.getBoundingClientRect(), edge = 56;
+    var rect = cachedViewportRect(), edge = 56;
     var dx = clientX < rect.left + edge ? Math.min(11, (rect.left + edge - clientX) * .18)
       : clientX > rect.right - edge ? -Math.min(11, (clientX - rect.right + edge) * .18) : 0;
     var dy = clientY < rect.top + edge ? Math.min(11, (rect.top + edge - clientY) * .18)
@@ -5750,21 +5827,23 @@
     applyView();
     return true;
   }
-  function positionDraggedSubtree(clientX, clientY) {
-    if (!drag || !drag.active) return;
-    var point = routeScenePoint(clientX, clientY);
+  function positionDraggedSubtree(point) {
     var dx = point.x - drag.startPoint.x, dy = point.y - drag.startPoint.y;
-    drag.starts.forEach(function (start, id) {
-      var placement = Object.assign({}, start, { x: start.x + dx, y: start.y + dy });
-      drag.livePlacements.set(id, placement);
-      var element = nodeElements.get(id);
-      if (element) element.style.transform = 'translate3d(' + dx + 'px,' + dy + 'px,0)';
+    if (dx === drag.dx && dy === drag.dy) return;
+    drag.dx = dx; drag.dy = dy;
+    var transform = 'translate3d(' + dx + 'px,' + dy + 'px,0)';
+    if (drag.cardLayer) drag.cardLayer.style.transform = transform;
+    drag.directCards.forEach(function (element) { element.style.transform = transform; });
+    drag.rigidGroups.forEach(function (group) {
+      group.setAttribute('transform', 'translate(' + dx + ' ' + dy + ')');
     });
-    writeDrawEdges(drag.affectedEdges, drag.livePlacements);
+    drag.boundaryIds.forEach(function (id) {
+      var start = drag.starts.get(id), placement = drag.livePlacements.get(id);
+      placement.x = start.x + dx; placement.y = start.y + dy;
+    });
+    writeDrawEdges(drag.boundaryEdges, drag.livePlacements);
   }
-  function updateDragCandidate(clientX, clientY) {
-    if (!drag || !drag.active) return;
-    var point = routeScenePoint(clientX, clientY), hitId = dragHitId(clientX, clientY);
+  function updateDragCandidate(point, hitId) {
     var candidate = GoalTree.structureDropCandidate(
       drag.baseLayout, drag.baseTree, drag.nodeId, point,
       { targetId: hitId, rowGap: 30, levelGap: 92, context: drag.dropContext },
@@ -5787,9 +5866,11 @@
     var now = Number.isFinite(timestamp) ? timestamp : performance.now();
     var elapsedMs = drag.panFrameAt == null ? 1000 / 60 : now - drag.panFrameAt;
     drag.panFrameAt = now;
+    var x = drag.latestX, y = drag.latestY;
+    var point = routeScenePoint(x, y);
+    updateDragCandidate(point, dragHitId(x, y));
     var panned = allowAutoPan !== false && autoPanDrag(drag.latestX, drag.latestY, elapsedMs);
-    positionDraggedSubtree(drag.latestX, drag.latestY);
-    updateDragCandidate(drag.latestX, drag.latestY);
+    positionDraggedSubtree(panned ? routeScenePoint(x, y) : point);
     if (panned && drag && drag.active) {
       dragFrame = requestAnimationFrame(function (nextTimestamp) { flushDragFrame(true, nextTimestamp); });
     }
@@ -5805,23 +5886,41 @@
       dragFrame = requestAnimationFrame(function (timestamp) { flushDragFrame(true, timestamp); });
     }
   }
-  function finishDrag(cancelled) {
+  function finishDrag(cancelled, skipRender) {
     if (!drag) return;
     var current = drag;
     if (dragFrame) cancelAnimationFrame(dragFrame);
     dragFrame = 0;
-    if (current.active && Number.isFinite(current.latestX) && Number.isFinite(current.latestY)) {
-      positionDraggedSubtree(current.latestX, current.latestY);
-      updateDragCandidate(current.latestX, current.latestY);
+    if (!cancelled && current.active) {
+      var point = routeScenePoint(current.latestX, current.latestY);
+      updateDragCandidate(point, dragHitId(current.latestX, current.latestY));
+      current.dx = point.x - current.startPoint.x;
+      current.dy = point.y - current.startPoint.y;
     }
     if (current.active && current.livePlacements) {
-      visualPlacements = placementMap(Array.from(current.livePlacements.values()));
-      current.dragIds.forEach(function (id) {
+      current.starts.forEach(function (start, id) {
         var placement = current.livePlacements.get(id), element = nodeElements.get(id);
-        if (!placement || !element) return;
-        element.style.transform = '';
-        writeNodePosition(element, placement);
+        placement.x = start.x + current.dx;
+        placement.y = start.y + current.dy;
+        if (element) writeNodePosition(element, placement);
       });
+      visualPlacements = current.livePlacements;
+      writeDrawEdges(current.affectedEdges, visualPlacements);
+      current.rigidGroups.forEach(function (group) {
+        var paths = document.createDocumentFragment();
+        while (group.firstChild) paths.appendChild(group.firstChild);
+        group.replaceWith(paths);
+      });
+      if (current.cardLayer) {
+        var nextCard = null;
+        for (var index = current.cardOrder.length - 1; index >= 0; index--) {
+          var element = current.cardOrder[index];
+          if (element.parentNode === current.cardLayer) nodesHost.insertBefore(element, nextCard);
+          nextCard = element;
+        }
+        current.cardLayer.remove();
+      }
+      current.directCards.forEach(function (element) { element.style.transform = ''; });
     }
     drag = null;
     window.removeEventListener('pointermove', onDragMove);
@@ -5857,14 +5956,13 @@
             }
             ignoreBusy(error);
           });
-      } else {
-        state.tree = current.baseTree; render({ duration: 260, preserveViewAnchor: 'root' });
-      }
+      } else if (!skipRender) render({ duration: 260, preserveViewAnchor: 'root' });
     }
   }
   function onDragEnd(event) {
     if (!drag || drag.id !== event.pointerId) return;
     if (drag.active) event.preventDefault();
+    drag.latestX = event.clientX; drag.latestY = event.clientY;
     finishDrag(false);
   }
   function onDragCancel(event) {
@@ -5874,6 +5972,7 @@
   function onDragMouseUp(event) {
     if (!drag || event.button !== 0) return;
     if (drag.active) event.preventDefault();
+    drag.latestX = event.clientX; drag.latestY = event.clientY;
     finishDrag(false);
   }
   function onDragLostCapture(event) {
@@ -5882,18 +5981,23 @@
   }
 
   viewport.addEventListener('wheel', function (event) {
-    if (!open) return;
+    if (!treePageIsForeground()) return;
     if (event.defaultPrevented || isRailWheelHotZone(event)) {
-      freezeViewForPageWheel();
+      freezeViewForInteraction();
       return;
     }
     event.preventDefault();
-    setZoom(viewTarget.zoom * Math.exp(-event.deltaY * .00115), event.clientX, event.clientY);
+    if (!event.deltaY || pan || drag || visualLinkDrag || freeItemDrag || freeItemResize || treeSwitchMotion) return;
+    stopPanInertia();
+    var unit = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? 240 : 1;
+    var delta = Math.max(-200, Math.min(200, event.deltaY * unit));
+    wheelZoomInputs.push({ factor: Math.exp(-delta / 200 * Math.log(1.1)), x: event.clientX, y: event.clientY });
+    requestViewAnimation();
   }, { passive: false });
   viewport.addEventListener('pointerdown', function (event) {
-    if (event.button === 0) stopPanInertia();
-    if (event.button !== 0 || event.target.closest('.study-route-node,.tree-page-free-item,.study-route-fit,.study-route-popover')) return;
-    stopViewAnimation();
+    if (event.button !== 0 || pan || visualLinkDrag || treeSwitchMotion) return;
+    freezeViewForInteraction();
+    if (drag || event.target.closest('.study-route-node,.tree-page-free-item,.study-route-fit,.study-route-popover')) return;
     var now = performance.now();
     pan = {
       id: event.pointerId, x: event.clientX, y: event.clientY, ox: view.x, oy: view.y,
@@ -5916,21 +6020,32 @@
     pan.lastMoveY = event.clientY;
     pan.lastMoveT = now;
     pan.moved = pan.moved || Math.hypot(event.clientX - pan.x, event.clientY - pan.y) >= 2;
-    view.x = pan.ox + event.clientX - pan.x;
-    view.y = pan.oy + event.clientY - pan.y;
-    viewTarget = Object.assign({}, view);
-    applyView();
+    if (!panFrame) panFrame = requestAnimationFrame(function () {
+      panFrame = 0;
+      if (pan) paintPan(pan.lastMoveX, pan.lastMoveY);
+    });
   });
+  function paintPan(clientX, clientY) {
+    view.x = pan.ox + clientX - pan.x;
+    view.y = pan.oy + clientY - pan.y;
+    viewTarget.x = view.x; viewTarget.y = view.y;
+    applyView();
+  }
   function endPan(event) {
-    if (!pan || pan.id !== event.pointerId) return;
+    if (!pan || (event && pan.id !== event.pointerId)) return;
+    if (panFrame) cancelAnimationFrame(panFrame);
+    panFrame = 0;
     var finished = pan;
+    var released = event && event.type === 'pointerup';
+    if (released) paintPan(event.clientX, event.clientY);
     pan = null; viewport.classList.remove('is-panning');
-    try { viewport.releasePointerCapture(event.pointerId); } catch (error) {}
+    try { viewport.releasePointerCapture(finished.id); } catch (error) {}
     saveViewSoon();
-    if (event.type === 'pointerup' && finished.moved) startPanInertia(finished);
+    if (released && finished.moved) startPanInertia(finished);
   }
   viewport.addEventListener('pointerup', endPan);
   viewport.addEventListener('pointercancel', endPan);
+  viewport.addEventListener('lostpointercapture', endPan);
   window.addEventListener('keydown', handleProgressPanelTab, true);
   overlay.addEventListener('keydown', function (event) {
     if (editingFreeItemId) {
@@ -5960,7 +6075,7 @@
     else viewport.focus({ preventScroll: true });
   });
   stageEl.addEventListener('mousemove', function (event) {
-    var rect = stageEl.getBoundingClientRect();
+    var rect = cachedStageRect();
     setRailVisible(rect.right - event.clientX <= railRevealPx || railOver);
   }, { passive: true });
   rail.addEventListener('pointerenter', function () { railOver = true; setRailVisible(true); });
@@ -5970,13 +6085,14 @@
   function isRailWheelHotZone(event) {
     if (rail.inert || progressPanelIsVisible() || event.ctrlKey || event.metaKey
       || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return false;
-    var rect = stageEl.getBoundingClientRect();
+    var rect = cachedStageRect();
     var rightDistance = rect.right - event.clientX;
     return rightDistance >= 0 && rightDistance <= railRevealPx;
   }
   function onRailWheel(event) {
     if (!open || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
-    freezeViewForPageWheel();
+    endPan();
+    freezeViewForInteraction();
     var direction = event.deltaY > 0 ? 1 : -1;
     var targetInList = railList.contains(event.target);
     var maxScroll = railList.scrollHeight - railList.clientHeight;
@@ -6000,6 +6116,8 @@
     railWheelAccum = 0;
     if (currentIndex < 0 || nextIndex < 0 || nextIndex >= state.trees.length) return;
     if (!railWheelGestureActive) {
+      if (drag) finishDrag(true);
+      if (visualLinkDrag) finishVisualLinkDrag(true);
       railWheelGestureActive = true;
       if (editingFreeItemId) commitFreeItemEdit();
       armedFreeItemKind = '';
@@ -6037,6 +6155,17 @@
     createTree().catch(ignoreBusy);
   });
   window.addEventListener('resize', preserveViewOnResize);
+  window.addEventListener('scroll', invalidateRouteRects);
+  function invalidateRectsAfterMotion(event) {
+    if (event.target.contains?.(stageEl)) invalidateRouteRects();
+  }
+  window.addEventListener('animationend', invalidateRectsAfterMotion);
+  window.addEventListener('transitionend', invalidateRectsAfterMotion);
+  if (window.ResizeObserver) {
+    var routeRectObserver = new ResizeObserver(invalidateRouteRects);
+    routeRectObserver.observe(viewport);
+    routeRectObserver.observe(stageEl);
+  }
   window.addEventListener('blur', cancelActivePointerGestures);
   window.addEventListener('relatum:goal-tree-simple-mode-change', function () {
     if (open) closePopover(false);

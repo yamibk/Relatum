@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 
@@ -889,6 +889,225 @@ async function checkTreeVisualMerges(browser, url, dataRoot, scenario) {
   }
 }
 
+async function checkTreeGestureBudget(browser, url, count, baseline) {
+  const tasks = fixture(count).tasks;
+  const nodes = [{ id: 'branch', kind: 'branch', title: 'Motion sample' },
+    ...tasks.map(task => ({ id: task.id, kind: 'task', taskId: task.id }))];
+  const links = nodes.map((node, order) => ({ id: 'link-' + node.id, from: order ? 'branch' : null,
+    to: node.id, type: 'contains', primary: true, order, side: 'right' }));
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+  try {
+    await page.addInitScript(() => {
+      localStorage.setItem('canvas:startWorkspace:v1', 'canvas');
+      localStorage.setItem('canvas:globalSystem:v1', JSON.stringify({ preload: false }));
+    });
+    await page.route('**/api/tree-page', route => route.fulfill({ json: { tasks, activeTreeId: 'motion',
+      goalTrees: [{ version: 2, id: 'motion', title: 'Motion', nodes, links }] } }));
+    if (baseline) {
+      for (const [file, type] of [['tree-page.js', 'text/javascript'], ['styles.css', 'text/css']]) {
+        const source = execFileSync('git', ['show', baseline + ':assets/' + file], { cwd: root, maxBuffer: 8 * 1024 * 1024 });
+        await page.route('**/' + file, route => route.fulfill({ contentType: type, body: source }));
+      }
+    }
+    await page.goto(url + '/index.html');
+    await page.evaluate(() => CanvasTreePage.prefetch());
+    await click(page, '.left-spine [data-action="tree-page-view"]');
+    const viewport = page.locator('.tree-page-embedded .study-route-viewport');
+    const branch = viewport.locator('[data-node-id="branch"]');
+    await branch.waitFor();
+    await settleFrames(page);
+    await viewport.evaluate(element => {
+      element.addEventListener('pointerdown', event => { window.treeProbePointer = event.pointerId; }, true);
+    });
+    const camera = () => viewport.evaluate(element => {
+      const matrix = new DOMMatrix(getComputedStyle(element.querySelector('.study-route-scene')).transform);
+      return { x: matrix.e, y: matrix.f, zoom: matrix.a };
+    });
+    const measure = (pan, point) => viewport.evaluate(async (element, options) => {
+      const scene = element.querySelector('.study-route-scene');
+      const counter = { scene: 0, nodeLayer: 0, card: 0, path: 0, edgeLayer: 0, hit: 0 };
+      const raf = window.requestAnimationFrame;
+      const hitTest = document.elementsFromPoint;
+      let callbackMs = 0;
+      window.requestAnimationFrame = callback => raf(time => {
+        const start = performance.now();
+        callback(time);
+        callbackMs += performance.now() - start;
+      });
+      document.elementsFromPoint = (...args) => { counter.hit++; return hitTest.apply(document, args); };
+      const observer = new MutationObserver(records => {
+        records.forEach(({ target, attributeName }) => {
+          if (target === scene && attributeName === 'style') counter.scene++;
+          if (target.matches('.tree-page-drag-layer') && attributeName === 'style') counter.nodeLayer++;
+          if (target.matches('.study-route-node') && attributeName === 'style') counter.card++;
+          if (target.matches('path[data-edge-id]') && attributeName === 'd') counter.path++;
+          if (target.matches('[data-tree-drag-edges]') && attributeName === 'transform') counter.edgeLayer++;
+        });
+      });
+      observer.observe(scene, { subtree: true, attributes: true, attributeFilter: ['style', 'd', 'transform'] });
+      const timing = [], frameIntervals = [], frames = 24;
+      const frame = () => new Promise(resolve => raf(resolve));
+      try {
+        let timestamp = await frame();
+        for (let batch = 0; batch < frames; batch++) {
+          const start = performance.now();
+          callbackMs = 0;
+          for (let i = 1; i <= 12; i++) {
+            const offset = 8 + i + batch % 2;
+            (options.pan ? element : window).dispatchEvent(new PointerEvent('pointermove', {
+              clientX: options.point.x + offset, clientY: options.point.y + offset / 2,
+              buttons: 1, button: -1, pointerId: window.treeProbePointer, bubbles: true,
+            }));
+          }
+          const inputMs = performance.now() - start;
+          const nextTimestamp = await frame();
+          frameIntervals.push(nextTimestamp - timestamp);
+          timestamp = nextTimestamp;
+          timing.push(inputMs + callbackMs);
+        }
+      } finally {
+        observer.disconnect();
+        window.requestAnimationFrame = raf;
+        document.elementsFromPoint = hitTest;
+      }
+      const p95 = values => +values.sort((a, b) => a - b)[Math.ceil(values.length * .95) - 1].toFixed(2);
+      return { ...counter, frames, workP95ms: p95(timing), frameP95ms: p95(frameIntervals) };
+    }, { pan, point });
+    const rect = await viewport.boundingBox();
+    const blank = { x: rect.x + 110, y: rect.y + 100 };
+    const originalCamera = await camera();
+    await page.mouse.move(blank.x, blank.y);
+    await page.mouse.down();
+    const pan = await measure(true, blank);
+    if (!baseline) {
+      assert.equal(pan.scene, pan.frames);
+      await viewport.evaluate((element, point) => element.dispatchEvent(new PointerEvent('pointerup', {
+        clientX: point.x, clientY: point.y, button: 0, pointerId: window.treeProbePointer, bubbles: true,
+      })), { x: blank.x + 36, y: blank.y + 40 });
+      const moved = await camera();
+      assert(Math.abs(moved.x - originalCamera.x - 36) < .001 && Math.abs(moved.y - originalCamera.y - 40) < .001,
+        'pointerup commits its own coordinates before the next frame');
+    }
+    await page.mouse.up();
+    await page.evaluate(() => CanvasTreePage.resetView());
+    const cardOrder = () => viewport.locator('.study-route-nodes > .study-route-node')
+      .evaluateAll(cards => cards.map(card => card.dataset.nodeId));
+    const initialOrder = await cardOrder();
+    const box = await branch.boundingBox();
+    const start = { x: box.x + box.width * .25, y: box.y + box.height * .35 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    const drag = await measure(false, start);
+    if (!baseline) {
+      assert.equal(drag.nodeLayer, drag.frames);
+      assert.equal(drag.edgeLayer, drag.frames);
+      assert.equal(drag.card, drag.frames, 'the pointer-capture owner follows the layer without being moved in the DOM');
+      assert.equal(drag.path, drag.frames, 'only the root-to-branch edge changes shape');
+      assert.equal(drag.hit, drag.frames);
+      assert.equal(await viewport.locator('[data-tree-drag-edges] > path').count(), count);
+      await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+      assert.equal(await viewport.locator('[data-tree-drag-edges], .tree-page-drag-layer, .is-subtree-dragging').count(), 0);
+      assert.deepEqual(await cardOrder(), initialOrder, 'cancelling restores card and keyboard traversal order');
+    }
+    console.log(JSON.stringify({ revision: baseline || 'working tree', tasks: count, pan, drag }));
+  } finally {
+    await page.close();
+  }
+}
+
+async function checkTreeGestureHandoffs(browser, url) {
+  const data = mergeFixture('branch');
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    await page.addInitScript(() => {
+      localStorage.setItem('canvas:startWorkspace:v1', 'canvas');
+      localStorage.setItem('canvas:globalSystem:v1', JSON.stringify({ preload: false }));
+    });
+    await page.route('**/api/tree-page', route => route.fulfill({ json: data }));
+    await page.goto(url + '/index.html');
+    await page.evaluate(() => CanvasTreePage.prefetch());
+    await click(page, '.left-spine [data-action="tree-page-view"]');
+    const viewport = page.locator('.tree-page-embedded .study-route-viewport');
+    const scene = viewport.locator('.study-route-scene');
+    const card = id => viewport.locator('.study-route-node[data-node-id="' + id + '"]');
+    await card('math').waitFor();
+    const scope = await viewport.boundingBox();
+    const anchor = { x: Math.round(scope.x + scope.width * .62), y: Math.round(scope.y + scope.height * .44) };
+    const transform = () => scene.evaluate((element, point) => {
+      const matrix = new DOMMatrix(getComputedStyle(element).transform);
+      const rect = element.parentElement.getBoundingClientRect();
+      return { zoom: matrix.a, worldX: (point.x - rect.left - matrix.e) / matrix.a,
+        worldY: (point.y - rect.top - matrix.f) / matrix.a };
+    }, anchor);
+    const initial = await transform();
+    await page.mouse.move(anchor.x, anchor.y);
+    await page.mouse.wheel(0, -100);
+    await settleFrames(page);
+    const zoomed = await transform();
+    assert(Math.abs(zoomed.zoom / initial.zoom - Math.sqrt(1.1)) < .00001);
+    assert(Math.abs(zoomed.worldX - initial.worldX) < .02 && Math.abs(zoomed.worldY - initial.worldY) < .02,
+      JSON.stringify({ initial, zoomed }));
+    const smallReverse = [{ deltaY: 1, deltaMode: 1 }, ...Array.from({ length: 10 }, () => ({ deltaY: 8.2, deltaMode: 0 }))];
+    await viewport.evaluate(async (element, { anchor, inputs }) => {
+      inputs.forEach(input => element.dispatchEvent(new WheelEvent('wheel', {
+        ...input, clientX: anchor.x, clientY: anchor.y, ctrlKey: true, bubbles: true, cancelable: true,
+      })));
+    }, { anchor, inputs: smallReverse });
+    await settleFrames(page);
+    assert(Math.abs((await transform()).zoom - initial.zoom) < .00001, 'line and small pixel deltas accumulate in order');
+
+    const trunk = viewport.locator('path[data-to="target"][data-merge-part="trunk"]');
+    const sourceEdge = viewport.locator('path[data-from="probability"][data-merge-part="branch"]');
+    const dragCard = async id => {
+      const box = await card(id).boundingBox();
+      const point = { x: box.x + box.width * .25, y: box.y + box.height * .35 };
+      await page.mouse.move(point.x, point.y); await page.mouse.down();
+      await page.mouse.move(point.x + 40, point.y + 16);
+      await settleFrames(page);
+    };
+    const original = await sourceEdge.getAttribute('d');
+    const originalBounds = await sourceEdge.boundingBox();
+    await dragCard('year');
+    assert(await trunk.evaluate(path => !!path.closest('[data-tree-drag-edges]')), 'a merge wholly inside the branch translates intact');
+    assert.equal(await sourceEdge.getAttribute('d'), original);
+    const movedX = await sourceEdge.evaluate(path => path.parentElement.transform.baseVal.getItem(0).matrix.e);
+    assert(Math.abs(movedX * initial.zoom - 40) < .01, 'the SVG offset matches the card offset at the current zoom');
+    const movedBounds = await sourceEdge.boundingBox();
+    assert(Math.abs(movedBounds.x - originalBounds.x - 40) < .02 && Math.abs(movedBounds.y - originalBounds.y - 16) < .02);
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await page.mouse.up();
+    assert.equal(await trunk.evaluate(path => !!path.closest('[data-tree-drag-edges]')), false);
+    assert.equal(await sourceEdge.getAttribute('d'), original);
+    await dragCard('math');
+    assert.equal(await trunk.evaluate(path => !!path.closest('[data-tree-drag-edges]')), false);
+    assert.notEqual(await sourceEdge.getAttribute('d'), original, 'mixed merge recomputes its shape');
+
+    await page.route('**/api/tree-page-command', route => route.fulfill({ status: 500, json: { error: 'test rollback' } }));
+    const target = await card('electrical').boundingBox();
+    const matched = page.waitForRequest(request => request.url().endsWith('/api/tree-page-command'));
+    await viewport.evaluate((element, position) => {
+      const anchor = element.querySelector('[data-node-id="math"]');
+      for (let id = 1; id < 8; id++) {
+        if (anchor.hasPointerCapture(id)) {
+          anchor.dispatchEvent(new PointerEvent('pointerup', { ...position, pointerId: id, button: 0, bubbles: true, cancelable: true }));
+          return;
+        }
+      }
+      throw new Error('expected the dragged node to own pointer capture');
+    }, { clientX: target.x + target.width / 2, clientY: target.y + target.height / 2 });
+    const request = await matched;
+    assert.equal(request.postDataJSON().primaryLink.from, 'electrical', 'release hit uses final pointer position');
+    await request.response();
+    await page.waitForFunction(d => document.querySelector('.tree-page-embedded path[data-from="probability"][data-merge-part="branch"]')?.getAttribute('d') === d, original);
+    await page.mouse.up();
+    assert.deepEqual(errors, []);
+  } finally {
+    await page.close();
+  }
+}
+
 async function checkTreeStageDimming(browser, url, dataRoot) {
   const fixture = mergeFixture('branch');
   const tree = fixture.goalTrees[0];
@@ -1149,6 +1368,16 @@ async function main() {
     if (process.argv.includes('--tree-stage-dimming')) {
       await checkTreeStageDimming(browser, url, dataRoot);
       console.log('tree-page stage dimming passed');
+      return;
+    }
+    if (process.argv.includes('--tree-gestures')) {
+      const baseline = process.argv.find(arg => arg.startsWith('--baseline='))?.slice('--baseline='.length);
+      for (const count of [24, 240]) {
+        if (baseline) await checkTreeGestureBudget(browser, url, count, baseline);
+        await checkTreeGestureBudget(browser, url, count);
+      }
+      await checkTreeGestureHandoffs(browser, url);
+      console.log('tree-page gesture handoffs passed');
       return;
     }
     await checkTreeFreeItemComposition(browser, url);

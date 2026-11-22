@@ -108,18 +108,14 @@ assert(syncNodeElementsSource.includes("replayClass(element, 'is-completion-rest
 
 [
   'clearRailTransients', 'railSnapshot', 'renderRail', 'animateRailChange', 'setRailVisible',
-  'sceneTransform', 'applyView', 'stopViewAnimation', 'stopPanInertia', 'startPanInertia',
-  'requestViewAnimation', 'tickView', 'setViewTarget', 'fit', 'setZoom',
-  'preserveViewOnResize', 'edgePath', 'animateLayout', 'settleNodeFills',
+  'sceneTransform', 'stopPanInertia', 'startPanInertia', 'edgePath', 'animateLayout', 'settleNodeFills',
   'transitionFill', 'transitionTaskCheck', 'preserveViewAnchor', 'positionPopover',
-  'beginTreeTransition', 'endTreeTransition', 'animateRootEntrance', 'settleViewThenSave',
+  'beginTreeTransition', 'endTreeTransition', 'animateRootEntrance',
   'cancelTreeSwitchMotion', 'requestTreeSwitchFrame',
   'collapseVisibleDescendants',
   'cleanupCollapseMotion', 'cancelCollapseMotion', 'finishCollapseMotion',
-  'setCollapseControlExpanded', 'clearDropPreview', 'showDropPreview',
-  // activateDrag is intentionally Tree-specific because its rollback snapshot must retain visualLinks/freeItems.
-  'dragHitId', 'autoPanDrag', 'updateDragCandidate', 'flushDragFrame',
-  'onDragMove', 'onDragEnd', 'onDragCancel', 'endPan',
+  'setCollapseControlExpanded', 'dragHitId', 'onDragMove', 'onDragCancel',
+  // Tree-specific camera and drag behavior is covered by the motion regressions and Edge gestures suite.
 ].forEach((name) => {
   const source = functionSource(tree, name)
     .replace('    if (!open || !railList || deferWorkspaceRender()) return;', '    if (!railList) return;')
@@ -396,7 +392,8 @@ assert(visualPortsSource.includes('Math.min(24, Math.max(0, placement.height * .
   && visualPortsSource.includes('other && other.y > placement.y ? 1 : -1')
   && visualPortsSource.includes('Math.abs(offset) < 6')
   && functionSource(tree, 'writeDrawEdges').includes('visualEdgePath(from, to, edge)')
-  && functionSource(tree, 'positionDraggedSubtree').includes('writeDrawEdges(drag.affectedEdges, drag.livePlacements)')
+  && functionSource(tree, 'positionDraggedSubtree').includes('writeDrawEdges(drag.boundaryEdges, drag.livePlacements)')
+  && functionSource(tree, 'finishDrag').includes('writeDrawEdges(current.affectedEdges, visualPlacements)')
   && functionSource(tree, 'toggleBranchCollapse').includes('layout.drawEdges'),
   'separate visual ports and shared paths must follow structural dragging');
 assert(functionSource(tree, 'activateDrag').includes('drag.baseTree = preserveTreeExtensions(state.tree, {')
