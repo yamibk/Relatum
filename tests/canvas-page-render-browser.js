@@ -889,6 +889,130 @@ async function checkTreeVisualMerges(browser, url, dataRoot, scenario) {
   }
 }
 
+async function checkTreeStageDimming(browser, url, dataRoot) {
+  const fixture = mergeFixture('branch');
+  const tree = fixture.goalTrees[0];
+  const digital = fixture.tasks.find(task => task.id === 'task-digital');
+  digital.progress = { current: 0, target: 3, milestones: [{ id: 'checkpoint', at: 2, name: '节点检查' }] };
+  tree.nodes.find(node => node.id === 'target').title = '大二下学期课程安排和需要完成的全部学习任务';
+  tree.visualLinks.push({ from: 'major', to: 'earlier' });
+  const filename = path.join(dataRoot, 'data', 'tree-page.json');
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  fs.writeFileSync(filename, JSON.stringify(fixture));
+
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.setDefaultTimeout(12000);
+  try {
+    await installProbes(page);
+    await page.goto(url + '/index.html?view=tree');
+    const scope = page.locator('.tree-page-embedded');
+    const card = id => scope.locator('.study-route-node[data-node-id="' + id + '"]');
+    const dimButton = id => card(id).locator('[data-route-action="dim-stage"]');
+    const checkpoint = scope.locator('[data-milestone-id="checkpoint"]');
+    const checkOpacity = (locator, value) => locator.evaluate(async (element, expected) => {
+      await Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => {})));
+      return Number(getComputedStyle(element).opacity) === expected;
+    }, value);
+    const clickInScene = locator => locator.evaluate(element => element.click());
+    const paths = () => scope.locator('path[data-edge-id]').evaluateAll(nodes => nodes.map(node => [node.getAttribute('d'), getComputedStyle(node).stroke, getComputedStyle(node).opacity]));
+    const rootMeta = () => card('root').locator('[data-route-action="progress-breakdown"]').textContent();
+    const switchTo = async id => {
+      const [response] = await Promise.all([
+        page.waitForResponse(response => response.url().endsWith('/api/tree-page-command')
+          && response.request().postDataJSON().treeId === id),
+        clickInScene(scope.locator('[data-route-tree-id="' + id + '"]')),
+      ]);
+      assert(response.ok());
+    };
+
+    const outer = dimButton('target');
+    const inner = dimButton('major');
+    await outer.waitFor();
+    await checkpoint.waitFor();
+    assert.equal(await outer.getAttribute('aria-pressed'), 'false');
+    assert.equal(await outer.locator('svg').evaluate(icon => getComputedStyle(icon).opacity), '0.12');
+    assert(await outer.locator('.tree-page-stage-toggle-slash').isVisible());
+    assert(await card('target').evaluate(element => {
+      const title = element.querySelector('.study-route-branch-main > strong');
+      return title.scrollWidth > title.clientWidth && getComputedStyle(title).textOverflow === 'ellipsis';
+    }));
+    const edgesBefore = await paths();
+    const statsBefore = await rootMeta();
+    const renderCount = (await renderTimes(page, 'tree-page')).length;
+    await outer.press('Enter');
+    assert.equal(await outer.getAttribute('aria-pressed'), 'true');
+    assert.equal(await outer.locator('.tree-page-stage-toggle-slash').isVisible(), false);
+    for (const node of [card('major'), card('digital'), card('machines'), checkpoint]) assert(await checkOpacity(node, .2));
+    for (const id of ['root', 'target', 'earlier', 'probability']) assert(await checkOpacity(card(id), 1));
+    assert.deepEqual(await paths(), edgesBefore);
+    assert.equal(await rootMeta(), statsBefore);
+    assert.equal((await renderTimes(page, 'tree-page')).length, renderCount);
+
+    await clickInScene(inner);
+    await clickInScene(outer);
+    assert(await checkOpacity(card('major'), 1));
+    assert(await checkOpacity(card('digital'), .2));
+    const collapse = card('major').locator('[data-route-action="collapse"]');
+    await clickInScene(collapse);
+    await card('digital').waitFor({ state: 'detached' });
+    await clickInScene(collapse);
+    assert(await checkOpacity(card('digital'), .2));
+
+    const rendersBeforeSlider = (await renderTimes(page, 'tree-page')).length;
+    await page.evaluate(() => RelatumGlobalSettings.open());
+    await page.locator('button[data-settings-category="learning"]').click();
+    const slider = page.locator('[data-role="tree-page-descendant-opacity-range"]');
+    await slider.press('End');
+    assert(await checkOpacity(card('machines'), 1));
+    await slider.press('Home');
+    assert(await checkOpacity(card('digital'), 0));
+    assert.equal((await renderTimes(page, 'tree-page')).length, rendersBeforeSlider);
+    await page.locator('[data-settings-action="close"]').click();
+    const plus = card('digital').locator('[data-delta="1"]');
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith('/api/tree-page-command') && response.ok()),
+      plus.click(),
+    ]);
+    assert.equal(await card('digital').locator('.study-route-task-value').textContent(), '1 / 3');
+    assert(await checkOpacity(card('digital'), 0));
+
+    const moved = await fetch(url + '/api/tree-page-command', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: 'move-node', treeId: tree.id, nodeId: 'analog',
+        primaryLink: { from: 'math', type: 'contains' } }),
+    });
+    assert(moved.ok, await moved.text());
+    assert(await page.evaluate(() => CanvasTreePage.refresh()));
+    assert(await checkOpacity(card('analog'), 1));
+    assert(await checkOpacity(card('digital'), 0));
+
+    await switchTo('empty-tree');
+    await card('major').waitFor({ state: 'detached' });
+    await switchTo(tree.id);
+    assert.equal(await inner.getAttribute('aria-pressed'), 'true');
+    await page.reload();
+    await click(page, '.left-spine [data-action="tree-page-view"]');
+    await inner.waitFor();
+    assert.equal(await inner.getAttribute('aria-pressed'), 'true');
+    assert(await checkOpacity(card('digital'), 0));
+    await page.evaluate(() => RelatumGlobalSettings.open());
+    await page.locator('button[data-settings-category="appearance"]').click();
+    await page.locator('#global-settings-dialog .start-theme-toggle').first().click();
+    assert.equal(await page.evaluate(() => document.body.dataset.startTheme), 'dark');
+    await page.locator('button[data-settings-category="learning"]').click();
+    await page.locator('[data-settings-action="reset-category"]').click();
+    await page.locator('[data-settings-action="accept-reset"]').click();
+    assert(await checkOpacity(card('digital'), .2));
+    assert.equal(await inner.getAttribute('aria-pressed'), 'true');
+    assert.equal(await outer.locator('svg').evaluate(icon => getComputedStyle(icon).opacity), '0.12');
+    assert.deepEqual(errors, []);
+  } finally {
+    await page.close();
+  }
+}
+
 async function checkTreeProgressUpdates(browser, url, dataRoot) {
   const fixture = mergeFixture('branch');
   const tree = fixture.goalTrees[0];
@@ -1020,6 +1144,11 @@ async function main() {
     if (process.argv.includes('--tree-progress-updates')) {
       await checkTreeProgressUpdates(browser, url, dataRoot);
       console.log('tree-page progress updates passed');
+      return;
+    }
+    if (process.argv.includes('--tree-stage-dimming')) {
+      await checkTreeStageDimming(browser, url, dataRoot);
+      console.log('tree-page stage dimming passed');
       return;
     }
     await checkTreeFreeItemComposition(browser, url);

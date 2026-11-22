@@ -3217,6 +3217,7 @@ body.tree-page-visual-linking .tree-page-route-panel,
 body.tree-page-visual-linking .tree-page-route-panel * { cursor: crosshair !important; user-select: none; }
 .study-route-node {
   --route-node-opacity: 1;
+  --route-effective-opacity: var(--route-node-opacity);
   position: absolute;
   display: grid;
   align-items: center;
@@ -3227,8 +3228,11 @@ body.tree-page-visual-linking .tree-page-route-panel * { cursor: crosshair !impo
   box-shadow: 0 8px 25px rgba(35,42,35,.07), 0 1px 2px rgba(35,42,35,.04);
   outline: 0;
   cursor: grab;
-  opacity: var(--route-node-opacity);
+  opacity: var(--route-effective-opacity);
   transition: border-color 170ms ease, box-shadow 170ms ease, opacity 170ms ease, transform 170ms ease;
+}
+.tree-page-route-panel .study-route-node[data-descendant-dimmed] {
+  --route-effective-opacity: var(--tree-page-descendant-opacity, .2);
 }
 .study-route-node:hover,
 .study-route-node:focus-visible { border-color: #9ba79d; box-shadow: 0 0 0 3px rgba(89,111,94,.10), 0 12px 30px rgba(35,42,35,.09); transform: translateY(-1px); }
@@ -3262,14 +3266,14 @@ body.tree-page-visual-linking .tree-page-route-panel * { cursor: crosshair !impo
 body.study-route-node-dragging { cursor: grabbing !important; user-select: none; }
 @keyframes studyRouteNodeIn {
   from { opacity: 0; transform: scale(.965); }
-  to { opacity: var(--route-node-opacity); transform: none; }
+  to { opacity: var(--route-effective-opacity); transform: none; }
 }
 @keyframes studyRouteNodeExpand {
   from { opacity: 0; transform: scale(.965); }
-  to { opacity: var(--route-node-opacity); transform: none; }
+  to { opacity: var(--route-effective-opacity); transform: none; }
 }
 @keyframes studyRouteNodeDelete {
-  from { opacity: var(--route-node-opacity); }
+  from { opacity: var(--route-effective-opacity); }
   to { opacity: 0; }
 }
 /* 新树的根卡比普通节点稍强的登场：更大缩放与上浮，作为新树"落地"的锚点 */
@@ -3409,11 +3413,15 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
 .study-route-collapse:disabled { pointer-events: none; cursor: default; }
 .tree-page-route-panel .study-route-collapse[aria-disabled="true"] { cursor: default; }
 .tree-page-route-panel .study-route-node.is-branch .study-route-branch-main { position: relative; }
-.tree-page-route-panel .study-route-node.is-branch .study-route-branch-main > strong { padding-inline-end: 24px; }
-.tree-page-progress-scope {
+.tree-page-route-panel .study-route-node.is-branch .study-route-branch-main > strong { padding-inline-end: 50px; }
+.tree-page-branch-toggles {
   position: absolute;
   inset-block-start: -4px;
   inset-inline-end: 0;
+  display: flex;
+  gap: 2px;
+}
+.tree-page-branch-toggles > button {
   display: grid;
   place-items: center;
   width: 24px;
@@ -3425,15 +3433,15 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
   color: #727b73;
   cursor: pointer;
 }
-.tree-page-progress-scope svg { width: 14px; height: 14px; pointer-events: none; }
-.tree-page-progress-scope[aria-pressed="false"]:not(:hover, :focus-visible) svg { opacity: .12; }
-.tree-page-progress-scope[aria-pressed="true"] { color: #3e5946; }
-.tree-page-progress-scope[aria-pressed="true"] .tree-page-progress-scope-slash { display: none; }
+.tree-page-branch-toggles svg { width: 14px; height: 14px; pointer-events: none; }
+.tree-page-branch-toggles > button[aria-pressed="false"]:not(:hover, :focus-visible) svg { opacity: .12; }
+.tree-page-branch-toggles > button[aria-pressed="true"] { color: #3e5946; }
+.tree-page-branch-toggles > button[aria-pressed="true"] .tree-page-stage-toggle-slash { display: none; }
 .tree-page-progress-scope[aria-busy="true"] { cursor: progress; }
-.tree-page-progress-scope:hover { background: rgba(113,128,116,.12); }
-.tree-page-progress-scope:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
-body.start-page[data-start-theme="dark"] .tree-page-progress-scope { color: #a0aba2; }
-body.start-page[data-start-theme="dark"] .tree-page-progress-scope[aria-pressed="true"] { color: #d6ebd8; }
+.tree-page-branch-toggles > button:hover { background: rgba(113,128,116,.12); }
+.tree-page-branch-toggles > button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+body.start-page[data-start-theme="dark"] .tree-page-branch-toggles > button { color: #a0aba2; }
+body.start-page[data-start-theme="dark"] .tree-page-branch-toggles > button[aria-pressed="true"] { color: #d6ebd8; }
 .study-route-collapse.is-expanding > span { animation: studyRouteCollapseIconExpand 210ms cubic-bezier(.22,1,.36,1) both; }
 @keyframes studyRouteCollapseIconExpand {
   from { transform: rotate(-45deg); }

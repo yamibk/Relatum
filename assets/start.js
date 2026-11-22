@@ -69,6 +69,9 @@
   const treePageRootTitleToggle = document.querySelector('[data-role="tree-page-root-title-toggle"]');
   const treePageRootTitleSizeRange = document.querySelector('[data-role="tree-page-root-title-size-range"]');
   const treePageRootTitleSizeValue = document.querySelector('[data-role="tree-page-root-title-size-value"]');
+  const treePageDescendantOpacityRange = document.querySelector('[data-role="tree-page-descendant-opacity-range"]');
+  const treePageDescendantOpacityValue = document.querySelector('[data-role="tree-page-descendant-opacity-value"]');
+  const treePageRoutePanel = document.querySelector('.tree-page-route-panel');
   const darkCardPresentationSettings = document.querySelector('[data-role="dark-card-presentation-settings"]');
   const darkCardPresentationRanges = Array.from(document.querySelectorAll('[data-role="dark-card-presentation-range"]'));
   const darkCardPresentationValues = Array.from(document.querySelectorAll('[data-role="dark-card-presentation-value"]'));
@@ -154,6 +157,8 @@
   const TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT = 25;
   const TREE_PAGE_ROOT_TITLE_SIZE_MIN = 16;
   const TREE_PAGE_ROOT_TITLE_SIZE_MAX = 36;
+  const TREE_PAGE_DESCENDANT_OPACITY_KEY = 'canvas:treePageDescendantOpacity:v1';
+  const TREE_PAGE_DESCENDANT_OPACITY_DEFAULT = 20;
   const DARK_CARD_PRESENTATION_KEY = 'canvas:darkCardPresentation:v1';
   const DARK_CARD_FILL_DEFAULT = 15;
   const DARK_CARD_ACCENT_DEFAULT = 100;
@@ -483,6 +488,21 @@
     return Math.max(0, Math.min(100, Math.round(strength / 5) * 5));
   }
 
+  function applyTreePageDescendantOpacity(value, persist) {
+    const number = value == null || String(value).trim() === '' ? NaN : Number(value);
+    const percent = Number.isFinite(number)
+      ? Math.max(0, Math.min(100, Math.round(number))) : TREE_PAGE_DESCENDANT_OPACITY_DEFAULT;
+    if (treePageDescendantOpacityRange) {
+      treePageDescendantOpacityRange.value = String(percent);
+      treePageDescendantOpacityRange.setAttribute('aria-valuetext', percent + '%');
+    }
+    if (treePageDescendantOpacityValue) treePageDescendantOpacityValue.textContent = percent + '%';
+    treePageRoutePanel?.style.setProperty('--tree-page-descendant-opacity', String(percent / 100));
+    if (persist) {
+      try { localStorage.setItem(TREE_PAGE_DESCENDANT_OPACITY_KEY, String(percent)); } catch (e) {}
+    }
+  }
+
   function normalizeDarkCardInk(value) {
     return value === 'auto' || value === 'dark' ? value : DARK_CARD_INK_DEFAULT;
   }
@@ -659,6 +679,9 @@
   let treePageRootTitleSizeInit = TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT;
   try { treePageRootTitleSizeInit = localStorage.getItem(TREE_PAGE_ROOT_TITLE_SIZE_KEY) || TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT; } catch (e) {}
   applyTreePageRootTitleSize(treePageRootTitleSizeInit, false);
+  let treePageDescendantOpacityInit;
+  try { treePageDescendantOpacityInit = localStorage.getItem(TREE_PAGE_DESCENDANT_OPACITY_KEY); } catch (e) {}
+  applyTreePageDescendantOpacity(treePageDescendantOpacityInit, false);
   applyDarkCardPresentation(readDarkCardPresentation(), false);
   let librarySearchEnabledInit = false;
   try { librarySearchEnabledInit = localStorage.getItem(LIBRARY_SEARCH_ENABLED_KEY) === '1'; } catch (e) {}
@@ -956,6 +979,9 @@
       applyTreePageRootTitleSize(treePageRootTitleSizeRange.value, true);
     });
   }
+  treePageDescendantOpacityRange?.addEventListener('input', () => {
+    applyTreePageDescendantOpacity(treePageDescendantOpacityRange.value, true);
+  });
   darkCardPresentationRanges.forEach((input) => {
     input.addEventListener('input', () => {
       const page = input.dataset.page;
@@ -1806,8 +1832,10 @@
     }
     if (category === 'learning') {
       remove(GOAL_TREE_SIMPLE_KEY, GOAL_TREE_ENFORCE_UNLOCK_KEY, TREE_PAGE_ROOT_TITLE_HIDDEN_KEY, TREE_PAGE_ROOT_TITLE_SIZE_KEY, DARK_CARD_PRESENTATION_KEY);
+      remove(TREE_PAGE_DESCENDANT_OPACITY_KEY);
       applyGoalTreeSimpleMode(true, false); applyGoalTreeUnlockEnforcement(false, false);
       applyTreePageRootTitleHidden(false, false); applyTreePageRootTitleSize(TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT, false); applyDarkCardPresentation(null, false);
+      applyTreePageDescendantOpacity(TREE_PAGE_DESCENDANT_OPACITY_DEFAULT, false);
     }
     if (category === 'starmap') {
       remove(STARMAP_MOTION_KEY); syncStarmapMotionForm(STARMAP_MOTION_DEFAULTS); clearTimeout(starmapMotionNotifyTimer);

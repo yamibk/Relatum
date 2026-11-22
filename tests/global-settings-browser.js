@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..'), catalog = JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json'), 'utf8'));
 const ids = catalog.workspaces.map(item => item.id), key = 'canvas:workspaceLayout:v1', pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const opacityKey = 'canvas:treePageDescendantOpacity:v1';
 const artifacts = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-global-settings-'));
 async function freePort() { const server = net.createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); const value = server.address().port; await new Promise(resolve => server.close(resolve)); return value; }
 async function run(browser, mode) {
@@ -201,6 +202,22 @@ async function run(browser, mode) {
       for (const id of ['appearance', 'navigation', 'learning', 'starmap', 'career', 'usage']) {
         await category(id).click(); await page.screenshot({ path: path.join(artifacts, 'category-' + id + '.png') });
       }
+      await dialog.locator('[data-settings-search]').fill('后续节点淡化');
+      await dialog.locator('.relatum-settings-result').filter({ hasText: '后续节点淡化不透明度' }).click();
+      assert.equal(await category('learning').getAttribute('aria-current'), 'page');
+      const opacity = dialog.locator('[data-role="tree-page-descendant-opacity-range"]');
+      assert.equal(await opacity.inputValue(), '20');
+      await opacity.press('Home');
+      assert.equal(await opacity.getAttribute('aria-valuetext'), '0%');
+      assert.equal(await page.evaluate(key => localStorage.getItem(key), opacityKey), '0');
+      await opacity.press('ArrowRight');
+      assert.equal(await opacity.inputValue(), '1');
+      assert.equal(await dialog.locator('[data-role="tree-page-descendant-opacity-value"]').textContent(), '1%');
+      await dialog.locator('[data-settings-action="reset-category"]').click();
+      await dialog.locator('[data-settings-action="accept-reset"]').click();
+      assert.equal(await opacity.inputValue(), '20');
+      assert.equal(await page.evaluate(key => localStorage.getItem(key), opacityKey), null);
+      await opacity.press('End');
       await category('appearance').click();
       assert(await dialog.locator('.start-panel-theme .start-theme-toggle').evaluate(button => {
         const rect = button.getBoundingClientRect(), row = button.closest('.start-panel-theme').getBoundingClientRect();
@@ -276,6 +293,12 @@ async function run(browser, mode) {
       await page.screenshot({ path: path.join(artifacts, mode + '-' + theme + '.png') });
     }
     await page.evaluate(() => RelatumI18n.setLanguage('en')); assert.equal(await category('workspaces').textContent(), 'Workspaces');
+    if (mode === 'full') {
+      await dialog.locator('[data-settings-search]').fill('dimmed descendant card opacity');
+      await dialog.locator('.relatum-settings-result').filter({ hasText: 'Dimmed descendant card opacity' }).click();
+      assert.equal(await category('learning').getAttribute('aria-current'), 'page');
+      assert.equal(await dialog.getByRole('slider', { name: 'Dimmed descendant card opacity' }).inputValue(), '100');
+    }
     await page.setViewportSize({ width: 560, height: 780 });
     assert(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth + 1));
     await page.screenshot({ path: path.join(artifacts, mode + '-narrow.png') });
@@ -286,6 +309,7 @@ async function run(browser, mode) {
     await page.evaluate(() => { localStorage.setItem('canvas:noteFontScale:v1', '120'); localStorage.setItem('canvas:startTheme', 'dark'); });
     await dialog.locator('[data-settings-action="reset-all"]').click(); await dialog.locator('[data-settings-action="accept-reset"]').click();
     await page.waitForFunction(key => localStorage.getItem(key) === null, key);
+    if (mode === 'full') await page.waitForFunction(key => localStorage.getItem(key) === null, opacityKey);
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteFontScale:v1')), '120');
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:startTheme')), 'dark');
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:toolbarLanguage')), 'en');

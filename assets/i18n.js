@@ -184,6 +184,7 @@
     '隐藏根节点标题': 'Hide root title',
     '树状页黑色根节点只显示进度百分比': 'Show only the progress percentage on the black Tree root node.',
     '根节点标题字号': 'Root title size', '小': 'Small', '大': 'Large',
+    '后续节点淡化不透明度': 'Dimmed descendant card opacity',
 
     '新建任务': 'New task', '任务': 'Tasks', '任务详情': 'Task details', '任务画布': 'Task canvas',
     '今日': 'Today', '今日任务': 'Today tasks', '待办': 'To do', '进行中': 'In progress',
@@ -252,6 +253,8 @@
     '独立进度': 'Independent progress',
     '独立统计进度': 'Track progress separately',
     '计入上游进度': 'Count toward upstream progress',
+    '淡化后续节点': 'Dim descendant cards',
+    '恢复后续节点显示': 'Restore descendant card opacity',
     '开启独立进度的阶段单独统计，其任务从上游阶段和根节点的统计中移除。': 'A stage with independent progress tracks its tasks separately. Those tasks are excluded from upstream stages and the root.',
     '一分钟开始使用': 'Start in one minute', '下一步做什么': 'What to do next',
     '阶段与进度': 'Stages and progress', '箭头、解锁与高级编辑': 'Arrows, unlocking, and advanced editing',

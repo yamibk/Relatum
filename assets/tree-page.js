@@ -36,6 +36,7 @@
   var progressCommandQueue = [], progressCommandContext = null;
   var appearanceCommandQueue = [], appearanceCommandContext = null;
   var collapsedIds = new Set(), nextTaskIndex = 0, nextCandidates = [];
+  var dimmedStageIds = new Set(), dimmedStageTreeId = null, hasDimmedNodes = false;
   var guidePage = 0;
   var routeRequestId = 0, routeCloseTimer = 0, routeCloseAnimationHandler = null;
   var routeReturnFocus = null;
@@ -1631,32 +1632,41 @@
   function viewKeyFor(treeId) {
     return GOAL_TREE_ROUTE_VIEW_KEY + '.' + (treeId || 'default');
   }
+  function syncDimmedStageTree() {
+    if (dimmedStageTreeId === state.activeTreeId) return;
+    dimmedStageTreeId = state.activeTreeId;
+    dimmedStageIds = new Set();
+    try {
+      var raw = JSON.parse(localStorage.getItem(viewKeyFor(dimmedStageTreeId)) || 'null');
+      if (!raw || !Array.isArray(raw.dimmedStageIds) || !raw.dimmedStageIds.length) return;
+      var saved = new Set(raw.dimmedStageIds);
+      state.tree.nodes.forEach(function (node) {
+        if (node.kind === 'branch' && saved.has(node.id)) dimmedStageIds.add(node.id);
+      });
+    } catch (e) {}
+  }
+  function viewSnapshot() {
+    syncDimmedStageTree();
+    return {
+      x: Math.round(view.x * 10) / 10,
+      y: Math.round(view.y * 10) / 10,
+      zoom: Math.round(view.zoom * 1000) / 1000,
+      collapsedIds: Array.from(collapsedIds),
+      dimmedStageIds: Array.from(dimmedStageIds),
+    };
+  }
   function flushViewSave() {
     if (viewSaveTimer) { clearTimeout(viewSaveTimer); viewSaveTimer = 0; }
-    try {
-      localStorage.setItem(viewKeyFor(state.activeTreeId), JSON.stringify({
-        x: Math.round(view.x * 10) / 10,
-        y: Math.round(view.y * 10) / 10,
-        zoom: Math.round(view.zoom * 1000) / 1000,
-        collapsedIds: Array.from(collapsedIds),
-      }));
-    } catch (e) {}
+    try { localStorage.setItem(viewKeyFor(state.activeTreeId), JSON.stringify(viewSnapshot())); } catch (e) {}
   }
   function saveViewSoon() {
     clearTimeout(viewSaveTimer);
     // 在调度时刻钉住树 id 与镜头快照：防抖定时器触发时若已切树，也不能把旧镜头写进新树的 key。
     var treeId = state.activeTreeId;
-    var snapshot = { x: view.x, y: view.y, zoom: view.zoom, collapsedIds: Array.from(collapsedIds) };
+    var snapshot = viewSnapshot();
     viewSaveTimer = setTimeout(function () {
       viewSaveTimer = 0;
-      try {
-        localStorage.setItem(viewKeyFor(treeId), JSON.stringify({
-          x: Math.round(snapshot.x * 10) / 10,
-          y: Math.round(snapshot.y * 10) / 10,
-          zoom: Math.round(snapshot.zoom * 1000) / 1000,
-          collapsedIds: snapshot.collapsedIds,
-        }));
-      } catch (e) {}
+      try { localStorage.setItem(viewKeyFor(treeId), JSON.stringify(snapshot)); } catch (e) {}
     }, 220);
   }
   function restoreView(treeId) {
@@ -2198,13 +2208,23 @@
         + percent + '">' + percent + '%</span>'
         + rootTitle + '</strong>'
       : '<strong data-user-content>' + escapeHtml(placement.node.title) + '</strong>';
-    var progressScope = placement.kind === 'branch'
-      ? '<button type="button" class="tree-page-progress-scope" data-route-action="progress-scope" aria-label="'
+    var dimmed = dimmedStageIds.has(placement.id);
+    var branchToggles = placement.kind === 'branch'
+      ? '<div class="tree-page-branch-toggles">'
+        + '<button type="button" class="tree-page-dim-stage" data-route-action="dim-stage" aria-label="'
+        + escapeHtml(T('淡化后续节点')) + '" aria-pressed="' + dimmed + '" data-tooltip="'
+        + escapeHtml(T(dimmed ? '恢复后续节点显示' : '淡化后续节点'))
+        + '"><svg viewBox="0 0 18 18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"'
+        + ' stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 5v8.5a2 2 0 0 1-2 2H5"/>'
+        + '<path stroke-width="1.7" d="M3 5h.01M6 3h.01M9 3h.01M12 3h.01M3 8h.01M6 6h.01'
+        + 'M9 6h.01M3 11h.01M6 9h.01M3 14h.01"/>'
+        + '<path class="tree-page-stage-toggle-slash" d="M3 2.5l12 13"/></svg></button>'
+        + '<button type="button" class="tree-page-progress-scope" data-route-action="progress-scope" aria-label="'
         + escapeHtml(T('独立进度')) + '" aria-pressed="' + !!placement.node.independentProgress + '" data-tooltip="'
         + escapeHtml(T(placement.node.independentProgress ? '独立统计进度' : '计入上游进度'))
         + '"><svg viewBox="0 0 18 18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"'
         + ' stroke-linecap="round" stroke-linejoin="round"><path d="M9 15v-4L4 5m0 4V5h4m1 6 5-6m-4 0h4v4"/>'
-        + '<path class="tree-page-progress-scope-slash" d="M3 2.5l12 13"/></svg></button>'
+        + '<path class="tree-page-progress-scope-slash tree-page-stage-toggle-slash" d="M3 2.5l12 13"/></svg></button></div>'
       : '';
     var progressBar = placement.kind === 'root'
       ? '<span class="study-progress-track-shell tree-page-root-progress-track"><span class="study-progress-track'
@@ -2215,7 +2235,7 @@
         + ' data-progress-target="' + percent + '" style="width:' + percent + '%"></span></span></span>'
       : '<i aria-hidden="true"><b data-route-progress-fill data-progress-target="' + percent
         + '" style="width:' + percent + '%"></b></i>';
-    return '<div class="study-route-branch-main">' + heading + progressScope
+    return '<div class="study-route-branch-main">' + heading + branchToggles
       + '<span class="study-route-branch-meta-row"><button type="button" class="study-route-node-meta" data-role="route-node-meta" data-route-action="progress-breakdown">'
       + percent + '% · ' + metrics.count + ' ' + T('项任务') + '</button>'
       + hidden + '</span>' + progressBar + '</div>'
@@ -2479,12 +2499,16 @@
     var nextTitle = nextMain.querySelector(':scope > strong');
     if (currentTitle && nextTitle) currentTitle.textContent = nextTitle.textContent;
 
-    var scopeButton = currentMain.querySelector('.tree-page-progress-scope');
-    var nextScope = nextMain.querySelector('.tree-page-progress-scope');
-    if (!scopeButton || !nextScope) return false;
-    ['aria-label', 'aria-pressed', 'data-tooltip'].forEach(function (attribute) {
-      var value = nextScope.getAttribute(attribute);
-      if (scopeButton.getAttribute(attribute) !== value) scopeButton.setAttribute(attribute, value);
+    var toggles = '.tree-page-branch-toggles > button';
+    var currentToggles = currentMain.querySelectorAll(toggles);
+    var nextToggles = nextMain.querySelectorAll(toggles);
+    if (currentToggles.length !== nextToggles.length) return false;
+    nextToggles.forEach(function (next, index) {
+      var current = currentToggles[index];
+      ['aria-label', 'aria-pressed', 'data-tooltip'].forEach(function (attribute) {
+        var value = next.getAttribute(attribute);
+        if (current.getAttribute(attribute) !== value) current.setAttribute(attribute, value);
+      });
     });
 
     var currentMeta = currentMain.querySelector('.study-route-branch-meta-row');
@@ -2964,9 +2988,30 @@
     else nodeElements.forEach(measure);
     return sizesChanged;
   }
+  function syncDimmedNodes(placements, children) {
+    if (!dimmedStageIds.size && !hasDimmedNodes) return;
+    var descendants = new Set(), pending = [];
+    dimmedStageIds.forEach(function (id) {
+      (children.get(id) || []).forEach(function (link) { pending.push(link.to); });
+    });
+    while (pending.length) {
+      var id = pending.pop();
+      if (descendants.has(id)) continue;
+      descendants.add(id);
+      (children.get(id) || []).forEach(function (link) { pending.push(link.to); });
+    }
+    hasDimmedNodes = false;
+    placements.forEach(function (placement) {
+      var nodeId = placement.kind === 'milestone' ? placement.node.parentNodeId : placement.id;
+      var dimmed = descendants.has(nodeId);
+      nodeElements.get(placement.id).toggleAttribute('data-descendant-dimmed', dimmed);
+      if (dimmed) hasDimmedNodes = true;
+    });
+  }
   function render(options) {
     if (!open || deferWorkspaceRender()) return;
     options = options || {};
+    syncDimmedStageTree();
     if (progressPanelSelectionTreeId !== state.activeTreeId) restoreProgressPanelSelection();
     else if (selectedProgressTaskId && !activeProgressTask(selectedProgressTaskId)) selectProgressTask('', true);
     state.tree = preserveTreeExtensions(state.tree, GoalTree.normalizeTree(state.tree, state.tasks, TREE_MODEL_OPTIONS));
@@ -2983,6 +3028,7 @@
     });
     var progressNodes = progressRenderNodes(previous, first, options.progressTaskId);
     syncNodeElements(progressNodes ? { nodes: progressNodes, model: model, partial: true } : first, options);
+    if (!progressNodes) syncDimmedNodes(first.nodes, model.children);
     var sizesChanged = measureRenderedNodes(progressNodes);
     var geometryChanged = !progressNodes || sizesChanged;
     if (geometryChanged) {
@@ -3293,12 +3339,18 @@
     return { from: nodeId, type: 'requires', trigger: { kind: 'complete' } };
   }
   function pruneCollapsedIds() {
+    syncDimmedStageTree();
     var primaryChildren = GoalTree.primaryChildren(state.tree);
-    var valid = new Set((state.tree.nodes || []).filter(function (node) {
-      return node.kind === 'branch' && (primaryChildren.get(node.id) || []).length > 0;
+    var branches = new Set((state.tree.nodes || []).filter(function (node) {
+      return node.kind === 'branch';
     }).map(function (node) { return node.id; }));
     var changed = false;
-    collapsedIds.forEach(function (id) { if (!valid.has(id)) { collapsedIds.delete(id); changed = true; } });
+    collapsedIds.forEach(function (id) {
+      if (!branches.has(id) || !primaryChildren.get(id)?.length) { collapsedIds.delete(id); changed = true; }
+    });
+    dimmedStageIds.forEach(function (id) {
+      if (!branches.has(id)) { dimmedStageIds.delete(id); changed = true; }
+    });
     if (changed) saveViewSoon();
   }
   function createClientId(prefix) {
@@ -5078,6 +5130,16 @@
       if (action === 'add') return addMenu(anchor);
       if (action === 'menu') return nodeMenu(anchor);
       if (action === 'progress-breakdown') return progressBreakdownPopover(anchor);
+      if (action === 'dim-stage' && anchor.dataset.kind === 'branch' && layout) {
+        var stageId = anchor.dataset.nodeId;
+        var dimmed = !dimmedStageIds.has(stageId);
+        if (dimmed) dimmedStageIds.add(stageId); else dimmedStageIds.delete(stageId);
+        actionControl.setAttribute('aria-pressed', String(dimmed));
+        actionControl.setAttribute('data-tooltip', T(dimmed ? '恢复后续节点显示' : '淡化后续节点'));
+        syncDimmedNodes(layout.nodes, layout.model.children);
+        flushViewSave();
+        return;
+      }
       if (action === 'progress-scope' && anchor.dataset.kind === 'branch') {
         if (busy) return;
         actionControl.setAttribute('aria-busy', 'true');

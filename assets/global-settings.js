@@ -78,8 +78,8 @@
   takeToggle('goal-tree-simple-toggle', 'learning', learning);
   takeToggle('goal-tree-unlock-toggle', 'learning', learning);
   takeToggle('tree-page-root-title-toggle', 'learning', features.enabled('canvas.tree'));
-  const titleSize = source.querySelector('.start-root-title-size-setting');
-  if (titleSize) { if (features.enabled('canvas.tree')) panels.get('learning').append(titleSize); else titleSize.remove(); }
+  takeToggle('tree-page-root-title-size-range', 'learning', features.enabled('canvas.tree'));
+  takeToggle('tree-page-descendant-opacity-range', 'learning', features.enabled('canvas.tree'));
   source.querySelectorAll('.start-dark-card-settings section').forEach(section => {
     const page = section.querySelector('[data-page]')?.dataset.page;
     if (!features.enabled('canvas.' + page)) section.remove();
