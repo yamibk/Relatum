@@ -399,14 +399,14 @@ async function checkTreeFreeItemComposition(browser, url) {
 
 function mergeFixture(scenario) {
   const tasks = [], nodes = [], links = [];
-  function add(id, title, from, { task = false, requires = false } = {}) {
+  function add(id, title, from, { task = false, requires = false, side = 'right' } = {}) {
     const taskId = 'task-' + id;
     if (task) tasks.push({ id: taskId, title, status: 'active', progress: { current: 0, target: 1 } });
     nodes.push(task ? { id, kind: 'task', taskId } : { id, kind: 'branch', title });
     links.push({ id: 'link-' + id, from, to: id, order: links.length, primary: true,
       type: requires ? 'requires' : 'contains',
       ...(requires ? { trigger: { kind: 'complete' } } : {}),
-      ...(!from ? { side: 'right' } : {}) });
+      ...(!from ? { side } : {}) });
   }
   add('year', '大二', null);
   add('math', '数学', 'year');
@@ -427,6 +427,17 @@ function mergeFixture(scenario) {
     add('target', '大二下学期', 'magnetism', { requires: true });
   }
   if (scenario === 'fallback') sources.push('neighbor');
+  if (scenario === 'branch') {
+    add('major', '专业课', 'target');
+    add('machines', '电机学', 'major', { task: true });
+    add('digital', '数字电子技术', 'major', { task: true });
+    add('analog', '模拟电子技术', 'major', { task: true });
+    add('plants', '发电厂部分', 'major', { task: true });
+    add('earlier', '上游任务', null, { task: true, side: 'left' });
+    for (const task of tasks) {
+      if (['task-magnetism', 'task-machines'].includes(task.id)) task.status = 'done';
+    }
+  }
   if (scenario === 'split') {
     add('another', '另一条路线', 'year');
     add('mid', '后续阶段', 'another');
@@ -444,6 +455,149 @@ function mergeFixture(scenario) {
   return { version: 2, tasks, goalTrees, activeTreeId: 'merge-tree' };
 }
 
+async function checkBranchCenterAndProgress(page, scope, node, fixture, filename, open) {
+  const target = node('target');
+  const scopeButton = target.getByRole('button', { name: '独立进度' });
+  const subtree = ['target', 'major', 'machines', 'digital', 'analog', 'plants'];
+  const coords = (id) => node(id).evaluate(card => ({
+    x: card.__layoutX, y: card.__layoutY + card.offsetHeight / 2,
+  }));
+  const baseline = await scope.evaluate((host, payload) => {
+    const sizes = new Map(Array.from(host.querySelectorAll('.study-route-node'), card => [
+      card.dataset.nodeId, { width: card.offsetWidth, height: card.offsetHeight },
+    ]));
+    const tree = window.RelatumStudyGoalTree.layout(payload.goalTrees[0], payload.tasks, { sizes });
+    return Object.fromEntries(tree.nodes.map(card => [card.id, { x: card.x, y: card.y }]));
+  }, fixture);
+  const desired = (baseline.probability.y + baseline.circuits.y) / 2;
+  const shift = desired - baseline.target.y;
+  assert(Math.abs(shift) > 20);
+  for (const id of subtree) {
+    assert.deepEqual(await coords(id), { x: baseline[id].x, y: baseline[id].y + shift }, id + ' moves with its branch');
+  }
+  for (const id of ['probability', 'complex', 'magnetism', 'circuits', 'electrical']) {
+    assert.deepEqual(await coords(id), baseline[id], id + ' keeps its original position');
+  }
+  const trunk = scope.locator('path[data-to="target"][data-merge-part="trunk"]');
+  const checkEndpoint = async () => {
+    const end = await trunk.evaluate(path => {
+      const point = path.getPointAtLength(path.getTotalLength());
+      return { x: point.x, y: point.y };
+    });
+    const position = await coords('target');
+    assert(Math.abs(end.x - position.x) < .1 && Math.abs(end.y - position.y) < .1);
+  };
+  await checkEndpoint();
+
+  const fold = target.locator('[data-route-action="collapse"]');
+  await fold.click();
+  await node('major').waitFor({ state: 'detached' });
+  assert.equal(await trunk.count(), 1);
+  await fold.click();
+  await node('plants').waitFor();
+  await page.waitForFunction(({ y, id }) => {
+    const card = document.querySelector('.tree-page-embedded [data-node-id="' + id + '"]');
+    return Math.abs(card.__layoutY + card.offsetHeight / 2 - y) < .03;
+  }, { id: 'plants', y: baseline.plants.y + shift });
+  await checkEndpoint();
+
+  const start = await target.locator('.study-route-branch-main > strong').boundingBox();
+  const beforeDrag = await coords('target');
+  const childBefore = await node('major').boundingBox();
+  await page.mouse.move(start.x + 8, start.y + start.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(start.x + 23, start.y + start.height / 2 + 28, { steps: 6 });
+  await page.waitForFunction(() => document.querySelector('.tree-page-embedded [data-node-id="major"]')
+    .classList.contains('is-subtree-dragging'));
+  assert.notEqual((await node('major').boundingBox()).y, childBefore.y);
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await page.mouse.up();
+  await page.waitForFunction(y => {
+    const card = document.querySelector('.tree-page-embedded [data-node-id="target"]');
+    return Math.abs(card.__layoutY + card.offsetHeight / 2 - y) < .03;
+  }, beforeDrag.y);
+  await checkEndpoint();
+
+  const metadata = id => node(id).locator('[data-route-action="progress-breakdown"]');
+  const progress = async (root, electrical, completed) => {
+    assert.equal(await metadata('root').textContent(), root);
+    assert.equal(await metadata('electrical').textContent(), electrical);
+    assert.equal(await metadata('target').textContent(), '25% · 4 项任务');
+    assert.equal(await scope.locator('[data-role="study-route-summary"] > span').textContent(), completed);
+  };
+  await progress('22% · 9 项任务', '33% · 6 项任务', '2 / 9 已完成');
+  assert.equal(await scopeButton.getAttribute('aria-pressed'), 'false');
+  assert(await scopeButton.locator('.tree-page-progress-scope-slash').isVisible());
+  const cardSize = await target.evaluate(card => [card.offsetWidth, card.offsetHeight]);
+
+  const changed = page.waitForResponse(response => response.url().endsWith('/api/tree-page-command'));
+  await scopeButton.focus();
+  await page.keyboard.press('Enter');
+  const response = await changed;
+  assert(response.ok());
+  assert.equal(response.request().postDataJSON().independentProgress, true);
+  await page.waitForFunction(() => document.activeElement.matches(
+    '[data-route-action="progress-scope"][aria-pressed="true"]:not([aria-busy])'));
+  assert.equal(await scopeButton.locator('.tree-page-progress-scope-slash').isVisible(), false);
+  assert.deepEqual(await target.evaluate(card => [card.offsetWidth, card.offsetHeight]), cardSize);
+  await progress('20% · 5 项任务', '50% · 2 项任务', '1 / 5 已完成');
+  for (const [id, titles] of [
+    ['root', ['概率论', '复变函数', '电磁场', '电路', '上游任务']],
+    ['electrical', ['电磁场', '电路']],
+    ['target', ['电机学', '数字电子技术', '模拟电子技术', '发电厂部分']],
+  ]) {
+    await metadata(id).evaluate(button => button.click());
+    const rows = scope.locator('.study-route-progress-detail li [data-user-content]');
+    assert.deepEqual(await rows.allTextContents(), titles);
+    await page.keyboard.press('Escape');
+  }
+
+  await page.route('**/api/tree-page-command', route => route.fulfill({
+    status: 500, json: { error: '模拟写入失败' },
+  }), { times: 1 });
+  await Promise.all([
+    page.waitForResponse(response => response.url().endsWith('/api/tree-page-command') && response.status() === 500),
+    scopeButton.press('Space'),
+  ]);
+  await page.waitForFunction(() => !document.querySelector(
+    '.tree-page-embedded [data-node-id="target"] [data-route-action="progress-scope"]').hasAttribute('aria-busy'));
+  assert.equal(await scopeButton.getAttribute('aria-pressed'), 'true');
+  await progress('20% · 5 项任务', '50% · 2 项任务', '1 / 5 已完成');
+  const saved = JSON.parse(fs.readFileSync(filename, 'utf8'));
+  assert.equal(saved.goalTrees[0].nodes.find(item => item.id === 'target').independentProgress, true);
+
+  const completeSource = node('magnetism').locator('[data-route-action="complete"]');
+  const dependent = node('digital').locator('[data-route-action="complete"]');
+  async function toggleSource() {
+    const [response] = await Promise.all([
+      page.waitForResponse(response => response.url().endsWith('/api/tree-page-command')),
+      completeSource.press('Enter'),
+    ]);
+    assert(response.ok());
+  }
+  await toggleSource();
+  await node('digital').and(scope.locator('.is-blocked')).waitFor();
+  assert.equal(await dependent.getAttribute('aria-disabled'), 'true', 'independent progress preserves the incoming requirement');
+  await toggleSource();
+  await page.waitForFunction(() => !document.querySelector('.tree-page-embedded [data-node-id="digital"]').classList.contains('is-blocked'));
+  assert.equal(await dependent.getAttribute('aria-disabled'), null);
+
+  await page.reload();
+  await open();
+  await scopeButton.waitFor();
+  assert.equal(await scopeButton.getAttribute('aria-pressed'), 'true');
+  await progress('20% · 5 项任务', '50% · 2 项任务', '1 / 5 已完成');
+  await page.setViewportSize({ width: 960, height: 680 });
+  await page.locator('[data-action="start-theme-toggle"]').first().evaluate(button => button.click());
+  assert.equal(await scopeButton.evaluate(button => getComputedStyle(button).color), 'rgb(214, 235, 216)');
+  await Promise.all([
+    page.waitForResponse(response => response.url().endsWith('/api/tree-page-command')),
+    scopeButton.press('Space'),
+  ]);
+  await page.waitForFunction(() => document.activeElement.matches('[data-route-action="progress-scope"][aria-pressed="false"]'));
+  await progress('22% · 9 项任务', '33% · 6 项任务', '2 / 9 已完成');
+}
+
 async function checkTreeVisualMerges(browser, url, dataRoot, scenario) {
   const filename = path.join(dataRoot, 'data', 'tree-page.json');
   const fixture = mergeFixture(scenario);
@@ -455,11 +609,13 @@ async function checkTreeVisualMerges(browser, url, dataRoot, scenario) {
   page.on('pageerror', error => errors.push(error.message));
   page.setDefaultTimeout(12000);
   try {
-    await page.addInitScript(() => {
+    await page.addInitScript(enforceUnlock => {
       localStorage.setItem('canvas:startWorkspace:v1', 'canvas');
       localStorage.setItem('canvas:startTheme', 'light');
+      localStorage.setItem('canvas:toolbarLanguage', 'zh-CN');
       localStorage.setItem('canvas:globalSystem:v1', JSON.stringify({ preload: false, dailyRetention: 'immediate' }));
-    });
+      if (enforceUnlock) localStorage.setItem('canvas:goalTreeEnforceUnlock:v1', '1');
+    }, scenario === 'branch');
     await page.goto(url + '/index.html');
     const open = async () => {
       await page.evaluate(() => CanvasTreePage.prefetch());
@@ -498,8 +654,17 @@ async function checkTreeVisualMerges(browser, url, dataRoot, scenario) {
     if (scenario === 'blocked') {
       const targetY = (await xy('target')).y;
       const candidateY = await centerBetween('probability', 'circuits');
-      assert(Math.abs(targetY - candidateY) > 20, 'collision keeps the target in its original slot');
+      const gap = await node('neighbor').evaluate(card => {
+        const target = document.querySelector('.tree-page-embedded [data-node-id="target"]');
+        return target.__layoutY - card.__layoutY - card.offsetHeight;
+      });
+      assert.equal(gap, 12, 'the target uses the available part of its original slot');
       assert(candidateY < targetY && candidateY < baselineY, 'the proposed move would cross the preceding card');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (scenario === 'branch') {
+      await checkBranchCenterAndProgress(page, scope, node, fixture, filename, open);
       assert.deepEqual(errors, []);
       return;
     }
@@ -677,7 +842,7 @@ async function main() {
       executablePath: process.env.RELATUM_EDGE_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
     });
     if (process.argv.includes('--tree-visual-merges')) {
-      for (const scenario of ['basic', 'visual-only', 'blocked', 'split', 'fallback']) {
+      for (const scenario of ['basic', 'visual-only', 'blocked', 'split', 'fallback', 'branch']) {
         await checkTreeVisualMerges(browser, url, dataRoot, scenario);
         console.log('tree-page visual merge passed: ' + scenario);
       }

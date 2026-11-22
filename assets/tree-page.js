@@ -66,7 +66,7 @@
   var layoutFrame = 0, summaryFrame = 0, rootProgressFrame = 0, rootTitleSizeFrame = 0, viewFrame = 0, panInertiaFrame = 0, dragFrame = 0, visualLinkFrame = 0;
   var dropSlot = null, reparentBadge = null, viewSaveTimer = 0;
   var GOAL_TREE_ROUTE_VIEW_KEY = 'relatum.tree-page.view';
-  var TREE_MODEL_OPTIONS = { allowBlankTitle: true };
+  var TREE_MODEL_OPTIONS = { allowBlankTitle: true, independentProgress: true };
   var legacyViewClaimed = false;
   var STUDY_DATA_CACHE_KEY = '_relatumTreePageData';
   var GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
@@ -1935,7 +1935,7 @@
     columns.forEach(function (column) { column.cards.sort(function (a, b) { return a.y - b.y; }); });
     return columns;
   }
-  function cardInArea(columns, x1, y1, x2, y2, fromId, toId, clearance) {
+  function cardInArea(columns, x1, y1, x2, y2, fromId, toId, clearance, match) {
     var left = Math.min(x1, x2) - clearance, right = Math.max(x1, x2) + clearance;
     var top = Math.min(y1, y2) - clearance, bottom = Math.max(y1, y2) + clearance;
     return columns.some(function (column) {
@@ -1950,7 +1950,8 @@
         var card = column.cards[index];
         if (card.y >= bottom + column.halfHeight) break;
         if (card.id !== fromId && card.id !== toId && card.x < right && card.x + card.width > left
-            && card.y - card.height / 2 < bottom && card.y + card.height / 2 > top) return true;
+            && card.y - card.height / 2 < bottom && card.y + card.height / 2 > top
+            && (!match || match(card))) return true;
       }
       return false;
     });
@@ -1959,19 +1960,22 @@
     var target = placements.get(merge.to), dir = merge.side === 'left' ? 1 : -1;
     if (!target) return null;
     var targetX = dir === 1 ? target.x : target.x + target.width;
-    var targetY = target.y + merge.offset, nearest = -Infinity;
+    var targetY = target.y + merge.offset, nearest = -Infinity, farthest = Infinity;
     var top = targetY, bottom = targetY;
     // View anchoring can briefly draw the new routes with the previous frame's cards.
     for (var index = 0; index < merge.members.length; index++) {
       var source = placements.get(merge.members[index].from);
       if (!source) return null;
-      nearest = Math.max(nearest, dir * (dir === 1 ? source.x + source.width : source.x));
+      var port = dir * (dir === 1 ? source.x + source.width : source.x);
+      nearest = Math.max(nearest, port);
+      farthest = Math.min(farthest, port);
       top = Math.min(top, source.y);
       bottom = Math.max(bottom, source.y);
     }
     var gap = dir * targetX - nearest;
     if (gap < 24) return null;
-    return { x: targetX - dir * gap / 3, targetX: targetX, y: targetY, top: top, bottom: bottom, dir: dir };
+    return { x: targetX - dir * gap / 3, targetX: targetX, sourceX: dir * farthest,
+      y: targetY, top: top, bottom: bottom, dir: dir };
   }
   function mergeHasClearance(merge, placements, columns) {
     var geometry = mergeGeometry(merge, placements);
@@ -1986,40 +1990,146 @@
   function mergeJoinY(y, targetY) {
     return y + Math.max(-10, Math.min(10, (targetY - y) * .12));
   }
-  function routeHasClearance(edge, placements, columns) {
+  function routeEndpoints(edge, placements) {
     var from = placements.get(edge.from), to = placements.get(edge.to);
     var reverse = to.x + to.width / 2 < from.x + from.width / 2;
-    var x1 = (edge.fromSide ? edge.fromSide === 'left' : reverse) ? from.x : from.x + from.width;
-    var x2 = (edge.toSide ? edge.toSide === 'right' : reverse) ? to.x + to.width : to.x;
-    var y1 = from.y + (edge.fromPortOffset || 0), y2 = to.y + (edge.toPortOffset || 0);
+    return {
+      x1: (edge.fromSide ? edge.fromSide === 'left' : reverse) ? from.x : from.x + from.width,
+      x2: (edge.toSide ? edge.toSide === 'right' : reverse) ? to.x + to.width : to.x,
+      y1: from.y + (edge.fromPortOffset || 0), y2: to.y + (edge.toPortOffset || 0),
+    };
+  }
+  function routeHasClearance(edge, placements, columns, existing, record) {
+    var port = routeEndpoints(edge, placements);
+    function isNew(card) { return !existing.has(card.id); }
     // Both coordinates of the regular route curve are monotone. Test successively tighter boxes.
     function clear(leftT, rightT, leftX, leftY, rightX, rightY, depth) {
-      if (!cardInArea(columns, leftX, leftY, rightX, rightY, edge.from, edge.to, 3)) return true;
-      if (!depth) return false;
+      if (!cardInArea(columns, leftX, leftY, rightX, rightY, edge.from, edge.to, 3, isNew)) return true;
+      if (!depth) {
+        if (!record) return false;
+        cardInArea(columns, leftX, leftY, rightX, rightY, edge.from, edge.to, 3, function (card) {
+          existing.add(card.id);
+          return false;
+        });
+        return true;
+      }
       var t = (leftT + rightT) / 2, inverse = 1 - t;
-      var x = x1 + (x2 - x1) * (t * t * t + 1.44 * inverse * t);
-      var y = y1 + (y2 - y1) * t * t * (3 - 2 * t);
+      var x = port.x1 + (port.x2 - port.x1) * (t * t * t + 1.44 * inverse * t);
+      var y = port.y1 + (port.y2 - port.y1) * t * t * (3 - 2 * t);
       return clear(leftT, t, leftX, leftY, x, y, depth - 1)
         && clear(t, rightT, x, y, rightX, rightY, depth - 1);
     }
-    return clear(0, 1, x1, y1, x2, y2, 7);
+    return clear(0, 1, port.x1, port.y1, port.x2, port.y2, 7);
+  }
+  function clampBranchShift(branch, moved, columns, height, delta) {
+    var direction = Math.sign(delta), distance = Math.abs(delta);
+    for (var index = 0; index < branch.length && distance >= .5; index++) {
+      var card = branch[index], half = card.height / 2;
+      distance = Math.max(0, Math.min(distance, (direction > 0 ? height - card.y : card.y) - half));
+      // Reserve the existing vertical order and a 12px gap to stationary cards.
+      cardInArea(columns, card.x, card.y, card.x + card.width,
+        card.y + direction * (distance + half + 12), '', '', 0, function (neighbor) {
+          var ahead = direction * (neighbor.y - card.y);
+          if (!moved.has(neighbor.id) && ahead >= 0) {
+            distance = Math.max(0, Math.min(distance, ahead - half - neighbor.height / 2 - 12));
+          }
+          return distance < .5;
+        });
+    }
+    return distance * direction;
+  }
+  function centerMergedBranches(next, placements, columns, merges, groupsByEdge, visualCounts) {
+    var visibleChildren = new Map(), byTarget = new Map();
+    next.edges.forEach(function (edge) {
+      if (!edge.primary) return;
+      if (!visibleChildren.has(edge.from)) visibleChildren.set(edge.from, []);
+      visibleChildren.get(edge.from).push(edge.to);
+    });
+    merges.forEach(function (merge) { byTarget.set(merge.to, byTarget.has(merge.to) ? null : merge); });
+    var ordered = Array.from(byTarget.values()).filter(function (merge) {
+      return merge && merge.members.length - (merge.primary ? 1 : 0) === visualCounts.get(merge.to);
+    }).sort(function (a, b) {
+      return placements.get(a.to).depth - placements.get(b.to).depth || a.to.localeCompare(b.to);
+    });
+    if (!ordered.length) return;
+    var ordinary = next.edges.filter(function (edge) { return !groupsByEdge.has(edge); });
+    var settled = [];
+    ordered.forEach(function (merge) {
+      var target = placements.get(merge.to);
+      var minY = Infinity, maxY = -Infinity;
+      merge.members.forEach(function (edge) {
+        var y = placements.get(edge.from).y;
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+      });
+      var delta = (minY + maxY) / 2 - target.y;
+      if (Math.abs(delta) < .5) return;
+      var ids = [merge.to];
+      for (var index = 0; index < ids.length; index++) {
+        (visibleChildren.get(ids[index]) || []).forEach(function (child) { ids.push(child); });
+      }
+      var moved = new Set(ids);
+      if (merge.members.some(function (member) { return moved.has(member.from); })) return;
+      // A later alignment should not pull part of an earlier group out of alignment.
+      if (settled.some(function (group) {
+        return group.members.some(function (member) { return moved.has(member.from) !== moved.has(group.to); });
+      })) return;
+      var branch = ids.map(function (id) { return placements.get(id); });
+      delta = clampBranchShift(branch, moved, columns, next.bounds.height, delta);
+      if (Math.abs(delta) < .5) return;
+
+      var left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+      var original = branch.map(function (card) {
+        left = Math.min(left, card.x);
+        right = Math.max(right, card.x + card.width);
+        top = Math.min(top, card.y + Math.min(0, delta) - card.height / 2);
+        bottom = Math.max(bottom, card.y + Math.max(0, delta) + card.height / 2);
+        return card.y;
+      });
+      function crossesSweep(x1, y1, x2, y2) {
+        return Math.max(x1, x2) >= left - 3 && Math.min(x1, x2) <= right + 3
+          && Math.max(y1, y2) >= top - 3 && Math.min(y1, y2) <= bottom + 3;
+      }
+      var nearbyRoutes = [];
+      ordinary.forEach(function (edge) {
+        var port = routeEndpoints(edge, placements);
+        if (!moved.has(edge.from) && !moved.has(edge.to) && !crossesSweep(port.x1, port.y1, port.x2, port.y2)) return;
+        var existing = new Set();
+        routeHasClearance(edge, placements, columns, existing, true);
+        nearbyRoutes.push({ edge: edge, existing: existing });
+      });
+      var nearbyMerges = merges.filter(function (group) {
+        var route = mergeGeometry(group, placements);
+        return moved.has(group.to) || group.members.some(function (member) { return moved.has(member.from); })
+          || crossesSweep(route.sourceX, route.top, route.targetX, route.bottom);
+      });
+      for (var attempt = 0; attempt <= 6 && Math.abs(delta) >= .5; attempt++, delta /= 2) {
+        branch.forEach(function (card, i) { card.y = original[i] + delta; });
+        if (nearbyMerges.every(function (group) { return mergeHasClearance(group, placements, columns); })
+            && nearbyRoutes.every(function (route) {
+              return routeHasClearance(route.edge, placements, columns, route.existing, false);
+            })) {
+          settled.push(merge);
+          return;
+        }
+      }
+      branch.forEach(function (card, i) { card.y = original[i]; });
+    });
   }
   function projectVisualMerges(next, placements, incoming, links) {
     next.drawEdges = next.edges;
     if (!incoming.size) return;
-    var inbound = new Map(), outgoing = new Set(), visualCounts = new Map();
+    var inbound = new Map(), visualCounts = new Map();
     links.forEach(function (link) {
       visualCounts.set(link.to, (visualCounts.get(link.to) || 0) + 1);
-      outgoing.add(link.from);
     });
     next.edges.forEach(function (edge) {
       if (edge.type !== 'visual' && visualCounts.has(edge.to)) {
         if (!inbound.has(edge.to)) inbound.set(edge.to, []);
         inbound.get(edge.to).push(edge);
       }
-      if (edge.type === 'requires') outgoing.add(edge.from);
     });
-    var columns, columnList;
+    var columns;
     var merges = [];
     incoming.forEach(function (visuals) {
       var first = visuals[0], target = placements.get(first.to);
@@ -2031,8 +2141,7 @@
       var primary = routes.find(function (edge) { return edge.type === 'requires' && edge.primary; });
       if (visuals.length < 2 && !primary) return;
       if (!columns) {
-        columns = cardColumns(placements);
-        columnList = Array.from(columns.values());
+        columns = Array.from(cardColumns(placements).values());
       }
       var merge = { id: 'merge|' + first.to + '|' + side, to: first.to, side: side, offset: 0 };
       function setPrimary(edge) {
@@ -2041,55 +2150,20 @@
         merge.offset = routes.some(function (route) { return route !== edge; }) ? Math.min(12, target.height * .18) : 0;
       }
       setPrimary(primary);
-      if (mergeHasClearance(merge, placements, columnList)) merges.push(merge);
+      if (mergeHasClearance(merge, placements, columns)) merges.push(merge);
       else if (primary && visuals.length >= 2) {
         setPrimary(null);
-        if (mergeHasClearance(merge, placements, columnList)) merges.push(merge);
+        if (mergeHasClearance(merge, placements, columns)) merges.push(merge);
       }
     });
     if (!merges.length) return;
-    var mergesByTarget = new Map();
-    merges.forEach(function (merge) {
-      mergesByTarget.set(merge.to, mergesByTarget.has(merge.to) ? null : merge);
-    });
-    var centered = new Map();
-    columns.forEach(function (column) {
-      column.cards.forEach(function (card, index) {
-        var merge = mergesByTarget.get(card.id);
-        if (!merge || outgoing.has(card.id) || next.model.children.has(card.id)
-            || (card.kind === 'task' && GoalTree.milestonesForTask(next.model.byTask.get(card.node.taskId)).length)) return;
-        if (merge.members.length - Number(!!merge.primary) !== visualCounts.get(card.id)) return;
-        var top = Infinity, bottom = -Infinity;
-        merge.members.forEach(function (edge) {
-          var y = placements.get(edge.from).y;
-          top = Math.min(top, y); bottom = Math.max(bottom, y);
-        });
-        var y = (top + bottom) / 2, halfHeight = card.height / 2;
-        var above = column.cards[index - 1], below = column.cards[index + 1];
-        var minY = above ? Math.max(above.y, centered.get(above.id) ?? above.y) + above.height / 2 + 12 : 0;
-        var maxY = below ? below.y - below.height / 2 - 12 : next.bounds.height;
-        if (Math.abs(y - card.y) < .5 || y - halfHeight < minY || y + halfHeight > maxY) return;
-        var original = card.y;
-        if (cardInArea(columnList, card.x, Math.min(y, original) - halfHeight, card.x + card.width,
-          Math.max(y, original) + halfHeight, '', card.id, 3)) return;
-        card.y = y;
-        var routes = inbound.get(card.id) || [];
-        if (mergeHasClearance(merge, placements, columnList) && routes.every(function (edge) {
-          return edge === merge.primary || routeHasClearance(edge, placements, columnList);
-        })) centered.set(card.id, original);
-        else card.y = original;
-      });
-    });
-    // A shifted card can also obstruct another target's routes. Preserve those clear routes.
-    if (centered.size && merges.some(function (merge) { return !mergeHasClearance(merge, placements, columnList); })) {
-      centered.forEach(function (original, id) { placements.get(id).y = original; });
-    }
     var groupsByEdge = new Map();
     next.visualMerges = new Map();
     merges.forEach(function (merge) {
       merge.members.forEach(function (edge) { groupsByEdge.set(edge, merge); });
       next.visualMerges.set(merge.to + '|' + merge.side, merge);
     });
+    centerMergedBranches(next, placements, columns, merges, groupsByEdge, visualCounts);
     next.drawEdges = next.edges.map(function (edge) {
       var merge = groupsByEdge.get(edge);
       return merge ? Object.assign({}, edge, { merge: merge, part: 'branch' }) : edge;
@@ -2121,6 +2195,14 @@
         + percent + '">' + percent + '%</span>'
         + rootTitle + '</strong>'
       : '<strong data-user-content>' + escapeHtml(placement.node.title) + '</strong>';
+    var progressScope = placement.kind === 'branch'
+      ? '<button type="button" class="tree-page-progress-scope" data-route-action="progress-scope" aria-label="'
+        + escapeHtml(T('独立进度')) + '" aria-pressed="' + !!placement.node.independentProgress + '" data-tooltip="'
+        + escapeHtml(T(placement.node.independentProgress ? '独立统计进度' : '计入上游进度'))
+        + '"><svg viewBox="0 0 18 18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"'
+        + ' stroke-linecap="round" stroke-linejoin="round"><path d="M9 15v-4L4 5m0 4V5h4m1 6 5-6m-4 0h4v4"/>'
+        + '<path class="tree-page-progress-scope-slash" d="M3 2.5l12 13"/></svg></button>'
+      : '';
     var progressBar = placement.kind === 'root'
       ? '<span class="study-progress-track-shell tree-page-root-progress-track"><span class="study-progress-track'
         + (metrics.count > 0 && percent >= 100 ? ' is-full' : '')
@@ -2130,7 +2212,7 @@
         + ' data-progress-target="' + percent + '" style="width:' + percent + '%"></span></span></span>'
       : '<i aria-hidden="true"><b data-route-progress-fill data-progress-target="' + percent
         + '" style="width:' + percent + '%"></b></i>';
-    return '<div class="study-route-branch-main">' + heading
+    return '<div class="study-route-branch-main">' + heading + progressScope
       + '<span class="study-route-branch-meta-row"><button type="button" class="study-route-node-meta" data-role="route-node-meta" data-route-action="progress-breakdown">'
       + percent + '% · ' + metrics.count + ' ' + T('项任务') + '</button>'
       + hidden + '</span>' + progressBar + '</div>'
@@ -2393,6 +2475,14 @@
     var currentTitle = currentMain.querySelector(':scope > strong');
     var nextTitle = nextMain.querySelector(':scope > strong');
     if (currentTitle && nextTitle) currentTitle.textContent = nextTitle.textContent;
+
+    var scopeButton = currentMain.querySelector('.tree-page-progress-scope');
+    var nextScope = nextMain.querySelector('.tree-page-progress-scope');
+    if (!scopeButton || !nextScope) return false;
+    ['aria-label', 'aria-pressed', 'data-tooltip'].forEach(function (attribute) {
+      var value = nextScope.getAttribute(attribute);
+      if (scopeButton.getAttribute(attribute) !== value) scopeButton.setAttribute(attribute, value);
+    });
 
     var currentMeta = currentMain.querySelector('.study-route-branch-meta-row');
     var nextMeta = nextMain.querySelector('.study-route-branch-meta-row');
@@ -2888,8 +2978,8 @@
   function syncSummary(model, animate) {
     var metrics = model.rootMetrics;
     var percent = Math.round(metrics.progress * 100);
-    var completed = model.tree.nodes.filter(function (node) {
-      var task = node.kind === 'task' && model.byTask.get(node.taskId);
+    var completed = model.rootTasks.filter(function (node) {
+      var task = model.byTask.get(node.taskId);
       return task && task.status === 'done';
     }).length;
     var number = summary.querySelector('strong'), copy = summary.querySelector('span');
@@ -3148,7 +3238,7 @@
       + (visibleRows ? '<ul>' + visibleRows + '</ul>' : '<p>' + T('尚无参与统计的任务') + '</p>')
       + (detail.rows.length > 50 ? '<p>' + T('仅展示前 50 项，公式仍按全部任务计算') + '</p>' : '')
       + '<p class="study-route-progress-formula">' + escapeHtml(formula) + '</p>'
-      + '<p class="study-route-progress-note">' + T('阶段只汇总包含的任务；解锁关系不会改变进度归属。') + '</p></div>');
+      + '<p class="study-route-progress-note">' + T('开启独立进度的阶段单独统计，其任务从上游阶段和根节点的统计中移除。') + '</p></div>');
   }
   function primaryLinkForAnchor(anchor) {
     var kind = anchor.dataset.kind, nodeId = anchor.dataset.nodeId;
@@ -4103,7 +4193,7 @@
     },
     {
       title: '阶段与进度',
-      body: '<p>阶段只是一组任务的收纳夹，不需要手动设置进度。</p><ul><li>已完成任务记为 100%；有总量时按“当前 ÷ 总量”；未设总量且未完成时记为 0%。</li><li>阶段平均它收纳的任务，根目标平均整棵树中的任务。</li><li>点击进度文字可查看每项任务和计算公式；需要另一套路线时，从左侧编号栏新建目标树。</li></ul>',
+      body: '<p>已完成任务记为 100%。有总量时按“当前 ÷ 总量”计算，未设总量且未完成时记为 0%。</p><ul><li>阶段和根卡显示所汇总任务的平均进度。点击进度文字可查看参与统计的任务和公式。</li><li>点阶段标题旁的分叉图标开启独立进度。这一段自己汇总进度，上游阶段和根卡分别统计其余任务。</li></ul>',
     },
     {
       title: '箭头、解锁与高级编辑',
@@ -4924,6 +5014,18 @@
       if (action === 'add') return addMenu(anchor);
       if (action === 'menu') return nodeMenu(anchor);
       if (action === 'progress-breakdown') return progressBreakdownPopover(anchor);
+      if (action === 'progress-scope' && anchor.dataset.kind === 'branch') {
+        if (busy) return;
+        actionControl.setAttribute('aria-busy', 'true');
+        actionControl.setAttribute('aria-disabled', 'true');
+        return command({
+          command: 'update-branch', nodeId: anchor.dataset.nodeId,
+          independentProgress: actionControl.getAttribute('aria-pressed') !== 'true',
+        }).catch(ignoreBusy).finally(function () {
+          actionControl.removeAttribute('aria-busy');
+          actionControl.removeAttribute('aria-disabled');
+        });
+      }
       if (action === 'collapse') {
         toggleBranchCollapse(anchor.dataset.nodeId); return;
       }

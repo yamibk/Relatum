@@ -3403,6 +3403,31 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
 .study-route-collapse[aria-expanded="true"] > span { transform: rotate(45deg); }
 .study-route-collapse:disabled { pointer-events: none; cursor: default; }
 .tree-page-route-panel .study-route-collapse[aria-disabled="true"] { cursor: default; }
+.tree-page-route-panel .study-route-node.is-branch .study-route-branch-main { position: relative; }
+.tree-page-route-panel .study-route-node.is-branch .study-route-branch-main > strong { padding-inline-end: 24px; }
+.tree-page-progress-scope {
+  position: absolute;
+  inset-block-start: -4px;
+  inset-inline-end: 0;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #727b73;
+  cursor: pointer;
+}
+.tree-page-progress-scope svg { width: 14px; height: 14px; pointer-events: none; }
+.tree-page-progress-scope[aria-pressed="true"] { color: #3e5946; }
+.tree-page-progress-scope[aria-pressed="true"] .tree-page-progress-scope-slash { display: none; }
+.tree-page-progress-scope[aria-busy="true"] { cursor: progress; }
+.tree-page-progress-scope:hover { background: rgba(113,128,116,.12); }
+.tree-page-progress-scope:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+body.start-page[data-start-theme="dark"] .tree-page-progress-scope { color: #a0aba2; }
+body.start-page[data-start-theme="dark"] .tree-page-progress-scope[aria-pressed="true"] { color: #d6ebd8; }
 .study-route-collapse.is-expanding > span { animation: studyRouteCollapseIconExpand 210ms cubic-bezier(.22,1,.36,1) both; }
 @keyframes studyRouteCollapseIconExpand {
   from { transform: rotate(-45deg); }

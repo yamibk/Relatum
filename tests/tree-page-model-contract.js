@@ -40,4 +40,40 @@ assert(layout.nodes.find((node) => node.id === 'stage').x < layout.nodes.find((n
 assert(GoalTree.prepareDropContext(layout, tree, 'stage').structuralExcluded.has('na'));
 assert.strictEqual(GoalTree.nextTasks(model)[0].id, 'nb');
 
+const scopedTasks = tasks.concat(
+  { id: 'c', title: '后续阶段任务', status: 'active' },
+  { id: 'd', title: '解锁后任务', status: 'active' },
+);
+const scopedTree = structuredClone(tree);
+scopedTree.nodes.push(
+  { id: 'next', kind: 'branch', title: '下一阶段', independentProgress: true },
+  { id: 'nested', kind: 'branch', title: '独立子阶段', independentProgress: true },
+  { id: 'nc', kind: 'task', taskId: 'c' },
+  { id: 'nd', kind: 'task', taskId: 'd' },
+);
+scopedTree.links[2].to = 'next';
+scopedTree.links.push(
+  { id: 'l4', from: 'next', to: 'nb', type: 'contains', primary: true },
+  { id: 'l5', from: 'next', to: 'nested', type: 'contains', primary: true },
+  { id: 'l6', from: 'nested', to: 'nc', type: 'contains', primary: true },
+  { id: 'l7', from: null, to: 'nd', type: 'contains', primary: true },
+  { id: 'l8', from: 'stage', to: 'nd', type: 'requires', primary: false, trigger: { kind: 'complete' } },
+);
+const independent = GoalTree.buildModel(scopedTree, scopedTasks, { independentProgress: true });
+const countedTasks = (model, id) => GoalTree.progressBreakdown(model, id).rows.map(row => row.taskId);
+assert.deepStrictEqual(countedTasks(independent, 'root'), ['a', 'd']);
+assert.deepStrictEqual(countedTasks(independent, 'stage'), ['a']);
+assert.deepStrictEqual(countedTasks(independent, 'next'), ['b']);
+assert.deepStrictEqual(countedTasks(independent, 'nested'), ['c']);
+assert.strictEqual(independent.rootMetrics.progress, .5);
+assert.strictEqual(independent.metrics.get('next').progress, .25);
+assert.strictEqual(independent.availability.get('nd').available, true, 'stage unlock uses its new scope');
+const study = GoalTree.buildModel(scopedTree, scopedTasks);
+assert.deepStrictEqual(countedTasks(study, 'root'), ['a', 'b', 'c', 'd']);
+assert.strictEqual(study.availability.get('nd').available, false);
+const unfinished = scopedTasks.map(task => task.id === 'a' ? { ...task, status: 'active' } : task);
+const locked = GoalTree.buildModel(scopedTree, unfinished, { independentProgress: true });
+assert.strictEqual(locked.availability.get('nb').available, false, 'incoming requirement still gates the stage');
+assert.strictEqual(locked.availability.get('nc').available, false, 'nested stages still inherit the requirement');
+
 console.log('tree page shared goal-tree model contract passed');

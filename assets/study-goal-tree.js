@@ -58,6 +58,7 @@
       if (kind === 'branch') {
         node.title = text(raw.title).trim() || '未命名阶段';
         if (text(raw.color).trim()) node.color = text(raw.color).trim();
+        if (options.independentProgress && raw.independentProgress === true) node.independentProgress = true;
       } else {
         var taskId = text(raw.taskId).trim();
         if (!taskId || !byTask.has(taskId) || taskIds.has(taskId)) throw new Error('目标树任务无效或重复');
@@ -209,8 +210,9 @@
       requirementReachableCache.set(nodeId, reachable);
       return reachable;
     }
-    function taskNodesForStage(nodeId) {
-      var gated = requirementReachableFrom(nodeId), result = [], seen = new Set();
+    function taskNodesForScope(nodeId) {
+      var gated = nodeId ? requirementReachableFrom(nodeId) : new Set();
+      var result = [], seen = new Set();
       (function visit(parentId) {
         (children.get(parentId) || []).forEach(function (link) {
           var childId = link.to;
@@ -219,7 +221,7 @@
           if (gated.has(childId) || seen.has(childId)) return;
           seen.add(childId);
           var child = byId.get(childId);
-          if (!child) return;
+          if (!child || child.independentProgress) return;
           if (child.kind === 'task') result.push(child);
           visit(childId);
         });
@@ -228,12 +230,17 @@
     }
     tree.nodes.forEach(function (node) {
       if (node.kind !== 'branch') return;
-      var scoped = taskNodesForStage(node.id);
+      var scoped = taskNodesForScope(node.id);
       stageTasks.set(node.id, scoped);
       metrics.set(node.id, combine(scoped.map(function (taskNode) { return metrics.get(taskNode.id); })));
     });
-    var rootValues = tree.nodes.filter(function (node) { return node.kind === 'task'; }).map(function (node) { return metrics.get(node.id); });
-    var rootMetrics = combine(rootValues); metrics.set('root', rootMetrics);
+    var rootTasks = tree.nodes.filter(function (node) { return node.kind === 'task'; });
+    if (tree.nodes.some(function (node) { return node.independentProgress; })) {
+      var rootScope = new Set(taskNodesForScope(''));
+      rootTasks = rootTasks.filter(function (node) { return rootScope.has(node); });
+    }
+    var rootMetrics = combine(rootTasks.map(function (node) { return metrics.get(node.id); }));
+    metrics.set('root', rootMetrics);
 
     function sourceSatisfied(link) {
       var source = byId.get(link.from);
@@ -282,14 +289,14 @@
       tree: tree, byId: byId, byTask: byTask, primaryByTarget: primaryByTarget,
       children: children, containsChildren: containsChildren, requirements: requirements,
       requirementChildren: requirementChildren, stageTasks: stageTasks,
-      metrics: metrics, availability: availability, rootMetrics: rootMetrics,
+      metrics: metrics, availability: availability, rootMetrics: rootMetrics, rootTasks: rootTasks,
     };
   }
 
   function scopedTaskNodes(model, nodeId) {
     if (!model) return [];
     if (!nodeId || nodeId === 'root') {
-      return model.tree.nodes.filter(function (node) { return node.kind === 'task'; });
+      return model.rootTasks.slice();
     }
     var root = model.byId.get(text(nodeId));
     if (!root) return [];

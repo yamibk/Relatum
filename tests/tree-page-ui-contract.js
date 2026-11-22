@@ -379,7 +379,7 @@ assert(commandSource.includes('applyAuthorityAfterGenerationChange(json)')
   'commands completed after close/reopen must reconcile authoritative state');
 const renderSource = functionSource(tree, 'render');
 assert(tree.includes('var nodeSizeCache = new Map()')
-  && tree.includes('var TREE_MODEL_OPTIONS = { allowBlankTitle: true };')
+  && tree.includes('var TREE_MODEL_OPTIONS = { allowBlankTitle: true, independentProgress: true };')
   && renderSource.includes('GoalTree.normalizeTree(state.tree, state.tasks, TREE_MODEL_OPTIONS)')
   && renderSource.includes('var model = GoalTree.buildModel(state.tree, state.tasks, TREE_MODEL_OPTIONS)')
   && renderSource.includes('model: model, sizes: nodeSizeCache')

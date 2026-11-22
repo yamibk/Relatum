@@ -5851,7 +5851,9 @@ def _study_goal_task_progress_value(task: dict | None) -> float:
     return min(1.0, current / target) if target else 0.0
 
 
-def _study_goal_availability(data: dict, tree: dict) -> dict[str, dict]:
+def _study_goal_availability(
+    data: dict, tree: dict, *, independent_progress: bool = False,
+) -> dict[str, dict]:
     """计算一棵目标树的运行时解锁状态；不修改树或任务数据。"""
     nodes = tree.get("nodes", [])
     links = tree.get("links", [])
@@ -5911,7 +5913,7 @@ def _study_goal_availability(data: dict, tree: dict) -> dict[str, dict]:
                 continue
             seen.add(child_id)
             child = by_id.get(child_id)
-            if not child:
+            if not child or (independent_progress and child.get("independentProgress") is True):
                 continue
             if child.get("kind") == "task":
                 result.append(child)
@@ -5987,7 +5989,9 @@ def _study_goal_availability(data: dict, tree: dict) -> dict[str, dict]:
     return availability
 
 
-def _study_goal_assert_task_available(data: dict, tree_id: object, task_id: str) -> None:
+def _study_goal_assert_task_available(
+    data: dict, tree_id: object, task_id: str, *, independent_progress: bool = False,
+) -> None:
     if not tree_id:
         return
     tree = _study_goal_tree(data, tree_id)
@@ -5997,7 +6001,9 @@ def _study_goal_assert_task_available(data: dict, tree_id: object, task_id: str)
     ), None)
     if not node:
         raise KeyError("这个任务不在指定目标树中")
-    state = _study_goal_availability(data, tree).get(str(node.get("id") or ""), {})
+    state = _study_goal_availability(
+        data, tree, independent_progress=independent_progress,
+    ).get(str(node.get("id") or ""), {})
     if not state.get("available"):
         raise RuntimeError("任务尚未满足目标树的解锁条件")
 
@@ -6410,6 +6416,10 @@ def _tree_page_capture_extras(data: dict) -> dict:
                     str(node.get("id") or ""): _tree_page_shape(node.get("shape"))
                     for node in tree.get("nodes", []) if node.get("kind") == "branch"
                 },
+                "independentStages": {
+                    node["id"] for node in tree.get("nodes", [])
+                    if node.get("kind") == "branch" and node.get("independentProgress") is True
+                },
                 "freeItems": [dict(item) for item in tree.get("freeItems", [])],
                 "visualLinks": [dict(link) for link in tree.get("visualLinks", [])],
             }
@@ -6440,9 +6450,12 @@ def _tree_page_restore_extras(data: dict, extras: dict) -> None:
             retained_visual_links, node_ids, tree.get("links", []),
         )
         node_shapes = saved.get("nodeShapes", {})
+        independent_stages = saved.get("independentStages", set())
         for node in tree.get("nodes", []):
             if node.get("kind") == "branch":
                 node["shape"] = _tree_page_shape(node_shapes.get(str(node.get("id") or ""), "rounded"))
+                if node["id"] in independent_stages:
+                    node["independentProgress"] = True
 
 
 def _tree_page_reconcile_removed_milestones(
@@ -6606,12 +6619,18 @@ def _tree_page_normalize(data: object) -> dict:
             raw_tree.get("visualLinks", []), node_ids, tree.get("links", []),
         )
         raw_nodes = {
-            str(node.get("id") or ""): node
+            str(node.get("id") or "").strip(): node
             for node in raw_tree.get("nodes", []) if isinstance(node, dict)
         }
         for node in tree["nodes"]:
             if node.get("kind") == "branch":
-                node["shape"] = _tree_page_shape((raw_nodes.get(node["id"]) or {}).get("shape"))
+                raw_node = raw_nodes.get(node["id"], {})
+                node["shape"] = _tree_page_shape(raw_node.get("shape"))
+                independent = raw_node.get("independentProgress", False)
+                if not isinstance(independent, bool):
+                    raise ValueError("独立进度状态不正确")
+                if independent:
+                    node["independentProgress"] = True
             elif node["taskId"] in globally_owned:
                 raise ValueError("每个任务只能属于一棵树并出现一次")
             else:
@@ -6877,7 +6896,7 @@ def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False)
             patch.get("status") == "done" and old.get("status") != "done"
         )
         if body.get("enforceGoalTreeUnlock") is True and tree_id and locks_route_action:
-            _study_goal_assert_task_available(data, tree_id, task_id)
+            _study_goal_assert_task_available(data, tree_id, task_id, independent_progress=True)
         progress_patch = patch.pop("progress", None)
         task = _study_task(patch, existing=old)
         if isinstance(progress_patch, dict):
@@ -6921,7 +6940,7 @@ def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False)
     elif command == "progress-task":
         task_id = str(body.get("taskId") or body.get("id") or "").strip()
         if body.get("enforceGoalTreeUnlock") is True:
-            _study_goal_assert_task_available(data, body.get("treeId"), task_id)
+            _study_goal_assert_task_available(data, body.get("treeId"), task_id, independent_progress=True)
         result.update(change_study_progress(
             data, task_id, body.get("delta"), allow_aggregate=True,
         ))
@@ -6968,6 +6987,9 @@ def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False)
         tree["updatedAt"] = _study_now()
 
     else:
+        if command == "update-branch" and "independentProgress" in body:
+            if not isinstance(body["independentProgress"], bool):
+                raise ValueError("独立进度状态不正确")
         removed_task_ids: set[str] = set()
         removed_node_ids: set[str] = set()
         if command == "delete-tree":
@@ -6993,9 +7015,15 @@ def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False)
                 task for task in data.get("tasks", [])
                 if task.get("id") not in removed_task_ids
             ]
-        if command == "update-branch" and "shape" in body:
+        if command == "update-branch":
             node = _study_goal_node(_tree_page_tree(data, body.get("treeId")), body.get("nodeId"))
-            node["shape"] = _tree_page_shape(body.get("shape"))
+            if "shape" in body:
+                node["shape"] = _tree_page_shape(body["shape"])
+            if "independentProgress" in body:
+                if body["independentProgress"]:
+                    node["independentProgress"] = True
+                else:
+                    node.pop("independentProgress", None)
 
     normalized = _tree_page_normalize(data)
     data.clear()

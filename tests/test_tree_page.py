@@ -502,6 +502,46 @@ class TreePageTests(unittest.TestCase):
                 "from": second, "type": "requires", "trigger": {"kind": "complete"},
             })
 
+    def test_independent_progress_persists_and_changes_stage_unlock_scope(self):
+        stage = self.branch("一学期")
+        first = self.task("本阶段任务", stage)
+        self.command("update-task", taskId=first["taskId"], status="done")
+        next_stage = self.branch("下一学期", stage)
+        downstream = self.task("下一阶段任务", next_stage, target=2)
+        gate = self.task("进入下一阶段的条件")
+        dependent = self.task("一学期结束后的任务", target=3)
+        self.command("add-requirement", fromNodeId=stage, toNodeId=dependent["nodeId"])
+        self.command("add-requirement", fromNodeId=gate["nodeId"], toNodeId=next_stage)
+
+        with self.assertRaisesRegex(RuntimeError, "解锁条件"):
+            self.command("progress-task", taskId=dependent["taskId"], delta=1, enforceGoalTreeUnlock=True)
+        with self.assertRaisesRegex(ValueError, "独立进度"):
+            self.command("update-branch", nodeId=next_stage, independentProgress=1)
+        with self.assertRaisesRegex(ValueError, "只能编辑阶段"):
+            self.command("update-branch", nodeId=gate["nodeId"], independentProgress=True)
+        self.command("update-branch", nodeId=next_stage, independentProgress=True)
+        self.command("update-branch", nodeId=next_stage, title="改名", shape="diamond")
+        self.command("move-node", nodeId=next_stage, primaryLink={"from": stage, "type": "contains"})
+        app.save_tree_page(self.data)
+        self.data = app.load_tree_page()
+        boundary = app._study_goal_node(self.active_tree(), next_stage)
+        self.assertIs(boundary["independentProgress"], True)
+        self.assertEqual(boundary["shape"], "diamond")
+        self.assertEqual(boundary["title"], "改名")
+
+        self.command("progress-task", taskId=dependent["taskId"], delta=1, enforceGoalTreeUnlock=True)
+        self.command("update-task", taskId=dependent["taskId"], status="done", enforceGoalTreeUnlock=True)
+        with self.assertRaisesRegex(RuntimeError, "解锁条件"):
+            self.command("update-task", taskId=downstream["taskId"], status="done", enforceGoalTreeUnlock=True)
+        self.command("update-task", taskId=gate["taskId"], status="done")
+        self.command("progress-task", taskId=downstream["taskId"], delta=1, enforceGoalTreeUnlock=True)
+
+        self.command("update-branch", nodeId=next_stage, independentProgress=False)
+        self.assertNotIn("independentProgress", app._study_goal_node(self.active_tree(), next_stage))
+        self.command("update-task", taskId=dependent["taskId"], status="active")
+        with self.assertRaisesRegex(RuntimeError, "解锁条件"):
+            self.command("update-task", taskId=dependent["taskId"], status="done", enforceGoalTreeUnlock=True)
+
     def test_visual_links_are_directional_idempotent_and_semantically_inert(self):
         first = self.task("高等数学上")["nodeId"]
         second = self.task("高等数学下")["nodeId"]
