@@ -3421,6 +3421,7 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
   cursor: pointer;
 }
 .tree-page-progress-scope svg { width: 14px; height: 14px; pointer-events: none; }
+.tree-page-progress-scope[aria-pressed="false"]:not(:hover, :focus-visible) svg { opacity: .12; }
 .tree-page-progress-scope[aria-pressed="true"] { color: #3e5946; }
 .tree-page-progress-scope[aria-pressed="true"] .tree-page-progress-scope-slash { display: none; }
 .tree-page-progress-scope[aria-busy="true"] { cursor: progress; }
