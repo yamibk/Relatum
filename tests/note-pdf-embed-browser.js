@@ -148,6 +148,22 @@ async function waitFor(check, description = 'the test host') {
       '  window.CanvasNoteWorkspace = {',
       '  window.__pdfTest = { state, openNote, setViewMode, movePath };\n  window.CanvasNoteWorkspace = {',
     ) }));
+    const runtime = fs.readFileSync(path.join(repo, 'assets/pdf-runtime.js'), 'utf8');
+    await page.route('**/pdf-runtime.js*', route => route.fulfill({ contentType: 'text/javascript', body: runtime.replace(
+      '  return library.getDocument({', '  const task = library.getDocument({',
+    ).replace(/\n  \}\);\n\}\s*$/, `
+  });
+  const pages = window.__pdfTestPages = new Map();
+  task.promise.then(document => {
+    const getPage = document.getPage.bind(document);
+    document.getPage = async number => {
+      const page = await getPage(number);
+      pages.set(number, new WeakRef(page));
+      return page;
+    };
+  }, () => {});
+  return task;
+}`) }));
     await page.goto(native ? page.url() : origin);
     await page.waitForFunction(() => window.__pdfTest?.state.initialized && __pdfTest.state.active);
     const open = note => page.evaluate(name => __pdfTest.openNote(name, { reuseActiveTab: false }), note);
@@ -291,7 +307,19 @@ async function waitFor(check, description = 'the test host') {
     await navigation.getByRole('button', { name: 'Thumbnails' }).click();
     await navigation.locator('[aria-current="page"] canvas').waitFor();
     assert.equal(await navigation.locator('[aria-current="page"]').getAttribute('data-page'), '8');
+    const thumbs = navigation.locator('.note-pdf-thumbnails');
+    const previewPages = [25, 50, 75, 100];
+    for (const number of previewPages) {
+      await thumbs.evaluate((node, number) => { node.scrollTop = (number - 1) * 136; }, number);
+      await page.waitForFunction(number => {
+        const intents = window.__pdfTestPages?.get(number)?.deref()?._intentStates;
+        return intents?.size && Array.from(intents.values()).every(intent => intent.operatorList.lastChunk && !intent.renderTasks.size);
+      }, number);
+    }
     await navigation.getByRole('button', { name: 'Files' }).click();
+    const retainedPreviews = await page.evaluate(numbers => numbers.filter(number =>
+      window.__pdfTestPages.get(number).deref()?._intentStates.size), previewPages);
+    assert.deepEqual(retainedPreviews, [], 'offscreen thumbnail pages release their PDF.js drawing data');
     assert.equal(await tree.evaluate(node => node.scrollTop), treeScroll);
     if (!native) {
       await page.setViewportSize({ width: 530, height: 780 });

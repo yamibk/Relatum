@@ -154,7 +154,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
     const from = pageAt(top - viewHeight / 2), to = pageAt(top + viewHeight * 1.5);
     for (const [number, item] of pages) {
       if (number < from || number > to) {
-        resetPage(item); item.host.remove(); pages.delete(number);
+        resetPage(number, item); item.host.remove(); pages.delete(number);
       }
     }
     for (let number = from; number <= to; number++) {
@@ -172,7 +172,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
       item.host.style.width = pageWidth + 'px';
       item.host.style.height = pageHeight + 'px';
       if (item.width !== pageWidth || item.height !== pageHeight) {
-        resetPage(item);
+        resetPage(number, item);
         item.width = pageWidth; item.height = pageHeight;
         void drawPage(number, item);
       } else if (stageResized) item.annotation?.layout();
@@ -190,11 +190,12 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
     paintThumbnails();
   }
 
-  function resetPage(item) {
+  function resetPage(number, item) {
     item.generation = (item.generation || 0) + 1;
     item.annotation?.dispose(); item.annotation = null;
     cancel(item.render); cancel(item.textRender);
-    item.page?.cleanup();
+    // The page and its thumbnail share the PDF.js drawing cache.
+    if (!thumbnails.get(number)?.page) item.page?.cleanup();
     item.page = null;
     item.render = item.textRender = item.textDivs = item.marker = null;
     item.drawSelection = null;
@@ -352,11 +353,15 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
     return results;
   }
 
+  function resetThumbnail(number, item) {
+    cancel(item.render);
+    if (!pages.get(number)?.page) item.page?.cleanup();
+    if (item.canvas) item.canvas.width = item.canvas.height = 0;
+    item.host.remove();
+  }
+
   function clearThumbnails() {
-    for (const item of thumbnails.values()) {
-      cancel(item.render);
-      if (item.canvas) item.canvas.width = item.canvas.height = 0;
-    }
+    for (const [number, item] of thumbnails) resetThumbnail(number, item);
     thumbnails.clear();
   }
 
@@ -367,9 +372,8 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
     const to = Math.min(pdf.numPages, from + Math.ceil(thumbnailStage.clientHeight / THUMB_HEIGHT) + 2);
     for (const [number, item] of thumbnails) {
       if (number >= from && number <= to) continue;
-      cancel(item.render);
-      if (item.canvas) item.canvas.width = item.canvas.height = 0;
-      item.host.remove(); thumbnails.delete(number);
+      resetThumbnail(number, item);
+      thumbnails.delete(number);
     }
     for (let number = from; number <= to; number++) {
       let item = thumbnails.get(number);
@@ -391,6 +395,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
     try {
       const page = await pdf.getPage(number);
       if (!alive() || thumbnails.get(number) !== item) return;
+      item.page = page;
       const base = page.getViewport({ scale: 1 });
       const viewport = page.getViewport({ scale: Math.min(180 / base.width, 156 / base.height) });
       const canvas = item.canvas = element('canvas');
@@ -472,7 +477,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
       lifetime.abort();
       cancelAnimationFrame(frame); cancelAnimationFrame(selectionFrame); stageResize.disconnect();
       thumbnailEvents?.abort(); clearThumbnails();
-      for (const item of pages.values()) resetPage(item);
+      for (const [number, item] of pages) resetPage(number, item);
       pages.clear(); stack.remove();
       textCache.clear(); textRequests.clear(); textBytes = 0;
       scroll.content(null);

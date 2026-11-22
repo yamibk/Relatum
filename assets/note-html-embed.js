@@ -72,6 +72,10 @@
       entry.generation++;
       entry.frame?.remove();
       entry.frame = null;
+      if (entry.pendingUrl) {
+        void nativeApi()?.note_html('revoke', entry.pendingUrl).catch(() => {});
+        entry.pendingUrl = null;
+      }
       entry.pending = false;
       entry.stage.removeAttribute('aria-busy');
       if (active === entry) active = null;
@@ -116,13 +120,16 @@
             : text('无法加载 HTML 文件', 'Unable to load the HTML file'));
           return;
         }
+        entry.pendingUrl = result.url;
         entry.name = result.name;
         if (entry.title) entry.title.textContent = entry.title.title = result.name;
         if (entry.openButton) entry.openButton.disabled = false;
         entry.onName?.(result.name);
         const element = entry.frame = frame(result.url, result.name, interactive);
-        if (interactive) element.addEventListener('load', () => {
-          if (current() && entry.frame === element && document.activeElement === (entry.button || entry.host)) element.focus({ preventScroll: true });
+        element.addEventListener('load', () => {
+          if (!current() || entry.frame !== element) return;
+          entry.pendingUrl = null;
+          if (interactive && document.activeElement === (entry.button || entry.host)) element.focus({ preventScroll: true });
         }, { once: true });
         entry.stage.append(element);
       } catch (_error) {

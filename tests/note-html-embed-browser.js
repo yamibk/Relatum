@@ -450,6 +450,31 @@ async function freePort() {
         await tabFrame().getByText('Ready').waitFor();
       }
       await page.locator('[data-note-tab-path="Schedule.md"]').click();
+      await page.evaluate(() => {
+        const append = Element.prototype.append;
+        Element.prototype.append = function (...nodes) {
+          const frame = nodes[0];
+          if (this.classList.contains('note-html-tab-stage') && frame instanceof HTMLIFrameElement) {
+            Element.prototype.append = append;
+            window.__unconsumedHtmlUrl = frame.src;
+            return;
+          }
+          return append.apply(this, nodes);
+        };
+        const api = window.pywebview.api, noteHtml = api.note_html;
+        api.note_html = async (...args) => {
+          const result = await noteHtml(...args);
+          if (args[0] === 'revoke' && args[1] === window.__unconsumedHtmlUrl && result.status === 'ok') {
+            api.note_html = noteHtml;
+            window.__revokedUnconsumedHtml = true;
+          }
+          return result;
+        };
+      });
+      await tab().click();
+      await page.waitForFunction(() => window.__unconsumedHtmlUrl);
+      await page.locator('[data-note-tab-path="Schedule.md"]').click();
+      await page.waitForFunction(() => window.__revokedUnconsumedHtml, null, { timeout: 3000 });
       await mode('reading');
       await panel().locator('iframe').waitFor({ state: 'detached' });
       await readingBlock.getByRole('button', { name: 'Open in new tab' }).click();
