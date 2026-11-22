@@ -80,6 +80,7 @@
   const settingsShortcutList = $('[data-role="note-shortcut-list"]');
   const settingsShortcutStatus = $('[data-role="note-shortcut-status"]');
   const selectionMatchHighlightToggle = $('[data-role="note-selection-match-highlight"]');
+  const imagePathStyleSelect = $('[data-role="note-image-path-style"]');
   const sortTrigger = $('[data-note-action="toggle-sort"]');
   const sortMenu = $('[data-role="note-sort-menu"]');
   const libraryTrigger = $('[data-note-action="toggle-library-settings"]');
@@ -718,6 +719,7 @@
   const EXPANDED_KEY = 'canvas:noteExpandedFolders:v1';
   const NOTE_VIEW_KEY = 'canvas:noteView:v1';
   const SELECTION_MATCH_HIGHLIGHT_KEY = 'canvas:noteSelectionMatchHighlight:v1';
+  const NOTE_IMAGE_PATH_STYLE_KEY = 'canvas:noteImagePathStyle:v1';
   const VIEW_STATES_KEY = 'canvas:noteViewStates:v1';
   const IMAGE_TEXT_DEFAULTS_KEY = 'canvas:noteImageTextDefaults:v1';
   const NOTE_FOCUS_KEY = 'canvas:noteFocusMode:v1';
@@ -872,6 +874,8 @@
   try { const stored = localStorage.getItem(ACTIVE_TAB_KEY) || ''; if (state.tabs.includes(stored)) state.activeTab = stored; } catch (error) {}
   try { state.viewMode = normalizeViewMode(localStorage.getItem(NOTE_VIEW_KEY)); } catch (error) {}
   try { state.selectionMatchHighlight = localStorage.getItem(SELECTION_MATCH_HIGHLIGHT_KEY) === '1'; } catch (error) {}
+  let noteImagePathStyle = 'relative';
+  try { if (localStorage.getItem(NOTE_IMAGE_PATH_STYLE_KEY) === 'filename') noteImagePathStyle = 'filename'; } catch (_) {}
   try { const savedSort = localStorage.getItem(TREE_SORT_KEY); if (SORT_MODES.includes(savedSort)) state.treeSort = savedSort; } catch (error) {}
   try { const savedPriority = localStorage.getItem(TREE_NAME_PRIORITY_KEY); if (NAME_PRIORITIES.includes(savedPriority)) state.treeNamePriority = savedPriority; } catch (error) {}
   try { const savedPriority = localStorage.getItem(TREE_SHARED_PREFIX_PRIORITY_KEY); if (NAME_PRIORITIES.includes(savedPriority)) state.treeSharedPrefixPriority = savedPriority; } catch (error) {}
@@ -1370,6 +1374,21 @@
   }
   window.addEventListener('relatum:note-apple-selection', syncNoteThemeSettings);
 
+  function syncNoteImagePathSettings() {
+    if (!imagePathStyleSelect || !settingsChoices) return;
+    const en = language() === 'en';
+    const title = en ? 'Path for new images' : '新插入图片的路径';
+    $('[data-role="note-image-path-label"]').textContent = title;
+    imagePathStyleSelect.setAttribute('aria-label', title);
+    $('#note-image-path-hint').textContent = en
+      ? 'Use full relative paths when opening notes in other editors.'
+      : '仅文件名适用于 Relatum 笔记。也在其他编辑器打开时，请使用完整相对路径。';
+    settingsChoices.setOptions(imagePathStyleSelect, [
+      { value: 'relative', label: en ? 'Full relative path (default)' : '完整相对路径（默认）' },
+      { value: 'filename', label: en ? 'Filename only' : '仅文件名' },
+    ], noteImagePathStyle);
+  }
+
   function syncNoteChartPaletteSettings() {
     const palette = window.RelatumNoteChartPalette;
     if (!chartPaletteSelect || !palette) return;
@@ -1555,7 +1574,7 @@
         searchTargets: () => Array.from(appearance.querySelectorAll('label, [data-settings-keywords], .note-canvas-default-tabs button, .note-shortcut-row'))
           .filter(element => !element.closest('[data-role="note-apple-selection-setting"]') || (element === appleSelectionSetting && !appleSelectionSetting.hidden)),
         reset: () => { resetNoteTheme(); resetNoteChartPalette(); pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
-      { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮 双向链接 补全 候选 搜索 正文 排序 wiki link completion suggestions scope search content sort', reset: resetEditingSettings },
+      { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮 双向链接 补全 候选 搜索 正文 排序 图片 文件名 路径 image filename path wiki link completion suggestions scope search content sort', reset: resetEditingSettings },
       { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings,
         keywords: '排序 命名 文件名开头优先 相同前缀后优先 高级排序 sort name timestamp file name prefix priority after a shared prefix advanced sorting',
         searchTargets: () => libraryNameSortOptions.inert ? [libraryNameField] : [libraryNamePrioritySetting, librarySharedPrefixSetting, libraryNameField],
@@ -1638,6 +1657,19 @@
     settingsChoices = window.RelatumReviewControls.createManager(settingsPop, themePortal);
     settingsChoices.enhance(themeSelect);
     if (appleSelectionSelect) settingsChoices.enhance(appleSelectionSelect);
+    if (imagePathStyleSelect) {
+      syncNoteImagePathSettings();
+      settingsChoices.enhance(imagePathStyleSelect).element.querySelector('button').setAttribute('aria-describedby', 'note-image-path-hint');
+      imagePathStyleSelect.addEventListener('change', () => {
+        try {
+          localStorage.setItem(NOTE_IMAGE_PATH_STYLE_KEY, imagePathStyleSelect.value);
+          noteImagePathStyle = imagePathStyleSelect.value;
+        } catch (_) {
+          settingsDialog.setStatus(language() === 'en' ? 'Could not save the image path setting.' : '图片路径设置保存失败。');
+          syncNoteImagePathSettings();
+        }
+      });
+    }
     if (chartPaletteSelect && window.RelatumNoteChartPalette) {
       syncNoteChartPaletteSettings();
       settingsChoices.enhance(chartPaletteSelect);
@@ -1680,7 +1712,7 @@
       }
     });
     settingsDialog.dialog.querySelector('[data-settings-search]').addEventListener('input', () => { settingsChoices.close(); linkCompletionSettings?.close(); });
-    document.addEventListener('relatum:languagechange', () => { settingsChoices.close(); finishLibrarySortMotion(); syncNoteThemeSettings(); syncNoteChartPaletteSettings(); linkCompletionSettings?.refresh(); });
+    document.addEventListener('relatum:languagechange', () => { settingsChoices.close(); finishLibrarySortMotion(); syncNoteThemeSettings(); syncNoteChartPaletteSettings(); syncNoteImagePathSettings(); linkCompletionSettings?.refresh(); });
     settingsDialog.dialog.addEventListener('click', handleWorkspaceClick);
     settingsTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     libraryTrigger.setAttribute('aria-controls', 'note-settings-dialog');
@@ -1695,6 +1727,9 @@
     linkCompletionSettings?.refresh();
     try { localStorage.removeItem(SELECTION_MATCH_HIGHLIGHT_KEY); } catch (_) {}
     applySelectionMatchHighlight(false, false);
+    localStorage.removeItem(NOTE_IMAGE_PATH_STYLE_KEY);
+    noteImagePathStyle = 'relative';
+    syncNoteImagePathSettings();
     return true;
   }
   function resetNoteSettings() {
@@ -5705,6 +5740,23 @@
       submenuTimer = setTimeout(() => { submenu.remove(); if (closingSubmenu === submenu) closingSubmenu = null; submenuTimer = 0; }, 170);
     }
   }
+  async function svgClipboardSize(blob, image) {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const littleEndian = bytes[0] === 0xFF && bytes[1] === 0xFE || bytes[0] === 0x3C && bytes[1] === 0;
+    const bigEndian = bytes[0] === 0xFE && bytes[1] === 0xFF || bytes[0] === 0 && bytes[1] === 0x3C;
+    const source = new TextDecoder(littleEndian ? 'utf-16le' : bigEndian ? 'utf-16be' : 'utf-8').decode(bytes);
+    const svg = new DOMParser().parseFromString(source, 'image/svg+xml').documentElement;
+    const fixed = name => /^\+?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?\s*(?:px|in|cm|mm|pt|pc|q)?$/i.test(svg.getAttribute(name)?.trim() || '');
+    if (!fixed('width') || !fixed('height')) {
+      const viewBox = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+      if (viewBox.length === 4 && viewBox[2] > 0 && viewBox[3] > 0) {
+        const longest = Math.max(viewBox[2], viewBox[3]);
+        return viewBox.slice(2).map(side => Math.max(1, Math.round(side / longest * 1600)));
+      }
+    }
+    return [image.naturalWidth, image.naturalHeight];
+  }
+
   async function noteImageClipboardPng(context, signal) {
     const check = () => {
       if (signal.aborted || bodyMenuContext !== context || !noteWorkspaceVisible() || state.viewMode !== 'live'
@@ -5721,26 +5773,43 @@
     check();
     // PNG already has the clipboard format: do not decode or re-encode it.
     if (blob.type === 'image/png') return blob;
-    if (!/^image\/(?:jpeg|webp|bmp|gif)$/.test(blob.type)) throw new Error('Unsupported image type');
-    const image = await createImageBitmap(blob);
-    let canvas;
+    const svg = blob.type === 'image/svg+xml';
+    if (!svg && !/^image\/(?:jpeg|webp|bmp|gif)$/.test(blob.type)) throw new Error('Unsupported image type');
+    let image, canvas, url;
+    const cancelDecode = () => image?.removeAttribute('src');
     try {
+      let width, height;
+      if (svg) {
+        image = new Image();
+        url = URL.createObjectURL(blob);
+        signal.addEventListener('abort', cancelDecode, { once: true });
+        image.src = url;
+        await image.decode();
+        check();
+        [width, height] = await svgClipboardSize(blob, image);
+      } else {
+        image = await createImageBitmap(blob);
+        ({ width, height } = image);
+      }
       check();
-      const { width, height } = image;
       if (!width || !height || width > 16384 || height > 16384 || width * height > 64 * 1024 * 1024) {
         throw new RangeError(tr('imageCopyTooLarge'));
       }
       canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
       const drawing = canvas.getContext('2d');
       if (!drawing) throw new Error('Canvas unavailable');
-      drawing.drawImage(image, 0, 0);
+      drawing.drawImage(image, 0, 0, width, height);
       const png = await new Promise((resolve, reject) => canvas.toBlob(blob => {
         if (blob) resolve(blob); else reject(new Error('PNG conversion failed'));
       }, 'image/png'));
       check();
       return png;
     } finally {
-      image.close();
+      if (svg) {
+        signal.removeEventListener('abort', cancelDecode);
+        cancelDecode();
+        if (url) URL.revokeObjectURL(url);
+      } else image?.close();
       if (canvas) canvas.width = canvas.height = 0;
     }
   }
@@ -6470,11 +6539,11 @@
       reader.readAsDataURL(file);
     });
   }
-  async function uploadImageFile(path, file, data) {
+  async function uploadImageFile(path, file, data, pathStyle) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 45000);
     try {
-      return await post('/api/note-upload-image', { path, name: file.name || 'image.png', mediaType: file.type || '', data }, { signal: controller.signal });
+      return await post('/api/note-upload-image', { path, name: file.name || 'image.png', mediaType: file.type || '', data, pathStyle }, { signal: controller.signal });
     } finally { clearTimeout(timeout); }
   }
   let imageUploadChain = Promise.resolve();
@@ -6501,6 +6570,7 @@
   }
   async function uploadImages(files, commandContext) {
     if (!state.current || !files.length || !noteWorkspaceVisible() || state.viewMode === 'reading') return;
+    const pathStyle = noteImagePathStyle;
     const documentState = state.current, path = documentState.path, sequence = state.openSeq;
     const visibility = noteVisibilityEpoch, mode = state.viewMode;
     const current = () => state.current === documentState && state.openSeq === sequence && state.viewMode === mode
@@ -6520,10 +6590,10 @@
           try {
             const data = await fileToBase64(file);
             if (!valid()) return;
-            const result = await uploadImageFile(path, file, data);
+            const result = await uploadImageFile(path, file, data, pathStyle);
             if (!valid()) return;
             const alt = String(result.name || file.name || 'image').replace(/[\\\[\]]/g, '\\$&');
-            const target = String(result.path).replace(/[()\s<>]/g, character => character === '(' ? '%28' : character === ')' ? '%29' : encodeURIComponent(character));
+            const target = String(result.referencePath || result.path).replace(/[%#()\s<>]/g, character => character === '(' ? '%28' : character === ')' ? '%29' : encodeURIComponent(character));
             insertions.push('![' + alt + '](' + target + ')\n');
           } catch (error) { if (valid()) showToast(error.message || tr('uploadFailed'), 'error'); }
         }

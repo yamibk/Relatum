@@ -10090,12 +10090,16 @@ def _detach_note_assets_for_move(source):
 
 
 def _recycle_note_media(targets):
+    _detach_note_asset_readers(targets)
+    _move_paths_to_recycle_bin(targets)
+
+
+def _detach_note_asset_readers(targets):
     # Finish active Windows readers on temporary snapshots before recycling.
     for stream in tuple(_NOTE_ASSET_STREAMS):
         if any(stream.path == target or target.is_dir() and stream.path.is_relative_to(target) for target in targets):
             stream.detach()
             _NOTE_ASSET_STREAMS.discard(stream)
-    _move_paths_to_recycle_bin(targets)
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -11313,7 +11317,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _api_note_move(self, body: dict):
         try:
             _detach_note_assets_for_move(body.get("path", ""))
-            result = NOTES_STORE.move(body.get("path", ""), body.get("destination", ""))
+            result = NOTES_STORE.move(body.get("path", ""), body.get("destination", ""),
+                                      detach_images=_detach_note_asset_readers)
             result["tree"] = NOTES_STORE.tree(body.get('_tree', {}))
             _usage_remap("move", "notes", body.get("path", ""), result["path"], Path(result["path"]).name, prefix=True)
         except NotesError as err:
@@ -11508,6 +11513,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 body.get("name", ""),
                 content,
                 body.get("mediaType", ""),
+                prefer_filename=body.get("pathStyle") == "filename",
             )
         except NotesError as err:
             return self._send_notes_error(err)

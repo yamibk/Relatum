@@ -123,6 +123,16 @@ class NoteAssetStreamingTests(unittest.TestCase):
             '中文 目录', '目标 目录', '目标 目录/含图 笔记.md', byte_range='bytes=17-300017',
         )
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows file sharing')
+    def test_single_note_archives_sibling_image_while_its_response_is_open(self):
+        self.source = '同级.png'
+        sibling = self.store.root / '中文 目录' / self.source
+        sibling.write_bytes(self.image)
+        self.store.save(self.note, f'![图片]({self.source})', self.store.load(self.note)['revision'])
+        self.store.create('', '目标', 'folder')
+        self.stream_during_move(self.note, '目标/含图 笔记.md', '目标/含图 笔记.md', after_read=True)
+        self.assertFalse(sibling.exists())
+
     @unittest.skipUnless(os.name == 'nt', 'Windows directory sharing')
     def test_note_rename_after_first_image_chunk(self):
         self.stream_during_move(

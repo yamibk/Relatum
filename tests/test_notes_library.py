@@ -715,6 +715,92 @@ class NotesLibraryTests(unittest.TestCase):
         self.assertEqual(result["path"], "new")
         self.assertIn("[[new/Topic]]", self.store.load("Index.md")["content"])
 
+    def test_filename_upload_resolution_cleanup_and_move_collision(self):
+        png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
+        self.store.create('old', 'Picture', 'note', create_parents=True)
+        self.store.create('', 'new', 'folder')
+        note = 'old/Picture.md'
+        uploaded = self.store.upload_image(note, 'diagram.png', png, prefer_filename=True)
+        short = uploaded['referencePath']
+        companion = self.root / 'old' / uploaded['path']
+        self.assertEqual(self.store.resolve_image(note, short)[0], companion)
+        with self.assertRaises(NotesError):
+            self.store.resolve_image(note, './' + short)
+        sibling = self.root / 'old' / short
+        sibling.write_bytes(png + b'different')
+        self.assertEqual(self.store.resolve_image(note, short)[0], sibling)
+        self.assertEqual(self.store.resolve_image(note, './' + short)[0], sibling)
+        self.assertNotIn('referencePath', self.store.upload_image(note, 'diagram.png', png, prefer_filename=True))
+        sibling.unlink()
+        with_spaces = companion.with_name('另 一张.png')
+        with_spaces.write_bytes(png)
+        self.store.save(note, f'![]({short})\n\n![](另 一张.png)', self.store.load(note)['revision'])
+        self.assertEqual(self.store.cleanup_unused_images(note, self.store.load(note)['revision'])['deletedCount'], 0)
+        (self.root / 'new' / short).write_bytes(png + b'other')
+        self.store.move(note, 'new/Renamed.md')
+        target = 'Renamed.assets/images/' + short
+        self.assertEqual(self.store.load('new/Renamed.md')['content'], f'![]({target})\n\n![](另 一张.png)')
+        self.assertEqual(self.store.resolve_image('new/Renamed.md', target)[0].read_bytes(), png)
+
+    def test_single_note_move_archives_only_rendered_sibling_images(self):
+        self.store.create('', 'new', 'folder')
+        self.store.create('old', 'Note', 'note', create_parents=True, content=(
+            'Before ![label|240](<接线 (一).svg> "Title") after\n\n'
+            '![[./接线 (一).svg|120]]\n\n![](shared.svg)\n\n'
+            '`![](code.svg)`\n\n<!-- ![](code.svg) -->\n\n```md\n![](code.svg)\n```\n'
+        ))
+        self.store.create('new', 'Other', 'note', content='[Shared image](../old/shared.svg)')
+        self.store.create('new', 'Wiki', 'note', content='![[shared.svg]]')
+        svg = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 10"><path d="M0 0h20v10z"/></svg>'
+        old = self.root / 'old'
+        images = old / 'Note.assets' / 'images'
+        images.mkdir(parents=True)
+        (images / '接线 (一).svg').write_bytes(svg + b'<!-- previous -->')
+        for name in ('接线 (一).svg', 'shared.svg', 'code.svg', 'unreferenced.svg'):
+            (old / name).write_bytes(svg)
+        old_note = 'old/Note.md'
+        self.store.move(old_note, 'old/Renamed.md')
+        self.assertTrue((old / '接线 (一).svg').exists())
+        self.store.move('old/Renamed.md', 'new/Renamed.md')
+        moved = self.store.load('new/Renamed.md')['content']
+        renamed = 'Renamed.assets/images/%E6%8E%A5%E7%BA%BF%20%28%E4%B8%80%29-2.svg'
+        self.assertIn(f'Before ![label|240](<{renamed}> "Title") after', moved)
+        self.assertIn(f'![[{renamed}|120]]', moved)
+        self.assertIn('![](Renamed.assets/images/shared-2.svg)', moved)
+        self.assertEqual(moved.count('![](code.svg)'), 3)
+        target = self.root / 'new' / 'Renamed.assets' / 'images'
+        self.assertEqual((target / '接线 (一)-2.svg').read_bytes(), svg)
+        self.assertEqual((target / '接线 (一).svg').read_bytes(), svg + b'<!-- previous -->')
+        self.assertEqual((target / 'shared-2.svg').read_bytes(), svg)
+        self.assertFalse((old / '接线 (一).svg').exists())
+        self.assertTrue(all((old / name).is_file() for name in ('shared.svg', 'code.svg', 'unreferenced.svg')))
+        self.assertEqual(self.store.load('new/Other.md')['content'], '[Shared image](../old/shared.svg)')
+        self.assertEqual(self.store.resolve_image('new/Wiki.md', 'shared.svg', syntax='wiki')[0], old / 'shared.svg')
+
+    def test_sibling_image_archive_rolls_back_and_folder_move_keeps_layout(self):
+        self.store.create('', 'new', 'folder')
+        self.store.create('old', 'Note', 'note', create_parents=True, content='![](image.svg)')
+        svg = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 10"/>'
+        source = self.root / 'old' / 'image.svg'
+        source.write_bytes(svg)
+        original = self.store.atomic_text
+
+        def fail_rewrite(path, text):
+            if path.parent.name == 'new':
+                self.assertFalse(source.exists())
+                raise OSError('image archive rewrite failure')
+            return original(path, text)
+
+        with mock.patch.object(self.store, 'atomic_text', side_effect=fail_rewrite):
+            with self.assertRaisesRegex(OSError, 'image archive rewrite failure'):
+                self.store.move('old/Note.md', 'new/Note.md')
+        self.assertEqual(source.read_bytes(), svg)
+        self.assertFalse((self.root / 'new' / 'Note.assets').exists())
+        self.assertEqual(self.store.load('old/Note.md')['content'], '![](image.svg)')
+        self.store.move('old', 'moved-folder')
+        self.assertEqual(self.store.load('moved-folder/Note.md')['content'], '![](image.svg)')
+        self.assertEqual((self.root / 'moved-folder' / 'image.svg').read_bytes(), svg)
+
     def test_html_embed_is_owned_by_note_and_follows_companion(self):
         self.store.create('', 'Main', 'note')
         self.store.create('', 'Other', 'note')

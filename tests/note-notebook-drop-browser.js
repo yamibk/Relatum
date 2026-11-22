@@ -38,6 +38,8 @@ for (const name of ['单篇', 'zz未打开', '单篇冲突', 'CaseNote', '素材
   write(`${sourceBook}/${name}.md`, `# ${name}\n![diagram](${name}.assets/images/diagram.png)\n\n` + '测试段落\n\n'.repeat(160));
   write(`${sourceBook}/${name}.assets/images/diagram.png`, png);
 }
+fs.appendFileSync(path.join(notes, singleNote), '\n![同级图](同级图.png)\n');
+write(`${sourceBook}/同级图.png`, png);
 write(`${sourceBook}/单篇.assets/attachment.pdf`, 'companion attachment');
 write(`${targetBook}/单篇冲突.md`, 'target note conflict');
 write(`${targetBook}/casenote.md`, 'target case conflict');
@@ -169,7 +171,14 @@ async function waitFor(check, message) {
     });
     await page.waitForTimeout(100);
     const singleBefore = await page.evaluate(() => { const s = __dropTest.editor.snapshot(); return [s.anchor, s.head, s.scrollTop, __dropTest.state.viewMode]; });
-    await drag(singleNote, noteTargetBook);
+    // The first drop flushes a dirty note. Forward the move once that revision has been indexed.
+    const firstMove = async route => {
+      await waitFor(async () => (await (await fetch(url + '/api/note-index-state')).json()).phase === 'ready', 'index did not settle after flushing the moved note');
+      await route.continue();
+    };
+    await page.route('**/api/note-move', firstMove);
+    try { await drag(singleNote, noteTargetBook); }
+    finally { await page.unroute('**/api/note-move', firstMove); }
     let movedSingle = `${noteTargetBook}/单篇.md`;
     assert.equal(await page.evaluate(() => CanvasNoteWorkspace.currentPath), movedSingle);
     assert.equal(await page.evaluate(() => __dropTest.editor.view === __singleNoteEditor), true);
@@ -180,6 +189,10 @@ async function waitFor(check, message) {
     assert(fs.readFileSync(path.join(notes, movedSingle), 'utf8').includes('unsaved single note marker'));
     assert(!fs.existsSync(path.join(notes, singleNote))); assert(!fs.existsSync(path.join(notes, sourceBook, '单篇.assets')));
     assert.equal(fs.readFileSync(path.join(notes, noteTargetBook, '单篇.assets/attachment.pdf'), 'utf8'), 'companion attachment');
+    const archivedImage = encodeURI('单篇.assets/images/同级图.png');
+    assert((await page.evaluate(() => __dropTest.editor.snapshot().value)).includes(`![同级图](${archivedImage})`));
+    assert.deepEqual(fs.readFileSync(path.join(notes, noteTargetBook, '单篇.assets/images/同级图.png')), png);
+    assert(!fs.existsSync(path.join(notes, sourceBook, '同级图.png')));
     assert(fs.readFileSync(path.join(notes, 'Index.md'), 'utf8').includes(`[[${movedSingle.slice(0, -3)}#单篇|单篇引用]]`));
     const imageResponse = await page.request.get(url + '/api/note-asset?' + new URLSearchParams({ note: movedSingle, src: '单篇.assets/images/diagram.png' }));
     assert(imageResponse.ok()); assert.deepEqual(await imageResponse.body(), png);

@@ -21,7 +21,7 @@ import urllib.parse
 import uuid
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Callable
+from typing import Callable, NamedTuple
 from note_metadata import note_metadata, valid_tag
 from note_canvas_reference import CANVAS_DIRECTORY, canvas_target, references as canvas_references, rewrite as rewrite_canvas_references
 from notes_index import NoteIndex, book_root
@@ -297,10 +297,36 @@ def _standalone_local_image_target(value: str) -> str | None:
     return reference['target'] if reference else None
 
 
-def _attachment_references(content: str) -> set[str]:
+def _rendered_image_references(text: str):
+    from note_graph import _protected_source
+
+    visible = _protected_source(text)
+    for reference in _markdown_image_references(visible):
+        yield dict(reference, syntax='markdown')
+    for match in re.finditer(r'(?<!\\)!\[\[([^\]\n]+)\]\]', visible):
+        raw = match[1].split('|', 1)[0]
+        target = raw.strip()
+        if target:
+            start = match.start(1) + len(raw) - len(raw.lstrip())
+            yield {'from': match.start(), 'to': match.end(), 'target': target,
+                   'targetFrom': start, 'targetTo': start + len(target), 'syntax': 'wiki'}
+
+
+def _image_file_stamp(path: Path) -> tuple[int, int, int, int]:
+    info = path.stat(follow_symlinks=False)
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+
+
+class _SiblingImage(NamedTuple):
+    name: str
+    stamp: tuple[int, int, int, int]
+    shared: bool
+
+
+def _attachment_references(content: str) -> tuple[set[str], set[str]]:
     """Local Markdown destinations, including links and reference definitions.
 
-    Only called by explicit attachment cleanup. Code and HTML comments are not
+    Called by attachment cleanup and sibling image moves. Code and HTML comments are not
     rendered attachments. Keep reference definitions conservatively even when
     their label is unused, so uncommon Markdown forms cannot lose their files.
     """
@@ -348,7 +374,13 @@ def _attachment_references(content: str) -> set[str]:
             end += 1
         if end > start:
             targets.add(re.sub(r'\\([!"#$%&\'()*+,\-./:;<=>?@\[\]\\^_`{|}~])', r'\1', source[start:end]))
-    return {value for value in targets if value and not _REMOTE_IMAGE_TARGET_RE.match(value)}
+    wiki = set()
+    if '![' in content:
+        for reference in _rendered_image_references(content):
+            targets.add(reference['target'])
+            if reference['syntax'] == 'wiki':
+                wiki.add(reference['target'])
+    return {value for value in targets if value and not _REMOTE_IMAGE_TARGET_RE.match(value)}, wiki
 
 
 def _decode_image_text_items(encoded: str) -> list[str] | None:
@@ -1569,7 +1601,102 @@ class NotesStore:
                 mapping[path] = path
         return mapping
 
-    def _rewrite_for_move(self, documents: dict[str, dict], mapping: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    def _image_replacements_for_move(self, source: str, destination: str, text: str,
+                                     sibling_images: dict[Path, _SiblingImage] | None):
+        if '![' not in text:
+            return
+        old_note, new_note = self._absolute(source), self._absolute(destination)
+        old_assets, new_assets = old_note.with_suffix('.assets'), new_note.with_suffix('.assets')
+        images = old_assets / 'images'
+        siblings = {}
+        pending = []
+        resolved = {}
+        for reference in _rendered_image_references(text):
+            target, separator, fragment = reference['target'].partition('#')
+            decoded = urllib.parse.unquote(target).replace('\\', '/')
+            path = PurePosixPath(decoded)
+            replacement = None
+            if old_assets.name != new_assets.name and path.parts[:1] == (old_assets.name,):
+                replacement = PurePosixPath(new_assets.name, *path.parts[1:]).as_posix()
+            elif sibling_images is not None:
+                syntax = reference['syntax']
+                key = (target, syntax)
+                if key not in resolved:
+                    try:
+                        candidates = self._image_candidates(source, target, syntax, wiki_fallback=False)
+                        resolved[key] = candidates[0] if len(candidates) == 1 else None
+                    except NotesError:
+                        resolved[key] = None
+                image = resolved[key]
+                if image is None:
+                    continue
+                if image.parent == old_note.parent:
+                    if image not in siblings:
+                        try:
+                            stamp = _image_file_stamp(image)
+                            self._validate_resolved_image(image)
+                        except NotesError:
+                            resolved[key] = None
+                            continue
+                        siblings[image] = stamp
+                    pending.append((reference, image, separator + fragment))
+                elif (image.parent == images and '/' not in decoded
+                      and os.path.lexists(new_note.parent / image.name)):
+                    replacement = f'{new_assets.name}/images/{image.name}'
+            if replacement:
+                encoded = urllib.parse.quote(replacement, safe='/.-_~')
+                yield reference['targetFrom'], reference['targetTo'], encoded + separator + fragment
+
+        if not siblings:
+            return
+        self._absolute(images.relative_to(self.root).as_posix(), allow_assets=True)
+        occupied = {entry.name.casefold() for entry in images.iterdir()} if images.exists() else set()
+        shared, wiki_names = self._shared_sibling_images(old_note, set(siblings))
+        for image, stamp in siblings.items():
+            # A duplicate basename can make an existing vault-wide wiki lookup ambiguous.
+            name = image.name
+            number = 2
+            while (name.casefold() in occupied or
+                   name.casefold() in wiki_names and (image in shared or name != image.name)):
+                name = f'{image.stem}-{number}{image.suffix}'
+                number += 1
+            occupied.add(name.casefold())
+            sibling_images[image] = _SiblingImage(name, stamp, image in shared)
+        for reference, image, fragment in pending:
+            target = f'{new_assets.name}/images/{sibling_images[image].name}'
+            yield reference['targetFrom'], reference['targetTo'], urllib.parse.quote(target, safe='/.-_~') + fragment
+
+    def _shared_sibling_images(self, note: Path, images: set[Path]) -> tuple[set[Path], set[str]]:
+        """Retain originals when other notes reference them or the scan is uncertain."""
+        names = {path.name.casefold() for path in images}
+        shared = set()
+        wiki_names = set()
+        try:
+            snapshot = self._note_files(strict=True)
+            for path, relative, _ in snapshot:
+                if path == note:
+                    continue
+                text = self._decode_note(self._read_note_bytes(path))
+                references, wiki = _attachment_references(text)
+                for target in wiki:
+                    filename = urllib.parse.unquote(target.partition('#')[0]).replace('\\', '/')
+                    if '/' not in filename:
+                        wiki_names.add(filename.casefold())
+                for target in references:
+                    decoded = urllib.parse.unquote(target.partition('#')[0]).replace('\\', '/')
+                    if PurePosixPath(decoded).name.casefold() not in names:
+                        continue
+                    shared.update(images.intersection(self._image_candidates(relative, target)))
+                    if target in wiki:
+                        shared.update(images.intersection(self._image_candidates(relative, target, 'wiki')))
+            if snapshot == self._note_files(strict=True):
+                return shared, wiki_names
+        except (NotesError, OSError):
+            pass
+        return images, wiki_names | names
+
+    def _rewrite_for_move(self, documents: dict[str, dict], mapping: dict[str, str],
+                          archive_source: str, sibling_images: dict[Path, _SiblingImage]) -> tuple[dict[str, str], list[str]]:
         old_exact, old_stems = self._resolver(list(mapping))
         post_paths = list(mapping.values())
         new_exact, new_stems = self._resolver(post_paths)
@@ -1603,16 +1730,12 @@ class NotesStore:
             if old_source in moved_targets:
                 old_stem = PurePosixPath(old_source).stem
                 new_stem = PurePosixPath(new_source).stem
-                if old_stem != new_stem:
+                archive = old_source == archive_source
+                if old_stem != new_stem or archive:
                     if text is None:
                         text = self._indexed_text(old_source, document)
-                    for reference in _markdown_image_references(text):
-                        target, separator, fragment = reference['target'].partition('#')
-                        target = PurePosixPath(urllib.parse.unquote(target).replace('\\', '/')).as_posix()
-                        old_prefix = old_stem + ".assets/"
-                        if target.startswith(old_prefix):
-                            replacement = urllib.parse.quote(new_stem + '.assets/' + target[len(old_prefix):], safe='/.-_~')
-                            replacements.append((reference['targetFrom'], reference['targetTo'], replacement + separator + fragment))
+                    replacements.extend(self._image_replacements_for_move(old_source, new_source, text,
+                                                                          sibling_images if archive else None))
 
             if replacements:
                 for start, end, replacement in sorted(replacements, reverse=True):
@@ -1627,7 +1750,7 @@ class NotesStore:
         # 同一句歧义只报告一次，避免长文重复刷屏。
         return updates, list(dict.fromkeys(warnings))[:50]
 
-    def move(self, source: object, destination: object) -> dict:
+    def move(self, source: object, destination: object, *, detach_images: Callable[[list[Path]], None] | None = None) -> dict:
         source_rel = self.normalize_path(source)
         destination_rel = self.normalize_path(destination)
         if NOTEBOOK_CONTAINER.casefold() in (source_rel.casefold(), destination_rel.casefold()):
@@ -1681,15 +1804,10 @@ class NotesStore:
                 sources.update(row[0] for row in conn.execute(sql, group))
         documents = {path: self.index.document(path) for path in sources}
         mapping = self._post_move_paths(paths, source_rel, destination_rel, source_is_folder)
-        updates, warnings = self._rewrite_for_move(documents, mapping)
+        sibling_images = {}
+        archive_source = source_rel if not source_is_folder and source_path.parent != destination_path.parent else ''
+        updates, warnings = self._rewrite_for_move(documents, mapping, archive_source, sibling_images)
         reverse_mapping = {new: old for old, new in mapping.items()}
-        stage = self.root / f".relatum-txn-{uuid.uuid4().hex}"
-        stage.mkdir()
-        backups: list[tuple[Path, str, str]] = []
-        database_applied: list[tuple[Path, Path]] = []
-        database_rollback_failed = False
-        moved = False
-        companion_moved = False
         source_companion = source_path.with_name(source_path.stem + ".assets") if source_path.is_file() else None
         destination_companion = destination_path.with_name(destination_path.stem + ".assets") if source_path.is_file() else None
         companion_case_only = bool(
@@ -1697,11 +1815,22 @@ class NotesStore:
             and source_companion.parent == destination_companion.parent
             and source_companion.name.casefold() == destination_companion.name.casefold()
         )
-        if source_companion and source_companion.exists():
+        if source_companion and os.path.lexists(source_companion):
             if _is_reparse(source_companion):
                 raise NotesError("伴生素材目录不能是链接或重解析点", status=403, code="unsafe_path")
-            if destination_companion and destination_companion.exists() and not companion_case_only:
-                raise NotesError("目标伴生素材目录已存在", status=409, code="exists")
+        if (destination_companion and os.path.lexists(destination_companion) and not companion_case_only
+                and (source_companion.exists() or sibling_images)):
+            raise NotesError("目标伴生素材目录已存在", status=409, code="exists")
+        stage = self.root / f".relatum-txn-{uuid.uuid4().hex}"
+        stage.mkdir()
+        backups: list[tuple[Path, str, str]] = []
+        database_applied: list[tuple[Path, Path]] = []
+        staged_images: dict[Path, Path] = {}
+        created_images: list[tuple[Path, tuple[int, int]]] = []
+        created_directories: list[Path] = []
+        rollback_failed = False
+        moved = False
+        companion_moved = False
         # Keep notification cleanup out of intermediate paths in this structural
         # disk transaction. A walk begun earlier must retry after the handoff.
         self.sync._condition.acquire()
@@ -1726,6 +1855,18 @@ class NotesStore:
                 if _revision(current) != document["revision"]:
                     raise NotesError("移动期间有笔记被外部修改，请重试", status=409, code="move_changed")
 
+            if sibling_images:
+                exclusive = [path for path, image in sibling_images.items() if not image.shared]
+                if detach_images and exclusive:
+                    detach_images(exclusive)
+                for index, path in enumerate(exclusive):
+                    self._absolute(path.relative_to(self.root).as_posix(), allow_assets=True)
+                    if _image_file_stamp(path) != sibling_images[path].stamp:
+                        raise NotesError('移动期间图片已修改，请重试', status=409, code='move_changed')
+                    staged = stage / f'sibling-{index}'
+                    path.rename(staged)
+                    staged_images[path] = staged
+
             case_only = (source_path.parent == destination_path.parent
                          and source_path.name.casefold() == destination_path.name.casefold())
             if case_only:
@@ -1743,6 +1884,25 @@ class NotesStore:
                 else:
                     source_companion.rename(destination_companion)
                 companion_moved = True
+            if sibling_images:
+                image_directory = destination_companion / 'images'
+                self._absolute(image_directory.relative_to(self.root).as_posix(), allow_assets=True)
+                for directory in (destination_companion, image_directory):
+                    if not directory.is_dir():
+                        directory.mkdir()
+                        created_directories.append(directory)
+                for path, image in sibling_images.items():
+                    original = staged_images.get(path, path)
+                    self._absolute(path.relative_to(self.root).as_posix(), allow_assets=True)
+                    if _image_file_stamp(original) != image.stamp:
+                        raise NotesError('移动期间图片已修改，请重试', status=409, code='move_changed')
+                    target = image_directory / image.name
+                    with original.open('rb') as reader, target.open('xb') as writer:
+                        info = os.fstat(writer.fileno())
+                        created_images.append((target, (info.st_dev, info.st_ino)))
+                        shutil.copyfileobj(reader, writer, length=256 * 1024)
+                    if _image_file_stamp(original) != image.stamp:
+                        raise NotesError('移动期间图片已修改，请重试', status=409, code='move_changed')
             for post_relative, text in updates.items():
                 self.atomic_text(self._absolute(post_relative), text)
             self.database.apply_move(database_changes, source_rel, destination_rel, database_applied)
@@ -1758,14 +1918,34 @@ class NotesStore:
                 try:
                     os.replace(backup, database)
                 except OSError:
-                    database_rollback_failed = True
+                    rollback_failed = True
             for backup, pre_relative, post_relative in reversed(backups):
                 current_relative = post_relative if moved else pre_relative
                 try:
                     if backup.exists() and self._absolute(current_relative).exists():
                         self.atomic_bytes(self._absolute(current_relative), backup.read_bytes())
                 except Exception:
+                    rollback_failed = True
+            for image, identity in reversed(created_images):
+                try:
+                    if _image_file_stamp(image)[:2] == identity:
+                        image.unlink()
+                except FileNotFoundError:
                     pass
+                except OSError:
+                    rollback_failed = True
+            for directory in reversed(created_directories):
+                try:
+                    directory.rmdir()
+                except OSError:
+                    rollback_failed = True
+            for original, staged in staged_images.items():
+                try:
+                    if os.path.lexists(original):
+                        raise FileExistsError(original)
+                    staged.rename(original)
+                except OSError:
+                    rollback_failed = True
             if companion_moved and destination_companion and destination_companion.exists() and source_companion:
                 try:
                     if companion_case_only:
@@ -1775,16 +1955,16 @@ class NotesStore:
                     else:
                         destination_companion.rename(source_companion)
                 except OSError:
-                    pass
+                    rollback_failed = True
             if moved and destination_path.exists() and not source_path.exists():
                 try:
                     destination_path.rename(source_path)
                 except OSError:
-                    pass
+                    rollback_failed = True
             raise
         finally:
             self.sync._condition.release()
-            if not database_rollback_failed:
+            if not rollback_failed:
                 shutil.rmtree(stage, ignore_errors=True)
         return {
             "path": destination_rel,
@@ -2024,7 +2204,8 @@ class NotesStore:
             candidates[identity] = (directory, entry.name, signature)
         return revision, candidates
 
-    def upload_image(self, note: object, name: object, content: bytes, media_type: object = "") -> dict:
+    def upload_image(self, note: object, name: object, content: bytes, media_type: object = "",
+                     *, prefer_filename: bool = False) -> dict:
         note_rel = self.normalize_path(note)
         note_path = self._absolute(note_rel)
         self._read_note_bytes(note_path)
@@ -2062,9 +2243,13 @@ class NotesStore:
         if not target.exists():
             self.atomic_bytes(target, content)
         markdown_path = os.path.relpath(target, note_path.parent).replace("\\", "/")
-        return {"path": markdown_path, "name": original_name, "mediaType": expected_type}
+        result = {"path": markdown_path, "name": original_name, "mediaType": expected_type}
+        if prefer_filename and not os.path.lexists(note_path.parent / target.name):
+            result['referencePath'] = target.name
+        return result
 
-    def _image_candidates(self, note: object, source: object, syntax: str = 'markdown') -> list[Path]:
+    def _image_candidates(self, note: object, source: object, syntax: str = 'markdown',
+                          *, wiki_fallback: bool = True) -> list[Path]:
         note_rel = self.normalize_path(note)
         note_path = self._absolute(note_rel)
         if syntax not in ('markdown', 'wiki'):
@@ -2092,7 +2277,12 @@ class NotesStore:
             raise NotesError("不支持这种图片格式", status=403, code="unsupported_type")
         if target.is_file():
             return [target]
-        if syntax == 'wiki' and '..' not in raw.replace('\\', '/').split('/'):
+        if syntax == 'markdown' and '/' not in raw and '\\' not in raw:
+            companion = note_path.with_suffix('.assets') / 'images' / raw
+            companion = self._absolute(companion.relative_to(self.root).as_posix(), allow_assets=True)
+            if companion.is_file():
+                return [companion]
+        if syntax == 'wiki' and wiki_fallback and '..' not in raw.replace('\\', '/').split('/'):
             vault_target = self._absolute(self.normalize_path(raw.replace('\\', '/'), allow_assets=True), allow_assets=True)
             if vault_target.is_file():
                 return [vault_target]
@@ -2117,6 +2307,9 @@ class NotesStore:
         if not candidates:
             raise NotesError("图片不存在", status=404, code="not_found")
         target = candidates[0]
+        return target, self._validate_resolved_image(target)
+
+    def _validate_resolved_image(self, target: Path) -> str:
         media_type = NOTE_IMAGE_TYPES[target.suffix.casefold()]
         if _is_reparse(target):
             raise NotesError("图片不能是链接或重解析点", status=403, code="unsafe_path")
@@ -2130,7 +2323,7 @@ class NotesStore:
                 if _sniff_image_media_type(header) in ("image/jpeg", "image/webp") and _image_dimensions(header) is None:
                     header += image.read(_IMAGE_HEADER_BYTES - len(header))
                 _check_image_dimensions(header)
-        return target, media_type
+        return media_type
 
     def resolve_link_target(self, note: object, source: object) -> Path:
         """Resolve a Markdown file link relative to its note, within the vault."""
@@ -2205,18 +2398,18 @@ class NotesStore:
             document_raw = raw if document == note_path else self._read_note_bytes(document)
             revisions.append((document, _revision(document_raw)))
             document_text = self._decode_note(document_raw)
-            references = _attachment_references(document_text)
-            wiki_sources = {match[1].split('|', 1)[0].strip() for match in re.finditer(r'(?<!\\)!\[\[([^\]\n]+)\]\]', document_text)}
+            references, wiki_sources = _attachment_references(document_text)
             for source in references:
-                if source in wiki_sources:
-                    try:
-                        for image in self._image_candidates(document_relative, source, 'wiki'):
-                            protected.add(image.relative_to(self.root).as_posix().casefold())
-                    except (NotesError, OSError):
-                        pass
+                decoded = urllib.parse.unquote(source.split('#', 1)[0]).replace('\\', '/')
+                for syntax, should_resolve in (('wiki', source in wiki_sources), ('markdown', '/' not in decoded)):
+                    if should_resolve:
+                        try:
+                            for image in self._image_candidates(document_relative, source, syntax):
+                                protected.add(image.relative_to(self.root).as_posix().casefold())
+                        except (NotesError, OSError):
+                            pass
                 # Resolve paths without the display-size limit: a referenced
                 # image must be retained even if it is currently too large to load.
-                decoded = urllib.parse.unquote(source.split('#', 1)[0]).replace('\\', '/')
                 if decoded.startswith('/') or _REMOTE_IMAGE_TARGET_RE.match(decoded):
                     continue
                 parts = list(document.parent.relative_to(self.root).parts)
@@ -2279,8 +2472,6 @@ class NotesStore:
     def trash_media(self, note: object, expected_revision: object, source: object, recycle,
                     *, kind: str, syntax: str = 'markdown', canvas_revision: object = None) -> dict:
         """Recycle a file and remove only this note's live embeds. Caller holds mutation locks."""
-        from note_graph import _protected_source
-
         normalized = self.normalize_path(note)
         note_path = self._absolute(normalized)
         raw = self._read_note_bytes(note_path)
@@ -2298,13 +2489,8 @@ class NotesStore:
                     if (canvas_target(normalized, ref['target']) or '').casefold() == current['path'].casefold()]
         elif kind == 'image':
             target, _ = self.resolve_image(normalized, source, syntax=syntax)
-            # The existing graph scanner masks protected syntax without changing offsets.
-            visible = _protected_source(text)
-            candidates = [dict(ref, syntax='markdown') for ref in _markdown_image_references(visible)]
-            candidates.extend({'from': match.start(), 'to': match.end(), 'target': match[1].split('|', 1)[0].strip(),
-                               'syntax': 'wiki'} for match in re.finditer(r'(?<!\\)!\[\[([^\]\n]+)\]\]', visible))
             resolved, refs = {}, []
-            for ref in candidates:
+            for ref in _rendered_image_references(text):
                 key = (ref['target'], ref['syntax'])
                 if key not in resolved:
                     try:

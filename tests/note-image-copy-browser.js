@@ -87,6 +87,11 @@ function probe() {
   let markdown = '# 图片复制\n\n普通文字 copy me\n\n' + lines.join('\n\n') + '\n\n末尾文字';
   fs.writeFileSync(path.join(notes, '图片 笔记.md'), markdown);
   fs.writeFileSync(path.join(notes, 'Other.md'), 'Other note');
+  const svg = attributes => `<svg xmlns="http://www.w3.org/2000/svg" ${attributes} viewBox="0 0 36 18"><rect x="9" y="4" width="18" height="10" fill="#13579b"/></svg>`;
+  const vectors = [['固定.svg', svg('width="36" height="18"'), 36, 18],
+    ['比例.svg', svg(''), 1600, 800], ['相对.svg', svg('width="100%" height="100%"'), 1600, 800]];
+  for (const [name, source] of vectors) fs.writeFileSync(path.join(notes, name), source);
+  fs.writeFileSync(path.join(notes, 'Vectors.md'), vectors.map(([name]) => `![vector|72](${name})`).join('\n\n'));
   const originalAssets = files.map(name => fs.readFileSync(path.join(assets, name)));
   const port = await freePort(), debugPort = native ? await freePort() : 0;
   const server = spawn(native ? path.join(release, 'Relatum.exe') : python,
@@ -106,7 +111,7 @@ function probe() {
     assert(ready, 'isolated host starts');
     let url = `http://127.0.0.1:${port}`;
     if (native) {
-      browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`); context = browser.contexts()[0];
+      browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`, { noDefaults: true }); context = browser.contexts()[0];
       for (let i = 0; i < 100; i++) {
         page = context.pages().find(item => item.url().startsWith('http://127.0.0.1:')); if (page) break; await pause(100);
       }
@@ -126,6 +131,7 @@ function probe() {
       await page.route(`**/${name}*`, route => route.fulfill({ contentType: name.endsWith('.css') ? 'text/css' : 'text/javascript', body: source }));
     }
     await page.goto(url + (native ? '/?desktop=1' : '/'));
+    if (native) await page.bringToFront();
     if (!await page.evaluate(() => window.copyTest?.state.active)) await page.locator('button[data-start-workspace="notes"]').click();
     await page.waitForFunction(() => window.copyTest?.state.initialized && copyTest.state.active && !copyTest.state.openingPath);
     await page.evaluate(() => copyTest.openNote('图片 笔记.md'));
@@ -173,9 +179,39 @@ function probe() {
       assert.equal(metrics.fetches, 1); assert.equal(metrics.encodes, index ? 1 : 0); assert.equal(metrics.decoded, index ? 1 : 0);
       assert(metrics.bitmapsReleased && metrics.canvasesReleased); assert.deepEqual(metrics.types, [['image/png']]);
       const pixels = await readPixels(index);
-      assert.deepEqual(pixels.types, ['image/png']); assert.deepEqual(pixels.actual, pixels.expected, files[index] + ': original pixels and dimensions');
+      assert.deepEqual(pixels.types, ['image/png'], files[index] + ': clipboard formats');
+      assert.deepEqual(pixels.actual, pixels.expected, files[index] + ': original pixels and dimensions');
       assert.equal(await page.evaluate(() => copyTest.editor.snapshot().value), markdown);
       performance.push({ file: files[index], ...metrics });
+    }
+    async function checkSvgClipboard() {
+      await page.evaluate(() => copyTest.openNote('Vectors.md'));
+      for (const [index, [name, , width, height]] of vectors.entries()) {
+        await openImage(index);
+        await menu.locator('[data-note-command="copy"]').click();
+        await menu.waitFor({ state: 'hidden' });
+        const result = await page.evaluate(async () => {
+          const [item] = await navigator.clipboard.read();
+          const bitmap = await createImageBitmap(await item.getType('image/png'));
+          try {
+            const { width, height } = bitmap;
+            const canvas = new OffscreenCanvas(width, height), ctx = canvas.getContext('2d');
+            ctx.drawImage(bitmap, 0, 0);
+            return { width, height, outside: ctx.getImageData(0, 0, 1, 1).data[3],
+              center: Array.from(ctx.getImageData(width / 2, height / 2, 1, 1).data) };
+          } finally { bitmap.close(); }
+        });
+        assert.deepEqual(result, { width, height, outside: 0, center: [19, 87, 155, 255] }, name);
+      }
+      const images = path.join(notes, 'Other.assets', 'images');
+      const before = fs.existsSync(images) ? fs.readdirSync(images).length : 0;
+      await page.evaluate(() => copyTest.openNote('Other.md'));
+      await page.locator('.cm-content').press('Control+End'); await page.keyboard.press('Shift+F10');
+      await menu.waitFor({ state: 'visible' }); await menu.locator('[data-note-command="paste"]').click();
+      await menu.waitFor({ state: 'hidden' }); await page.evaluate(() => copyTest.flushSave());
+      assert.equal(fs.readdirSync(images).length, before + 1);
+      for (const [name, source] of vectors) assert.equal(fs.readFileSync(path.join(notes, name), 'utf8'), source);
+      checks.push('fixed, viewBox-only and relative SVG clipboard PNG dimensions, transparency, pixels, and round trip');
     }
     for (let i = 0; i < files.length; i++) await copy(i, i === 2);
     checks.push('original RGBA/dimensions, PNG/JPEG/WebP/BMP/GIF first frame, inline/wiki/Chinese paths, keyboard menu, overlay excluded');
@@ -211,10 +247,10 @@ function probe() {
         document.documentElement.dataset.desktopMinimized = '1'; window.dispatchEvent(new CustomEvent('canvasdesktop:visibility'));
       });
       else await page.locator('button[data-start-workspace="canvas"]').click();
+      await menu.waitFor({ state: 'hidden' });
       await page.evaluate(() => imageCopyProbe.release());
       await page.waitForFunction(() => imageCopyProbe.writes[0].done);
       assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'cancelled 图片 笔记.md');
-      assert(await menu.isHidden());
       assert(await page.evaluate(() => imageCopyProbe.bitmaps.every(image => !image.width)
         && imageCopyProbe.canvases.every(canvas => !canvas.width && !canvas.height)), 'cancellation releases decoded images and canvases');
       if (cancel === 'minimize') await page.evaluate(() => {
@@ -247,6 +283,32 @@ function probe() {
     await menu.waitFor({ state: 'hidden' }); await page.evaluate(() => copyTest.flushSave());
     assert(fs.readFileSync(path.join(notes, 'Other.md'), 'utf8').includes('Other.assets/images/'));
     checks.push('real image clipboard reimports through the existing note paste API');
+
+    await checkSvgClipboard();
+
+    if (!native) {
+      const dialog = page.locator('[data-role="note-settings-dialog"]');
+      await page.locator('[data-note-action="toggle-library-settings"]').click();
+      await dialog.locator('nav [data-settings-category="editing"]').click();
+      const choice = dialog.getByRole('combobox', { name: '新插入图片的路径', exact: true });
+      await choice.click();
+      await dialog.getByRole('option', { name: '仅文件名', exact: true }).click();
+      await page.keyboard.press('Escape');
+      await page.reload();
+      await page.waitForFunction(() => copyTest?.state.initialized && copyTest.state.active);
+      await page.locator('[data-note-action="toggle-library-settings"]').click();
+      await dialog.locator('nav [data-settings-category="editing"]').click();
+      assert.equal((await choice.textContent()).trim(), '仅文件名');
+      await page.keyboard.press('Escape');
+      await page.evaluate(() => copyTest.openNote('Vectors.md'));
+      await page.locator('.cm-content').press('Control+End'); await page.keyboard.press('Shift+F10');
+      await menu.waitFor({ state: 'visible' }); await menu.locator('[data-note-command="paste"]').click();
+      await menu.waitFor({ state: 'hidden' }); await page.evaluate(() => copyTest.flushSave());
+      const content = fs.readFileSync(path.join(notes, 'Vectors.md'), 'utf8');
+      const short = /\]\(([^/()]+\.png)\)/.exec(content)?.[1];
+      assert(short && fs.existsSync(path.join(notes, 'Vectors.assets', 'images', short)), content);
+      checks.push('image path setting survives reload and inserts a bare filename backed by the companion folder');
+    }
     assert.equal(fs.readFileSync(path.join(notes, '图片 笔记.md'), 'utf8'), markdown);
     files.forEach((name, i) => assert.deepEqual(fs.readFileSync(path.join(assets, name)), originalAssets[i]));
 
