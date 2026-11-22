@@ -26349,8 +26349,8 @@ html.dark-semantic-ui .editor-page[data-background-tone="dark"] .normal-kind-fab
   color: #a0a0a0;
 }
 
-/* 结构化富文本编辑态：格式来自 node.textMarks / node.bodyMarks，DOM 中没有
-   {hl:...} 等可见定界符。所有载体共用同一组语义色与相对字号。 */
+/* 结构化富文本编辑态：工具栏格式来自 node.textMarks / node.bodyMarks。
+   Markdown 黄色高光可在编辑时显示 == 定界符。 */
 .rt-run[data-rt-size="sm"] { font-size: 0.86em; }
 .rt-run[data-rt-size="lg"] { font-size: 1.22em; }
 .rt-run[data-rt-size="xl"] { font-size: 1.48em; }
@@ -26421,6 +26421,12 @@ html.dark-semantic-ui .editor-page[data-background-tone="dark"] .normal-kind-fab
 .node-text h4:last-child,
 .node-text h5:last-child,
 .node-text h6:last-child { margin-bottom: 0; }
+
+/* 节点内的滚动容器要容纳标题字形。较紧的行盒会在部分字号下
+   溢出一两个像素，即使整个标题已自然撑开节点也会出现滚动条。 */
+.node .canvas-node-markdown :is(h1, h2, h3, h4, h5, h6):last-child {
+  padding-block-end: max(2px, 0.15em);
+}
 
 .node-text p {
   margin: 0 0 6px;

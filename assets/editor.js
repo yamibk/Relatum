@@ -8181,8 +8181,11 @@
     function setProRichBody(node) {
       if (!proBodyRich) return;
       var rich = window.RelatumRichText;
-      if (rich) rich.renderEditable(proBodyRich, node && node.body || '', node && node.bodyMarks || []);
-      else proBodyRich.textContent = node && node.body || '';
+      if (rich) {
+        rich.renderEditable(proBodyRich, node && node.body || '', node && node.bodyMarks || [], { revealHighlights: true });
+      } else {
+        proBodyRich.textContent = node && node.body || '';
+      }
     }
     function readProRichBody() {
       var rich = window.RelatumRichText;

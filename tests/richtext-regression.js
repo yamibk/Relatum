@@ -88,4 +88,41 @@ function extract(root) {
   });
 }
 
+// The marker pass sees the same logical lines as commit, including browser-only breaks.
+{
+  const first = text('# Heading');
+  const second = text('## Next\r\n### Last');
+  const root = element('div', [first, element('br'), element('div', [element('span', [second])])]);
+  const source = RichText.editableSource(root);
+  assert.equal(source.text, '# Heading\n## Next\n### Last');
+  assert.deepEqual(source.segments, [
+    { node: first, start: 0, end: 9, domStart: 0 },
+    { node: second, start: 10, end: 17, domStart: 0 },
+    { node: second, start: 18, end: 26, domStart: 9 },
+  ]);
+}
+
+// Structured formatting follows retained characters when Markdown delimiters are removed.
+{
+  const source = '==before== {';
+  const marks = RichText.apply(source, [], 11, 12, { highlight: 'yellow' });
+  const parsed = RichText.parseLegacy(source, marks);
+  assert.equal(parsed.text, 'before {');
+  assert.deepEqual(parsed.marks, [
+    { start: 0, end: 6, highlight: 'yellow' },
+    { start: 7, end: 8, highlight: 'yellow', highlightTag: true },
+  ]);
+  assert.equal(RichText.serialize('Yellow', RichText.apply('Yellow', [], 0, 6, { highlight: 'yellow' })), '==Yellow==');
+  assert.deepEqual(RichText.parseLegacy('{hl:yellow|a==b==c}').marks, [
+    { start: 0, end: 1, highlight: 'yellow', highlightTag: true },
+    { start: 1, end: 2, highlight: 'yellow' },
+    { start: 2, end: 3, highlight: 'yellow', highlightTag: true },
+  ]);
+  assert.deepEqual(RichText.parseLegacy('==abc==', [{ start: 3, end: 4, highlight: 'blue', bold: true }]).marks, [
+    { start: 0, end: 1, highlight: 'yellow' },
+    { start: 1, end: 2, highlight: 'blue', bold: true },
+    { start: 2, end: 3, highlight: 'yellow' },
+  ]);
+}
+
 console.log('richtext regression tests passed');

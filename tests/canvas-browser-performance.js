@@ -648,6 +648,53 @@ async function groupAndTextRegression(browser, config, options = {}) {
     await undo();
     assert.equal(await text.innerText(), '123\n456');
 
+    const markdownMarkers = () => text.evaluate(() => (
+      Array.from(CSS.highlights.get('md-mark') || [], (range) => range.toString())
+    ));
+    await edit();
+    await page.keyboard.type('# 12345678');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('## 123');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('### 123');
+    await page.keyboard.press('Enter');
+    await page.keyboard.insertText('  #### 523');
+    const headings = await markdownMarkers();
+    await page.keyboard.press('Control+Enter');
+    assert.equal(await text.locator('h2').innerText(), '123');
+    assert.equal(await text.locator('h4').innerText(), '523');
+    const headingScroll = await text.evaluate((el) => [el.scrollHeight, el.clientHeight]);
+    assert.equal(headingScroll[0], headingScroll[1], 'short rendered headings fit: ' + headingScroll);
+    assert.deepEqual(headings, ['#', '##', '###', '####']);
+    await undo();
+
+    await edit();
+    await page.keyboard.type('==123==');
+    assert.deepEqual(await markdownMarkers(), ['==', '==']);
+    await page.keyboard.press('Control+Enter');
+    assert.equal(await text.locator('mark').innerText(), '123');
+    await text.dblclick();
+    assert.equal(await text.innerText(), '==123==', 'reopen a saved yellow highlight as editable Markdown');
+    await page.keyboard.press('Control+End');
+    await page.keyboard.type('23');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('32');
+    await page.keyboard.press('Control+Enter');
+    assert.equal((await model('a')).text, '12323\n32');
+    assert.deepEqual((await model('a')).textMarks, [{ start: 0, end: 3, highlight: 'yellow' }]);
+    assert.equal(await text.locator('mark').innerText(), '123');
+
+    await text.dblclick();
+    await page.keyboard.press('Control+Home');
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Control+Enter');
+    assert.equal(await text.locator('mark').count(), 0, 'removing a delimiter clears the highlight');
+    await undo();
+    await undo();
+    await undo();
+    assert.equal(await text.innerText(), '123\n456');
+
     await edit();
     await page.keyboard.insertText('第一行');
     await page.keyboard.press('Enter');
@@ -660,6 +707,49 @@ async function groupAndTextRegression(browser, config, options = {}) {
     } finally { await cdp.detach(); }
     assert.equal((await model('a')).text, '第一行\n中文');
     assert.equal(await text.innerText(), '第一行\n中文');
+
+    const dragTextHeight = async (side, dy) => {
+      await node('a').hover();
+      const handle = await node('a').locator('.body-resize-' + side).boundingBox();
+      assert(handle, 'vertical text resize handle');
+      const x = handle.x + handle.width / 2;
+      const y = handle.y + handle.height / 2;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x, y + dy, { steps: 4 });
+      await page.mouse.up();
+    };
+    await dragTextHeight('s', 60);
+    assert((await model('a')).bodyHeight > 0);
+    await edit();
+    const longText = Array.from({ length: 9 }, (_, index) => 'Line ' + (index + 1)).join('\n');
+    await page.keyboard.insertText(longText);
+    await page.keyboard.press('Control+Enter');
+    const verticalOverflow = () => text.evaluate((el) => el.scrollHeight - el.clientHeight);
+    assert(await verticalOverflow() > 20, 'text taller than the resized node really scrolls');
+    await text.evaluate((el) => { el.scrollTop = 40; });
+    assert.equal(await text.evaluate((el) => el.scrollTop), 40);
+    await dragTextHeight('s', 175);
+    assert.equal(await verticalOverflow(), 0, 'bottom resize reveals all text and clears scrolling');
+    await dragTextHeight('n', 175);
+    assert(await verticalOverflow() > 20, 'shrinking from the top restores scrolling');
+    await dragTextHeight('n', -175);
+    assert.equal(await verticalOverflow(), 0, 'top resize also clears scrolling');
+
+    await edit();
+    await page.keyboard.insertText('Toolbar yellow');
+    await page.keyboard.press('Control+a');
+    const textDockToggle = page.locator('[data-role="text-dock-collapse"]');
+    if (await textDockToggle.getAttribute('aria-expanded') === 'false') await textDockToggle.click();
+    await page.locator('[data-text-tone="y"]').click();
+    await page.locator('[data-text-action="highlight"]').click();
+    await page.keyboard.press('Control+Enter');
+    assert(await page.evaluate(() => EditorShell.saveNow()), 'canvas saves the toolbar format');
+    await openCanvas(page, config, name);
+    await text.dblclick();
+    assert.equal(await text.innerText(), 'Toolbar yellow');
+    assert.equal(await text.locator('[data-rt-highlight="yellow"]').innerText(), 'Toolbar yellow');
+    await page.keyboard.press('Escape');
     assert(!requests.some((url) => /\/vendor\/(?:mathjax|mermaid)\//i.test(url)), 'plain text and code do not load diagram or math runtimes');
     assert.deepEqual(page.testErrors, []);
     return { ...options, editSize, expanded, beforeResize, resized };

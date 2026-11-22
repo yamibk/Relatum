@@ -2184,7 +2184,7 @@
 
   // ── Y2 轮：标记符号区间（给编辑态实时高亮用）────────────
   // 在原始源码上算出"应该变浅灰的标记符号"的字符区间 [start, end)（end 不含）。
-  // 偏移基于原始 text 的字符位置（含 \n），和 contenteditable 的 textContent 偏移一致。
+  // 偏移基于包含换行的 Markdown 源码，由编辑器映射到实际 DOM。
   // 只标"定界符本身"，中间内容保持原色。
   function markIntervals(text) {
     const out = [];
@@ -2192,9 +2192,12 @@
     let base = 0;
     for (let li = 0; li < lines.length; li++) {
       const line = lines[li];
-      // 行首标题 #{1,6}+空格
-      let m = /^(#{1,6})\s/.exec(line);
-      if (m) out.push([base, base + m[1].length]);
+      // 行首标题的缩进与渲染器一致。
+      let m = /^([ \t]{0,3})(#{1,6})[ \t]/.exec(line);
+      if (m) {
+        const start = base + m[1].length;
+        out.push([start, start + m[2].length]);
+      }
       // 行首无序列表 - * +（允许前导空格）
       m = /^(\s*)([-*+])\s/.exec(line);
       if (m) {

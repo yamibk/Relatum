@@ -3,7 +3,7 @@
 // - 节点多行文本：富文本编辑与 Markdown 显示保留 Enter 换行，
 //   Ctrl/Cmd+Enter 提交、Esc 取消；连线标签仍然是单行
 // - 节点 Markdown 渲染：显示态用 window.MarkdownMini.render(...) 渲成 HTML；
-//   字号/字色/高光/粗体使用 textMarks/bodyMarks 结构化保存，编辑态不显示增强语法
+//   字号/字色/高光/粗体使用 textMarks/bodyMarks 保存，Markdown 黄色高光可编辑源码
 // - 数学公式：$...$ 行内、$$...$$ 块级，每次显示态渲染后 typesetMath(textEl)
 //   调用 MathJax；MathJax 未加载完时静默跳过，加载好后会一次性 typeset 所有现有节点
 // - 编辑期间打字 → 节点尺寸变化 → 相邻连线实时跟随
@@ -7052,7 +7052,7 @@
     function setRichEditable(el, text, marks) {
       if (!el) return;
       prepareRichEditable(el);
-      if (RichText) RichText.renderEditable(el, String(text || ''), marks || []);
+      if (RichText) RichText.renderEditable(el, String(text || ''), marks || [], { revealHighlights: true });
       else el.textContent = String(text || '');
     }
 
@@ -7066,9 +7066,7 @@
       const text = String(draft && draft.text || '');
       const marks = draft && Array.isArray(draft.marks) ? draft.marks : [];
       if (!RichText) return { text: text, marks: [] };
-      // 用户或 AI 仍可输入旧增强语法；退出编辑时统一转成纯文字 + 区间格式。
-      // 先序列化已有 DOM 格式再整体解析，能同时保住“已有格式”和“新输入语法”。
-      const parsed = RichText.parseLegacy(RichText.serialize(text, marks));
+      const parsed = RichText.parseLegacy(text, marks);
       return { text: parsed.text, marks: parsed.marks };
     }
 
@@ -18987,7 +18985,7 @@
       selectNodes([node.id], false);
 
       const text = el.querySelector('.node-text');
-      // 普通文字使用结构化富文本 DOM：编辑面只显示真实文字，不暴露 {hl:...} 等定界符。
+      // Markdown 高光恢复可编辑的 ==，工具栏样式仍用结构化 DOM。
       // 代码节点仍是严格纯文本源码编辑器。
       if (isCodeNode(node)) {
         text.textContent = editingOriginalText;
@@ -19109,33 +19107,24 @@
       && CSS.highlights && typeof Highlight !== 'undefined');
 
     function applyMarkHighlight(textEl) {
-      if (!supportsHighlight || !textEl) return;
+      if (!supportsHighlight || !textEl || !RichText) return;
       const md = global.MarkdownMini;
       if (!md || !md.markIntervals) return;
-      const text = textEl.textContent || '';
+      const { text, segments } = RichText.editableSource(textEl);
       const intervals = md.markIntervals(text);
       if (intervals.length === 0) { CSS.highlights.delete(HL_NAME); return; }
 
-      // 全局字符偏移 → 文本节点的映射（plaintext-only 通常单文本节点，但遍历更稳）
-      const segs = [];
-      const walker = document.createTreeWalker(textEl, NodeFilter.SHOW_TEXT, null);
-      let n, base = 0;
-      while ((n = walker.nextNode())) {
-        segs.push({ node: n, start: base, end: base + n.nodeValue.length });
-        base += n.nodeValue.length;
-      }
       const ranges = [];
       intervals.forEach(function (iv) {
         const s = iv[0], e = iv[1];
         const r = document.createRange();
         let okS = false, okE = false;
-        for (let i = 0; i < segs.length; i++) {
-          const seg = segs[i];
+        for (const seg of segments) {
           if (!okS && s >= seg.start && s < seg.end) {
-            r.setStart(seg.node, s - seg.start); okS = true;
+            r.setStart(seg.node, seg.domStart + s - seg.start); okS = true;
           }
           if (okS && e > seg.start && e <= seg.end) {
-            r.setEnd(seg.node, e - seg.start); okE = true; break;
+            r.setEnd(seg.node, seg.domStart + e - seg.start); okE = true; break;
           }
         }
         if (okS && okE) ranges.push(r);
@@ -23345,6 +23334,8 @@
         root.dispatchEvent(new Event('input', { bubbles: true }));
       } else if (ctx.surf.kind === 'reader-body' && ctx.node) {
         applyTextNodeBody(ctx.node, draft.text, next);
+      } else if (ctx.surf.kind === 'node') {
+        onEditingInput();
       }
       scheduleTextDock();
       return true;
@@ -23647,6 +23638,7 @@
           RichText.renderEditable(ctx.surf.el, draft.text, []);
           ctx.surf.el.focus({ preventScroll: true });
           setNodeSelection(ctx.surf.el, caret, caret);
+          onEditingInput();
         }
         delete ctx.node[richMarksKey(field)];
         if (editingNodeId === ctx.node.id) editingOriginalMarks = [];
@@ -23740,7 +23732,7 @@
         const active = marks[markIndex] && marks[markIndex].start <= start && marks[markIndex].end >= end
           ? marks[markIndex] : null;
         const style = {};
-        ['size', 'color', 'highlight', 'bold'].forEach(function (key) {
+        ['size', 'color', 'highlight', 'highlightTag', 'bold'].forEach(function (key) {
           if (active && active[key] != null) style[key] = active[key];
           else if (fallback && fallback[key] != null) style[key] = fallback[key];
         });
@@ -27298,7 +27290,7 @@
         readerRichEditor.addEventListener('input', function () {
           const node = findNode(readingNodeId);
           if (!node || !isBodyNode(node) || isCodeNode(node) || !textReaderEditing) return;
-          const draft = readRichEditable(readerRichEditor);
+          const draft = canonicalRichDraft(readRichEditable(readerRichEditor));
           if (draft.text) node.body = draft.text;
           else delete node.body;
           storeRichMarks(node, 'body', draft.marks);

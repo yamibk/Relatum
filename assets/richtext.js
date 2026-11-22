@@ -2,7 +2,7 @@
 //
 // 真实内容始终是纯文字；字号、字色、高光与粗体保存在不重叠的 marks 区间中。
 // 旧 {hl:...|...} / {tc:...|...} / {fs:...|...} / ==...== / **...**
-// 只在载入兼容和 Markdown 输出边界出现，正常编辑面不再暴露这些定界符。
+// Markdown 黄色高光在编辑时还原为源码，工具栏格式保留为结构化样式。
 (function (global) {
   'use strict';
 
@@ -17,6 +17,7 @@
     if (SIZES.has(raw.size)) out.size = raw.size;
     if (TEXT_COLORS.has(raw.color)) out.color = raw.color;
     if (HIGHLIGHT_COLORS.has(raw.highlight)) out.highlight = raw.highlight;
+    if (out.highlight === 'yellow' && raw.highlightTag === true) out.highlightTag = true;
     if (raw.bold === true) out.bold = true;
     return out;
   }
@@ -26,7 +27,8 @@
   }
 
   function sameStyle(a, b) {
-    return STYLE_KEYS.every(function (key) { return (a && a[key]) === (b && b[key]); });
+    return a?.highlightTag === b?.highlightTag
+      && STYLE_KEYS.every(function (key) { return (a && a[key]) === (b && b[key]); });
   }
 
   function normalizedMark(raw, textLength) {
@@ -46,6 +48,8 @@
         STYLE_KEYS.forEach(function (key) {
           if (mark[key] != null) out[key] = mark[key];
         });
+        if (mark.highlightTag) out.highlightTag = true;
+        else if (mark.highlight) delete out.highlightTag;
       }
     }
     return out;
@@ -143,12 +147,17 @@
       if (a >= start && b <= end) {
         if (patch && patch.clear === true) {
           STYLE_KEYS.forEach(function (key) { delete style[key]; });
+          delete style.highlightTag;
         } else if (patch && typeof patch === 'object') {
           STYLE_KEYS.forEach(function (key) {
             if (!Object.prototype.hasOwnProperty.call(patch, key)) return;
             const value = patch[key];
             if (value == null || value === false || value === '') delete style[key];
             else style[key] = value;
+            if (key === 'highlight') {
+              if (value === 'yellow') style.highlightTag = true;
+              else delete style.highlightTag;
+            }
           });
         }
       }
@@ -203,18 +212,24 @@
     return result;
   }
 
-  function appendRun(runs, text, style) {
+  function appendRun(runs, text, style, sourceStart) {
     if (!text) return;
     style = cleanStyle(style);
     const last = runs[runs.length - 1];
-    if (last && sameStyle(last.style, style)) last.text += text;
-    else runs.push({ text: text, style: style });
+    if (last && last.sourceStart + last.text.length === sourceStart && sameStyle(last.style, style)) last.text += text;
+    else runs.push({ text: text, style: style, sourceStart: sourceStart });
+  }
+
+  function combineStyles(outer, inner) {
+    const style = Object.assign({}, outer, inner);
+    if (inner.highlight && !inner.highlightTag) delete style.highlightTag;
+    return style;
   }
 
   function applyOuterStyle(runs, outer) {
     return runs.map(function (run) {
       // DOM/CSS 的嵌套语义是内层覆盖外层；兼容迁移时保持同一结果。
-      return { text: run.text, style: Object.assign({}, cleanStyle(outer), cleanStyle(run.style)) };
+      return { ...run, style: combineStyles(outer, run.style) };
     });
   }
 
@@ -230,7 +245,7 @@
     return -1;
   }
 
-  function parseLegacyInline(input) {
+  function parseLegacyInline(input, base) {
     const runs = [];
     let changed = false;
     let i = 0;
@@ -239,7 +254,7 @@
       if (input[i] === '`') {
         const close = input.indexOf('`', i + 1);
         if (close > i) {
-          appendRun(runs, input.slice(i, close + 1), {});
+          appendRun(runs, input.slice(i, close + 1), {}, base + i);
           i = close + 1;
           continue;
         }
@@ -253,10 +268,12 @@
           : (custom[1] === 'hl' ? HIGHLIGHT_COLORS.has(custom[2]) : TEXT_COLORS.has(custom[2]));
         const close = valid ? matchingBrace(input, i) : -1;
         if (close > i + custom[0].length) {
-          const inner = parseLegacyInline(input.slice(i + custom[0].length, close));
+          const innerStart = i + custom[0].length;
+          const inner = parseLegacyInline(input.slice(innerStart, close), base + innerStart);
           const style = custom[1] === 'hl' ? { highlight: custom[2] }
             : custom[1] === 'tc' ? { color: custom[2] } : { size: custom[2] };
-          applyOuterStyle(inner.runs, style).forEach(function (run) { appendRun(runs, run.text, run.style); });
+          if (style.highlight === 'yellow') style.highlightTag = true;
+          applyOuterStyle(inner.runs, style).forEach(function (run) { appendRun(runs, run.text, run.style, run.sourceStart); });
           changed = true;
           i = close + 1;
           continue;
@@ -266,8 +283,8 @@
       if (input[i] === '*' && input[i + 1] === '*') {
         const close = input.indexOf('**', i + 2);
         if (close > i + 2) {
-          const inner = parseLegacyInline(input.slice(i + 2, close));
-          applyOuterStyle(inner.runs, { bold: true }).forEach(function (run) { appendRun(runs, run.text, run.style); });
+          const inner = parseLegacyInline(input.slice(i + 2, close), base + i + 2);
+          applyOuterStyle(inner.runs, { bold: true }).forEach(function (run) { appendRun(runs, run.text, run.style, run.sourceStart); });
           changed = true;
           i = close + 2;
           continue;
@@ -277,47 +294,67 @@
       if (input[i] === '=' && input[i + 1] === '=') {
         const close = input.indexOf('==', i + 2);
         if (close > i + 2) {
-          const inner = parseLegacyInline(input.slice(i + 2, close));
-          applyOuterStyle(inner.runs, { highlight: 'yellow' }).forEach(function (run) { appendRun(runs, run.text, run.style); });
+          const inner = parseLegacyInline(input.slice(i + 2, close), base + i + 2);
+          applyOuterStyle(inner.runs, { highlight: 'yellow' }).forEach(function (run) { appendRun(runs, run.text, run.style, run.sourceStart); });
           changed = true;
           i = close + 2;
           continue;
         }
       }
 
-      appendRun(runs, input[i], {});
+      appendRun(runs, input[i], {}, base + i);
       i += 1;
     }
     return { runs: runs, changed: changed };
   }
 
-  function parseLegacy(source) {
+  function parseLegacy(source, rawMarks) {
     source = String(source == null ? '' : source).replace(/\r\n?/g, '\n');
     const lines = source.split('\n');
     const runs = [];
     let changed = false;
     let fenced = false;
+    let base = 0;
     lines.forEach(function (line, index) {
       if (/^\s*```/.test(line)) {
-        appendRun(runs, line, {});
+        appendRun(runs, line, {}, base);
         fenced = !fenced;
       } else if (fenced) {
-        appendRun(runs, line, {});
+        appendRun(runs, line, {}, base);
       } else {
-        const parsed = parseLegacyInline(line);
-        parsed.runs.forEach(function (run) { appendRun(runs, run.text, run.style); });
+        const parsed = parseLegacyInline(line, base);
+        parsed.runs.forEach(function (run) { appendRun(runs, run.text, run.style, run.sourceStart); });
         changed = changed || parsed.changed;
       }
-      if (index < lines.length - 1) appendRun(runs, '\n', {});
+      base += line.length;
+      if (index < lines.length - 1) appendRun(runs, '\n', {}, base);
+      base += 1;
     });
 
     let text = '';
     const marks = [];
+    const existing = normalize(source, rawMarks);
+    let markIndex = 0;
     runs.forEach(function (run) {
       const start = text.length;
       text += run.text;
-      if (hasStyle(run.style) && run.text.length) {
-        marks.push(Object.assign({ start: start, end: text.length }, cleanStyle(run.style)));
+      // 只平移保留下来的字符。工具栏格式无需序列化成语法再解析，
+      // 所以其中的等号、花括号等文字不会干扰 Markdown 定界符。
+      const sourceEnd = run.sourceStart + run.text.length;
+      let position = run.sourceStart;
+      while (position < sourceEnd) {
+        while (existing[markIndex]?.end <= position) markIndex += 1;
+        const mark = existing[markIndex];
+        const covered = mark && mark.start <= position;
+        const boundary = covered ? mark.end : (mark?.start ?? sourceEnd);
+        const next = Math.min(boundary, sourceEnd);
+        const style = covered ? combineStyles(run.style, cleanStyle(mark)) : run.style;
+        if (hasStyle(style)) marks.push({
+          start: start + position - run.sourceStart,
+          end: start + next - run.sourceStart,
+          ...style,
+        });
+        position = next;
       }
     });
     return { text: text, marks: normalize(text, marks), changed: changed };
@@ -357,7 +394,7 @@
     return out;
   }
 
-  function renderEditable(root, text, rawMarks) {
+  function renderEditable(root, text, rawMarks, { revealHighlights = false } = {}) {
     if (!root || !global.document) return;
     text = String(text == null ? '' : text);
     const marks = normalize(text, rawMarks);
@@ -374,16 +411,31 @@
       if (style.size) span.dataset.rtSize = style.size;
       if (style.color) span.dataset.rtColor = style.color;
       if (style.highlight) span.dataset.rtHighlight = style.highlight;
+      if (style.highlightTag) span.dataset.rtHighlightTag = '1';
       if (style.bold) span.dataset.rtBold = '1';
       span.textContent = value;
       fragment.appendChild(span);
     }
     marks.forEach(function (mark) {
       if (mark.start > pos) appendText(text.slice(pos, mark.start), {});
-      appendText(text.slice(mark.start, mark.end), mark);
+      const value = text.slice(mark.start, mark.end);
+      if (revealHighlights && mark.highlight === 'yellow' && !mark.highlightTag) {
+        const style = cleanStyle(mark);
+        delete style.highlight;
+        value.split('\n').forEach(function (line, index) {
+          if (index) appendText('\n', {});
+          if (!line) return;
+          appendText('==', {});
+          appendText(line, style);
+          appendText('==', {});
+        });
+      } else {
+        appendText(value, mark);
+      }
       pos = mark.end;
     });
     if (pos < text.length) appendText(text.slice(pos), {});
+    if (revealHighlights) fragment.normalize();
     root.replaceChildren(fragment);
     if (!text) root.appendChild(global.document.createTextNode(''));
   }
@@ -395,7 +447,10 @@
       if (el.dataset) {
         if (!style.size && SIZES.has(el.dataset.rtSize)) style.size = el.dataset.rtSize;
         if (!style.color && TEXT_COLORS.has(el.dataset.rtColor)) style.color = el.dataset.rtColor;
-        if (!style.highlight && HIGHLIGHT_COLORS.has(el.dataset.rtHighlight)) style.highlight = el.dataset.rtHighlight;
+        if (!style.highlight && HIGHLIGHT_COLORS.has(el.dataset.rtHighlight)) {
+          style.highlight = el.dataset.rtHighlight;
+          if (style.highlight === 'yellow' && el.dataset.rtHighlightTag === '1') style.highlightTag = true;
+        }
         if (!style.bold && el.dataset.rtBold === '1') style.bold = true;
       }
       el = el.parentElement;
@@ -403,7 +458,7 @@
     return style;
   }
 
-  function readEditable(root, point) {
+  function readEditable(root, point, segments) {
     let text = '';
     let atLineBreak = false;
     const marks = [];
@@ -443,7 +498,18 @@
           }
           const start = text.length;
           append(value);
-          if (!point && value) {
+          if (segments && value) {
+            // Synthetic breaks advance the source offset without owning a DOM range.
+            // A CRLF in a text node occupies one source character but two DOM offsets.
+            let domStart = 0;
+            let from = start;
+            for (const line of child.nodeValue.split('\r\n')) {
+              const to = Math.min(from + line.length, text.length);
+              if (to > from) segments.push({ node: child, start: from, end: to, domStart: domStart });
+              domStart += line.length + 2;
+              from = to + 1;
+            }
+          } else if (!point && value) {
             const style = styleFromAncestors(child, root);
             if (hasStyle(style)) marks.push(Object.assign({ start: start, end: text.length }, style));
           }
@@ -461,6 +527,7 @@
     }
     if (root) visit(root, false);
     if (point) return pointOffset;
+    if (segments) return { text: text, segments: segments };
     return { text: text, marks: normalize(text, marks) };
   }
 
@@ -470,6 +537,10 @@
 
   function editableOffset(root, container, offset) {
     return readEditable(root, { container: container, offset: offset });
+  }
+
+  function editableSource(root) {
+    return readEditable(root, null, []);
   }
 
   function concat(parts) {
@@ -499,6 +570,7 @@
     renderEditable: renderEditable,
     extractEditable: extractEditable,
     editableOffset: editableOffset,
+    editableSource: editableSource,
     concat: concat,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
