@@ -167,6 +167,15 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert(await fallback.evaluate(() => T.flushSave()));
     assert.equal(fs.readFileSync(path.join(notes, 'Fallback.md'), 'utf8'), fixture.expected);
     await area.press('Control+a'); await area.press('Control+Shift+v'); assert.equal(await area.inputValue(), fixture.copied);
+    await fallback.evaluate(async () => {
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 10"><rect width="20" height="10"/></svg>';
+      const html = '<img src="data:image/svg+xml,' + encodeURIComponent(svg) + '">';
+      await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }) })]);
+    });
+    await area.press('Control+a'); await area.press('Control+v');
+    await fallback.waitForFunction(() => document.querySelector('[data-role="note-editor-fallback"]').value.includes('.svg)'));
+    await area.press('Control+z');
+    assert.equal(await area.inputValue(), fixture.copied, 'fallback SVG paste has native undo');
     await fallback.context().close();
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ output, source: true, live: true, reading: true, clipboard: true, plain: true,

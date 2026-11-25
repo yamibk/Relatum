@@ -7874,7 +7874,12 @@
             }
             if (plain || !event.clipboardData || view.state.readOnly || inputPending() || imageTextController.active) return false;
             const text = event.clipboardData.getData('text/plain');
-            const paste = clipboardSelection(text, event.clipboardData.getData('text/html'));
+            const html = event.clipboardData.getData('text/html');
+            if (safeOptions.pasteClipboardImage?.(text, html)) {
+              event.preventDefault();
+              return true;
+            }
+            const paste = clipboardSelection(text, html);
             if (!paste.changed) return false;
             event.preventDefault();
             view.dispatch(Object.assign({}, paste.transaction, { userEvent: 'input.paste', scrollIntoView: true }));
