@@ -93,10 +93,13 @@ for (const hz of [60, 120, 144, 240]) {
   const current = { x: 0, y: 0, zoom: 1 };
   const anchor = { x: 320, y: 180 };
   const frames = new Map();
+  const classes = new Set();
   let paints = 0, saves = 0, nextFrame = 1;
+  const zooming = () => classes.has('is-wheel-zooming');
   const context = {
     open: true, prefersReduced: false, view: { ...current }, viewTarget: { ...current },
     viewTickAt: 1000, viewFrame: 0, wheelZoomInputs: [{ ...anchor, factor: Math.sqrt(1.1) }],
+    scene: { classList: { toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); } } },
     cachedViewportRect: () => ({ left: 0, top: 0 }),
     requestAnimationFrame(callback) { const id = nextFrame++; frames.set(id, callback); return id; },
     cancelAnimationFrame(id) { frames.delete(id); },
@@ -111,14 +114,17 @@ for (const hz of [60, 120, 144, 240]) {
     callbacks.forEach(callback => callback(time));
   };
   context.requestViewAnimation();
+  assert(!zooming(), 'queued input does not promote the scene before it moves');
   for (let i = 1; i < hz / 20; i++) step(1000 + i * 1000 / hz);
   step(1050);
+  assert(zooming(), 'animated zoom promotes the scene');
   assert(Math.abs((context.view.zoom - 1) / (Math.sqrt(1.1) - 1) - (1 - .68 ** 3)) < 1e-9,
     `${hz}Hz: zoom follows the same response curve after 50 ms`);
   assert(Math.abs(context.view.x + anchor.x * context.view.zoom - anchor.x) < 1e-8);
   assert(Math.abs(context.view.y + anchor.y * context.view.zoom - anchor.y) < 1e-8);
   for (let time = 1050 + 1000 / hz; frames.size && time < 2000; time += 1000 / hz) step(time);
   assert.equal(frames.size, 0);
+  assert(!zooming(), 'the final zoom frame releases the scene');
   assert.equal(saves, 1, 'only the final zoom frame schedules persistence');
 
   context.prefersReduced = true;
@@ -130,10 +136,30 @@ for (const hz of [60, 120, 144, 240]) {
   assert.equal(context.view.zoom, 1);
   assert.equal(paints, before + 1);
   assert.equal(frames.size, 0);
+  assert(!zooming(), 'reduced motion lands without promoting the scene');
   context.wheelZoomInputs.push({ ...anchor, factor: 1.1 });
   context.requestViewAnimation();
   context.stopViewAnimation();
   assert.equal(context.wheelZoomInputs.length, 0);
   assert.equal(frames.size, 0);
+
+  context.prefersReduced = false;
+  for (const [zoom, factor] of [[.38, .9], [1.6, 1.1]]) {
+    context.view = { ...current, zoom };
+    context.viewTarget = { ...context.view };
+    context.wheelZoomInputs.push({ ...anchor, factor });
+    context.requestViewAnimation();
+    step(3000);
+    assert.equal(paints, before + 1);
+    assert.equal(frames.size, 0);
+    assert(!zooming(), 'scrolling past either zoom limit leaves the scene idle');
+  }
+  context.wheelZoomInputs.push({ ...anchor, factor: .9 });
+  context.requestViewAnimation();
+  step(4000);
+  assert(zooming());
+  context.stopViewAnimation();
+  assert(!zooming(), 'interrupting active zoom releases the scene immediately');
+  assert.equal(frames.size, 0);
 }
-console.log('tree-page zoom: refresh-rate independent easing, fixed anchor, single reduced-motion frame and input cancellation passed');
+console.log('tree-page zoom: refresh-rate independent easing, fixed anchor, reduced motion, zoom limits and temporary promotion passed');

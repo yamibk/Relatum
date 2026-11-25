@@ -13,6 +13,7 @@
   // reorders use this one-axis mapping; text and cell hit testing stay separate.
   const inWindow = point => point.clientX >= 0 && point.clientX < window.innerWidth
     && point.clientY >= 0 && point.clientY < window.innerHeight;
+  const sameRect = (a, b) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
   function axisGap(rects, kind, position) {
     const gap = rects.findIndex(rect => position < (kind === 'row' ? (rect.top + rect.bottom) / 2 : (rect.left + rect.right) / 2));
     return gap < 0 ? rects.length : gap;
@@ -267,7 +268,11 @@
             surface.refreshReorder();
             const rect = surface.table.getBoundingClientRect(), wrap = surface.wrap.getBoundingClientRect();
             const size = rect.width + ':' + rect.height + ':' + wrap.width + ':' + wrap.height;
-            if (size !== surface.measuredSize) { surface.measuredSize = size; surface.view.requestMeasure(); }
+            if (size !== surface.measuredSize) {
+              surface.measuredSize = size;
+              if (!surface.gesture) surface.hideEdges();
+              surface.view.requestMeasure();
+            }
           });
           alignmentToolbar?.refresh();
         });
@@ -596,20 +601,22 @@
       return s ? { r0: Math.min(s.r0, s.r1), r1: Math.max(s.r0, s.r1), c0: Math.min(s.c0, s.c1), c1: Math.max(s.c0, s.c1) } : null;
     }
     geometry() {
-      if (this.geometryCache) return this.geometryCache;
+      const rect = this.table.getBoundingClientRect(), wrap = this.wrap.getBoundingClientRect();
+      const cached = this.geometryCache;
+      // Body edits can translate the whole table without a resize or scroll event.
+      if (cached && sameRect(cached.rect, rect) && sameRect(cached.wrap, wrap)) return cached;
       const rows = Array.from(this.body.rows, (row) => row.getBoundingClientRect());
       const cols = Array.from(this.body.rows[0] ? this.body.rows[0].cells : [], (cell) => cell.getBoundingClientRect());
-      return this.geometryCache = { rows, cols, rect: this.table.getBoundingClientRect(), wrap: this.wrap.getBoundingClientRect() };
+      return this.geometryCache = { rows, cols, rect, wrap };
     }
-    hit(point, clamp) {
-      const g = this.geometry(), x = point.clientX, y = point.clientY;
+    hit(point, clamp, g = this.geometry()) {
+      const x = point.clientX, y = point.clientY;
       if (!g.rows.length || !g.cols.length || !clamp && (x < g.rect.left || x > g.rect.right || y < g.rect.top || y > g.rect.bottom)) return null;
       let row = g.rows.findIndex(rect => y < rect.bottom), col = g.cols.findIndex(rect => x < rect.right);
       if (row < 0) row = g.rows.length - 1; if (col < 0) col = g.cols.length - 1;
       return { row, col };
     }
-    positionOverlay(node, x, y, width, height) {
-      const rect = this.wrap.getBoundingClientRect();
+    positionOverlay(node, rect, x, y, width, height) {
       node.style.left = (x - rect.left) + 'px'; node.style.top = (y - rect.top) + 'px';
       if (width !== undefined) node.style.width = width + 'px';
       if (height !== undefined) node.style.height = height + 'px';
@@ -620,29 +627,32 @@
       if (this.wrap.contains(event.target) && event.target.closest('.note-table-control')) return;
       const g = this.geometry(), x = event.clientX, y = event.clientY, band = 20, outside = 32, size = 26;
       this.hideEdges();
-      if (!g.rows.length || !g.cols.length || x < g.rect.left - outside || x > g.rect.right + outside || y < g.rect.top - outside || y > g.rect.bottom + outside) return;
+      const bottomLimit = Math.max(g.rect.bottom + outside, g.wrap.bottom);
+      if (!g.rows.length || !g.cols.length || x < g.rect.left - outside || x > g.rect.right + outside || y < g.rect.top - outside || y > bottomLimit) return;
       let edge, distance = Infinity;
       const choose = (name, delta, within) => { if (within && Math.abs(delta) < distance) { edge = name; distance = Math.abs(delta); } };
       choose('left', x - g.rect.left, x >= g.rect.left - outside && x <= g.rect.left + band && y >= g.rect.top && y <= g.rect.bottom);
       choose('top', y - g.rect.top, y >= g.rect.top - outside && y <= g.rect.top + band && x >= g.rect.left && x <= g.rect.right);
       choose('right', x - g.rect.right, x >= g.rect.right - band && x <= g.rect.right + outside && y >= g.rect.top && y <= g.rect.bottom);
-      choose('bottom', y - g.rect.bottom, y >= g.rect.bottom - band && y <= g.rect.bottom + outside && x >= g.rect.left && x <= g.rect.right);
+      choose('bottom', y - g.rect.bottom, y >= g.rect.bottom - band && x >= g.rect.left && x <= g.rect.right);
       let kind, index, control, left, top, width, height, label;
       if (edge === 'right') {
         kind = 'column'; index = g.cols.length; control = this.add;
         left = g.rect.right; top = g.rect.top; width = size; height = g.rect.height;
         label = text('在右侧新增列', 'Add column on the right');
       } else if (edge === 'bottom') {
+        const scroll = this.scroll.getBoundingClientRect();
+        left = Math.max(g.rect.left, scroll.left); width = Math.min(g.rect.right, scroll.right) - left;
+        if (x < left || x > left + width) return;
         kind = 'row'; index = g.rows.length; control = this.add;
-        // Use only the widget's real gutter. A compact neighbour may start a
-        // paragraph immediately beyond it; the old 26px target covered that line.
-        left = g.rect.left; top = g.rect.bottom; width = g.rect.width; height = Math.min(size, g.wrap.bottom - g.rect.bottom);
+        // The reserved gutter starts below the scrollbox, including its scrollbar.
+        top = scroll.bottom; height = g.wrap.bottom - top;
         label = text('在下方新增行', 'Add row below');
       } else if (edge === 'left') {
-        kind = 'row'; index = this.hit(event, true).row; control = this.grip;
+        kind = 'row'; index = this.hit(event, true, g).row; control = this.grip;
         left = g.rect.left - size; top = g.rows[index].top; width = size; height = g.rows[index].height;
       } else if (edge === 'top') {
-        kind = 'column'; index = this.hit(event, true).col; control = this.grip;
+        kind = 'column'; index = this.hit(event, true, g).col; control = this.grip;
         height = Math.min(size, g.rect.top - g.wrap.top);
         left = g.cols[index].left; top = g.rect.top - height; width = g.cols[index].width;
       }
@@ -651,7 +661,7 @@
       control.setAttribute('aria-label', control.title = label || (control === this.add
         ? text('在此插入' + (kind === 'row' ? '行' : '列'), 'Insert ' + kind + ' here')
         : text('选择或拖动移动' + (kind === 'row' ? '行' : '列'), 'Select or drag to move ' + kind)));
-      this.positionOverlay(control, left, top, width, height);
+      this.positionOverlay(control, g.wrap, left, top, width, height);
     }
     paintSelection() {
       let s = this.bounds();
@@ -698,7 +708,7 @@
         const g = this.geometry(), first = g.rows[s.r0], last = g.rows[s.r1], left = g.cols[s.c0], right = g.cols[s.c1];
         if (!first || !last || !left || !right) { this.selection = null; this.paintSelection(); return; }
         const x0 = Math.max(left.left, g.rect.left), x1 = Math.min(right.right, this.scroll.getBoundingClientRect().right);
-        this.positionOverlay(this.outline, x0, first.top, Math.max(0, x1 - x0), last.bottom - first.top);
+        this.positionOverlay(this.outline, g.wrap, x0, first.top, Math.max(0, x1 - x0), last.bottom - first.top);
       }
     }
     select(kind, index, extend) {
@@ -896,7 +906,7 @@
       gesture.gap = gap;
       const g = this.geometry(), rects = gesture.kind === 'row' ? g.rows : g.cols;
       const edge = gap === rects.length ? (gesture.kind === 'row' ? g.rect.bottom : g.rect.right) : (gesture.kind === 'row' ? rects[gap].top : rects[gap].left);
-      this.positionOverlay(this.drop, gesture.kind === 'row' ? g.rect.left : edge - 2, gesture.kind === 'row' ? edge - 2 : g.rect.top,
+      this.positionOverlay(this.drop, g.wrap, gesture.kind === 'row' ? g.rect.left : edge - 2, gesture.kind === 'row' ? edge - 2 : g.rect.top,
         gesture.kind === 'row' ? g.rect.width : 4, gesture.kind === 'row' ? 4 : g.rect.height);
       this.wrap.classList.add('is-table-reordering'); if (scroll) this.autoScroll();
     }

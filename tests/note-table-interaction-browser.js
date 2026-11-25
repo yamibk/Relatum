@@ -157,14 +157,65 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     const edgeCell = await cell(0, 1).boundingBox();
     await page.mouse.move(edgeCell.x + edgeCell.width - 1, edgeCell.y + edgeCell.height - 1);
     assert.equal(await table.locator('.note-table-control:visible').count(), 1);
+    const rightAdd = await table.locator('.note-table-add[data-table-kind="column"]').boundingBox();
+    const rightGrid = await table.locator('table').boundingBox();
+    assert.equal(rightAdd.width, 26);
+    assert.equal(rightAdd.height, rightGrid.height);
+    assert.equal(rightAdd.x, rightGrid.x + rightGrid.width);
     await table.locator('.note-table-control:visible').click(); await settle();
     assert.equal((await rows())[0].length, 3, 'right edge appends a column');
     await page.keyboard.press('Control+z'); await settle(); assert.equal((await rows())[0].length, 2);
-    await reset(source + '\n\n后文');
-    const bottomCell = await cell(2, 0).boundingBox();
-    await page.mouse.move(bottomCell.x + bottomCell.width - 1, bottomCell.y + bottomCell.height - 1);
-    await table.locator('.note-table-control:visible').click(); await settle();
+
+    const footerSource = 'XXX\nYYY\nZZZ\n' + grid + '\n后文\n' + '滚动占位\n'.repeat(42);
+    await reset(footerSource);
+    const dataGrid = table.locator('table'), footer = table.locator('.note-table-add[data-table-kind="row"]:visible');
+    const following = page.getByText('后文', { exact: true });
+    async function checkFooter() {
+      const box = await dataGrid.boundingBox(), body = await following.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height - 1);
+      const add = await footer.boundingBox();
+      assert(add, 'hovering the current bottom edge must show the row add strip');
+      assert.deepEqual(add, { x: box.x, y: box.y + box.height, width: box.width, height: 10 });
+      assert(body.y >= add.y + add.height, 'the add strip must fit before the next line');
+      assert.deepEqual(await dataGrid.boundingBox(), box, 'showing the add strip must leave the grid in place');
+      assert.deepEqual(await following.boundingBox(), body, 'showing the add strip must leave the following line in place');
+      return add;
+    }
+
+    const beforeEnter = await checkFooter();
+    const beforeBody = await following.boundingBox();
+    await page.mouse.move(20, 20);
+    assert.equal(await footer.count(), 0);
+    assert.deepEqual(await following.boundingBox(), beforeBody, 'hiding the add strip must leave the following line in place');
+    await page.getByText('ZZZ', { exact: true }).click();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    const afterEnter = await checkFooter();
+    assert(afterEnter.y > beforeEnter.y, 'Enter before the table must move the grid and its add strip together');
+    await page.keyboard.press('Control+z'); await settle();
+    assert.equal(await value(), footerSource);
+    assert.deepEqual(await checkFooter(), beforeEnter);
+    await page.evaluate(() => { editor.view.scrollDOM.scrollTop = 40; }); await settle();
+    assert((await checkFooter()).y < beforeEnter.y);
+    await page.setViewportSize({ width: 620, height: 1000 }); await settle();
+    const resized = await checkFooter();
+    assert(resized.width < beforeEnter.width);
+    await page.mouse.click(resized.x + resized.width / 2, resized.y + resized.height - 2); await settle();
     assert.equal((await rows()).length, 4, 'bottom edge appends a row');
+    await page.keyboard.press('Control+z'); await settle();
+    assert.equal(await value(), footerSource, 'appending a row is a single undo');
+
+    // Force a horizontal scrollbar and move the grid beneath its scrollport.
+    const tableScroll = table.locator('.note-table-scroll');
+    await dataGrid.evaluate(node => { node.style.minWidth = 'calc(100% + 80px)'; node.parentElement.scrollLeft = 40; });
+    await settle();
+    assert.equal(await tableScroll.evaluate(node => node.scrollLeft), 40);
+    const scrollBox = await tableScroll.boundingBox();
+    await page.mouse.move(scrollBox.x + scrollBox.width / 2, scrollBox.y + scrollBox.height + 1);
+    assert.deepEqual(await footer.boundingBox(), {
+      x: scrollBox.x, y: scrollBox.y + scrollBox.height, width: scrollBox.width, height: 10
+    }, 'the strip must sit below the horizontal scrollbar and cover only the visible width');
+    await page.setViewportSize({ width: 1400, height: 1000 });
 
     // A blank part of the SAME cell must allow selecting the cell, even while editing.
     await reset(source + '\n\n后文');
