@@ -19,6 +19,7 @@ import threading
 import unicodedata
 import urllib.parse
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Callable, NamedTuple
@@ -887,15 +888,23 @@ class NotesStore:
                 return entry
         return None
 
-    def _read_note_bytes(self, target: Path) -> bytes:
+    @contextmanager
+    def _open_note_file(self, target: Path):
         if not target.is_file() or target.suffix.casefold() != NOTE_SUFFIX:
             raise NotesError("笔记不存在", status=404, code="not_found")
         if _is_reparse(target):
             raise NotesError("笔记不能是链接或重解析点", status=403, code="unsafe_path")
         try:
-            content = target.read_bytes()
+            with target.open("rb") as file:
+                if os.fstat(file.fileno()).st_size > MAX_NOTE_BYTES:
+                    raise NotesError("笔记过大（单文件上限 4MB）", status=413, code="too_large")
+                yield file
         except OSError as err:
             raise NotesError(f"读取笔记失败：{err}", status=500, code="read_failed") from err
+
+    def _read_note_bytes(self, target: Path) -> bytes:
+        with self._open_note_file(target) as file:
+            content = file.read(MAX_NOTE_BYTES + 1)
         if len(content) > MAX_NOTE_BYTES:
             raise NotesError("笔记过大（单文件上限 4MB）", status=413, code="too_large")
         return content
@@ -2300,7 +2309,9 @@ class NotesStore:
         return []
 
     def resolve_image(self, note: object, source: object, *, syntax: str = 'markdown') -> tuple[Path, str]:
-        self._read_note_bytes(self._absolute(self.normalize_path(note)))
+        with self._open_note_file(self._absolute(self.normalize_path(note))):
+            # The owner authorizes the attachment; its Markdown is not needed here.
+            pass
         candidates = self._image_candidates(note, source, syntax)
         if len(candidates) > 1:
             raise NotesError('图片文件名不唯一，请使用库内完整路径', status=409, code='ambiguous_image')

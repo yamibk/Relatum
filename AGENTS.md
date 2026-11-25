@@ -134,7 +134,9 @@ Windows 文件树「清理未使用的 PDF」复用 HTML 清理弹窗。列表�
 
 笔记实时预览的行内排版在 `assets/note-live-editor.js` 中按每个可见区间的完整行边界筛选富块候选；包含跨屏父块及相接边界，保留源码顺序，行内包含判断、公式查找及 Callout 装饰复用候选。Callout 的祖先及折叠模型仍使用完整块集合，每次行内排版只计算一次，多个可见区间共用；没有新增持久缓存、设置或公开接口。`tests/note-inline-candidates-browser.js` 对照原排版的装饰范围、样式和控件种类，并以隔离的 400KiB/1MiB/4MiB 合成长文交替测量初访、往返后的光标移动、输入和滚动；三轮为完整基准，`--quick` 用于浏览器回归。行为及测量边界见 `docs/note-scroll-preparation-2026-11-01.md`。
 
-笔记阅读模式仍在 `assets/note-live-editor.js` 中同步生成全文 HTML 和位置索引。含 Callout 且没有内嵌画布占位改写时，Callout 与标题扫描共用同一次原始 Lezer 解析；标题注释等屏蔽逻辑按需重解析，存在画布替换时按各自的原始与投影源码解析，确保偏移正确。MathJax 在原串行队列执行时按最新折叠状态搜集一次公式根，保留会话与可见性检查。复用仅限单次渲染，无新增缓存档位；`tests/note-viewport-browser.js` 与 `tests/note-math-preview-browser.js` 验证锚点、折叠内容与公式排版。
+笔记阅读模式在 `assets/note-live-editor.js` 中同步生成全文 HTML 和位置索引。含 Callout 且没有内嵌画布占位改写时，Callout 与标题扫描共用原始 Lezer 解析。前后有空行且已被 Lezer 完整识别的普通表格无需单独触发标题遮罩重解析，特殊表格、注释和公式仍按原规则处理。阅读渲染直接输出首行为数据单元格的笔记表格，打印和通用 Markdown 保留原表头。阅读位置恢复在首帧测量滚动几何，避免挂载正文后立即触发同步布局。MathJax 在原队列中按当前折叠状态搜集公式根。`tests/note-viewport-browser.js`、`tests/note-outline-regression.js` 和 `tests/note-math-preview-browser.js` 验证位置、语法边界和公式排版。
+
+笔记图片请求由 `notes_library.py` 打开所属 Markdown 并从文件句柄复核大小，保留存在性、读取权限和路径授权，图片的 200、304 和分段读均无需读取正文。实时预览与阅读通过 `prepareLocalImage()` 共享按请求 URL 保存的图片自然宽高，最多 256 项且估算 64 KiB。显式宽高优先，已见过的图片在异步加载期间按列宽及当前模式的高度限制占位，加载成功后使用实测尺寸，失败时淘汰提示。清理缓存或 pagehide 释放尺寸记录。没有新增磁盘数据。`node tests/note-viewport-browser.js --image-hints-only` 和 `py -B -m unittest tests.test_note_asset_streaming` 覆盖跨模式重开、文件替换、缺失、条件请求及授权。
 
 Callout 的标题、图标、配色及颜色分量由 `completeSpec()` 生成随块存续的只读展示信息，正文编辑、位置映射及标题字段未变的重扫共用；类型、标题或折叠后缀改变时重新生成。折叠、焦点、选区及隐藏标题仍实时计算，普通提示块不再读取无关标题行，嵌套及完整祖先模型不变；不新增独立缓存、偏好、监听或任务。`tests/note-callout-performance-browser.js` 以 `30ff695` 为默认基线，对照原始 Callout 模型和行内装饰，三轮交替测量 400KiB/1MiB/4MiB 提示块混排及 4MiB 表格对照；`--quick` 已接入笔记浏览器回归。实现、复现及测量边界见 `docs/note-callout-performance-2026-11-01.md`。
 

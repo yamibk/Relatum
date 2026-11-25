@@ -1961,7 +1961,10 @@
         const cellStyle = function (idx) { return aligns[idx] ? ' style="text-align:' + aligns[idx] + '"' : ''; };
         let html = '<div class="md-scroll-x"' + span(tableStartLine, i) + ' data-md-table-ln="' + tableStartLine
           + '"><table class="md-table"><thead><tr' + span(tableStartLine, tableStartLine + 1) + '>';
-        header.forEach(function (c, idx) { html += '<th' + cellStyle(idx) + '>' + renderInline(escapeHtml(c), options?.noteSyntax) + '</th>'; });
+        const headerCell = options?.noteTableDataCells ? 'td' : 'th';
+        header.forEach(function (c, idx) {
+          html += '<' + headerCell + cellStyle(idx) + '>' + renderInline(escapeHtml(c), options?.noteSyntax) + '</' + headerCell + '>';
+        });
         html += '</tr></thead><tbody>';
         bodyRows.forEach(function (row, rowIndex) {
           html += '<tr' + span(tableStartLine + 2 + rowIndex, tableStartLine + 3 + rowIndex) + '>';
@@ -2131,7 +2134,7 @@
           seen.add(use.key);
           const entry = noteContext.footnotes.get(use.key);
           const body = renderResult(entry.body, { noteSyntax: true, noteBlocks: true, localImages: opts.localImages, mermaid: opts.mermaid,
-            noteContext, noteFootnoteBody: true, noteSourcePosition: opts.noteSourcePosition });
+            noteContext, noteFootnoteBody: true, noteSourcePosition: opts.noteSourcePosition, noteTableDataCells: opts.noteTableDataCells });
           features.math = features.math || body.features.math;
           features.mermaid = features.mermaid || body.features.mermaid;
           const position = typeof opts.noteSourcePosition === 'function' ? opts.noteSourcePosition : value => value;

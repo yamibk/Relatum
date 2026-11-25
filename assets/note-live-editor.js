@@ -895,6 +895,7 @@
     const source = window.MarkdownMini.structure.normalizeSource(value);
     let tree = options?.initialTree || (yield* parseHeadingTree(source));
     const protectedRanges = [], inlineCode = [], customRanges = [];
+    let matchedTableCount = 0;
     const protectedName = /^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock|CommentBlock|Blockquote|BulletList|OrderedList|Table)$/;
     for (let node = tree.topNode.firstChild; node; node = node.nextSibling) {
       if (protectedName.test(node.name)) protectedRanges.push({ from: node.from, to: node.to, kind: node.name });
@@ -948,7 +949,13 @@
             length += lines[close].length + 1; close++; yield;
           }
           if (length <= RICH_BLOCK_LIMIT) {
-            customRanges.push({ from: offset, to: offset + length }); offset += length + 1; number = close - 1; yield; continue;
+            const range = { from: offset, to: offset + length };
+            const guard = guards[guardIndex];
+            // Blanking an already recognized, isolated table cannot expose a heading.
+            if (guard?.kind === 'Table' && guard.from <= range.from && guard.to >= range.to
+                && !lines[number - 1]?.trim() && !lines[close]?.trim()) matchedTableCount++;
+            customRanges.push(range);
+            offset += length + 1; number = close - 1; yield; continue;
           }
         }
         if (!comment && (trimmed === '$$' || trimmed === '\\[')) math = { from: offset, close: trimmed === '$$' ? '$$' : '\\]' };
@@ -978,7 +985,7 @@
       for (const range of customRanges) options.blocks.push(range);
     }
     let visibleSource = source;
-    if (customRanges.length) {
+    if (customRanges.length > matchedTableCount) {
       const ranges = [...protectedRanges, ...customRanges].sort((a, b) => a.from - b.from), merged = [];
       for (const range of ranges) {
         const last = merged[merged.length - 1];
@@ -2487,6 +2494,33 @@
     return (labels[code] || ['图片无法加载', 'Image could not be loaded'])[document.documentElement.lang === 'en' ? 1 : 0];
   }
 
+  const imageSizeHints = new Map();
+  let imageSizeHintBytes = 0;
+  function forgetImageSizeHint(url) {
+    const previous = imageSizeHints.get(url);
+    if (!previous) return;
+    imageSizeHintBytes -= previous.bytes;
+    imageSizeHints.delete(url);
+  }
+  function rememberImageSizeHint(url, width, height) {
+    forgetImageSizeHint(url);
+    const bytes = url.length * 2 + 48;
+    if (bytes > 64 * 1024) return;
+    imageSizeHints.set(url, { width, height, bytes });
+    imageSizeHintBytes += bytes;
+    while (imageSizeHints.size > 256 || imageSizeHintBytes > 64 * 1024) {
+      forgetImageSizeHint(imageSizeHints.keys().next().value);
+    }
+  }
+  function clearImageSizeHints() {
+    imageSizeHints.clear();
+    imageSizeHintBytes = 0;
+  }
+  window.addEventListener?.('pagehide', clearImageSizeHints);
+  window.addEventListener?.('relatum:note-system', event => {
+    if (event.detail.clear) clearImageSizeHints();
+  });
+
   function prepareLocalImage(image, frame, url, target, isCurrent) {
     image.__noteImageCleanup?.();
     let disposed = false, requested = false, cancelProbe = null;
@@ -2494,15 +2528,38 @@
     frame.classList.toggle('has-svg-auto-size', svg);
     frame.style.removeProperty('--note-svg-natural-width');
     frame.style.removeProperty('--note-svg-ratio');
-    const loaded = () => {
-      if (disposed || !svg || !image.naturalWidth || !image.naturalHeight) return;
+    const applySvgSize = (width, height) => {
       // Percentage-sized SVGs have a ratio but no intrinsic width. Give the
       // fit-content frame a definite, bounded image width to break that cycle.
-      frame.style.setProperty('--note-svg-natural-width', image.naturalWidth + 'px');
-      frame.style.setProperty('--note-svg-ratio', image.naturalWidth / image.naturalHeight);
+      frame.style.setProperty('--note-svg-natural-width', width + 'px');
+      frame.style.setProperty('--note-svg-ratio', width / height);
     };
-    image.addEventListener('load', loaded);
+    const clearReservation = () => {
+      if (!image.hasAttribute('data-note-image-size-hint')) return;
+      image.removeAttribute('data-note-image-size-hint');
+      image.style.removeProperty('--note-image-hint-width');
+      image.style.removeProperty('--note-image-hint-ratio');
+      frame.style.removeProperty('--note-svg-natural-width');
+      frame.style.removeProperty('--note-svg-ratio');
+    };
     const current = () => !disposed && image.__noteImageCleanup === cleanup && image.isConnected && frame.isConnected && (!isCurrent || isCurrent());
+    const loaded = () => {
+      if (!current() || !image.naturalWidth || !image.naturalHeight) return;
+      clearReservation();
+      const { naturalWidth: width, naturalHeight: height } = image;
+      rememberImageSizeHint(url, width, height);
+      if (svg) applySvgSize(width, height);
+    };
+    const hint = imageSizeHints.get(url);
+    if (hint && !frame.classList.contains('has-explicit-box')) {
+      imageSizeHints.delete(url);
+      imageSizeHints.set(url, hint);
+      image.setAttribute('data-note-image-size-hint', '');
+      image.style.setProperty('--note-image-hint-width', hint.width + 'px');
+      image.style.setProperty('--note-image-hint-ratio', hint.width / hint.height);
+      if (svg) applySvgSize(hint.width, hint.height);
+    }
+    image.addEventListener('load', loaded);
     const foreground = () => !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
       && !frame.closest('[hidden]') && (!frame.closest('.note-workspace') || document.body.dataset.startWorkspace === 'notes');
     const show = code => {
@@ -2513,6 +2570,8 @@
     };
     const failed = () => {
       if (!current()) return;
+      clearReservation();
+      forgetImageSizeHint(url);
       const failedUrl = image.src;
       show(''); image.removeAttribute('src');
       if (requested || !foreground()) return;
@@ -2540,7 +2599,7 @@
       }).catch(() => {}).finally(finish);
     };
     function cleanup() {
-      disposed = true; cancelProbe?.(); image.removeEventListener('error', failed); image.removeEventListener('load', loaded);
+      disposed = true; cancelProbe?.(); clearReservation(); image.removeEventListener('error', failed); image.removeEventListener('load', loaded);
       if (image.__noteImageCleanup === cleanup) delete image.__noteImageCleanup;
     }
     image.__noteImageCleanup = cleanup;
@@ -3181,7 +3240,8 @@
   function startViewportRestore(scroller, anchor, options) {
     cancelViewportRestore(scroller);
     if (!anchor) return null;
-    let frame = 0, corrections = 0, expectedTop = scroller.scrollTop, measured = false;
+    // Reading scrollTop here would lay out the newly mounted reading document.
+    let frame = 0, corrections = 0, expectedTop, measured = false;
     const current = () => viewportRestores.get(scroller) === control && scroller.isConnected
       && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1' && options.isCurrent();
     const control = { anchor,
@@ -3372,6 +3432,7 @@
     const readingSyntax = window.MarkdownMini.noteSyntax.scan(renderedSource);
     const noteCallouts = hasCallouts ? readingCallouts(renderedSource, canvasRefs.length ? null : initialTree) : [];
     const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts, noteSourcePosition, noteSourceMap: true, noteContext: readingSyntax,
+      noteTableDataCells: !printing,
       renderFence(block) {
         if (block.language === 'database' && databasePositions?.has(block.from)) {
           return '<div class="note-database-carrier" data-database-id="' + databasePositions.get(block.from).id + '"></div>';
@@ -3427,12 +3488,13 @@
       };
       content.addEventListener('click', jumpReading); content.addEventListener('keydown', jumpReading);
     }
-    const sourceLines = original.split('\n');
+    const folds = content.querySelectorAll('.note-block[data-fold]');
+    const sourceLines = folds.length && !printing ? original.split('\n') : [];
     let sourceOffset = 0;
     const sourceLineOffsets = sourceLines.map(line => { const from = sourceOffset; sourceOffset += line.length + 1; return from; });
-    const metadata = window.MarkdownMini.frontmatter(original);
+    const metadata = sourceLines.length ? window.MarkdownMini.frontmatter(original) : null;
     const lineOffset = metadata ? original.slice(0, metadata.to).split('\n').length - 1 : 0;
-    content.querySelectorAll('.note-block[data-fold]').forEach((block) => {
+    folds.forEach((block) => {
       if (!block.dataset.fold) return;
       const button = block.querySelector('.note-callout-fold');
       const body = block.querySelector('.md-callout-body');
@@ -3445,12 +3507,6 @@
       const refresh = () => { if (body) body.hidden = collapsed; button.setAttribute('aria-expanded', String(!collapsed)); button.setAttribute('aria-label', collapsed ? 'Expand callout' : 'Collapse callout'); };
       refresh();
       button.addEventListener('click', () => { collapsed = !collapsed; if (session) session.set(position, collapsed); refresh(); host.__relatumReadingQuiz?.sync(); host.__relatumReadingCards?.resume(); typesetVisibleMath(); });
-    });
-    // Notes present every table row as data, including the first Markdown row.
-    if (!printing) content.querySelectorAll('table th').forEach((header) => {
-      const cell = document.createElement('td');
-      Array.from(header.attributes).forEach((attribute) => cell.setAttribute(attribute.name, attribute.value));
-      cell.append(...header.childNodes); header.replaceWith(cell);
     });
     content.querySelectorAll('[data-note-image]').forEach((image) => {
       const placeholder = /^relatum-canvas-placeholder-(\d+)$/.exec(image.dataset.noteImage || '');
