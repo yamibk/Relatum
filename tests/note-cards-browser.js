@@ -149,6 +149,62 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
     await styleDialog().getByRole('button',{name:'应用',exact:true}).click(); await styleDialog().waitFor({state:'detached'});
     assert((await value()).includes('> @style: outline\n> ##[book][!Purple]卡片\n> @badge: 重点\n> 正文'),'style edits preserve quote prefixes');
     await page.keyboard.press('Control+z'); assert.equal(await value(),nested);
+    const taskSource = ['before', '', '> [!note]', '>', '> ```cards', '> # Tasks', '> \\B\\bbb\\red\\## 逐行加大提高对比度',
+      '>\\!check\\!check 第一项任务需要在窄窗折行显示', '> \\check 已完成', '> \\bar Summary', '> \\bar1:6 Fixed',
+      '> # Other', '> \\bar Other progress', '> ```', '', 'after'].join('\n');
+    const toggledTask = taskSource.replace('\\!check\\!check', '\\check\\check');
+    const box = () => group().locator('.note-card-task').first();
+    const readProgress = () => group().locator('[role="progressbar"]').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-valuetext')));
+    await reset(taskSource);
+    await box().waitFor();
+    assert.deepEqual(await readProgress(), ['1/2', '1/6', '0/0']);
+    await box().click();
+    assert.equal(await value(), toggledTask, 'toggle updates both matching tokens and preserves quote prefixes');
+    assert(await box().isChecked());
+    assert.deepEqual(await readProgress(), ['2/2', '1/6', '0/0']);
+    assert.equal(await preview().count(), 0);
+    assert(await box().evaluate(node => document.activeElement === node), 'focus follows the updated native checkbox');
+    await page.keyboard.press('Space');
+    assert.equal(await value(), taskSource);
+    await page.keyboard.press('Control+z');
+    assert.equal(await value(), toggledTask);
+    await page.keyboard.press('Control+y');
+    assert.equal(await value(), taskSource);
+    await box().dblclick();
+    assert.equal(await value(), taskSource, 'two clicks restore the original state');
+    assert.equal(await preview().count(), 0, 'double-click on a checkbox leaves the block collapsed');
+    await page.evaluate(() => editor.focus());
+    await toolsCdp.send('Input.imeSetComposition', {text:'zhong', selectionStart:5, selectionEnd:5});
+    await box().evaluate(node => node.click());
+    assert.equal(await value(), taskSource, 'an active composition blocks task edits');
+    await toolsCdp.send('Input.imeSetComposition', {text:'', selectionStart:0, selectionEnd:0});
+    await reset(toggledTask);
+    assert(await box().isChecked());
+    const stale = await box().elementHandle();
+    await reset('another note');
+    await stale.evaluate(node => node.click());
+    assert.equal(await value(), 'another note');
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
+      await reset(toggledTask);
+      await page.evaluate(() => { document.querySelector('.note-cards').style.width = '220px'; });
+      assert(await box().isChecked());
+      const rows = await group().evaluate(root => {
+        const task = root.querySelector('.is-check > span'), fixed = root.querySelectorAll('.note-card-progress-track')[1];
+        return { wrapped: task.offsetHeight > parseFloat(getComputedStyle(task).lineHeight),
+          fraction: fixed.firstElementChild.getBoundingClientRect().width / fixed.getBoundingClientRect().width };
+      });
+      assert(rows.wrapped);
+      assert(Math.abs(rows.fraction - 1/6) < .002);
+    }
+    await page.evaluate(() => {
+      document.body.dataset.startTheme = 'light';
+      const host = document.getElementById('reading'); host.hidden = false;
+      RelatumNoteLiveEditor.renderMarkdown(host, editor.snapshot().value, 'cards.md', {});
+    });
+    assert(await page.locator('#reading .note-card-task').first().isDisabled());
+    assert(await page.locator('#reading .note-card-task').first().isChecked());
+    await page.evaluate(() => RelatumNoteLiveEditor.releaseReadingDocument(document.getElementById('reading')));
     await reset('before\n\nafter'); await page.locator('.cm-line').filter({hasText:/^after$/}).click();
     await page.evaluate(()=>editor.executeCommand('insert:cards',editor.commandContext())); await preview().waitFor();
     assert((await value()).includes('```cards\n### 卡片标题')); await page.keyboard.press('Escape'); await group().waitFor();
@@ -209,6 +265,10 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
       const layoutExample = page.locator('#guide .note-guide-example').nth(4);
       assert.equal(await layoutExample.locator('.note-card').count(),4);
       assert.equal(await layoutExample.locator('.note-card:not([data-span="full"])').count(),3,'layout example has three ordinary cards before its full-width summary');
+      const taskExample = page.locator('#guide .note-guide-example').filter({ has: page.locator('.note-card-task') });
+      assert.equal(await taskExample.locator('.note-card-task').count(), 2);
+      await taskExample.locator('.note-guide-copy').click();
+      assert((await page.evaluate(() => navigator.clipboard.readText())).includes('\\bar1:6'));
     }
     await reset(source.replace('减少**转换损耗**','公式 $I=U/R$ 与**转换损耗**')); await group().locator('mjx-container').waitFor();
     await page.evaluate(()=>document.querySelector('.note-workspace').style.width='700px');await settle();await page.locator('.cm-line').filter({hasText:/^after$/}).click();assert.equal(await page.evaluate(()=>editor.view.state.doc.lineAt(editor.view.state.selection.main.head).text),'after');await page.evaluate(()=>document.querySelector('.note-workspace').style.width='');await settle();

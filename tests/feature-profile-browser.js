@@ -51,7 +51,7 @@ const cases = [
       const noteFixture = (!choices || choices.notes) && (quizFixture || ['full', 'notes', 'notes-mermaid', 'notes-mermaid-mixed-off'].includes(name));
       if (noteFixture) {
         fs.mkdirSync(path.join(root, 'notes'));
-        fs.writeFileSync(path.join(root, 'notes', 'Diagram.md'), quizFixture ? '# 选择题\n\n```quiz\n哪项正确？\n- [ ] 错误\n- [x] 正确\n```\n\n正文' : cardsFixture ? '# 卡片组\n\n```cards\n### [book] [!purple] 本地概念卡\n笔记权限下的卡片正文。\n```\n\n正文' : '# 图表\n\n```mermaid\nflowchart LR\n A[开始] --> B[完成]\n```\n\n正文', 'utf8');
+        fs.writeFileSync(path.join(root, 'notes', 'Diagram.md'), quizFixture ? '# 选择题\n\n```quiz\n哪项正确？\n- [ ] 错误\n- [x] 正确\n```\n\n正文' : cardsFixture ? '# 卡片组\n\n```cards\n### [book] [!purple] 本地概念卡\n笔记权限下的卡片正文。\n\\!check 复习\n\\bar 进度\n```\n\n正文' : '# 图表\n\n```mermaid\nflowchart LR\n A[开始] --> B[完成]\n```\n\n正文', 'utf8');
       }
       if (name === 'career') {
         fs.mkdirSync(path.join(root, 'notes'));
@@ -135,6 +135,16 @@ const cases = [
             await page.keyboard.press('Control+z'); await page.keyboard.press('Control+s');
             for (let i = 0; i < 100 && fs.readFileSync(path.join(root, 'notes', 'Diagram.md'), 'utf8') !== original; i++) await sleep(50);
             assert.equal(fs.readFileSync(path.join(root, 'notes', 'Diagram.md'), 'utf8'), original, 'one undo restores the original disk document');
+            const task = page.locator('.note-cards-block .note-card-task');
+            await task.click();
+            assert(await task.isChecked());
+            const completed = original.replace('\\!check', '\\check');
+            for (let i = 0; i < 100 && fs.readFileSync(path.join(root, 'notes', 'Diagram.md'), 'utf8') !== completed; i++) await sleep(50);
+            assert.equal(fs.readFileSync(path.join(root, 'notes', 'Diagram.md'), 'utf8'), completed, 'task changes autosave to Markdown');
+            await page.reload();
+            await task.waitFor();
+            assert(await task.isChecked(), 'reopening restores the saved task');
+            assert.equal(await page.locator('.note-cards-block [role="progressbar"]').getAttribute('aria-valuetext'), '1/1');
           } else if (quizFixture) {
             if (enabled('notes.quiz')) { await page.waitForSelector('.note-live-rich-block.is-quiz .note-quiz'); await page.locator('.note-quiz [data-quiz-option="1"]').click(); assert.equal(await page.locator('.note-quiz').getAttribute('data-quiz-state'), 'correct'); }
             else { assert.equal(await page.locator('.note-quiz').count(), 0); assert(!requests.some(url => url.includes('note-quiz')), 'disabled quizzes stay cold'); }
@@ -207,10 +217,13 @@ const cases = [
             if (enabled(item.id)) continue;
             for (const src of item.scripts || []) {
               // Shared assets can remain available for another enabled owner.
-              const owners = catalog.sharedScripts[src] || [];
-              if (owners.some(enabled)) continue;
+              const shared = (catalog.sharedScripts[src] || []).some(enabled)
+                || catalog.features.some(owner => enabled(owner.id) && owner.scripts?.includes(src));
+              if (shared) continue;
               assert(!requests.some(request => src.endsWith('/') ? request.slice(1).startsWith(src) : request === '/' + src), `${name}: disabled request ${src}`);
-              assert.equal((await fetch(base + '/' + src + (src.endsWith('/') ? 'research-workspace.js' : ''))).status, 403, `${name}: direct asset ${src}`);
+              const sample = src.endsWith('/') ? fs.readdirSync(path.join(repo, 'assets', src)).find(file => file.endsWith('.js')) : '';
+              assert.notEqual(sample, undefined, 'expected a JavaScript fixture for ' + src);
+              assert.equal((await fetch(base + '/' + src + sample)).status, 403, `${name}: direct asset ${src}`);
             }
             for (const resource of item.pages || []) assert.equal((await fetch(base + '/' + resource)).status, 403);
             if (item.view) assert.equal((await fetch(base + '/?view=' + item.view)).status, 403, `${name}: direct page ${item.view}`);

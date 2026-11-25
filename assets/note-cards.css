@@ -29,10 +29,68 @@ html[data-markdown-dark="1"] .note-cards .note-card[data-note-card-color][data-s
 .note-cards .note-card-title { margin: 0; color: var(--text); font-size: 1em; font-weight: 600; line-height: 1.4; }
 .note-cards .note-card-body { margin-top: 6px; font-size: .9em; line-height: 1.6; color: var(--text-secondary); }
 .note-cards .note-card-body:empty { display: none; }
-.note-cards .note-card-body > :is(p,ul,ol) { margin: 0 0 .65em; }
+.note-cards .note-card-body > :is(p,ul,ol,.note-card-line) { margin: 0 0 .65em; }
 .note-cards .note-card-body > :last-child { margin-bottom: 0; }
 .note-cards .note-card-body :is(ul,ol) { padding-left: 1.4em; }
 .note-cards .note-card-body li { margin: 0; }
+.note-cards .note-card-line {
+  --note-card-ink: var(--text);
+  --note-card-line-depth: 0%;
+  --note-card-line-ink: var(--text-secondary);
+  color: color-mix(in srgb, var(--note-card-line-ink), var(--note-card-ink) var(--note-card-line-depth));
+}
+.note-cards .note-card-line[style] {
+  --note-card-line-ink: color-mix(in srgb, var(--note-card-line-color) 72%, var(--note-card-ink));
+}
+.note-cards .note-card-line[data-depth="1"] { --note-card-line-depth: 33%; }
+.note-cards .note-card-line[data-depth="2"] { --note-card-line-depth: 66%; }
+.note-cards .note-card-line[data-depth="3"] { --note-card-line-depth: 100%; }
+.note-cards .note-card-line[style][data-depth="1"] { --note-card-line-depth: 4%; --note-card-color-step: 1; }
+.note-cards .note-card-line[style][data-depth="2"] { --note-card-line-depth: 8%; --note-card-color-step: 2; }
+.note-cards .note-card-line[style][data-depth="3"] { --note-card-line-depth: 12%; --note-card-color-step: 3; }
+@supports (color: oklch(from red calc(l * .35 + .28) calc(c * 1.7) h)) {
+  .note-cards .note-card-line[style] {
+    color: oklch(from var(--note-card-line-color)
+      calc(clamp(.43, l * .35 + .28, .54) - .02 * var(--note-card-color-step, 0)) calc(c * 1.7) h);
+  }
+  body.start-page[data-start-theme="dark"] .note-cards .note-card-line[style],
+  html[data-markdown-dark="1"] .note-cards .note-card-line[style] {
+    color: oklch(from var(--note-card-line-color)
+      calc(.62 + l * .25 + .015 * var(--note-card-color-step, 0)) calc(c * 1.7) h);
+  }
+}
+.note-cards .note-card-line[data-size="1"] { font-size: 1.1em; }
+.note-cards .note-card-line[data-size="2"] { font-size: 1.2em; }
+.note-cards .note-card-line[data-size="3"] { font-size: 1.3em; }
+.note-cards .note-card-line.is-bold { font-weight: 700; }
+.note-cards .note-card-line.is-check { display: flex; align-items: start; gap: .55em; }
+.note-cards .note-card-task {
+  appearance: none; box-sizing: border-box; flex: none; width: 1em; height: 1em; margin: .3em 0 0;
+  border: 1px solid var(--text-secondary); border-radius: 3px; font: inherit; display: grid; place-content: center;
+}
+.note-cards .note-card-task:enabled { cursor: pointer; }
+.note-cards .note-card-task:focus-visible { outline: 2px solid #267cc7; outline-offset: 2px; }
+.note-cards .note-card-task:checked { border-color: #096ac4; background: #096ac4; print-color-adjust: exact; }
+.note-cards .note-card-task:checked::before {
+  content: ""; box-sizing: border-box; width: .36em; height: .6em;
+  border: solid white; border-width: 0 2px 2px 0; transform: translateY(-.06em) rotate(45deg);
+}
+@media (forced-colors: active) {
+  .note-cards .note-card-task { appearance: auto; }
+  .note-cards .note-card-task::before { display: none; }
+}
+.note-cards .note-card-line.is-bar { border-top: 1px solid var(--border); padding-top: .75em; margin-top: .75em; }
+.note-cards .note-card-progress-label { display: flex; align-items: baseline; justify-content: space-between; gap: .75em; font-weight: 600; }
+.note-cards .note-card-progress-label > :last-child { flex: none; font-variant-numeric: tabular-nums; }
+.note-cards .note-card-progress-track {
+  height: 5px; margin-top: .4em; border-radius: 999px; overflow: hidden;
+  background: color-mix(in srgb, var(--text) 12%, transparent); print-color-adjust: exact;
+}
+.note-cards .note-card-progress-track > span { display: block; height: 100%; border-radius: inherit; background: #16a34a; }
+@media (forced-colors: active) {
+  .note-cards .note-card-progress-track { forced-color-adjust: none; background: Canvas; outline: 1px solid CanvasText; }
+  .note-cards .note-card-progress-track > span { background: Highlight; }
+}
 .note-cards a[href] { color: var(--note-live-link, #4183c4); text-decoration: underline; }
 .note-cards code { font-family: "Cascadia Mono", Consolas, monospace; font-size: .9em; }
 .note-live-rich-block.is-cards { width: 100%; margin: 0; padding-block: 4px; }

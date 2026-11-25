@@ -28,6 +28,45 @@
     const match = /^[ \t]*@([a-z][\w-]*)(?:[ \t]*[:：][ \t]*|[ \t]+)(.*)$/i.exec(text);
     return match ? { key: match[1].toLowerCase(), value: match[2].trim() } : /^\s*@\S/.test(text) ? { key: '', value: '' } : null;
   }
+  const lineCommand = /\\(bar-?\d+:-?\d+|#+|!?[a-zA-Z]+)/y;
+  function parseLine(text, number) {
+    if (text[0] !== '\\') return { text, number };
+    let end = 0, bold = false, depth = 0, size = 0, component = '', progress, checked, conflict = false;
+    const lineColors = new Set(), checks = [];
+    while (true) {
+      lineCommand.lastIndex = end;
+      const match = lineCommand.exec(text);
+      if (!match) break;
+      const token = match[1];
+      if (token === 'B') bold = true;
+      else if (/^b+$/.test(token)) depth = Math.min(3, depth + token.length);
+      else if (token[0] === '#') size = Math.min(3, size + token.length);
+      else if (colors.has(token)) lineColors.add(token);
+      else if (token === 'check' || token === '!check') {
+        const next = token === 'check';
+        conflict ||= !!component && (component !== 'check' || next !== checked);
+        component = 'check'; checked = next;
+        checks.push({ from: end, to: lineCommand.lastIndex });
+      } else if (token === 'bar' || token.startsWith('bar') && token.includes(':')) {
+        let next = 'auto';
+        if (token === 'bar') {
+          if (/[\d:-]/.test(text.charAt(lineCommand.lastIndex))) break;
+        } else {
+          const [done, total] = token.slice(3).split(':').map(Number);
+          next = Number.isSafeInteger(done) && Number.isSafeInteger(total) && done >= 0 && total > 0 && done <= total ? [done, total] : null;
+        }
+        if (next !== null) {
+          conflict ||= !!component && (component !== 'bar' || String(next) !== String(progress));
+          component = 'bar'; progress = next;
+        }
+      } else break;
+      end = lineCommand.lastIndex;
+    }
+    if (!end) return { text, number };
+    return { text: text.slice(end).replace(/^[ \t]+/, ''), number, styled: true, bold, depth, size,
+      color: lineColors.size === 1 ? lineColors.values().next().value : '',
+      component: conflict ? '' : component, progress, checked, checks };
+  }
   function parse(value) {
     const source = String(value || '').replace(/\r\n?/g, '\n');
     const model = { valid: false, cards: [], settings: { ...defaults }, metadata: {}, segments: [], diagnostics: [], preludeEnd: 0 };
@@ -90,6 +129,7 @@
       const displayed = [card.title, card.subtitle, card.badge, card.value, card.footer, ...lines].join('\n').replace(/`[^`\n]*`/g, '');
       if (lines.some(line => /^\s*(?:`{3,}|~{3,}|!\[|>)/.test(line)) || /\$\$|\\begin\{/.test(displayed) || displayed.includes('\\[') && displayed.includes('\\]')) { raw('unsupported-content'); return; }
       card.body = lines.join('\n').trim();
+      card.lines = lines.map((line, index) => parseLine(line, bodyStart + index));
       model.segments.push({ kind: 'card', index: model.cards.length, from, to }); model.cards.push(card);
     }
     let start = first;
@@ -98,6 +138,12 @@
       else if (heading(rows[index].text) && index > start) { emit(start, index); start = index; }
     }
     emit(start, rows.length); model.valid = model.cards.length > 0; return model;
+  }
+  function taskEdit(source, index, number) {
+    const line = parse(source).cards[index]?.lines.find(candidate => candidate.number === number);
+    if (line?.component !== 'check') return null;
+    return line.checks.map(range => ({ ...range, expected: line.checked ? '\\check' : '\\!check',
+      insert: line.checked ? '\\!check' : '\\check' }));
   }
   // Return narrow source edits; untouched text (including unknown options) is never serialized.
   function patch(value, target, fields) {
@@ -156,11 +202,37 @@
       const result = window.MarkdownMini.renderLabelResult(text, { links: true });
       math ||= result.features.math; return result.html;
     };
-    function body(text) {
+    const escape = window.MarkdownMini.escapeHtml;
+    const english = documentLanguage() === 'en';
+    function body(lines) {
       const blocks = []; let paragraph = [], list = [], ordered = false, start = 1;
       const flushParagraph = () => { if (paragraph.length) blocks.push('<p>' + inline(paragraph.join('\n')) + '</p>'); paragraph = []; };
       const flushList = () => { if (list.length) blocks.push((ordered ? '<ol start="' + start + '">' : '<ul>') + list.map(item => '<li>' + inline(item) + '</li>').join('') + (ordered ? '</ol>' : '</ul>')); list = []; };
-      for (const line of text.split('\n')) {
+      const tasks = lines.filter(line => line.component === 'check');
+      const autoProgress = [tasks.filter(line => line.checked).length, tasks.length];
+      for (const [index, row] of lines.entries()) {
+        if (row.styled) {
+          flushParagraph(); flushList();
+          const lineColor = colors.get(row.color);
+          const style = lineColor ? ' style="--note-card-line-color:' + lineColor.base + '"' : '';
+          const classes = 'note-card-line' + (row.bold ? ' is-bold' : '') + (row.component ? ' is-' + row.component : '');
+          const attrs = ' class="' + classes + '" data-size="' + row.size + '" data-depth="' + row.depth + '"' + style;
+          if (row.component === 'check') {
+            const name = row.text.trim() || (english ? 'Task' : '任务');
+            blocks.push('<div' + attrs + '><input class="note-card-task" type="checkbox" data-note-card-task="' + row.number
+              + '" aria-label="' + escape(name) + '" disabled' + (row.checked ? ' checked' : '') + '><span>' + inline(row.text) + '</span></div>');
+          } else if (row.component === 'bar') {
+            const [done, total] = row.progress === 'auto' ? autoProgress : row.progress;
+            const label = row.text || (english ? 'Progress' : '进度');
+            blocks.push('<div' + attrs + '><div class="note-card-progress-label"><span>' + inline(label) + '</span><span>' + done + '/' + total
+              + '</span></div><div class="note-card-progress-track" role="progressbar" aria-label="' + escape(label) + '" aria-valuemin="0" aria-valuemax="'
+              + (total || 1) + '" aria-valuenow="' + done + '" aria-valuetext="' + done + '/' + total + '"><span style="width:'
+              + (total ? done / total * 100 : 0) + '%"></span></div></div>');
+          } else if (row.text.trim()) blocks.push('<div' + attrs + '>' + inline(row.text) + '</div>');
+          continue;
+        }
+        let line = index === 0 ? row.text.trimStart() : row.text;
+        if (index === lines.length - 1) line = line.trimEnd();
         const item = /^\s*(?:([-+*]) |(\d{1,9})[.)] )(.+)$/.exec(line);
         if (item) {
           flushParagraph(); const nextOrdered = !!item[2];
@@ -171,7 +243,6 @@
       }
       flushParagraph(); flushList(); return blocks.join('');
     }
-    const escape = window.MarkdownMini.escapeHtml;
     const problem = item => {
       const messages = { 'unknown-option': ['未知选项，已保留原文', 'Unknown option; source preserved'], 'invalid-option': ['选项值无效或重复，已保留原文', 'Invalid or repeated option; source preserved'],
         'missing-title': ['卡片缺少标题', 'This card needs a title'], 'unsupported-content': ['这张卡片暂不支持此内容格式', 'This card contains an unsupported block format'] };
@@ -187,7 +258,7 @@
         + '<div class="note-card-heading"><div class="note-card-title">' + inline(card.title) + '</div>' + (card.badge ? '<span class="note-card-badge">' + inline(card.badge) + '</span>' : '') + '</div>'
         + (card.subtitle ? '<div class="note-card-subtitle">' + inline(card.subtitle) + '</div>' : '')
         + (card.value ? '<div class="note-card-value">' + inline(card.value) + '</div>' : '')
-        + '<div class="note-card-body">' + body(card.body) + '</div>'
+        + '<div class="note-card-body">' + body(card.lines) + '</div>'
         + (card.footer ? '<div class="note-card-footer">' + inline(card.footer) + '</div>' : '') + card.diagnostics.map(problem).join('') + '</article>';
     }).join('') + '</div></div>';
     return { html: html.replace('class="note-cards"', 'class="note-cards" data-note-cards-math="' + (math ? '1' : '0') + '"'), features: { math, mermaid: false } };
@@ -217,6 +288,19 @@
       });
     }
     root.addEventListener('click', openLink);
+    const taskSelector = '.note-card-task[data-note-card-task]';
+    const enableTasks = () => {
+      if (options.onTask) root.querySelectorAll(taskSelector).forEach(box => { box.disabled = false; });
+    };
+    function toggleTask(event) {
+      const box = event.target.closest(taskSelector);
+      if (!box || box.disabled || !options.onTask) return;
+      event.preventDefault(); event.stopPropagation();
+      if (disposed || !pageActive || !root.isConnected || options.isCurrent && !options.isCurrent()) return;
+      options.onTask(source, Number(box.closest('[data-card-index]').dataset.cardIndex), Number(box.dataset.noteCardTask));
+    }
+    if (options.onTask) root.addEventListener('click', toggleTask);
+    enableTasks();
     function typeset() {
       const ticket = version;
       const current = () => !disposed && pageActive && ticket === version && root.isConnected && !root.closest('[hidden]')
@@ -238,14 +322,18 @@
       resume: typeset,
       update(next) {
         if (disposed || source === next) return;
+        const active = document.activeElement;
+        const focusedTask = root.contains(active) && active.matches(taskSelector) ? active.dataset.noteCardTask : '';
         source = next; version++; clear();
         const result = render(next);
         if (result) root.innerHTML = result.html;
         else { const pre = document.createElement('pre'); pre.className = 'md-code'; pre.textContent = '```cards\n' + next + '\n```'; root.replaceChildren(pre); }
+        enableTasks();
+        if (focusedTask) root.querySelector(taskSelector + '[data-note-card-task="' + focusedTask + '"]')?.focus({ preventScroll: true });
         typeset();
       },
-      destroy() { if (disposed) return; disposed = true; version++; clear(); root.removeEventListener('click', openLink); retries.delete(typeset); if (!retries.size) watch(false); },
+      destroy() { if (disposed) return; disposed = true; version++; clear(); root.removeEventListener('click', openLink); root.removeEventListener('click', toggleTask); retries.delete(typeset); if (!retries.size) watch(false); },
     };
   }
-  window.RelatumNoteCards = Object.freeze({ parse, render, attach, patch, styles, defaults, icons: Object.freeze(Object.keys(icons)), MAX_SOURCE, MAX_LINE });
+  window.RelatumNoteCards = Object.freeze({ parse, render, attach, patch, taskEdit, styles, defaults, icons: Object.freeze(Object.keys(icons)), MAX_SOURCE, MAX_LINE });
 })();

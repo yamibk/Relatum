@@ -261,6 +261,7 @@
     try {
       const result = check(await api().markdown_document('read')); current = result.document; settings = result.settings;
       editor = RelatumNoteLiveEditor.create($('editor'), { value: current.content, notePath: current.path || 'Untitled.md',
+        readOnlyCardsTasks: true,
         shortcutBindings: window.RelatumNoteShortcuts?.load(),
         clipboardText: (...args) => window.MarkdownMini.pastedLinkMarkdown(...args),
         imageUrl: (_path, source) => '/api/markdown-file-asset?token=' + encodeURIComponent(current.token) + '&src=' + encodeURIComponent(source),

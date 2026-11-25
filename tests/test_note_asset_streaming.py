@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from notes_library import NotesStore
+from notes_library import MAX_NOTE_BYTES, NotesStore
 
 
 class NoteAssetStreamingTests(unittest.TestCase):
@@ -206,6 +206,38 @@ class NoteAssetStreamingTests(unittest.TestCase):
                     self.assertEqual(response.read(), b'')
         status, result = self.move(self.note, '中文 目录/已释放.md')
         self.assertEqual(status, 200, result)
+
+    def test_image_requests_validate_owner_without_reading_markdown(self):
+        second = self.store.upload_image(self.note, 'second.svg',
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"/>')
+        with mock.patch.object(self.store, '_read_note_bytes', wraps=self.store._read_note_bytes) as read_note:
+            for source in (self.source, second['path']):
+                url = self.asset_url(self.note, source)
+                with urllib.request.urlopen(url, timeout=5) as response:
+                    self.assertEqual(response.status, 200)
+                    etag = response.headers['ETag']
+                    response.read()
+                with self.assertRaises(urllib.error.HTTPError) as cached:
+                    urllib.request.urlopen(urllib.request.Request(url, headers={'If-None-Match': etag}), timeout=5)
+                with cached.exception as response:
+                    self.assertEqual(response.status, 304)
+                    self.assertEqual(response.read(), b'')
+
+            owner = self.root / 'notes' / self.note
+            with owner.open('wb') as file:
+                file.truncate(MAX_NOTE_BYTES + 1)
+            with self.assertRaises(urllib.error.HTTPError) as oversized:
+                urllib.request.urlopen(self.asset_url(self.note, self.source), timeout=5)
+            with oversized.exception as response:
+                self.assertEqual(response.status, 413)
+                self.assertEqual(json.load(response)['code'], 'too_large')
+            owner.unlink()
+            with self.assertRaises(urllib.error.HTTPError) as missing:
+                urllib.request.urlopen(self.asset_url(self.note, self.source), timeout=5)
+            with missing.exception as response:
+                self.assertEqual(response.status, 404)
+                self.assertEqual(json.load(response)['code'], 'not_found')
+            read_note.assert_not_called()
 
     def test_svg_response_headers_also_cover_ranges_and_cache_hits(self):
         image = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 10"><path d="M0 0h20v10z"/></svg>'

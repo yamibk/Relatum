@@ -184,6 +184,11 @@ async function bounded(task, label, timeout = 15000) {
         uploadProbe.changes = uploadProbe.reads = uploadProbe.uploads = uploadProbe.notifications = 0;
       }, value), 'reset document');
     };
+    if (process.argv.includes('--clipboard-svg')) {
+      await checkSvgClipboard();
+      assert.deepEqual(errors, []);
+      return;
+    }
     for (const [label, value] of [['empty', ''], ['end', '# 图片\n\n正文\n\n'], ['inline', '插入位置'],
       ['table', '| A | B |\n| --- | --- |\n| 1 | 2 |\n\n'], ['code', '```js\nconst x = 1;\n```\n\n']]) {
       await reset(value);
@@ -367,6 +372,153 @@ async function bounded(task, label, timeout = 15000) {
         [0, 0, '# SVG size\n\n'], 'oversized SVG is rejected before FileReader, Base64 or upload');
     };
 
+    async function checkSvgClipboard() {
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><text x="5" y="25">矢量示意图 100%</text></svg>';
+      const source = 'Before\n\nAfter\n';
+      const dataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      const htmlFor = url => '<html>\r\n<body>\r\n<!--StartFragment--><img src="' + url + '"/><!--EndFragment-->\r\n</body>\r\n</html>';
+      const content = page.locator('.cm-content');
+      const menu = page.locator('[data-role="note-context-menu"]');
+      const toast = page.locator('[data-role="note-toast"]');
+      const value = () => page.evaluate(() => uploadTest.editor.snapshot().value);
+      const paste = (html, { text = '', withFile = false } = {}) => page.evaluate(({ html, text, withFile }) => {
+        const data = new DataTransfer();
+        data.setData('text/html', html);
+        if (text) data.setData('text/plain', text);
+        if (withFile) data.items.add(imageUploadFiles(1)[0]);
+        uploadTest.editor.view.contentDOM.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+      }, { html, text, withFile });
+      const cursorBeforeAfter = () => page.evaluate(() => {
+        const editor = uploadTest.editor;
+        editor.view.dispatch({ selection: { anchor: editor.view.state.doc.toString().indexOf('After') } });
+        editor.focus();
+      });
+      const waitForAttachment = extension => page.waitForFunction(ext => uploadTest.editor.snapshot().value.includes('.' + ext + ')'), extension);
+      const readSvg = markdown => {
+        const relative = markdown.match(/\]\(([^)]+\.svg)\)/)[1];
+        return fs.readFileSync(path.join(root, 'notes', decodeURIComponent(relative)), 'utf8');
+      };
+      const menuPaste = async (command = 'paste') => {
+        await content.press('Shift+F10');
+        await menu.locator('[data-note-command="' + command + '"]').click();
+        await menu.waitFor({ state: 'hidden' });
+      };
+      await page.evaluate(() => uploadTest.openNote('Images.md'));
+      for (const [mode, url] of [['live', dataUrl], ['source', 'data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64')]]) {
+        await page.evaluate(mode => uploadTest.setViewMode(mode), mode);
+        await reset(source);
+        await cursorBeforeAfter();
+        await paste(htmlFor(url));
+        await waitForAttachment('svg');
+        const inserted = await value();
+        assert.match(inserted, /^Before\n\n!\[[^\]]+\]\([^)]+\.svg\)\nAfter\n$/);
+        assert.equal(readSvg(inserted), svg, 'the SVG bytes survive clipboard decoding');
+        await content.press('Control+z');
+        assert.equal(await value(), source, 'one undo removes the pasted attachment reference');
+      }
+
+      await page.evaluate(() => uploadTest.setViewMode('live'));
+      await reset(source);
+      await cursorBeforeAfter();
+      await paste(htmlFor(dataUrl), { withFile: true });
+      await waitForAttachment('png');
+      assert(!(await value()).includes('.svg)'), 'direct image files take precedence over HTML');
+      await reset('');
+      await paste('Copied paragraph ' + htmlFor(dataUrl), { text: 'Copied paragraph' });
+      assert.equal(await value(), 'Copied paragraph', 'mixed clipboard content still pastes as text');
+      await reset('');
+      await paste(htmlFor('https://example.test/picture.svg'));
+      assert.equal(await value(), '', 'image URLs without embedded bytes are not imported');
+      assert.equal(await page.evaluate(() => uploadProbe.uploads), 0);
+
+      for (const [url, feedback] of [
+        ['data:image/svg+xml,%GG', /SVG/],
+        ['data:image/svg+xml;base64,@@@@', /SVG/],
+        ['data:image/svg+xml;base64,' + Buffer.alloc(4 * 1024 * 1024 + 1).toString('base64'), /4MiB/],
+      ]) {
+        await reset(source);
+        await paste(htmlFor(url));
+        assert.equal(await value(), source);
+        assert.equal(await page.evaluate(() => uploadProbe.uploads), 0, 'bad clipboard encoding never uploads');
+        assert.match(await toast.textContent(), feedback);
+      }
+      await reset(source);
+      const rejected = page.waitForResponse(response => response.url().endsWith('/api/note-upload-image'));
+      await paste(htmlFor('data:image/svg+xml,' + encodeURIComponent(svg.replace('</svg>', '<script>alert(1)</script></svg>'))));
+      assert(!(await rejected).ok(), 'clipboard SVG goes through server validation');
+      assert.equal(await value(), source);
+
+      await reset(source);
+      await cursorBeforeAfter();
+      const clipboardHtml = htmlFor(dataUrl);
+      if (!native) {
+        await page.evaluate(async html => navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }) })]), clipboardHtml);
+      } else {
+        // Test the handler in WebView2 independently of its native permission dialog.
+        await page.evaluate(html => {
+          navigator.clipboard.read = async () => [{ types: ['text/html'], getType: async type => new Blob([html], { type }) }];
+        }, clipboardHtml);
+      }
+      await menuPaste();
+      await waitForAttachment('svg');
+      const saved = await value();
+      assert.match(saved, /^Before\n\n!\[[^\]]+\]\([^)]+\.svg\)\nAfter\n$/);
+      assert.equal(readSvg(saved), svg);
+      await content.press('Control+z');
+      assert.equal(await value(), source);
+      await content.press('Control+y');
+      assert.equal(await value(), saved);
+      assert(await page.evaluate(() => uploadTest.flushSave()));
+      await page.evaluate(async () => { await uploadTest.openNote('Other.md'); await uploadTest.openNote('Images.md'); });
+      assert.equal(await value(), saved);
+      await page.waitForFunction(() => [...document.querySelectorAll('.note-live-image-frame img')].some(img => img.naturalWidth > 0 && img.src.includes('.svg')));
+
+      await reset(source);
+      await page.evaluate(svg => {
+        navigator.clipboard.read = async () => [{ types: ['image/svg+xml'], getType: async type => new Blob([svg], { type }) }];
+      }, svg);
+      await menuPaste();
+      await waitForAttachment('svg');
+      assert.equal(readSvg(await value()), svg);
+      await page.evaluate(() => { delete navigator.clipboard.read; });
+
+      await reset('');
+      if (!native) {
+        await page.evaluate(async ({ text, html }) => navigator.clipboard.write([new ClipboardItem({
+          'text/plain': new Blob([text], { type: 'text/plain' }), 'text/html': new Blob([html], { type: 'text/html' }),
+        })]), { text: dataUrl, html: clipboardHtml });
+        await content.press('Control+Shift+v');
+        assert.equal(await value(), dataUrl, 'plain paste preserves a literal SVG address');
+        assert.equal(await page.evaluate(() => uploadProbe.uploads), 0);
+        await reset('');
+        await menuPaste('paste-plain');
+        assert.equal(await value(), dataUrl, 'the plain menu command also preserves the address');
+        assert.equal(await page.evaluate(() => uploadProbe.uploads), 0);
+      }
+
+      await reset(source);
+      await page.evaluate(() => {
+        const read = FileReader.prototype.readAsDataURL;
+        FileReader.prototype.readAsDataURL = function (file) {
+          window.finishSvgRead = () => new Promise(resolve => {
+            FileReader.prototype.readAsDataURL = read;
+            this.addEventListener('loadend', resolve, { once: true });
+            read.call(this, file);
+          });
+        };
+      });
+      await paste(clipboardHtml);
+      await page.waitForFunction(() => !!window.finishSvgRead);
+      await page.evaluate(async () => {
+        await uploadTest.openNote('Other.md');
+        await window.finishSvgRead();
+        delete window.finishSvgRead;
+      });
+      assert.equal(await value(), '# Other\n\nKeep this text.');
+      assert.equal(await page.evaluate(() => uploadProbe.uploads), 0, 'a late clipboard image never uploads to the next note');
+      console.log('clipboard SVG HTML, direct MIME, formatting, bounds, history and cancellation: ok');
+    }
+
     await reset('# Batch\n\n');
     const start = performance.now();
     await bounded(() => page.evaluate(() => uploadTest.uploadImages(imageUploadFiles(40))), '40 image batch', 30000);
@@ -489,6 +641,7 @@ async function bounded(task, label, timeout = 15000) {
       return !!parsed && parsed.alt === '图 [1](demo).png' && parsed.target.includes('%28');
     }), true);
     await checkSvgIntake();
+    await checkSvgClipboard();
     assert.deepEqual(errors, []);
     assert.deepEqual(failures, []);
     console.log('note image upload browser regression: ok');
@@ -503,6 +656,7 @@ async function bounded(task, label, timeout = 15000) {
     }
     if (browser) await browser.close();
     if (server.exitCode === null) await new Promise(resolve => { server.once('exit', resolve); server.kill(); });
-    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    // WebView2 can finish writing preference files after the host exits.
+    await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -1708,6 +1708,7 @@
     viewFrame = 0;
     viewTickAt = 0;
     wheelZoomInputs.length = 0;
+    scene.classList.toggle('is-wheel-zooming', false);
   }
   function stopPanInertia() {
     if (panInertiaFrame) cancelAnimationFrame(panInertiaFrame);
@@ -1759,20 +1760,22 @@
   }
   function tickView(timestamp) {
     viewFrame = 0;
-    if (!open) { wheelZoomInputs.length = 0; return; }
+    if (!open) { stopViewAnimation(); return; }
+    var previousTarget = viewTarget;
     applyWheelZoomInputs();
     var dt = viewTickAt ? Math.max(0, Math.min(34, timestamp - viewTickAt)) : 1000 / 60;
     viewTickAt = timestamp;
     var dx = viewTarget.x - view.x, dy = viewTarget.y - view.y, dz = viewTarget.zoom - view.zoom;
     if (prefersReduced || (Math.abs(dx) < .25 && Math.abs(dy) < .25 && Math.abs(dz) < .0007)) {
       view = Object.assign({}, viewTarget);
-      viewTickAt = 0;
+      stopViewAnimation();
       if (dx || dy || dz) {
         applyView();
         saveViewSoon();
       }
       return;
     }
+    if (viewTarget !== previousTarget) scene.classList.toggle('is-wheel-zooming', true);
     var factor = 1 - Math.pow(1 - .32, dt / (1000 / 60));
     view.x += dx * factor;
     view.y += dy * factor;

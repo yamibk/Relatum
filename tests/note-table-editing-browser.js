@@ -67,7 +67,8 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
             return { blanks: [...content.children].filter(node => node.matches('.cm-line') && !node.textContent).length,
               padding: [style.paddingTop, style.paddingBottom] };
           });
-          assert.equal(layout.blanks, blanks * 2, 'only real blank lines may occupy layout'); assert.deepEqual(layout.padding, ['4px', '4px']);
+          assert.equal(layout.blanks, blanks * 2, 'only source blank lines may create editable lines');
+          assert.deepEqual(layout.padding, ['4px', '10px']);
           assert.equal(await value(), source, 'loading cannot rewrite whitespace');
           // Approach the bottom edge first: its add strip must not cover the following paragraph/blank.
           const table = await page.locator('.note-table table').boundingBox();

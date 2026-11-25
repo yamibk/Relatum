@@ -754,6 +754,13 @@
   const DOCUMENT_CACHE_BYTES = 16 * 1024 * 1024;
   const BLANK_TAB_PREFIX = 'relatum:blank-tab:';
   const IMAGE_RE = /\.(png|jpe?g|webp|gif|bmp|svg)$/i;
+  const SVG_MIME = 'image/svg+xml';
+  const SVG_UPLOAD_LIMIT = 4 * 1024 * 1024;
+  const CLIPBOARD_IMAGE_HTML_LIMIT = SVG_UPLOAD_LIMIT * 3 + 4096;
+  const CLIPBOARD_IMAGE_SUFFIXES = new Map([
+    ['image/png', 'png'], ['image/jpeg', 'jpg'], ['image/webp', 'webp'],
+    ['image/gif', 'gif'], ['image/bmp', 'bmp'], [SVG_MIME, 'svg'],
+  ]);
   const COPY = {
     'zh-CN': {
       loading: '正在读取笔记库…', emptyTree: '还没有笔记', select: '选择一篇笔记', readFailed: '读取笔记失败',
@@ -767,6 +774,7 @@
       importFailed: '导入失败', imported: '已导入 {count} 篇笔记', unsupportedSkipped: '已跳过 {count} 个不支持的文件',
       uploadFailed: '图片保存失败', imageUploadTooLarge: '图片过大（上限 40MB）', svgUploadTooLarge: 'SVG 图片过大（上限 4MiB）', linkWarnings: '已移动；{count} 个歧义双链保持原样', ambiguous: '同名笔记不唯一',
       imageCopyFailed: '复制图片失败，请检查图片是否可读取及剪贴板权限。', imageCopyTooLarge: '图片尺寸过大，无法复制。',
+      clipboardSvgInvalid: '无法读取剪贴板中的 SVG 图片。',
       missing: '尚未创建', noOutgoing: '当前笔记没有出链', noBacklinks: '当前笔记没有反向链接',
       cancel: '取消',
       externalOpenFailed: '无法打开外部链接',
@@ -804,6 +812,7 @@
       revealFailed: 'Could not show this item in File Explorer', importFailed: 'Import failed', imported: 'Imported {count} notes',
       unsupportedSkipped: 'Skipped {count} unsupported files', uploadFailed: 'Could not save image', imageUploadTooLarge: 'Image is too large (40MB limit)', svgUploadTooLarge: 'SVG image is too large (4MiB limit)',
       imageCopyFailed: 'Could not copy image. Check that the image is readable and clipboard access is allowed.', imageCopyTooLarge: 'This image is too large to copy.',
+      clipboardSvgInvalid: 'Could not read the SVG image from the clipboard.',
       linkWarnings: 'Moved; {count} ambiguous links were unchanged', ambiguous: 'Duplicate note name', missing: 'Not created',
       noOutgoing: 'No outgoing links', noBacklinks: 'No backlinks', cancel: 'Cancel',
       externalOpenFailed: 'Could not open external link',
@@ -2021,9 +2030,50 @@
     markChanged(editorSnapshot());
   }
 
+  function insertFallbackPaste(text) {
+    let inserted = false;
+    try {
+      inserted = document.activeElement === fallbackEditor && !!document.execCommand?.('insertText', false, text);
+    } catch (error) {}
+    if (!inserted) replaceEditorSelection(text);
+  }
+
   function clipboardLinkMarkdown(text, html, getContext, inlineOnly) {
     text = window.MarkdownMini?.normalizePastedMath(text, getContext, inlineOnly) ?? text;
     return window.MarkdownMini?.pastedLinkMarkdown(text, html, getContext, inlineOnly) ?? text;
+  }
+
+  function pasteClipboardSvg(text, html, context) {
+    if (!html || html.length > CLIPBOARD_IMAGE_HTML_LIMIT || !/<img\s/i.test(html) || !/data:image\/svg\+xml[;,]/i.test(html)) return null;
+    // A template keeps clipboard markup inert. Only the copied image's source is read.
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    const contents = Array.from(template.content.childNodes).filter(node =>
+      node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+    if (contents.length !== 1 || contents[0].nodeName !== 'IMG') return null;
+    const source = contents[0].getAttribute('src')?.trim() || '';
+    const plain = text.trim();
+    if (!/^data:image\/svg\+xml[;,]/i.test(source) || (plain && plain !== source)) return null;
+    try {
+      const header = /^data:image\/svg\+xml(?:;charset=utf-8)?(;base64)?,/i.exec(source);
+      if (!header) throw new TypeError('Invalid SVG data URL');
+      const payload = decodeURIComponent(source.slice(header[0].length).split('#', 1)[0]);
+      let bytes;
+      if (header[1]) {
+        const base64 = payload.replace(/[\t\n\f\r ]/g, '');
+        if (base64.length > Math.ceil(SVG_UPLOAD_LIMIT / 3) * 4) throw new RangeError('SVG clipboard size');
+        bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0));
+      } else {
+        if (payload.length > SVG_UPLOAD_LIMIT) throw new RangeError('SVG clipboard size');
+        bytes = new TextEncoder().encode(payload);
+      }
+      if (bytes.length > SVG_UPLOAD_LIMIT) throw new RangeError('SVG clipboard size');
+      if (!bytes.length) throw new TypeError('Empty SVG');
+      return uploadImages([new File([bytes], 'image.svg', { type: SVG_MIME })], context);
+    } catch (error) {
+      showToast(tr(error instanceof RangeError ? 'svgUploadTooLarge' : 'clipboardSvgInvalid'), 'error');
+      return Promise.resolve();
+    }
   }
 
   let wikiOpenTask = null;
@@ -2534,6 +2584,7 @@
           onOpenExternal: (target) => openMarkdownTarget(target),
           onOpenLocalFile: (target, syntax) => openLocalNoteFile(target, syntax),
           onImageFiles: (files) => uploadImages(files),
+          pasteClipboardImage: pasteClipboardSvg,
           database: noteDatabaseHost,
           htmlEmbed: noteHtmlHost,
           pdfEmbed: notePdfHost,
@@ -2601,15 +2652,14 @@
       if (files.length) { event.preventDefault(); uploadImages(files); return; }
       if (plain || !event.clipboardData) return;
       const text = event.clipboardData.getData('text/plain');
-      const markdown = clipboardLinkMarkdown(text, event.clipboardData.getData('text/html'), () => ({
+      const html = event.clipboardData.getData('text/html');
+      if (pasteClipboardSvg(text, html)) { event.preventDefault(); return; }
+      const markdown = clipboardLinkMarkdown(text, html, () => ({
         before: fallbackEditor.value.slice(0, fallbackEditor.selectionStart), after: fallbackEditor.value.slice(fallbackEditor.selectionEnd),
       }));
       if (markdown !== text) {
         event.preventDefault();
-        // Native insertion gives the fallback textarea one undoable paste.
-        let inserted = false;
-        try { inserted = !!document.execCommand?.('insertText', false, markdown); } catch (error) {}
-        if (!inserted) replaceEditorSelection(markdown);
+        insertFallbackPaste(markdown);
       }
     });
     fallbackEditor.addEventListener('dragover', (event) => { if (Array.from(event.dataTransfer && event.dataTransfer.files || []).some((file) => /^image\//i.test(file.type || '') || IMAGE_RE.test(file.name || ''))) event.preventDefault(); });
@@ -5773,7 +5823,7 @@
     check();
     // PNG already has the clipboard format: do not decode or re-encode it.
     if (blob.type === 'image/png') return blob;
-    const svg = blob.type === 'image/svg+xml';
+    const svg = blob.type === SVG_MIME;
     if (!svg && !/^image\/(?:jpeg|webp|bmp|gif)$/.test(blob.type)) throw new Error('Unsupported image type');
     let image, canvas, url;
     const cancelDecode = () => image?.removeAttribute('src');
@@ -5861,21 +5911,28 @@
           if (bodyMenuContext !== context) return;
           const images = [];
           for (const item of items) {
-            const type = item.types.find((candidate) => /^image\//.test(candidate));
-            if (type) images.push(new File([await item.getType(type)], 'image.' + (type === 'image/jpeg' ? 'jpg' : 'png'), { type }));
+            const type = item.types.find(candidate => CLIPBOARD_IMAGE_SUFFIXES.has(candidate));
+            if (type) images.push(new File([await item.getType(type)], 'image.' + CLIPBOARD_IMAGE_SUFFIXES.get(type), { type }));
           }
           if (images.length) {
             await uploadImages(images, context);
             if (bodyMenuContext === context) closeContextMenu();
             return;
           }
-          for (const item of items) {
-            if (!item.types.includes('text/plain')) continue;
-            try {
-              clipboardText = await (await item.getType('text/plain')).text();
-              if (item.types.includes('text/html')) clipboardHtml = await (await item.getType('text/html')).text();
-            } catch (error) { /* Preserve available text when rich clipboard data is unavailable. */ }
-            break;
+          const textItem = items.find(item => item.types.includes('text/plain'));
+          const htmlItem = textItem?.types.includes('text/html') ? textItem : items.find(item => item.types.includes('text/html'));
+          try { if (textItem) clipboardText = await (await textItem.getType('text/plain')).text(); }
+          catch (error) { /* Try the text-only clipboard reader below. */ }
+          try {
+            const html = await htmlItem?.getType('text/html');
+            if (html && html.size <= CLIPBOARD_IMAGE_HTML_LIMIT) clipboardHtml = await html.text();
+          } catch (error) { /* Preserve available text when rich clipboard data is unavailable. */ }
+          if (bodyMenuContext !== context || !liveEditor?.queryCommand(name, context).enabled) return;
+          const svgPaste = pasteClipboardSvg(clipboardText || '', clipboardHtml, context);
+          if (svgPaste) {
+            await svgPaste;
+            if (bodyMenuContext === context) closeContextMenu();
+            return;
           }
         }
         const rawText = clipboardText == null ? await navigator.clipboard.readText() : clipboardText;
@@ -6529,7 +6586,7 @@
     });
   }
   function fileToBase64(file) {
-    if (/\.svg$/i.test(file.name || '') && file.size > 4 * 1024 * 1024) return Promise.reject(new Error(tr('svgUploadTooLarge')));
+    if (/\.svg$/i.test(file.name || '') && file.size > SVG_UPLOAD_LIMIT) return Promise.reject(new Error(tr('svgUploadTooLarge')));
     if (file.size > 40 * 1024 * 1024) return Promise.reject(new Error(tr('imageUploadTooLarge')));
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -6603,7 +6660,7 @@
         const text = insertions.join('');
         if (commandContext) liveEditor.executeCommand('paste', commandContext, text);
         else if (insertion) insertion.insert(text);
-        else { fallbackEditor.setSelectionRange(fallback.from, fallback.to); replaceEditorSelection(text); }
+        else { fallbackEditor.setSelectionRange(fallback.from, fallback.to); insertFallbackPaste(text); }
       } catch (error) {
         if (current()) showToast(error.message || tr('uploadFailed'), 'error');
       } finally { insertion?.dispose(); }

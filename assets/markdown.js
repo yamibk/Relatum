@@ -880,9 +880,16 @@
   function noteDestination(raw) {
     const match = /^(?:<([^<>\n]+)>|(\S+?))(?:\s+["']([^\n]*?)["'])?\s*$/.exec(raw.trim());
     if (!match) return null;
-    const target = (match[1] || match[2]).replace(/\\([()<>\\])/g, '$1');
+    let target = (match[1] || match[2]).replace(/\\([()<>\\])/g, '$1');
     if (/^(?:javascript|vbscript|data):/i.test(target) || /^file:/i.test(target) && !isLocalFileUrl(target)
         || /[\x00-\x1f]/.test(target)) return null;
+    if (/^[a-z]:\//i.test(target)) {
+      try {
+        // Drive paths are literal filenames. Encode # and % before URL parsing.
+        const path = target.slice(3).split('/').map(encodeURIComponent).join('/');
+        target = 'file:///' + target.slice(0, 3) + path;
+      } catch (_) { return null; }
+    }
     return { target, title: match[3] || '' };
   }
 
@@ -1954,7 +1961,10 @@
         const cellStyle = function (idx) { return aligns[idx] ? ' style="text-align:' + aligns[idx] + '"' : ''; };
         let html = '<div class="md-scroll-x"' + span(tableStartLine, i) + ' data-md-table-ln="' + tableStartLine
           + '"><table class="md-table"><thead><tr' + span(tableStartLine, tableStartLine + 1) + '>';
-        header.forEach(function (c, idx) { html += '<th' + cellStyle(idx) + '>' + renderInline(escapeHtml(c), options?.noteSyntax) + '</th>'; });
+        const headerCell = options?.noteTableDataCells ? 'td' : 'th';
+        header.forEach(function (c, idx) {
+          html += '<' + headerCell + cellStyle(idx) + '>' + renderInline(escapeHtml(c), options?.noteSyntax) + '</' + headerCell + '>';
+        });
         html += '</tr></thead><tbody>';
         bodyRows.forEach(function (row, rowIndex) {
           html += '<tr' + span(tableStartLine + 2 + rowIndex, tableStartLine + 3 + rowIndex) + '>';
@@ -2124,7 +2134,7 @@
           seen.add(use.key);
           const entry = noteContext.footnotes.get(use.key);
           const body = renderResult(entry.body, { noteSyntax: true, noteBlocks: true, localImages: opts.localImages, mermaid: opts.mermaid,
-            noteContext, noteFootnoteBody: true, noteSourcePosition: opts.noteSourcePosition });
+            noteContext, noteFootnoteBody: true, noteSourcePosition: opts.noteSourcePosition, noteTableDataCells: opts.noteTableDataCells });
           features.math = features.math || body.features.math;
           features.mermaid = features.mermaid || body.features.mermaid;
           const position = typeof opts.noteSourcePosition === 'function' ? opts.noteSourcePosition : value => value;

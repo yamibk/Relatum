@@ -9,9 +9,12 @@ const repo = path.resolve(__dirname, '..'), root = fs.mkdtempSync(path.join(os.t
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const baseline = process.argv.includes('--baseline'), quick = process.argv.includes('--quick'), measureOnly = process.argv.includes('--measure');
 const resourcesOnly = process.argv.includes('--resources-only');
+const imageHintsOnly = process.argv.includes('--image-hints-only');
 const results = [], errors = [];
 fs.mkdirSync(path.join(root, 'notes'));
 fs.writeFileSync(path.join(root, 'notes', 'Other.md'), 'Another short note');
+const imageNote = '# Section 100000\n\n![Measured image](measured.png)\n\n![Sized image|240x120](measured.png)\n';
+fs.writeFileSync(path.join(root, 'notes', 'Images.md'), imageNote);
 function fixture(bytes) {
   const sections = []; let size = 0, index = 0;
   while (size < bytes) {
@@ -127,6 +130,108 @@ function paintedSection() {
         assert(Math.abs((tracked?.y ?? after.y) - before.y) <= 2, label + ': at most 2px drift ' + JSON.stringify({ before, after }));
       }
       assert.equal(after.anchor, before.anchor, label + ': editing anchor'); assert.equal(after.head, before.head, label + ': editing head');
+    }
+    async function imageSizeHints() {
+      const file = path.join(root, 'notes', 'measured.png');
+      await page.waitForFunction(() => T.state.entryIndex.has('Images.md') && T.state.entryIndex.has('Other.md'));
+      await page.waitForLoadState('networkidle');
+      await page.evaluate(() => {
+        // Exercise a delayed transfer on every mount, including when Edge already has the pixels.
+        const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+        window.restoreImageFixtureSrc = () => Object.defineProperty(HTMLImageElement.prototype, 'src', descriptor);
+        Object.defineProperty(HTMLImageElement.prototype, 'src', { ...descriptor, set(value) {
+          const url = new URL(value, document.baseURI);
+          if (window.imageFixtureRequest && url.pathname === '/api/note-asset' && url.searchParams.get('src') === 'measured.png') {
+            url.searchParams.set('fixture', window.imageFixtureRequest);
+            value = url.href;
+          }
+          descriptor.set.call(this, value);
+        } });
+      });
+      let fixtureRequest = 0;
+      async function writeImage(width, height) {
+        const base64 = await page.evaluate(({ width, height }) => {
+          const canvas = document.createElement('canvas');
+          canvas.width = width; canvas.height = height;
+          const context = canvas.getContext('2d');
+          context.fillStyle = '#b2c9b5'; context.fillRect(0, 0, width, height);
+          return canvas.toDataURL('image/png').split(',')[1];
+        }, { width, height });
+        fs.writeFileSync(file, Buffer.from(base64, 'base64'));
+      }
+      async function openDelayed(mode, failed = false) {
+        await page.evaluate(async ({ mode, request }) => {
+          await T.openNote('Other.md', { reuseActiveTab: false });
+          await T.setViewMode(mode);
+          window.imageFixtureRequest = request;
+        }, { mode, request: ++fixtureRequest });
+        const match = url => url.pathname === '/api/note-asset' && url.searchParams.get('src') === 'measured.png';
+        let release;
+        const held = new Promise(resolve => { release = resolve; });
+        const routeImage = async route => { await held; await route.continue(); };
+        await page.route(match, routeImage);
+        const host = mode === 'reading' ? '[data-role="note-reading-view"]' : '[data-role="note-editor"]';
+        const selector = host + ' img[alt="Measured image"]';
+        const image = page.locator(selector);
+        const measure = () => image.evaluate(node => {
+          const rect = node.getBoundingClientRect();
+          return { hint: node.hasAttribute('data-note-image-size-hint'), naturalWidth: node.naturalWidth, width: rect.width, height: rect.height };
+        });
+        try {
+          await Promise.all([
+            page.waitForRequest(request => match(new URL(request.url()))),
+            page.evaluate(() => T.openNote('Images.md', { reuseActiveTab: false })).then(opened => assert(opened, 'open the image fixture')),
+          ]);
+          const before = await measure();
+          const sized = page.locator(host + ' img[alt="Sized image"]');
+          assert.equal(await sized.getAttribute('data-note-image-size-hint'), null, 'explicit size has priority');
+          assert.equal(Math.round((await sized.boundingBox()).height), 120, 'explicit size is reserved before download');
+          release();
+          await page.waitForFunction(({ selector, failed }) => {
+            const node = document.querySelector(selector);
+            return failed ? !!node?.closest('.is-failed')
+              : node?.complete && node.naturalWidth && !node.hasAttribute('data-note-image-size-hint');
+          }, { selector, failed });
+          const after = await measure();
+          assert.equal(after.hint, false, 'the measured image replaces the provisional size');
+          return { before, after };
+        } finally {
+          release();
+          await page.unroute(match, routeImage);
+          await page.evaluate(() => { window.imageFixtureRequest = 0; });
+        }
+      }
+      await writeImage(300, 150);
+      const cold = await openDelayed('reading');
+      assert.equal(cold.before.hint, false);
+      assert.equal(cold.after.height, 150);
+      const warm = await openDelayed('reading');
+      const live = await openDelayed('live');
+      for (const sample of [warm, live]) {
+        assert.equal(sample.before.naturalWidth, 0, 'the real resource is still pending');
+        assert.equal(sample.before.hint, true, 'a previous decode supplies the initial dimensions');
+        assert(Math.abs(sample.before.height - sample.after.height) <= 1, 'the reserved image box survives decoding');
+      }
+      await writeImage(320, 280);
+      const replaced = await openDelayed('reading');
+      assert.equal(replaced.before.height, 150);
+      assert.equal(replaced.after.height, 280, 'the new image dimensions replace stale hints');
+      fs.unlinkSync(file);
+      const missing = await openDelayed('reading', true);
+      assert.equal(missing.before.height, 280);
+      assert.equal(missing.after.naturalWidth, 0);
+      await writeImage(320, 280);
+      const restored = await openDelayed('reading');
+      assert.equal(restored.before.hint, false, 'a failed image request evicts its hint');
+      assert.equal(fs.readFileSync(path.join(root, 'notes', 'Images.md'), 'utf8'), imageNote);
+      await page.evaluate(() => { window.restoreImageFixtureSrc(); delete window.restoreImageFixtureSrc; });
+      results.push({ scenario: 'image-size-hints', cold, warm, live, replaced, missing, restored });
+    }
+    if (imageHintsOnly) {
+      await imageSizeHints();
+      assert.deepEqual(errors, []);
+      console.log('note viewport browser: image size hints ok');
+      return;
     }
     for (const data of resourcesOnly ? [] : fixtures) {
       await page.evaluate(() => T.setViewMode('live'));
@@ -248,6 +353,9 @@ function paintedSection() {
           await page.evaluate(() => document.fonts.ready); await settle();
           const after = await position(); results.push({ scenario: userScroll ? 'resource-user-scroll' : 'resource-layout', before, after });
           checkSame(userScroll ? before : saved, after, true, 'late resource layout');
+          const reference = userScroll ? before : saved;
+          const tracked = after.nearby?.find(node => node.from === reference.from);
+          assert(Math.abs((tracked?.y ?? after.y) - reference.y) <= 1, 'late resources preserve the reading point within 1 CSS px');
           if (userScroll) assert(after.section !== saved.section, 'user wheel changes the reading position');
         } finally {
           release(); await page.evaluate(() => { MathJax.typesetPromise = nativeTypeset; heldTypesets.splice(0).forEach(run => run()); });
@@ -338,6 +446,7 @@ function paintedSection() {
         try { await new Promise(resolve => setTimeout(resolve, 450)); return count; } finally { window.requestAnimationFrame = native; }
       });
       assert.equal(frames, 0, 'settled viewport restoration adds no idle RAF loop');
+      await imageSizeHints();
     }
     assert.deepEqual(errors, []);
     console.log('note viewport browser: ok (' + results.length + ' scenarios)');
