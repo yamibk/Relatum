@@ -880,9 +880,16 @@
   function noteDestination(raw) {
     const match = /^(?:<([^<>\n]+)>|(\S+?))(?:\s+["']([^\n]*?)["'])?\s*$/.exec(raw.trim());
     if (!match) return null;
-    const target = (match[1] || match[2]).replace(/\\([()<>\\])/g, '$1');
+    let target = (match[1] || match[2]).replace(/\\([()<>\\])/g, '$1');
     if (/^(?:javascript|vbscript|data):/i.test(target) || /^file:/i.test(target) && !isLocalFileUrl(target)
         || /[\x00-\x1f]/.test(target)) return null;
+    if (/^[a-z]:\//i.test(target)) {
+      try {
+        // Drive paths are literal filenames. Encode # and % before URL parsing.
+        const path = target.slice(3).split('/').map(encodeURIComponent).join('/');
+        target = 'file:///' + target.slice(0, 3) + path;
+      } catch (_) { return null; }
+    }
     return { target, title: match[3] || '' };
   }
 
