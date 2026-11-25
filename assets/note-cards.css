@@ -40,14 +40,25 @@ html[data-markdown-dark="1"] .note-cards .note-card[data-note-card-color][data-s
   color: color-mix(in srgb, var(--note-card-line-ink), var(--note-card-ink) var(--note-card-line-depth));
 }
 .note-cards .note-card-line[style] {
-  --note-card-line-ink: color-mix(in srgb, var(--note-card-line-color) 55%, var(--note-card-ink));
+  --note-card-line-ink: color-mix(in srgb, var(--note-card-line-color) 72%, var(--note-card-ink));
 }
 .note-cards .note-card-line[data-depth="1"] { --note-card-line-depth: 33%; }
 .note-cards .note-card-line[data-depth="2"] { --note-card-line-depth: 66%; }
 .note-cards .note-card-line[data-depth="3"] { --note-card-line-depth: 100%; }
-.note-cards .note-card-line[style][data-depth="1"] { --note-card-line-depth: 8%; }
-.note-cards .note-card-line[style][data-depth="2"] { --note-card-line-depth: 16%; }
-.note-cards .note-card-line[style][data-depth="3"] { --note-card-line-depth: 24%; }
+.note-cards .note-card-line[style][data-depth="1"] { --note-card-line-depth: 4%; --note-card-color-step: 1; }
+.note-cards .note-card-line[style][data-depth="2"] { --note-card-line-depth: 8%; --note-card-color-step: 2; }
+.note-cards .note-card-line[style][data-depth="3"] { --note-card-line-depth: 12%; --note-card-color-step: 3; }
+@supports (color: oklch(from red calc(l * .35 + .28) calc(c * 1.7) h)) {
+  .note-cards .note-card-line[style] {
+    color: oklch(from var(--note-card-line-color)
+      calc(clamp(.43, l * .35 + .28, .54) - .02 * var(--note-card-color-step, 0)) calc(c * 1.7) h);
+  }
+  body.start-page[data-start-theme="dark"] .note-cards .note-card-line[style],
+  html[data-markdown-dark="1"] .note-cards .note-card-line[style] {
+    color: oklch(from var(--note-card-line-color)
+      calc(.62 + l * .25 + .015 * var(--note-card-color-step, 0)) calc(c * 1.7) h);
+  }
+}
 .note-cards .note-card-line[data-size="1"] { font-size: 1.1em; }
 .note-cards .note-card-line[data-size="2"] { font-size: 1.2em; }
 .note-cards .note-card-line[data-size="3"] { font-size: 1.3em; }
