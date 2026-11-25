@@ -28,6 +28,7 @@ const source = [
   '$$\\notARealMathCommand$$', '', fence + 'mermaid', 'flowchart LR', 'A[', fence, '',
   '![Tall|100x1500](研究笔记.assets/tall.svg)', '',
   fence + 'quiz', 'Quiz question', '- [x] Answer', '- [ ] Distractor', fence, '',
+  fence + 'cards', '# Course', '\\check Reviewed', '\\!check Practice', '\\bar Progress', '\\bar1:6 Whole course', fence, '',
   '[^a]: Footnote content', '', '## Tail marker', '', fence + 'database records', fence, '',
 ].join('\n');
 fs.writeFileSync(path.join(notes, note), source);
@@ -95,6 +96,8 @@ async function verifyPrintFrame(frame) {
       tall: article.querySelector('img[alt="Tall"]')?.getBoundingClientRect().height,
       white: getComputedStyle(document.body).backgroundColor,
       folded: article.querySelector('.md-callout-body').hidden,
+      cardTasks: [...article.querySelectorAll('.note-card-task')].map(box => [box.checked, box.disabled]),
+      cardProgress: [...article.querySelectorAll('.note-card-progress-track')].map(track => track.getAttribute('aria-valuetext')),
     };
   });
   assert.equal(contents.title, note.replace('.md', '.pdf'));
@@ -118,6 +121,8 @@ async function verifyPrintFrame(frame) {
   assert(contents.tall > 900 && contents.tall < 955, contents.tall);
   assert.equal(contents.white, 'rgb(255, 255, 255)');
   assert(!contents.folded);
+  assert.deepEqual(contents.cardTasks, [[true, true], [false, true]]);
+  assert.deepEqual(contents.cardProgress, ['1/2', '1/6']);
   for (const text of ['Shared.canvas', 'Quiz question', 'Tail marker', 'Table row 65']) assert(contents.text.includes(text));
 }
 

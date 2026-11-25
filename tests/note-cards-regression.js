@@ -78,6 +78,51 @@ assert.equal(cards.parse(patched('# [book] [target] 字面标题', 0, { icon: ''
 const cleared = cards.parse(patched('# A\n@subtitle: 原值\n@subtitle: 重复值\n@badge: 重点\n正文', 0, { subtitle: '' }));
 assert.equal(cleared.cards[0].subtitle, ''); assert.equal(cleared.cards[0].badge, '重点'); assert.equal(cleared.cards[0].diagnostics.length, 1, 'clearing a field does not promote duplicates or consume later fields as body text');
 const rendered = cards.render(body);
+const commands = String.raw`# 任务
+\bbb\red\####\B 大字
+\B\####\red\bbb 同样的样式
+\#abcdefg\red
+\redshift 照常显示
+\\check 字面命令
+ \check 缩进后照常显示
+\red\blue\B 无颜色
+\!check\check 互相抵消
+\check\check 已完成
+\!check 待完成
+\check\bar 互相抵消
+\bar1:2\bar1:4 互相抵消
+\bar2:1 越界
+\bar-1:6 负数
+\bar1:0 零总数
+\bar9007199254740993:9007199254740993 超范围
+\bar0:6 起点
+\bar6:6 终点
+\bar1:6 手动
+\bar 自动
+# 其他任务
+\bar 自动`;
+const [taskCard, emptyCard] = cards.parse(commands).cards;
+const [style, reordered, suffixed, unknown, escaped, indented, colorConflict] = taskCard.lines;
+const appearance = ({ bold, color, depth, size }) => ({ bold, color, depth, size });
+assert.deepEqual(appearance(style), { bold: true, color: 'red', depth: 3, size: 3 });
+assert.deepEqual(appearance(style), appearance(reordered));
+assert.equal(suffixed.text, String.raw`abcdefg\red`);
+assert.equal(suffixed.size, 1);
+for (const line of [unknown, escaped, indented]) assert.equal(line.styled, undefined);
+assert.deepEqual(appearance(colorConflict), { bold: true, color: '', depth: 0, size: 0 });
+const unchanged = taskCard.lines.filter(row => row.styled && !row.component);
+assert.equal(unchanged.length, 11);
+assert.equal(cards.taskEdit(commands, 0, taskCard.lines[7].number), null);
+assert.equal(cards.taskEdit(commands, 1, emptyCard.lines[0].number), null);
+assert.deepEqual(cards.taskEdit(commands, 0, taskCard.lines[8].number), [
+  { from: 0, to: 6, expected: '\\check', insert: '\\!check' },
+  { from: 6, to: 12, expected: '\\check', insert: '\\!check' },
+]);
+const commandHtml = cards.render(commands).html;
+assert.equal((commandHtml.match(/type="checkbox"/g) || []).length, 2);
+assert.deepEqual([...commandHtml.matchAll(/aria-valuetext="([^"]+)"/g)].map(match => match[1]), ['0/6', '6/6', '1/6', '1/2', '0/0']);
+assert(commandHtml.includes(String.raw`\check 字面命令`));
+assert(!commandHtml.includes(String.raw`\\check 字面命令`));
 assert(rendered.features.math); assert(rendered.html.includes('<ul>')); assert(rendered.html.includes('<ol start="1">'));
 assert(rendered.html.includes('<strong>标题</strong>')); assert(rendered.html.includes('href="https://example.com"'));
 assert.equal((rendered.html.match(/note-card-icon/g) || []).length, 1);

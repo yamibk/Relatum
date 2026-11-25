@@ -3602,7 +3602,7 @@
       const entry = dom.__relatumMermaidBlock = { widget: this, control: null };
       dom.innerHTML = safeIsolatedResult(this.spec.renderSource || this.spec.source).html;
       dom.addEventListener('mousedown', event => {
-        if (event.target.closest('[data-note-mermaid-control], [data-note-cards-control], a')) return;
+        if (event.target.closest('[data-note-mermaid-control], [data-note-cards-control], [data-note-card-task], a')) return;
         if (event.button !== 0 && event.button !== 2) return;
         event.preventDefault(); event.stopPropagation();
         const widget = entry.widget, diagram = dom.querySelector('.mermaid-diagram, .note-cards'), rect = diagram?.getBoundingClientRect();
@@ -3614,7 +3614,7 @@
       });
       dom.addEventListener('dblclick', event => { event.preventDefault(); event.stopPropagation(); });
       dom.addEventListener('keydown', event => {
-        if (event.key !== 'Enter' || event.target.closest('[data-note-mermaid-control], [data-note-cards-control], a')) return;
+        if (event.key !== 'Enter' || event.target.closest('[data-note-mermaid-control], [data-note-cards-control], [data-note-card-task], a')) return;
         event.preventDefault(); event.stopPropagation(); entry.widget.options.onMermaidEdit(entry.widget.spec.id);
       });
       const current = () => {
@@ -3623,6 +3623,8 @@
       };
       entry.control = (this.spec.kind === 'cards' ? attachNoteCards : attachNoteMermaid)(dom, { mode: 'live', onLink: target => this.options.onOpenExternal(normalizedImageTarget(target)), source: fencedCodeBody(this.spec.renderSource || this.spec.source), historyKey: this.epoch + ':' + this.spec.id,
         isCurrent: current, whenSettled: () => runWhenInputSettled(view, () => true),
+        onTask: this.spec.kind === 'cards' && !this.options.readOnlyCardsTasks
+          ? (source, index, line) => entry.widget.options.onCardsTask(entry.widget.spec.id, source, index, line) : undefined,
         onLayout: () => runWhenInputSettled(view, () => {
           if (!current()) return;
           dom.style.removeProperty('min-height'); measureMermaid(view, dom, entry.widget.coordinator, entry.widget.spec.id);
@@ -3658,7 +3660,11 @@
       return true;
     }
     destroy(dom) { dom.__relatumMermaidBlock?.control.destroy(); delete dom.__relatumMermaidBlock; }
-    ignoreEvent(event) { return event.type !== 'contextmenu'; }
+    ignoreEvent(event) {
+      if (event.type === 'keydown' && (event.ctrlKey || event.metaKey) && !event.altKey
+          && /^[syz]$/i.test(event.key) && event.target.matches('[data-note-card-task]')) return false;
+      return event.type !== 'contextmenu';
+    }
   }
 
   class RichBlockWidget extends WidgetType {
@@ -7087,6 +7093,21 @@
     safeOptions.onMermaidSelect = id => routeMermaid(id, spec => {
       view.dispatch({ selection: EditorSelection.range(spec.from, spec.to), userEvent: 'select.pointer' }); view.focus();
     });
+    safeOptions.onCardsTask = (id, source, index, line) => {
+      const spec = currentMermaid(id);
+      if (spec?.kind !== 'cards' || inputPending() || view.state.readOnly || view.state.doc.sliceString(spec.from, spec.to) !== spec.source) return;
+      const container = window.MarkdownMini.noteContainerSource(spec.source);
+      const opener = fenceStart(container.lines[0]);
+      if (!opener || !isFenceEnd(container.lines.at(-1), opener) || fencedCodeBody(container.text) !== source) return;
+      const edits = window.RelatumNoteCards.taskEdit(source, index, line);
+      if (!edits) return;
+      const offset = spec.from + container.offsets[line + 1];
+      const changes = edits.map(edit => ({ from: offset + edit.from, to: offset + edit.to, insert: edit.insert }));
+      if (changes.some((change, i) => view.state.doc.sliceString(change.from, change.to) !== edits[i].expected)) return;
+      const changeSet = view.state.changes(changes);
+      view.dispatch({ changes: changeSet, selection: view.state.selection.map(changeSet),
+        userEvent: 'input.cards-task', annotations: CM.isolateHistory.of('full') });
+    };
     safeOptions.onCardsStyle = async (id, anchor) => {
       closeCardsTools();
       const ticket = cardsToolsRequest, spec = currentMermaid(id), doc = view.state.doc, epoch = coordinator.epoch;

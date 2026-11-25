@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict'), fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..'), output = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-cards-markdown-'));
-const source = '# 文档\n\n```cards\n@style: outline\n##[book][!Purple]整理笔记\n@subtitle: 第三章\n@badge: 待复习\n@value: 3 个核心概念\n@footer: 来源：[资料](https://example.com)\n正文 **重点**\n```\n\nafter';
+const source = '# 文档\n\n```cards\n@style: outline\n##[book][!Purple]整理笔记\n@subtitle: 第三章\n@badge: 待复习\n@value: 3 个核心概念\n@footer: 来源：[资料](https://example.com)\n正文 **重点**\n\\check 已复习\n\\bar 进度\n```\n\nafter';
 (async () => {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost'), file = path.resolve(repo, '.' + decodeURIComponent(url.pathname));
@@ -34,6 +34,9 @@ const source = '# 文档\n\n```cards\n@style: outline\n##[book][!Purple]整理�
       const page = await context.newPage(), errors = [], requests = [];
       page.on('pageerror', error => errors.push(error.message)); page.on('request', req => requests.push(req.url()));
       await page.goto(origin + '/assets/markdown-file.html'); await page.waitForSelector('.note-cards-block .note-card');
+      const task = page.locator('.note-card-task');
+      assert(await task.isChecked() && await task.isDisabled());
+      assert.equal(await page.locator('.note-card-progress-track').getAttribute('aria-valuetext'), '1/1');
       const geometry = await page.locator('.note-cards').evaluate(root => ({ group: root.clientWidth, card: root.querySelector('.note-card').getBoundingClientRect().width }));
       assert(Math.abs(geometry.group - geometry.card) < 1, 'standalone single cards fill the note width');
       assert(!requests.some(url => url.includes('note-cards-tools')), 'standalone tools stay cold until clicked');
