@@ -96,6 +96,7 @@
     ? (window.RelatumBackgroundPreparation ||= createBackgroundPreparation()) : null;
   const workspacePanels = Array.from(document.querySelectorAll('[data-start-workspace-panel]'));
   const workspaceButtons = Array.from(document.querySelectorAll('button[data-start-workspace]'));
+  const workspaceStage = document.querySelector('.start-workspace-stage');
   const header = document.querySelector('body > .top-bar');
   function syncHeaderAccess() {
     if (!header) return;
@@ -129,8 +130,7 @@
   let researchWorkspaceFrame = null, researchWorkspaceApi = null;
   let noteWorkspaceWarmupHandle = 0, careerWorkspaceWarmupHandle = 0;
   let noteWorkspaceWarmupScheduled = false, careerWorkspaceWarmupScheduled = false;
-  const workspaceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-  let workspaceHandoff = null;
+  let workspaceTransitionTimer = 0;
   const retiringWorkspaces = new Set();
   function finishWorkspaceExits(except) {
     retiringWorkspaces.forEach(id => { if (id !== except) lifecycle[id]?.afterLeave?.(); });
@@ -351,86 +351,57 @@
     });
   }
 
-  function clearPanelMotion(panel) {
-    panel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-departed', 'workspace-forward', 'workspace-back');
-    panel.style.removeProperty('--workspace-enter-ms');
-  }
-
-  function finishWorkspaceHandoff() {
-    if (!workspaceHandoff) return;
-    const { cover, animation } = workspaceHandoff;
-    workspaceHandoff = null;
-    animation?.cancel();
-    cover.remove();
-    document.body.classList.remove('start-workspace-turning');
-    workspacePanels.forEach(panel => {
-      const active = panel.dataset.startWorkspacePanel === activeStartWorkspace;
-      panel.hidden = !active;
-      panel.inert = !active;
-      clearPanelMotion(panel);
-    });
-    if (activeStartWorkspace === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
-    finishWorkspaceExits(activeStartWorkspace);
-  }
-
-  async function coverWorkspace(name, previous, animate) {
-    const outgoing = workspacePanels.find(panel => panel.dataset.startWorkspacePanel === previous);
-    if (!animate || name === previous || !outgoing || !workspacePanels.some(panel => panel.dataset.startWorkspacePanel === name)
-      || workspaceMotion.matches || document.hidden || document.documentElement.dataset.desktopMinimized === '1'
-      || typeof outgoing.animate !== 'function') return null;
-    const speed = config.turnSpeed();
-    const concealMs = Math.min(110, Math.round(speed * .35));
-    const existing = workspaceHandoff;
-    const cover = existing?.cover || document.createElement('div');
-    const opacity = existing ? Number(getComputedStyle(cover).opacity) : 0;
-    if (!existing) {
-      cover.className = 'start-workspace-cover';
-      cover.setAttribute('aria-hidden', 'true');
-      cover.style.backgroundColor = getComputedStyle(document.documentElement).backgroundColor;
-      document.body.append(cover);
-    }
-    const handoff = { cover, revealMs: speed + 80 - concealMs };
-    workspaceHandoff = handoff;
-    existing?.animation?.cancel();
-    document.body.classList.add('start-workspace-turning');
-    outgoing.inert = true;
-    outgoing.classList.add('workspace-leaving');
-    handoff.animation = cover.animate([{ opacity }, { opacity: 1 }], {
-      duration: concealMs * (1 - opacity), fill: 'both', easing: 'ease-out',
-    });
-    try { await handoff.animation.finished; } catch (_) { return null; }
-    return workspaceHandoff === handoff ? handoff : null;
-  }
-
-  function showWorkspacePanel(name, previous, handoff) {
-    if (!handoff) finishWorkspaceHandoff();
+  function showWorkspacePanel(name, previous, animate, previousStageTop) {
+    clearTimeout(workspaceTransitionTimer);
     finishWorkspaceExits(name);
     if (name !== previous) retiringWorkspaces.add(previous);
-    const nextPanel = workspacePanels.find(panel => panel.dataset.startWorkspacePanel === name);
-    const previousPanel = workspacePanels.find(panel => panel.dataset.startWorkspacePanel === previous);
-    workspacePanels.forEach(panel => {
-      clearPanelMotion(panel);
-      panel.hidden = panel !== nextPanel && !(handoff && panel === previousPanel);
-      panel.inert = panel !== nextPanel;
+    document.body.classList.remove('start-workspace-turning');
+    const nextPanel = workspacePanels.find((panel) => panel.dataset.startWorkspacePanel === name);
+    const previousPanel = workspacePanels.find((panel) => panel.dataset.startWorkspacePanel === previous);
+    workspacePanels.forEach((panel) => {
+      panel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
+      panel.style.removeProperty('--workspace-layout-shift-y');
+      if (panel !== nextPanel && panel !== previousPanel) {
+        panel.hidden = true; panel.inert = true;
+      }
     });
-    if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
-    if (!handoff) {
+    if (!nextPanel) { workspacePanels.forEach(panel => { panel.hidden = true; panel.inert = true; }); finishWorkspaceExits(name); return; }
+    nextPanel.hidden = false;
+    nextPanel.inert = false;
+    if (!animate || !previousPanel || previousPanel === nextPanel
+      || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      if (previousPanel && previousPanel !== nextPanel) {
+        previousPanel.hidden = true;
+        previousPanel.inert = true;
+      }
+      if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
       finishWorkspaceExits(name);
       return;
     }
-    // Keep the retired panel mounted until the reveal ends, but paint only the new one.
     const forward = layout.order.indexOf(name) > layout.order.indexOf(previous);
-    previousPanel.classList.add('workspace-leaving', 'workspace-departed');
-    nextPanel.style.setProperty('--workspace-enter-ms', handoff.revealMs + 'ms');
-    nextPanel.classList.add('workspace-entering', forward ? 'workspace-forward' : 'workspace-back');
-    const conceal = handoff.animation;
-    handoff.animation = handoff.cover.animate([{ opacity: 1 }, { opacity: 0 }], {
-      duration: handoff.revealMs, fill: 'both', easing: 'ease-out',
-    });
-    conceal.cancel();
-    handoff.animation.finished.then(() => {
-      if (workspaceHandoff === handoff) finishWorkspaceHandoff();
-    }, () => {});
+    const directionClass = forward ? 'workspace-forward' : 'workspace-back';
+    if (workspaceStage && Number.isFinite(previousStageTop)) {
+      const layoutShiftY = previousStageTop - workspaceStage.getBoundingClientRect().top;
+      if (Math.abs(layoutShiftY) > 0.5) {
+        previousPanel.style.setProperty('--workspace-layout-shift-y', `${layoutShiftY}px`);
+      }
+    }
+    previousPanel.hidden = false;
+    previousPanel.inert = true;
+    previousPanel.classList.add('workspace-leaving', directionClass);
+    nextPanel.classList.add('workspace-entering', directionClass);
+    document.body.classList.add('start-workspace-turning');
+    workspaceTransitionTimer = window.setTimeout(() => {
+      previousPanel.hidden = true;
+      previousPanel.inert = true;
+      previousPanel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
+      nextPanel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
+      previousPanel.style.removeProperty('--workspace-layout-shift-y');
+      document.body.classList.remove('start-workspace-turning');
+      if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
+      finishWorkspaceExits(name);
+    }, Math.max(220, config.turnSpeed()) + 140);
+    if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
   }
 
   // 画布工作区隐藏时，书脊目标的 DOMRect 会退化为零尺寸；此时留下的游标形状
@@ -453,12 +424,12 @@
     if (name !== 'none' && !visibleWorkspaces().includes(name)) return false;
     if (name === 'none' && visibleWorkspaces().length && !options.allowEmpty) return false;
     const previous = activeStartWorkspace;
+    const previousStageTop = workspaceStage ? workspaceStage.getBoundingClientRect().top : 0;
     if (name !== previous && await lifecycle[previous]?.leave?.() === false) return false;
-    const handoff = await coverWorkspace(name, previous, options.animate !== false);
     activeStartWorkspace = name;
     syncWorkspaceControls(name);
     config.onChange();
-    showWorkspacePanel(name, previous, workspaceHandoff === handoff ? handoff : null);
+    showWorkspacePanel(name, previous, options.animate !== false && name !== previous, previousStageTop);
     if (name === 'canvas' && name !== previous) window.CanvasTreePage?.resumeAfterWorkspace?.();
     if (options.persist !== false && name !== 'none') {
       try { localStorage.setItem(START_WORKSPACE_KEY, name); } catch (e) {}
@@ -581,7 +552,6 @@
   document.addEventListener('relatum:note-graph-target', scheduleGraphPreparation);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-      finishWorkspaceHandoff();
       resumeGraphPreparation = !!graphPreparation;
       graphPreparation?.abort();
     } else if (resumeGraphPreparation) {
@@ -596,11 +566,6 @@
   }
   if (activeStartWorkspace === 'notes') workspaceSwitchPromise.then(scheduleCareerWorkspaceIdleWarmup);
   workspaceSwitchPromise.then(scheduleGraphPreparation);
-  workspaceMotion.addEventListener('change', () => { if (workspaceMotion.matches) finishWorkspaceHandoff(); });
-  window.addEventListener('canvasdesktop:visibility', () => {
-    if (document.documentElement.dataset.desktopMinimized === '1') finishWorkspaceHandoff();
-  });
-  window.addEventListener('pagehide', finishWorkspaceHandoff, { once: true });
   window.addEventListener('pagehide', disposeResearchWorkspace, { once: true });
 
   return window.RelatumStartWorkspace;

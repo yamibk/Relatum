@@ -587,6 +587,13 @@ html[data-note-theme="apple"] body.start-page[data-start-workspace="notes"] > :i
   --settings-text: var(--note-theme-text); --settings-muted: var(--note-theme-muted); --settings-selected: var(--note-theme-nav-selected);
   color: var(--text); font-family: var(--note-theme-ui-font); font-optical-sizing: auto;
 }
+
+/* Keep the shared header on the same typography across workspace changes. */
+html:is([data-note-theme="sky"], [data-note-theme="apple"]) body.start-page[data-start-workspace="notes"] > .top-bar {
+  font-family: inherit;
+  font-optical-sizing: inherit;
+}
+
 html[data-note-theme="apple"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-context-menu, .note-highlight-menu, .note-modal-host, .note-ai-popovers, .note-search-popover, .note-table-alignment, .note-link-completion, .note-link-completion-status, .note-inline-math-preview),
 html[data-note-theme="apple"] body.start-page[data-start-theme="dark"][data-start-workspace="notes"] > :is(.top-bar, .desktop-note-focus-controls) {
   --note-theme-paper: #1c1c1e; --note-theme-nav: var(--apple-shell, #242426); --note-theme-surface: #2c2c2e;

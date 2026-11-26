@@ -14,7 +14,6 @@ html[data-start-appearance] {
   --workspace-active-ink: #fff;
   --start-header-primary: #181817;
   --start-header-primary-ink: #fff;
-  background-color: var(--start-home-base);
 }
 html[data-start-appearance][data-start-theme="dark"] {
   --claude-shell: #151515;
@@ -130,6 +129,14 @@ html[data-start-workspace="notes"][data-note-theme="apple"] { --start-header-bas
 html[data-start-appearance][data-start-background="simple"]:where(:not([data-start-workspace="none"])) {
   --start-home-base: var(--start-header-base);
 }
+
+/* The standalone editor shares the homepage's solid base during navigation. */
+html[data-start-appearance]:not([data-editor-background-tone]),
+html[data-canvas-route-appearance]:not(:has(> body.canvas-ready)),
+html[data-canvas-route-appearance] .editor-opening-cover,
+html[data-canvas-route-appearance] > body.editor-page::after {
+  background-color: var(--start-home-base);
+}
 html[data-start-appearance] body.start-page { background-color: var(--start-home-base); }
 html[data-start-appearance]:not([data-start-appearance="default"], [data-start-workspace="notes"], [data-start-workspace="none"]) body.start-page[data-start-background="scenic"] {
   background-image: radial-gradient(90% 75% at 78% 24%, var(--start-home-glow), transparent 76%),
@@ -193,11 +200,8 @@ html[data-start-appearance]:where(:not([data-start-workspace="notes"])) body.sta
   background-color: color-mix(in srgb, var(--start-header-primary) 90%, var(--start-header-base));
 }
 
-/* The cover handles the visual handoff for the entire shell in one pass. */
-body.start-page.start-workspace-turning,
-body.start-page.start-workspace-turning > .top-bar,
-body.start-page.start-workspace-turning .top-actions { transition: none; }
-body.start-page.start-workspace-turning .top-actions { animation: none; }
+/* Commit the backing color with the header while the panels use their own motion. */
+body.start-page.start-workspace-turning { transition-property: color; }
 
 @media (prefers-reduced-motion: reduce) {
   html[data-start-appearance] body.start-page,

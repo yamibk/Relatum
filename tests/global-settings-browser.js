@@ -28,10 +28,11 @@ async function checkWorkspaceHandoffs(page) {
       for (const appearance of themes) for (const notes of themes) {
         RelatumStartAppearance.apply(appearance); RelatumNoteTheme.apply(notes);
         const previous = RelatumStartWorkspace.current, next = previous === 'notes' ? 'canvas' : 'notes';
-        const report = { depth, background, appearance, notes, previous, next, covered: null, frames: 0, invalid: [] };
+        const report = { depth, background, appearance, notes, previous, next, motion: null, frames: 0, invalid: [] };
         const surface = getComputedStyle(root).backgroundColor;
+        const panel = id => panels.find(node => node.dataset.startWorkspacePanel === id);
         const observer = new MutationObserver(() => {
-          report.covered = Number(getComputedStyle(document.querySelector('.start-workspace-cover')).opacity);
+          report.motion = [getComputedStyle(panel(previous)).animationName, getComputedStyle(panel(next)).animationName];
         });
         observer.observe(root, { attributes: true, attributeFilter: ['data-start-workspace'] });
         let complete = false;
@@ -39,18 +40,14 @@ async function checkWorkspaceHandoffs(page) {
         try {
           do {
             await nextFrame();
-            const cover = document.querySelector('.start-workspace-cover');
-            if (!cover) continue;
+            if (!body.classList.contains('start-workspace-turning')) continue;
             report.frames++;
-            const workspace = root.dataset.startWorkspace;
-            const painting = panels.filter(panel => !panel.hidden && Number(getComputedStyle(panel).opacity) > 0)
-              .map(panel => panel.dataset.startWorkspacePanel);
-            if (painting.join() !== workspace || body.dataset.startWorkspace !== workspace) report.invalid.push({ workspace, painting });
+            const backdrop = getComputedStyle(root).backgroundColor;
+            if (getComputedStyle(body).backgroundColor !== backdrop) report.invalid.push({ backdrop });
             if (background === 'simple' && appearance === notes) {
-              if (getComputedStyle(root).backgroundColor !== surface || getComputedStyle(body).backgroundColor !== surface
-                || getComputedStyle(cover).backgroundColor !== surface) report.invalid.push({ surface });
+              if (backdrop !== surface) report.invalid.push({ surface, backdrop });
             }
-          } while (!complete || document.querySelector('.start-workspace-cover'));
+          } while (!complete || body.classList.contains('start-workspace-turning'));
           report.switched = await switching;
         } finally { observer.disconnect(); }
         reports.push(report);
@@ -62,7 +59,9 @@ async function checkWorkspaceHandoffs(page) {
   });
   assert.equal(reports.length, 64);
   for (const report of reports) {
-    assert(report.switched && report.frames > 0 && report.covered === 1 && !report.invalid.length, JSON.stringify(report));
+    const direction = report.next === 'notes' ? 'Forward' : 'Back';
+    assert.deepEqual(report.motion, ['startWorkspaceLeave' + direction, 'startWorkspaceEnter' + direction], JSON.stringify(report));
+    assert(report.switched && report.frames > 0 && !report.invalid.length, JSON.stringify(report));
   }
 }
 

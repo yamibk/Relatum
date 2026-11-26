@@ -4,8 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Relatum</title>
-  <!-- 背景配置需要等 /api/load 返回；先用上次确认过的深浅语义给浏览器首帧定底色，
-       避免深色画布在等待数据与图片时闪出白屏。真实配置加载后仍由 editor.js 校准。 -->
+  <!-- 先恢复画布自身的深浅语义，真实配置加载后由 editor.js 校准。 -->
   <script>
     (function () {
       try {
@@ -67,6 +66,24 @@
       };
     })();
   </script>
+  <script src="start-appearance.js"></script>
+  <script>
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var features = window.RelatumFeatureRuntime;
+      if (!params.get('file') || params.get('embed') === '1' ||
+          (features && !features.workspaces.some(item => features.workspaceEnabled(item.id)))) return;
+      var root = document.documentElement;
+      root.dataset.canvasRouteAppearance = '';
+      root.dataset.startTheme = 'light';
+      root.dataset.startBackground = 'simple';
+      try {
+        if (localStorage.getItem('canvas:startTheme') === 'dark') root.dataset.startTheme = 'dark';
+        if (localStorage.getItem('canvas:startBackgroundStyle') === 'scenic') root.dataset.startBackground = 'scenic';
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="start-appearance.css">
   <!-- 首屏核心使用 defer：浏览器在解析大型编辑器 DOM 时即可并行下载，仍严格按声明顺序执行。 -->
   <script src="i18n.js" defer></script>
   <script src="desktop-shell.js" defer></script>
