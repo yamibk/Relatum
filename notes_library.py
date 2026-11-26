@@ -172,6 +172,7 @@ _WINDOWS_RESERVED = {
 }
 _INVALID_NAME_CHARS = re.compile(r'[<>:"\\|?*\x00-\x1f]')
 _WIKI_RE = re.compile(r"(?<!!)\[\[([^\]\n]+)\]\]")
+_NOTE_SECTION_RE = re.compile(r"^ {0,3}!\[\[([^#\[\]|\r\n]+)#([^\[\]|\r\n]+)\]\][ \t]*\r?$", re.MULTILINE)
 _FENCE_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})([^\n]*)$")
 _INLINE_CODE_RE = re.compile(r"(`+)(.*?)\1")
 _IMAGE_TEXT_COMMENT_RE = re.compile(
@@ -587,6 +588,25 @@ def _wiki_mentions(text: str) -> list[dict]:
                 "excerpt": bare.strip()[:240],
             })
         offset += len(line)
+    if _NOTE_SECTION_RE.search(text):
+        from note_graph import _protected_source
+
+        visible = _protected_source(text)
+        line = 1
+        previous = 0
+        for match in _NOTE_SECTION_RE.finditer(text):
+            start = match.start() + match[0].index('!')
+            end = match.start(2) + len(match[2]) + 2
+            if visible[start:end] != text[start:end] or not match[1].strip() or not match[2].strip() or match[2].lstrip().startswith('^'):
+                continue
+            line += text.count('\n', previous, start)
+            previous = start
+            mentions.append({
+                'start': start, 'end': end, 'inner': text[start + 3:end - 2],
+                'base': match[1].strip(), 'suffix': '#' + match[2], 'alias': '',
+                'line': line, 'excerpt': match[0].strip()[:240], 'section': True,
+            })
+        mentions.sort(key=lambda item: item['start'])
     return mentions
 
 
@@ -1081,7 +1101,7 @@ class NotesStore:
             "path": relative, "revision": revision,
         }
         document["signature"] = signature
-        needs_mentions = "mentions" not in document
+        needs_mentions = "mentions" not in document or not document.get('sectionMentions')
         needs_metadata = "tags" not in document or "excerpt" not in document
         needs_canvas = "canvasTargets" not in document
         graph = graph or bool(cached and 'graphReferences' in cached)
@@ -1094,6 +1114,7 @@ class NotesStore:
             if needs_mentions:
                 self.sync.cooperate()
                 document["mentions"] = _wiki_mentions(text)
+                document['sectionMentions'] = True
             if needs_metadata:
                 self.sync.cooperate()
                 document.update(note_metadata(text))
@@ -1366,6 +1387,15 @@ class NotesStore:
         self._cache_document(normalized, raw, revision=revision)
         result = self.index.links(normalized) or {'path': normalized, 'outgoing': [], 'backlinks': []}
         result['revision'] = revision
+        return result
+
+    def wiki_target(self, target: str) -> dict:
+        if not target or len(target) > 4096:
+            return {'state': 'invalid'}
+        self._prepare_index()
+        result = self.index.wiki_target(target)
+        if result['state'] == 'missing' and self.sync.background and self.sync.status()['phase'] != 'ready':
+            return {'state': 'indexing'}
         return result
 
     def report_statistics(self) -> dict:
@@ -1728,10 +1758,13 @@ class NotesStore:
                 if new_state == "resolved" and still_resolved == new_target:
                     continue
                 new_base = _strip_note_suffix(new_target)
+                if mention.get('section'):
+                    new_base = re.sub(r'[%#^|\[\]]', lambda match: urllib.parse.quote(match[0], safe=''), new_base)
                 inner = new_base + mention["suffix"]
                 if mention["alias"]:
                     inner += "|" + mention["alias"]
-                replacements.append((mention["start"], mention["end"], "[[" + inner + "]]"))
+                prefix = '![[' if mention.get('section') else '[['
+                replacements.append((mention["start"], mention["end"], prefix + inner + "]]"))
 
             new_source = mapping[old_source]
             if replacements:

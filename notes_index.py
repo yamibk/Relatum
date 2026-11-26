@@ -37,6 +37,15 @@ def book_root(path):
     return "/".join(parts[:2]) if len(parts) >= 2 and parts[0].casefold() == "customnotebook" else ""
 
 
+def wiki_lookup(base):
+    target = urllib.parse.unquote(base.strip()).replace('\\', '/').strip('/')
+    if target.lower().endswith('.md'):
+        target = target[:-3]
+    if not target or target.startswith('.') or '/../' in '/' + target + '/':
+        return None
+    return normalize(target)
+
+
 @lru_cache(maxsize=8192)
 def natural(value):
     return tuple((1, int(piece)) if piece.isdigit() else (0, normalize(piece))
@@ -257,6 +266,9 @@ class NoteIndex:
             conn.execute("INSERT OR IGNORE INTO settings VALUES('root',?)", (identity,))
             conn.execute("INSERT OR IGNORE INTO settings VALUES('generation','0')")
             conn.execute("INSERT OR IGNORE INTO settings VALUES('directory_generation','0')")
+            if conn.execute("INSERT OR IGNORE INTO settings VALUES('section_mentions','1')").rowcount:
+                # The existing search projection keeps the # in standalone section references.
+                conn.execute("UPDATE entries SET needs_sync=1 WHERE kind='note' AND instr(body,'#')>0")
             conn.commit()
             self._writer = conn
             self._initialized = True
@@ -440,12 +452,8 @@ class NoteIndex:
             conn.execute("DELETE FROM refs WHERE entry=?", (row['id'],))
             values = []
             for mention in metadata.get('mentions', []):
-                target = urllib.parse.unquote(mention['base'].strip()).replace('\\', '/').strip('/')
-                if target.lower().endswith('.md'):
-                    target = target[:-3]
-                if not target or target.startswith('.') or '/../' in '/' + target + '/':
-                    target = 'invalid:' + target
-                values.append((row['id'], 'wiki', normalize(target), dump(mention)))
+                target = wiki_lookup(mention['base']) or 'invalid:' + normalize(mention['base'])
+                values.append((row['id'], 'wiki', target, dump(mention)))
             for target in metadata.get('canvasTargets', []):
                 values.append((row['id'], 'canvas', normalize(target), dump({'target': target})))
             conn.executemany("INSERT INTO refs(entry,consumer,lookup,payload) VALUES(?,?,?,?)", values)
@@ -682,6 +690,19 @@ class NoteIndex:
                 backlinks.append({'path': ref['path'], 'label': PurePosixPath(ref['path']).stem,
                                   'line': mention['line'], 'excerpt': mention['excerpt']})
             return {'path': row['path'], 'revision': row['revision'], 'outgoing': outgoing, 'backlinks': backlinks}
+
+    def wiki_target(self, base):
+        key = wiki_lookup(base)
+        if key is None:
+            return {'state': 'invalid'}
+        with self.read() as conn:
+            query = "SELECT e.path,e.revision FROM entries e JOIN books b ON b.id=e.book WHERE e.kind='note' AND b.deleted=0 AND "
+            rows = conn.execute(query + 'e.path_stem_key=? LIMIT 1', (key,)).fetchall()
+            if not rows and '/' not in key:
+                rows = conn.execute(query + 'e.stem_key=? LIMIT 2', (key,)).fetchall()
+        if len(rows) == 1:
+            return {'state': 'resolved', **dict(rows[0])}
+        return {'state': 'ambiguous' if rows else 'missing'}
 
     def canvas_references(self, target=None, *, with_names=False):
         with self.read() as conn:

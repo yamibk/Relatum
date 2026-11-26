@@ -100,20 +100,21 @@
     }
     function markdown() {
       const samples = [
-        ['标题', 'Headings', '# ' + text('一级标题', 'Heading one') + '\n\n## ' + text('二级标题', 'Heading two'), text('使用 1–6 个 #，后面留一个空格。', 'Use one to six # characters followed by a space.')],
+        ['标题', 'Headings', '# ' + text('一级标题', 'Heading one') + '\n\n## ' + text('二级标题', 'Heading two'), text('使用 1–6 个 #，后面留一个空格。标题折叠箭头默认隐藏，可在「笔记设置 → 编辑」开启。在实时预览或阅读中，点标题左侧的箭头可折叠章节。', 'Use one to six # characters followed by a space. Heading fold arrows are hidden by default. Enable them under Note Settings → Editing, then select the arrow beside a heading in Live Preview or Reading mode.')],
         ['强调与标记', 'Emphasis and marks', text('**粗体** · *斜体* · ~~删除线~~ · ==高亮==', '**Bold** · *Italic* · ~~Deleted~~ · ==Highlight==')],
         ['彩色高亮', 'Highlight colors', text('==默认== · ==🔴红色== · ==🟠橙色== · ==🟡黄色== · ==🟢绿色== · ==🔵蓝色== · ==🟣紫色==', '==Default== · ==🔴Red== · ==🟠Orange== · ==🟡Yellow== · ==🟢Green== · ==🔵Blue== · ==🟣Purple==')],
         ['列表与任务', 'Lists and tasks', text('- 第一项\n- 第二项\n\n1. 有序项目\n2. 下一项\n\n- [ ] 待完成\n- [x] 已完成', '- First item\n- Second item\n\n1. Ordered item\n2. Next item\n\n- [ ] To do\n- [x] Completed')],
         ['引用', 'Quotes', '> ' + text('引用一段文字。', 'A quoted paragraph.')],
         ['链接与双链', 'Links and wiki links', text('[链接文字](https://example.com)\n\n[[笔记名称]]\n\n[[笔记名称#标题|显示名称]]', '[Link text](https://example.com)\n\n[[Note name]]\n\n[[Note name#Heading|Display name]]'), text('双链指向库内笔记；这里的预览只用于展示。', 'Wiki links point to notes in your library. This preview is only an example.')],
-        ['标题跳转', 'Jump to a heading', text('[跳到研究方法](#研究方法)\n\n## 研究方法', '[Jump to Methods](#Methods)\n\n## Methods'), text('粘贴到笔记后，在实时预览或源码模式下按住 Ctrl 单击链接，在阅读模式下直接单击。', 'Paste this into a note. Ctrl-click the link in Live Preview or Source mode, or click it in Reading mode.')],
+        ['标题跳转', 'Jump to a heading', text('[跳到研究方法](#研究方法)\n\n## 研究方法', '[Jump to Methods](#Methods)\n\n## Methods'), text('实时预览和源码中按住 Ctrl 单击链接，阅读中直接单击。右键正文标题或大纲条目，可复制这一节的双链。', 'Ctrl-click links in Live Preview or Source mode, or click them in Reading mode. Right-click a heading or an Outline entry to copy its section link.')],
+        ['跨笔记嵌入章节', 'Embed a section', text('![[论文笔记#实验方法]]', '![[Research notes#Methods]]'), text('引用独占一行。实时预览和阅读中会显示这一节的只读内容，点击来源标题可打开原笔记。笔记重名时写完整库内路径。', 'Place the reference on its own line. Live Preview and Reading mode show the section as read-only. Select the source title to open the original note. Use the full vault path if note names overlap.'), false],
         ['图片', 'Images', text('![图片说明](图片.png)', '![Image description](image.png)'), text('相对路径从当前笔记所在目录查找。', 'Relative paths start in the current note’s folder.')],
         ['行内代码与代码块', 'Inline code and code blocks', '`const value = 1`\n\n```javascript\nconst value = 1;\n```'],
         ['表格', 'Tables', text('| 名称 | 说明 |\n| --- | --- |\n| Markdown | 笔记语法 |', '| Name | Description |\n| --- | --- |\n| Markdown | Note syntax |')],
         ['分隔线', 'Horizontal rules', text('上方内容\n\n---\n\n下方内容', 'Content above\n\n---\n\nContent below')],
         ['转义', 'Escaping', '\\*' + text('显示星号', 'Literal asterisks') + '\\*', text('在语法符号前加反斜杠，将它作为普通文字显示。', 'Add a backslash before a syntax character to display it as text.')],
       ];
-      samples.forEach(([zh, en, source, detail]) => { heading(zh, en); example(source, source, detail, zh === '图片'); });
+      samples.forEach(([zh, en, source, detail, preview = true]) => { heading(zh, en); example(source, preview ? source : null, detail, zh === '图片'); });
     }
     function mermaid() {
       const intro = document.createElement('p'); intro.textContent = text('将图表源码写在 mermaid 代码围栏内。复制后可直接粘贴到笔记。', 'Write diagrams inside a mermaid code fence. Copy an example and paste it into a note.'); host.append(intro);

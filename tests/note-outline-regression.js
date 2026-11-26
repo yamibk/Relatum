@@ -18,6 +18,22 @@ const source = [
   '## [[Target|Alias]]', '## `[[Literal|Wiki]]`', '## Escaped \\*text\\*', '', '# Last', '',
 ].join('\n');
 const headings = scan(source);
+const { headingSections, matchHeading, escapeSectionPart, noteHeadingsFromString } = context.RelatumNoteLiveSyntax;
+const sections = headingSections(headings, source.length);
+assert.equal(sections[0].end, headings[7].from);
+assert.equal(sections[2].end, headings[3].from);
+assert.equal(matchHeading(sections, 'same').length, 2);
+assert.equal(matchHeading(sections, escapeSectionPart('[[Literal|Wiki]]'))[0].label, '[[Literal|Wiki]]');
+const embeds = [];
+const embedInput = ['![[Source#Section]]', '', fence, '![[Source#Code]]', fence, '', '$$', '![[Source#Math]]', '$$', '',
+  '<!--', '![[Source#Comment]]', '-->', '', '- list', '  ![[Source#List]]', '', '![[Image.png]]'].join('\n');
+noteHeadingsFromString(embedInput, { sections: embeds });
+assert.equal(embeds.length, 1);
+assert.equal(embeds[0].fragment, 'Section');
+const embedHtml = context.MarkdownMini.renderResult(embedInput, { noteSections: embeds, noteBlocks: true, localImages: true }).html;
+assert.equal((embedHtml.match(/data-note-section=/g) || []).length, 1);
+assert(embedHtml.includes('data-note-image="Image.png"'));
+assert(!embedHtml.includes('data-note-image="Source#Math"'));
 assert.deepEqual(headings.map(item => item.level), [1, 3, 2, 2, 4, 5, 6, 1, 2, 1, 2, 2, 2, 1]);
 assert.deepEqual(headings.map(item => item.label), ['Root', 'Skipped', 'Same', 'Same', 'Four', 'Five', 'Six',
   'Underlined one', 'Underlined two', 'Bold Link code $x^2$', 'Alias', '[[Literal|Wiki]]', 'Escaped *text*', 'Last']);

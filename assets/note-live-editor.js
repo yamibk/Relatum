@@ -94,6 +94,10 @@
   let databaseBlocksEnabled;
   let htmlEmbedsEnabled;
   let pdfEmbedsEnabled;
+  let sectionEmbedsEnabled;
+  const headingSectionIndexEffect = StateEffect.define();
+  const headingSectionFoldEffect = StateEffect.define();
+  const headingSectionEnabledEffect = StateEffect.define();
   const databaseOpener = /^```database[\t ]+([a-z0-9][a-z0-9-]{0,47})[\t ]*$/m;
   const htmlEmbedOpener = /^```html-embed[\t ]+([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})(?:[\t ]+(auto|[1-9][0-9]{2,3})x([1-9][0-9]{2,3}))?(?:[\t ]+zoom=([1-9][0-9]{1,2})%)?[\t ]*$/m;
   const htmlEmbedLimits = { minWidth: 240, maxWidth: 1600, minHeight: 160, maxHeight: 1200, minZoom: 50, maxZoom: 100 };
@@ -246,6 +250,7 @@
   function jumpNotePosition(view, position) {
     if (compositionActive(view)) return;
     const at = clamp(position, 0, view.state.doc.length);
+    view.__relatumRevealHeadingSection?.(at);
     view.dispatch({ selection: EditorSelection.cursor(at), effects: EditorView.scrollIntoView(at, { y: 'center' }) });
     view.focus();
   }
@@ -958,6 +963,10 @@
             offset += length + 1; number = close - 1; yield; continue;
           }
         }
+        if (options?.sections && !comment && line.includes('![[')) {
+          const reference = window.MarkdownMini.parseNoteSectionEmbed(line);
+          if (reference && !guarded(offset + line.indexOf('!'))) options.sections.push({ ...reference, line: number, from: offset });
+        }
         if (!comment && (trimmed === '$$' || trimmed === '\\[')) math = { from: offset, close: trimmed === '$$' ? '$$' : '\\]' };
         else if (!comment && (/^\$\$.+\$\$$/.test(trimmed) || /^\\\[.+\\\]$/.test(trimmed))) customRanges.push({ from: offset, to: end });
         else {
@@ -1056,6 +1065,98 @@
     let step;
     do { step = scan.next(); } while (!step.done);
     return step.value;
+  }
+
+  function headingSections(headings, length) {
+    const stack = [], sections = new Array(headings.length);
+    for (let index = headings.length - 1; index >= 0; index--) {
+      const heading = headings[index];
+      while (stack.length && stack[stack.length - 1].level > heading.level) stack.pop();
+      sections[index] = { ...heading, end: stack[stack.length - 1]?.from ?? length };
+      stack.push(heading);
+    }
+    return sections;
+  }
+
+  function decodeSectionFragment(value) {
+    try { return decodeURIComponent(value); } catch (error) { return value; }
+  }
+
+  function headingKey(value) { return String(value).normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase(); }
+
+  function matchHeading(headings, fragment) {
+    const wanted = headingKey(decodeSectionFragment(fragment));
+    if (!wanted) return [];
+    const exact = headings.filter(heading => headingKey(heading.label) === wanted || headingKey(heading.text) === wanted);
+    return exact.length ? exact : headings.filter(heading => headingKey(heading.label).replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s+/g, '-') === wanted);
+  }
+
+  function escapeSectionPart(value) { return value.replace(/[%#^|\[\]]/g, encodeURIComponent); }
+
+  function headingFoldButton(collapsed, toggle) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'note-heading-fold';
+    updateHeadingFoldButton(button, collapsed);
+    button.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="m4 2 4 4-4 4"/></svg>';
+    button.addEventListener('mousedown', event => event.preventDefault());
+    button.addEventListener('click', event => { event.stopPropagation(); toggle(); });
+    return button;
+  }
+
+  function updateHeadingFoldButton(button, collapsed) {
+    const english = document.documentElement.lang === 'en';
+    button.setAttribute('aria-expanded', String(!collapsed));
+    button.setAttribute('aria-label', collapsed ? (english ? 'Expand section' : '展开章节') : (english ? 'Collapse section' : '收起章节'));
+  }
+
+  class HeadingFoldWidget extends WidgetType {
+    constructor(position, collapsed, toggle) { super(); Object.assign(this, { position, collapsed, toggle }); }
+    eq(other) { return this.position === other.position && this.collapsed === other.collapsed; }
+    toDOM(view) {
+      const button = headingFoldButton(this.collapsed, () => this.toggle(view, Number(button.dataset.headingPosition)));
+      this.updateDOM(button);
+      return button;
+    }
+    updateDOM(button) {
+      button.dataset.headingPosition = String(this.position);
+      updateHeadingFoldButton(button, this.collapsed);
+      return true;
+    }
+  }
+
+  function headingProjectionState(doc, sections, collapsed, enabled, toggle) {
+    const buttons = [], hidden = [];
+    let until = -1;
+    if (enabled) for (const heading of sections) {
+      if (heading.from < until) continue;
+      const lineEnd = doc.lineAt(heading.to).to;
+      const to = heading.end === doc.length ? heading.end : doc.lineAt(heading.end).from - 1;
+      if (lineEnd >= to) continue;
+      const folded = collapsed.has(heading.from);
+      buttons.push(Decoration.widget({ widget: new HeadingFoldWidget(heading.from, folded, toggle), side: -1 }).range(heading.from));
+      if (folded) {
+        hidden.push(Decoration.replace({ block: true, inclusive: false }).range(lineEnd, to));
+        until = heading.end;
+      }
+    }
+    return { sections, collapsed, enabled, hidden, decorations: Decoration.set(buttons.concat(hidden), true), atomic: Decoration.set(hidden) };
+  }
+
+  function headingStructureChanged(transaction) {
+    const structural = /^ {0,3}(?:[#>*+~-]|\d+[.)]|={2,}|<)|\|+|\$\$|\\[\[\]]|<!--|-->|%%|`|\t/;
+    const near = (doc, from, to) => {
+      const start = doc.lineAt(from), end = doc.lineAt(to);
+      if (end.number - start.number > 16) return true;
+      for (let number = Math.max(1, start.number - 1); number <= Math.min(end.number + 1, doc.lines); number++) {
+        if (structural.test(doc.line(number).text)) return true;
+      }
+      return false;
+    };
+    let changed = false;
+    transaction.changes.iterChanges((from, to, nextFrom, nextTo) => {
+      changed ||= near(transaction.startState.doc, from, to) || near(transaction.newDoc, nextFrom, nextTo);
+    });
+    return changed;
   }
 
   const headingProjectionCache = new WeakMap();
@@ -1305,7 +1406,9 @@
     const databaseEnabled = databaseBlocksEnabled && state.field(databaseBlocksEnabled, false);
     const htmlEnabled = htmlEmbedsEnabled && state.field(htmlEmbedsEnabled, false);
     const pdfEnabled = pdfEmbedsEnabled && state.field(pdfEmbedsEnabled, false);
+    const sectionsEnabled = sectionEmbedsEnabled && state.field(sectionEmbedsEnabled, false);
     let referencePositions;
+    const standaloneSections = [];
     let reusableMedia;
     const protectedBlocks = [];
     const metadata = documentFrontmatter(doc);
@@ -1399,6 +1502,7 @@
         }
         if (node.name === 'Image') {
           const line = doc.lineAt(node.from);
+          if (sectionsEnabled && line.text.includes('![[') && window.MarkdownMini.parseNoteSectionEmbed(line.text)) return false;
           if (node.to <= line.to && !window.MarkdownMini.quoteLine(doc.sliceString(line.from, node.from)).text.trim() && !doc.sliceString(node.to, line.to).trim()) {
             const image = parseStandaloneImage(line.text);
             if (image && image.target && previewableImage(image.target) && line.length <= MAX_RICH_LINE && (!canvasImage(image) || canvasEnabled())) {
@@ -1469,6 +1573,16 @@
           }
         }
       }
+      const section = sectionsEnabled && line.text.includes('![[') && window.MarkdownMini.parseNoteSectionEmbed(line.text);
+      if (section) {
+        let node = tree.resolveInner(line.from + line.text.indexOf('!'), 1);
+        while (node && !/^(?:ListItem|Blockquote|Table)$/.test(node.name)) node = node.parent;
+        if (!node && line.to >= start && line.from <= end && !protectedBlocks.some(range => range.from <= line.from && line.from < range.to)) {
+          standaloneSections.push({ from: line.from, to: line.to, kind: 'section-embed', source: line.text, section });
+        }
+        number += 1;
+        continue;
+      }
       const standaloneImage = parseStandaloneImage(line.text);
       if (standaloneImage && standaloneImage.target && previewableImage(standaloneImage.target) && line.to >= start && line.from <= end) {
         if (canvasImage(standaloneImage) && !canvasEnabled()) { number += 1; continue; }
@@ -1504,6 +1618,11 @@
       } else number += 1;
     }
 
+    if (standaloneSections.length) {
+      const positions = new Set(standaloneSections.map(spec => spec.from));
+      excludeReferenceMath(doc, positions, protectedBlocks, mathFrom);
+      standaloneSections.forEach(spec => { if (positions.has(spec.from)) push(spec); });
+    }
     raw.sort((a, b) => a.from - b.from || b.to - a.to);
     if (metadata) {
       for (let index = raw.length - 1; index >= 0; index--) if (raw[index].from < metadata.to) raw.splice(index, 1);
@@ -3300,6 +3419,7 @@
   function readingPositionIndex(host, content) {
     const byElement = new WeakMap(), entries = [];
     for (const element of content.querySelectorAll('[data-note-block-from]')) {
+      if (element.closest('[data-note-heading-hidden]')) continue;
       const from = Number(element.dataset.noteBlockFrom), to = Number(element.dataset.noteBlockTo);
       if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from) continue;
       const parent = byElement.get(element.parentElement?.closest('[data-note-block-from]')) || null;
@@ -3366,6 +3486,9 @@
     delete host.__relatumReadingHtmlEmbeds;
     host.__relatumReadingPdfEmbeds?.forEach(dispose => dispose());
     delete host.__relatumReadingPdfEmbeds;
+    host.__relatumReadingSectionEmbeds?.forEach(dispose => dispose());
+    delete host.__relatumReadingSectionEmbeds;
+    delete host.__relatumReadingHeadingFolds;
     if (host.__relatumReadingCode) host.__relatumReadingCode.destroy();
     delete host.__relatumReadingCode;
     host.querySelectorAll('[data-canvas-source]').forEach(frame => frame.__noteCanvas?.destroy());
@@ -3409,7 +3532,9 @@
     const htmlPositions = hasHtmlCandidate ? referenceBlockPositions(original, initialTree, htmlEmbedOpener) : null;
     const pdfPositions = hasPdfCandidate ? referenceBlockPositions(renderedSource, canvasRefs.length ? null : initialTree, pdfEmbedOpener) : null;
     let canvasShift = 0, canvasIndex = 0;
-    const noteHeadings = noteHeadingsFromString(original, { initialTree }).map(heading => {
+    const references = (printing || safeOptions.sectionEmbed) && original.includes('![[') ? [] : null;
+    const sourceHeadings = noteHeadingsFromString(original, { initialTree, sections: references });
+    const noteHeadings = sourceHeadings.map(heading => {
       while (canvasIndex < canvasRefs.length && canvasRefs[canvasIndex].to <= heading.from) {
         const ref = canvasRefs[canvasIndex];
         canvasShift += ('![](relatum-canvas-placeholder-' + canvasIndex + ')').length - (ref.to - ref.from);
@@ -3431,7 +3556,7 @@
     };
     const readingSyntax = window.MarkdownMini.noteSyntax.scan(renderedSource);
     const noteCallouts = hasCallouts ? readingCallouts(renderedSource, canvasRefs.length ? null : initialTree) : [];
-    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts, noteSourcePosition, noteSourceMap: true, noteContext: readingSyntax,
+    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts, noteSourcePosition, noteSourceMap: true, noteContext: readingSyntax, noteSections: references,
       noteTableDataCells: !printing,
       deferCodeHighlight: printing ? null : readingCodeParser,
       renderFence(block) {
@@ -3484,7 +3609,9 @@
         const link = event.target.closest('[data-note-jump]'); if (!link) return;
         if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
         event.preventDefault(); event.stopPropagation();
-        const target = jumpTarget(Number(link.dataset.noteJump));
+        const position = Number(link.dataset.noteJump);
+        host.__relatumReadingHeadingFolds?.reveal(position);
+        const target = jumpTarget(position);
         if (target) { target.scrollIntoView({ block: 'center' }); target.tabIndex = -1; target.focus({ preventScroll: true }); }
       };
       content.addEventListener('click', jumpReading); content.addEventListener('keydown', jumpReading);
@@ -3563,6 +3690,15 @@
         content.querySelectorAll('.md-local-image.has-image-text').forEach(imageTextSizer.update);
       } };
     }
+    if (safeOptions.headingSession && safeOptions.headingFolding) {
+      const sections = headingSections(sourceHeadings, original.length);
+      safeOptions.headingSession.index(sections);
+      host.__relatumReadingHeadingFolds = bindReadingHeadingFolds(content, sections, safeOptions.headingSession, () => {
+        readingPositionIndex(host, content);
+        host.__relatumReadingQuiz?.sync(); host.__relatumReadingCards?.resume();
+        safeOptions.sectionEmbed?.sync(); typesetVisibleMath(); readingLayout();
+      });
+    }
     readingPositionIndex(host, content);
     content.addEventListener('load', readingLayout, true);
     host.classList.toggle('is-failed', !!result.error);
@@ -3577,8 +3713,8 @@
         // Split at hidden descendants so MathJax never walks folded bodies.
         const roots = [];
         const visit = element => {
-          if (element.hidden || element.matches('pre,code,template,script,style,mjx-container')) return;
-          if (element.querySelector('[hidden]')) { for (const child of element.children) visit(child); return; }
+          if (element.hidden || element.matches('pre,code,template,script,style,mjx-container,[data-note-section]')) return;
+          if (element.querySelector('[hidden], [data-note-section]')) { for (const child of element.children) visit(child); return; }
           const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, { acceptNode(node) {
             return node.parentElement.closest('pre,code,template,script,style,mjx-container') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
           } });
@@ -3605,6 +3741,10 @@
       host.__relatumReadingPdfEmbeds = Array.from(content.querySelectorAll('[data-pdf-embed-id]'), element =>
         safeOptions.pdfEmbed.mount(element, { path: notePath, id: element.dataset.pdfEmbedId, mode: 'reading', onLayout: readingLayout }));
     }
+    if (references?.length && safeOptions.sectionEmbed) {
+      host.__relatumReadingSectionEmbeds = Array.from(content.querySelectorAll('[data-note-section]'), element =>
+        safeOptions.sectionEmbed.mount(element, { ...references[Number(element.dataset.noteSection)], owner: notePath, reading: true, onLayout: readingLayout }));
+    }
     host.__relatumReadingCode = prepareReadingCode(content, current);
     if (result.features && result.features.mermaid && mermaidEnabled()) {
       window.RelatumNoteMermaid?.reserve?.(content, { mode: 'reading' });
@@ -3612,6 +3752,70 @@
     }
     Promise.resolve().then(typesetVisibleMath);
     return result;
+  }
+
+  function bindReadingHeadingFolds(content, sections, session, onLayout) {
+    const byPosition = new Map(sections.map(heading => [heading.from, heading]));
+    const nodes = Array.from(content.children), records = [], parents = [];
+    for (const node of nodes) {
+      const heading = node.hasAttribute('data-note-heading-from') && byPosition.get(Number(node.dataset.noteHeadingFrom));
+      if (heading) while (parents.length && parents[parents.length - 1].heading.level >= heading.level) parents.pop();
+      const record = { node, owner: parents[parents.length - 1], heading, originallyHidden: node.hidden };
+      records.push(record);
+      if (heading) {
+        if (record.owner) record.owner.hasBody = true;
+        parents.push(record);
+      } else if (record.owner) record.owner.hasBody = true;
+    }
+    const sync = () => {
+      const folded = new Set(session.positions());
+      for (const record of records) {
+        record.hidden = !!record.owner && (record.owner.hidden || folded.has(record.owner.heading.from));
+        record.node.hidden = record.originallyHidden || record.hidden;
+        record.node.toggleAttribute('data-note-heading-hidden', record.hidden);
+        if (record.button) updateHeadingFoldButton(record.button, folded.has(record.heading.from));
+      }
+    };
+    for (const record of records) {
+      if (!record.heading || !record.hasBody) continue;
+      record.button = headingFoldButton(false, () => { session.toggle(record.heading.from); sync(); onLayout(); });
+      record.node.setAttribute('aria-label', record.heading.label);
+      record.node.prepend(record.button);
+    }
+    sync();
+    return { reveal(position) { if (session.reveal(position)) { sync(); onLayout(); } } };
+  }
+
+  function renderSectionFragment(element, data, current, onLayout) {
+    const english = document.documentElement.lang === 'en';
+    const source = data.body;
+    const rich = /^(?:database|html-embed|pdf-embed|mermaid|mmd|cards|quiz|derive)$/;
+    const result = safeIsolatedResult(source, { mermaid: false, noteTags: false, noteSections: data.references || [],
+      renderFence(block) {
+        return rich.test(block.language) ? '<p class="note-section-placeholder">'
+          + (english ? 'Open the source note to view this block' : '打开源笔记查看此块') + ' · ' + block.language + '</p>' : null;
+      },
+    });
+    element.innerHTML = result.html;
+    element.querySelectorAll('input').forEach(input => { input.disabled = true; });
+    element.querySelectorAll('[data-note-section]').forEach(node => {
+      node.className = 'note-section-placeholder'; node.removeAttribute('data-note-section');
+    });
+    const cleanup = [];
+    for (const image of element.querySelectorAll('[data-note-image]')) {
+      const target = image.dataset.noteImage, syntax = image.dataset.noteImageSyntax || 'markdown';
+      if (isRemoteTarget(target) || absoluteImageTarget(target)) continue;
+      const url = '/api/note-asset?note=' + encodeURIComponent(data.path) + '&src=' + encodeURIComponent(target) + '&syntax=' + encodeURIComponent(syntax);
+      cleanup.push(prepareLocalImage(image, image.closest('.md-local-image'), url, target, current));
+    }
+    if (result.features.math) typesetMath(element, current).then(() => { if (current()) onLayout(); }).catch(() => {});
+    element.addEventListener('load', onLayout, true);
+    return () => {
+      element.removeEventListener('load', onLayout, true);
+      cleanup.forEach(dispose => dispose?.());
+      window.MathJax?.typesetClear?.([element]);
+      element.replaceChildren();
+    };
   }
 
   function richBlockEditPosition(spec) {
@@ -4205,6 +4409,20 @@
     return usesBlockReplacement(spec) && (spec.kind === 'database' || Object.hasOwn(attachmentOpeners, spec.kind) || spec.kind === 'media' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'table' || !activeIds.has(spec.id));
   }
 
+  class SectionEmbedWidget extends WidgetType {
+    constructor(spec, path, controller) { super(); Object.assign(this, { spec, path, controller }); }
+    eq(other) { return this.spec.id === other.spec.id && this.spec.source === other.spec.source && this.path === other.path; }
+    toDOM(view) {
+      const element = document.createElement('div');
+      element.className = 'note-section-reference'; element.contentEditable = 'false';
+      element.__relatumSectionDispose = this.controller.mount(element, { ...this.spec.section, owner: this.path,
+        onLayout: () => { if (element.isConnected) view.requestMeasure(); },
+      });
+      return element;
+    }
+    destroy(element) { element.__relatumSectionDispose?.(); }
+  }
+
   class DatabaseBlockWidget extends WidgetType {
     constructor(spec, path, database, onMove) {
       super();
@@ -4480,6 +4698,7 @@
     }
     if (spec.kind === 'quiz') return new QuizBlockWidget(spec, path, options, coordinator, selected);
     if (spec.kind === 'database') return new DatabaseBlockWidget(spec, path, options.database, options.onMoveDatabaseBlock);
+    if (spec.kind === 'section-embed') return new SectionEmbedWidget(spec, path, options.sectionEmbed);
     if (Object.hasOwn(attachmentOpeners, spec.kind)) return new AttachmentEmbedWidget(spec, path, options);
     if (spec.kind === 'canvas') return new CanvasBlockWidget(spec, path, options, coordinator, selected);
     const widget = spec.kind === 'table' && options.tableController && spec.tableModel
@@ -4556,7 +4775,7 @@
     });
   }
 
-  function createBlockField(notePath, options, coordinator, inputSession) {
+  function createBlockField(notePath, options, coordinator, inputSession, sectionField) {
     coordinator.folds = coordinator.folds || new Map(); coordinator.records = coordinator.records || [];
     const atomicUnions = new WeakMap();
     // Specs and their parent subsets are source-ordered. Keep the furthest
@@ -4570,10 +4789,18 @@
       });
       return ids;
     };
-    const projectionState = (specs) => {
+    const projectionState = (specs, state) => {
       const callouts = specs.filter(spec => spec.kind === 'callout');
       const collapsed = callouts.filter(spec => calloutCollapsed(spec, coordinator));
-      return { callouts, collapsed: new Set(collapsed.map(spec => spec.id)), hidden: descendants(specs, collapsed) };
+      const hidden = descendants(specs, collapsed), ranges = sectionField ? state.field(sectionField).hidden : [];
+      if (ranges.length) {
+        let index = 0;
+        for (const spec of specs) {
+          while (index < ranges.length && ranges[index].to < spec.from) index++;
+          if (index < ranges.length && spec.from > ranges[index].from && spec.to <= ranges[index].to) hidden.add(spec.id);
+        }
+      }
+      return { callouts, collapsed: new Set(collapsed.map(spec => spec.id)), hidden };
     };
     const projectedSpecs = (specs, activeIds, projection) => specs.filter(spec => blockIsProjected(spec, activeIds) && !projection.hidden.has(spec.id));
     const mathPreviews = (specs, activeIds, projection) => specs.filter(spec => spec.kind === 'math'
@@ -4603,7 +4830,7 @@
         const byId = new Map(specs.map((spec) => [spec.id, spec]));
         const selectedImageIds = selectedBlockImageIds(specs, state);
         const selectedMermaidIds = selectedBlockMermaidIds(specs, state);
-        const projection = projectionState(specs);
+        const projection = projectionState(specs, state);
         const projected = projectedSpecs(specs, new Set(), projection);
         const hidden = calloutProjections(projection, state, false);
         const decorations = Decoration.set(projected.map((spec) => Decoration.replace({
@@ -4617,7 +4844,9 @@
       update(value, transaction) {
         let focused = value.focused;
         transaction.effects.forEach((effect) => { if (effect.is(focusEffect)) focused = !!effect.value; });
-        const foldChanged = transaction.effects.some(effect => effect.is(calloutFoldEffect));
+        const foldChanged = transaction.effects.some(effect => effect.is(calloutFoldEffect) || effect.is(headingSectionFoldEffect) || effect.is(headingSectionEnabledEffect))
+          || sectionField && transaction.effects.some(effect => effect.is(headingSectionIndexEffect))
+            && (transaction.startState.field(sectionField).hidden.length || transaction.state.field(sectionField).hidden.length);
         transaction.effects.forEach(effect => { if (effect.is(calloutFoldEffect)) coordinator.folds.set(effect.value.id, effect.value.collapsed); });
         if (inputSession.pending()) {
           // The browser owns the preedit text until compositionend. Preserve
@@ -4717,7 +4946,7 @@
         let decorations = transaction.docChanged ? mapBlockProjections(value.decorations, transaction.changes) : value.decorations;
         let atomic = transaction.docChanged ? value.atomic.map(transaction.changes) : value.atomic;
         if (refresh.size) {
-          const projection = projectionState(specs);
+          const projection = projectionState(specs, transaction.state);
           const projected = projectedSpecs(specs, activeIds, projection).filter(spec => refresh.has(spec.id));
           const hidden = calloutProjections(projection, transaction.state, focused).filter(range => refresh.has(range.value.spec.blockId));
           decorations = decorations.update({
@@ -5427,8 +5656,9 @@
         }
 
         matches(/!\[\[[^\]\n]+?\]\]/g, (match, from, to) => {
-          const parsed = parseStandaloneImage(match[0]);
           protect(from, to);
+          if (options.sectionEmbed && window.MarkdownMini.parseNoteSectionEmbed(text)) return;
+          const parsed = parseStandaloneImage(match[0]);
           if (parsed && parsed.target && previewableImage(parsed.target) && !canvasImage(parsed)) {
             add(from, to, Decoration.replace({
               widget: new InlineImageWidget(parsed, from, to, imageSelectionMatches(view, from, to), notePath(), options),
@@ -7277,7 +7507,87 @@
       return !sourceMode && !inputPending() && !!tableController?.enterBoundary(view, backward);
     }
     const notePath = () => currentPath;
-    const blockField = createBlockField(notePath, safeOptions, coordinator, inputSession);
+    let headingFolding = safeOptions.headingFolding === true, savedHeadingFolds = [];
+    let headingIndexTimer = 0, headingIndexDirty = true;
+    const sectionField = StateField.define({
+      create(state) { return headingProjectionState(state.doc, [], new Set(savedHeadingFolds), headingFolding, toggleHeading); },
+      update(value, transaction) {
+        let { sections, collapsed, enabled } = value;
+        if (transaction.docChanged) {
+          const map = position => transaction.changes.mapPos(position, 1);
+          sections = sections.map(heading => ({ ...heading, from: map(heading.from), to: transaction.changes.mapPos(heading.to, -1),
+            end: heading.end === transaction.startState.doc.length ? transaction.newDoc.length : map(heading.end),
+          })).filter(heading => heading.from <= heading.to && heading.from < heading.end);
+          if (collapsed.size) collapsed = new Set([...collapsed].map(map));
+        }
+        for (const effect of transaction.effects) {
+          if (effect.is(headingSectionIndexEffect)) {
+            sections = effect.value;
+            if (collapsed.size) collapsed = new Set(sections.filter(heading => collapsed.has(heading.from)).map(heading => heading.from));
+          } else if (effect.is(headingSectionFoldEffect)) collapsed = effect.value;
+          else if (effect.is(headingSectionEnabledEffect)) enabled = effect.value;
+        }
+        if (sections === value.sections && collapsed === value.collapsed && enabled === value.enabled) return value;
+        return headingProjectionState(transaction.newDoc, sections, collapsed, enabled, toggleHeading);
+      },
+    });
+
+    function stopHeadingIndex() { clearTimeout(headingIndexTimer); headingIndexTimer = 0; }
+
+    function queueHeadingIndex(delay = 0) {
+      stopHeadingIndex();
+      if (!headingIndexDirty || !headingFolding || sourceMode || !highlightActive || destroyed || inputPending()) return;
+      const doc = view.state.doc;
+      let scan;
+      const read = () => {
+        headingIndexTimer = 0;
+        if (destroyed || view.state.doc !== doc || sourceMode || !highlightActive || inputPending()) return;
+        scan ||= scanNoteHeadings(doc.toString());
+        const deadline = performance.now() + 6;
+        let step;
+        do { step = scan.next(); } while (!step.done && performance.now() < deadline);
+        if (!step.done) { headingIndexTimer = setTimeout(read, 0); return; }
+        setHeadingIndex(headingSections(step.value, doc.length));
+      };
+      headingIndexTimer = setTimeout(read, delay);
+    }
+
+    function setHeadingIndex(sections) {
+      stopHeadingIndex(); headingIndexDirty = false;
+      view.dispatch({ effects: headingSectionIndexEffect.of(sections), annotations: Transaction.addToHistory.of(false) });
+    }
+
+    function applyHeadingFolds(collapsed, selection) {
+      view.dispatch({ effects: headingSectionFoldEffect.of(collapsed), selection, annotations: Transaction.addToHistory.of(false) });
+      safeOptions.onHeadingFoldsChanged?.();
+    }
+
+    function toggleHeading(editorView, position) {
+      if (inputPending()) return;
+      const value = editorView.state.field(sectionField), heading = value.sections.find(item => item.from === position);
+      if (!heading || !value.enabled) return;
+      const collapsed = new Set(value.collapsed);
+      if (collapsed.delete(position)) applyHeadingFolds(collapsed);
+      else {
+        collapsed.add(position);
+        const lineEnd = editorView.state.doc.lineAt(heading.to).to;
+        const selection = selectionTouches(editorView.state.selection, lineEnd + 1, heading.end - 1)
+          ? EditorSelection.cursor(lineEnd) : undefined;
+        applyHeadingFolds(collapsed, selection);
+      }
+    }
+
+    function revealHeadingSection(position) {
+      const { sections, collapsed, enabled } = view.state.field(sectionField);
+      if (!enabled || !collapsed.size) return false;
+      const next = new Set(collapsed);
+      for (const heading of sections) if (heading.to < position && position < heading.end) next.delete(heading.from);
+      if (next.size === collapsed.size) return false;
+      applyHeadingFolds(next);
+      return true;
+    }
+
+    const blockField = createBlockField(notePath, safeOptions, coordinator, inputSession, sectionField);
     const mathPreviewPlugin = createMathEditPreviewPlugin(coordinator);
     const mermaidPreviewPlugin = createMermaidEditPreviewPlugin(coordinator);
     const inlinePlugin = createInlinePlugin(blockField, notePath, safeOptions);
@@ -7466,7 +7776,11 @@
     });
 
     function livePreviewExtensions() {
-      return sourceMode ? [sourceFoldPlugin] : [blockField, viewportParsePlugin, blockLayoutPlugin, inlinePlugin, inlineMathPreview.extensions, mathPreviewPlugin, mermaidPreviewPlugin];
+      return sourceMode ? [sourceFoldPlugin] : [
+        EditorView.decorations.from(sectionField, value => value.decorations),
+        EditorView.atomicRanges.of(view => view.state.field(sectionField).atomic),
+        blockField, viewportParsePlugin, blockLayoutPlugin, inlinePlugin, inlineMathPreview.extensions, mathPreviewPlugin, mermaidPreviewPlugin,
+      ];
     }
 
     function editorLabelExtension() {
@@ -7612,10 +7926,12 @@
         rectangularSelection(), crosshairCursor(), highlightActiveLine(),
         selectionMatchHighlightCompartment.of(selectionMatchHighlight ? highlightSelectionMatches() : []),
         markdownCompartment.of(markdownExtensions()),
+        sectionField,
         noteSyntaxField,
         ...(options.database ? [databaseBlocksEnabled ||= StateField.define({ create: () => true, update: value => value })] : []),
         ...(options.htmlEmbed ? [htmlEmbedsEnabled ||= StateField.define({ create: () => true, update: value => value })] : []),
         ...(options.pdfEmbed ? [pdfEmbedsEnabled ||= StateField.define({ create: () => true, update: value => value })] : []),
+        ...(options.sectionEmbed ? [sectionEmbedsEnabled ||= StateField.define({ create: () => true, update: value => value })] : []),
         extensionCompartment.of(extensionHost ? extensionHost.configuration() : []),
         codeHighlighting,
         livePreviewCompartment.of(livePreviewExtensions()),
@@ -7690,6 +8006,9 @@
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) cancelReferenceMove?.();
+          if (headingFolding && update.docChanged && (headingIndexDirty || update.transactions.some(tr => tr.docChanged && headingStructureChanged(tr)))) {
+            headingIndexDirty = true; queueHeadingIndex(100);
+          } else if (headingIndexDirty && !headingIndexTimer && !inputPending()) queueHeadingIndex();
           else if (refreshReferenceMove && (update.geometryChanged || update.viewportChanged
             || syntaxTree(update.startState) !== syntaxTree(update.state)
             || update.startState.field(blockField) !== update.state.field(blockField))) refreshReferenceMove();
@@ -7807,6 +8126,7 @@
             const rect = view.coordsAtPos(view.state.selection.main.head);
             safeOptions.onContextMenu({ x: keyboard && rect ? rect.left : event.clientX,
               y: keyboard && rect ? rect.bottom : event.clientY, context: commandContext(), keyboard,
+              headingPosition: view.state.doc.lineAt(position).from,
               image: image && !isRemoteTarget(image.parsed.target) ? { target: image.parsed.target, syntax: image.parsed.syntax } : null });
             return true;
           },
@@ -7836,6 +8156,7 @@
             const selection = view.state.selection.main;
             const image = !sourceMode && currentImageRange(view, selection.from, selection.to);
             safeOptions.onContextMenu({ x: rect ? rect.left : 8, y: rect ? rect.bottom : 8, context: commandContext(), keyboard: true,
+              headingPosition: view.state.doc.lineAt(selection.head).from,
               image: image && !isRemoteTarget(image.parsed.target) ? { target: image.parsed.target, syntax: image.parsed.syntax } : null });
             return true;
           },
@@ -7984,6 +8305,7 @@
     }
 
     const view = new EditorView({ state: makeState(options.value || '', EditorSelection.cursor(0)), parent: host });
+    view.__relatumRevealHeadingSection = revealHeadingSection;
 
     function editableAttachmentEmbed(id, path, kind) {
       if (destroyed || sourceMode || view.state.readOnly || path !== currentPath || inputPending()
@@ -8394,6 +8716,8 @@
         pendingSelectionMatchHighlight = null;
       }
       const value = documentState && typeof documentState.value === 'string' ? documentState.value : '';
+      stopHeadingIndex(); headingIndexDirty = true;
+      savedHeadingFolds = documentState?.headingFolds || [];
       coordinator.layout.restoring = !!normalizeViewportAnchor(documentState?.viewport);
       canvasHistoryPresent = /\.canvas/i.test(value);
       currentPath = String(documentState && documentState.notePath || '');
@@ -8402,9 +8726,11 @@
       const head = clamp(documentState && documentState.head, 0, end);
       suppressChanges = true;
       try { view.setState(makeState(value, EditorSelection.range(anchor, head))); }
-      finally { suppressChanges = false; }
+      finally { suppressChanges = false; savedHeadingFolds = []; }
       view.__relatumInputSession = inputSession;
+      view.__relatumRevealHeadingSection = revealHeadingSection;
       inputSession.reset(view);
+      queueHeadingIndex();
       extensionHost?.documentChanged();
       host.classList.toggle('is-source-mode', sourceMode);
       syncImageSelectionClass(view);
@@ -8781,6 +9107,7 @@
       cancelViewportRestore(view.scrollDOM);
       scrollRestoreSeq++;
       const target = clamp(position, 0, view.state.doc.length);
+      revealHeadingSection(target);
       if (!sourceMode && mediaController?.reveal(target, options?.end)) return;
       const effects = [];
       const blocks = view.state.field(blockField, false);
@@ -8900,8 +9227,24 @@
     return {
       setDocument, setNotePath, setSourceMode, setShortcutBindings, setSelectionMatchHighlight, setImageTextMode, imageTextCommand, snapshot, replaceSelection, revealPosition,
       captureViewport, restoreViewport, cancelViewportRestore() { cancelViewportRestore(view.scrollDOM); scrollRestoreSeq++; },
+      headingSession: {
+        index: setHeadingIndex,
+        positions: () => [...view.state.field(sectionField).collapsed],
+        reveal: revealHeadingSection,
+        toggle(position) { toggleHeading(view, position); },
+        setEnabled(enabled) {
+          headingFolding = enabled;
+          view.dispatch({ effects: headingSectionEnabledEffect.of(enabled), annotations: Transaction.addToHistory.of(false) });
+          queueHeadingIndex();
+        },
+        headingAt(position) {
+          const { sections } = view.state.field(sectionField);
+          return sections.find(item => view.state.doc.lineAt(item.from).from <= position && position <= item.to);
+        },
+      },
       setExtensionsActive(active) {
         highlightActive = active !== false;
+        if (!highlightActive) stopHeadingIndex(); else if (!headingIndexTimer) queueHeadingIndex();
         view.plugin(inlineMathPreview.plugin)?.sync();
         if (!highlightActive) { cancelMathPointerScroll(); highlightInputs.forEach(input => input.dismiss()); view.plugin(viewportParsePlugin)?.pause(); }
         else { view.plugin(viewportParsePlugin)?.schedule(); coordinator.layout.schedule(); }
@@ -8917,6 +9260,7 @@
       get inputPending() { return inputPending(); },
       focus() { if (mediaController?.active()) mediaController.active().input.focus(); else view.focus(); },
       destroy() {
+        stopHeadingIndex();
         cancelReferenceMove?.();
         cancelMathPointerScroll();
         cancelViewportRestore(view.scrollDOM);
@@ -8958,6 +9302,9 @@
   window.RelatumNoteLiveSyntax = {
     scanNoteHeadings,
     noteHeadingsFromString,
+    headingSections,
+    matchHeading,
+    escapeSectionPart,
     scanBlockSpecsFromString(source) {
       const state = EditorState.create({ doc: String(source || ''), extensions: [markdown({ base: markdownLanguage })] });
       return scanBlockSpecs(state, 0, state.doc.length).map((spec) => Object.assign({}, spec));
@@ -8981,5 +9328,6 @@
     quizFence, renderFence: noteFence, attachCards: attachNoteCards, attachQuiz: attachNoteQuiz,
     remapQuiz(source, destination) { quizSession?.remap(source, destination); } });
   window.RelatumNoteLiveEditor.releaseReadingDocument = releaseReadingDocument;
-  Object.assign(window.RelatumNoteLiveEditor, { normalizeViewportAnchor, captureReadingViewport, restoreReadingViewport, cancelViewportRestore });
+  Object.assign(window.RelatumNoteLiveEditor, { normalizeViewportAnchor, captureReadingViewport, restoreReadingViewport, cancelViewportRestore,
+    renderSectionFragment, revealReadingHeading(host, position) { host?.__relatumReadingHeadingFolds?.reveal(position); } });
 })();

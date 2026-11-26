@@ -10496,6 +10496,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if parsed.path == "/api/note-links":
             q = urllib.parse.parse_qs(parsed.query)
             try:
+                if "target" in q:
+                    return self._send_json(200, NOTES_STORE.wiki_target(q["target"][0]))
                 return self._send_json(200, NOTES_STORE.links(q.get("path", [""])[0]))
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})

@@ -455,6 +455,18 @@
 
   // Parse one complete image token (optional surrounding horizontal whitespace included).
   // Numeric labels follow Obsidian's pixel sizing convention; non-numeric pipes remain alt text.
+  function parseNoteSectionEmbed(line) {
+    const match = /^ {0,3}!\[\[([^#\[\]|\r\n]+)#([^\[\]|\r\n]+)\]\][ \t]*$/.exec(line);
+    if (!match) return null;
+    const target = match[1].trim(), fragment = match[2].trim();
+    return target && fragment && !fragment.startsWith('^') ? { target, fragment } : null;
+  }
+
+  function sectionEmbedLineAt(source, position) {
+    const from = source.lastIndexOf('\n', position - 1) + 1, end = source.indexOf('\n', position);
+    return parseNoteSectionEmbed(source.slice(from, end < 0 ? source.length : end));
+  }
+
   function parseImage(source) {
     const value = String(source || '');
     const leading = /^[ \t]*/.exec(value)[0];
@@ -1391,7 +1403,7 @@
   // 笔记工作区显式启用的本地图片占位。这里绝不写入 src，也不解析远程 URL；
   // 调用方必须把 data-note-image 交给受后端路径沙箱保护的本地图片接口。
   // 其它 Markdown 消费者不传 localImages，继续保持原先“不生成 img”的安全行为。
-  function protectLocalImages(src, enabled) {
+  function protectLocalImages(src, enabled, reserveSections) {
     const images = [];
     if (!enabled) return { protected: src, images: images };
     const source = String(src || '');
@@ -1414,6 +1426,7 @@
       }
       let parsed = end < 0 ? null : parseImage(source.slice(cursor, end));
       if (!parsed) continue;
+      if (reserveSections && parsed.syntax === 'wiki' && parsed.target.includes('#') && sectionEmbedLineAt(source, cursor)) continue;
       const lineStart = source.lastIndexOf('\n', cursor - 1) + 1;
       const lineBreak = source.indexOf('\n', end);
       const lineEnd = lineBreak < 0 ? source.length : lineBreak;
@@ -1467,9 +1480,10 @@
     + ' fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"'
     + ' stroke-linejoin="round" aria-hidden="true">'
     + '<path d="M6 3.5H4.2A1.7 1.7 0 0 0 2.5 5.2v5.6A1.7 1.7 0 0 0 4.2 12.5H6M10 3.5h1.8A1.7 1.7 0 0 1 13.5 5.2v5.6a1.7 1.7 0 0 1-1.7 1.7H10"/></svg>';
-  function protectWikiLinks(src) {
+  function protectWikiLinks(src, reserveSections) {
     const wikis = [];
-    const s = src.replace(/(^|[^\\])\[\[([^\]\n|]+?)(?:\|([^\]\n]+?))?\]\]/g, function (_, prefix, name, alias) {
+    const s = src.replace(/(^|[^\\])\[\[([^\]\n|]+?)(?:\|([^\]\n]+?))?\]\]/g, function (whole, prefix, name, alias, index) {
+      if (reserveSections && prefix === '!' && name.includes('#') && sectionEmbedLineAt(src, index)) return whole;
       wikis.push({ name: name.trim(), alias: (alias || '').trim() });
       return prefix + '\x00WIKI' + (wikis.length - 1) + '\x00';
     });
@@ -1868,6 +1882,14 @@
 
       if (trimmed === '') { i++; continue; }
 
+      const section = options?.noteSections && /^\x00NSECTION(\d+)\x00$/.exec(trimmed);
+      if (section) {
+        const index = Number(section[1]), reference = options.noteSections[index];
+        if (reference) out.push('<div class="note-section-reference" data-note-section="' + index + '"' + span(i, i + 1) + '>'
+          + escapeHtml(reference.target + ' › ' + reference.fragment) + '</div>');
+        i++; continue;
+      }
+
       // Note-only source headings are identified before placeholder transforms,
       // which otherwise shift line numbers (frontmatter, math and comments).
       const noteHeading = options && Array.isArray(options.noteHeadings)
@@ -2057,7 +2079,16 @@
       pieces.push(headingSource.slice(position)); headingSource = pieces.join('');
     }
     const header = opts.noteTags ? frontmatter(headingSource) : null;
-    const body = header ? headingSource.slice(header.to) : headingSource;
+    let body = header ? headingSource.slice(header.to) : headingSource;
+    if (opts.noteSections?.length) {
+      const base = header ? source.slice(0, header.to).split('\n').length - 1 : 0;
+      const lines = body.split('\n');
+      opts.noteSections.forEach((reference, index) => {
+        const line = reference.line - base;
+        if (line >= 0 && parseNoteSectionEmbed(lines[line])) lines[line] = '\x00NSECTION' + index + '\x00';
+      });
+      body = lines.join('\n');
+    }
     // Opt-in source spans belong to Notes only. All placeholder transforms keep
     // source newlines; resolve their line numbers against the unmodified input.
     let noteSourceOffsets;
@@ -2078,8 +2109,8 @@
       const codeGuard = protectCode(mediaGuard.protected, opts.noteBlocks);
       if (mediaGuard.blocks.length) features.mermaid = opts.mermaid !== false && scanFeatures(mediaGuard.protected).mermaid;
       const inlineCodeGuard = protectInlineCode(codeGuard.protected);
-      const imageGuard = protectLocalImages(inlineCodeGuard.protected, opts.localImages === true);
-      const wikiGuard = protectWikiLinks(imageGuard.protected);   // 先抠 [[双链]]（早于 [文字](url)）
+      const imageGuard = protectLocalImages(inlineCodeGuard.protected, opts.localImages === true, opts.noteSections != null);
+      const wikiGuard = protectWikiLinks(imageGuard.protected, opts.noteSections != null);   // 先抠 [[双链]]（早于 [文字](url)）
       const noteGuard = noteContext ? protectNoteSyntax(wikiGuard.protected, noteContext, opts.noteHeadings, opts.noteSourcePosition) : null;
       const linkGuard = noteGuard ? { protected: noteGuard.protected, links: [] } : protectLinks(wikiGuard.protected);
       const mathSource = opts.noteBlocks ? linkGuard.protected.replace(/<!--[\s\S]*?(?:-->|$)|%%[\s\S]*?(?:%%|$)/g, (comment) => comment.split('\n').slice(1).map(line => '\n' + quoteLine(line).prefix).join('')) : linkGuard.protected;
@@ -2280,6 +2311,7 @@
     highlightCode: highlightCode,
     markIntervals: markIntervals,
     parseImage: parseImage,
+    parseNoteSectionEmbed,
     isCanvasImage: isCanvasImage,
     canvasReferences: canvasReferences,
     canvasTarget: canvasTarget,

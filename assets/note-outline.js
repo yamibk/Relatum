@@ -304,6 +304,12 @@
       if (event.target.closest('.note-outline-toggle')) fold(row.dataset.outlineKey);
       else navigate(row.dataset.outlineKey);
     });
+    host.addEventListener('contextmenu', event => {
+      const row = event.target.closest('[data-outline-key]');
+      if (!active || !row) return;
+      const heading = headings.find(item => item.key === row.dataset.outlineKey);
+      if (heading) options.openHeadingMenu?.(event, heading);
+    });
     host.addEventListener('keydown', event => {
       const row = event.target.closest('[data-outline-key]');
       if (!active || !row || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;

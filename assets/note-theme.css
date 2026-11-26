@@ -788,3 +788,48 @@ html:is([data-note-theme="claude"], [data-note-theme="apple"]) body.start-page .
 html:is([data-note-theme="claude"], [data-note-theme="apple"]) body.start-page .note-graph-active .note-document-pane::before { right: 0; }
 html:is([data-note-theme="claude"], [data-note-theme="apple"]) body.start-page .note-graph-active .note-graph-panel { border-radius: var(--note-theme-paper-radius); }
 html:is([data-note-theme="claude"], [data-note-theme="apple"]) body.start-page:not([data-start-background="scenic"]) .note-graph-panel .note-graph-tools { background-color: var(--note-theme-paper); }
+.note-heading-fold {
+  --note-heading-fold-size: 1.35rem;
+  display: inline-grid;
+  place-items: center;
+  width: var(--note-heading-fold-size);
+  height: var(--note-heading-fold-size);
+  margin-block: calc((1lh - var(--note-heading-fold-size)) / 2);
+  margin-inline: calc(-1 * var(--note-heading-fold-size) - .2rem) .2rem;
+  vertical-align: top;
+  padding: 0;
+  border: 0;
+  border-radius: .25rem;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+[data-heading-fold-arrows="hover"] :is(.cm-line, [data-note-heading-from]):not(:hover) .note-heading-fold:not(:focus-visible) { opacity: 0; }
+.note-heading-fold:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+.note-heading-fold svg { display: block; width: .75rem; height: .75rem; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.note-heading-fold[aria-expanded="true"] svg { transform: rotate(90deg); }
+.note-reading-content > [hidden] { display: none !important; }
+
+.note-section-reference {
+  margin-block: .35em;
+  padding: .25em .65em;
+  border-inline-start: 2px solid color-mix(in srgb, currentColor 22%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.note-section-source {
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  text-align: start;
+  color: inherit;
+  background: transparent;
+}
+
+.note-section-source:enabled { cursor: pointer; }
+.note-section-source:enabled:hover { text-decoration: underline; }
+.note-section-message, .note-section-placeholder { opacity: .72; }
+.note-section-content:empty { display: none; }

@@ -34,6 +34,21 @@ def _tree_scan_fixture(original, folder, overrides, observed):
 
 
 class NotesLibraryTests(unittest.TestCase):
+    def test_section_reference_resolution_and_move(self):
+        self.store.create('', 'Papers', 'folder')
+        self.store.create('Papers', 'Source', 'note', content='## Methods\n\nRead this.')
+        content = '\n'.join([
+            '# Review', '', '![[Source#Methods]]', '', '```md', '![[Source#Code]]', '```', '',
+            '<!--', '![[Source#Comment]]', '-->', '', '$$', '![[Source#Math]]', '$$', '',
+        ])
+        self.store.create('', 'Review', 'note', content=content)
+        self.assertEqual(self.store.wiki_target('Source')['path'], 'Papers/Source.md')
+        self.assertEqual(self.store.wiki_target('%2E%2E/Source')['state'], 'invalid')
+        self.assertEqual([item['rawTarget'] for item in self.store.links('Review.md')['outgoing']], ['Source'])
+        self.store.move('Papers/Source.md', 'Papers/Source #2.md')
+        self.assertEqual(self.store.load('Review.md')['content'], content.replace('![[Source#Methods]]', '![[Papers/Source %232#Methods]]'))
+        self.assertEqual(self.store.wiki_target('Papers/Source %232')['path'], 'Papers/Source #2.md')
+
     def test_image_header_dimensions_without_pixel_decoding(self):
         def png(width, height):
             return b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" + width.to_bytes(4, 'big') + height.to_bytes(4, 'big')

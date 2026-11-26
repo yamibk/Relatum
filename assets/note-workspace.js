@@ -80,6 +80,7 @@
   const settingsShortcutList = $('[data-role="note-shortcut-list"]');
   const settingsShortcutStatus = $('[data-role="note-shortcut-status"]');
   const selectionMatchHighlightToggle = $('[data-role="note-selection-match-highlight"]');
+  const headingFoldArrowsSelect = $('[data-role="note-heading-fold-arrows"]');
   const imagePathStyleSelect = $('[data-role="note-image-path-style"]');
   const databasePdfOpenSelect = $('[data-role="note-database-pdf-open"]');
   const sortTrigger = $('[data-note-action="toggle-sort"]');
@@ -739,6 +740,20 @@
   const NOTE_IMAGE_PATH_STYLE_KEY = 'canvas:noteImagePathStyle:v1';
   const DATABASE_PDF_OPEN_KEY = 'canvas:noteDatabasePdfOpen:v1';
   const VIEW_STATES_KEY = 'canvas:noteViewStates:v1';
+  const HEADING_FOLDING_KEY = 'canvas:noteHeadingFolding:v1';
+  let headingFoldArrows = 'never';
+  try {
+    const stored = localStorage.getItem(HEADING_FOLDING_KEY);
+    if (stored === 'always' || stored === '1') headingFoldArrows = 'always';
+    else if (stored === 'hover') headingFoldArrows = 'hover';
+  } catch (error) {}
+  root.dataset.headingFoldArrows = headingFoldArrows;
+
+  function foldViewState(view) {
+    if (!Array.isArray(view.headingFolds) || !view.headingFolds.length || typeof view.headingRevision !== 'string' || !view.headingRevision) return {};
+    const headingFolds = view.headingFolds.filter(position => Number.isInteger(position) && position >= 0).slice(0, 512);
+    return headingFolds.length ? { headingFolds, headingRevision: view.headingRevision } : {};
+  }
   const IMAGE_TEXT_DEFAULTS_KEY = 'canvas:noteImageTextDefaults:v1';
   const NOTE_FOCUS_KEY = 'canvas:noteFocusMode:v1';
   const TREE_SORT_KEY = 'canvas:noteTreeSort:v1';
@@ -936,7 +951,7 @@
       if (![view.anchor, view.head, view.scrollTop].every((value) => Number.isFinite(value) && value >= 0)) return;
       const viewport = normalizeViewport(view.viewport);
       viewStates.set(entry[0], { anchor: Math.floor(view.anchor), head: Math.floor(view.head), scrollTop: view.scrollTop,
-        ...(viewport ? { viewport } : {}) });
+        ...(viewport ? { viewport } : {}), ...foldViewState(view) });
     });
   } catch (error) {}
 
@@ -1336,7 +1351,34 @@
     }
   }
 
+  function syncHeadingFoldArrowsSetting() {
+    if (!headingFoldArrowsSelect || !settingsChoices) return;
+    const en = language() === 'en';
+    const title = en ? 'Heading fold arrows' : '标题折叠箭头';
+    $('[data-role="note-heading-fold-arrows-label"]').textContent = title;
+    headingFoldArrowsSelect.setAttribute('aria-label', title);
+    settingsChoices.setOptions(headingFoldArrowsSelect, [
+      { value: 'never', label: en ? 'Never' : '永不' },
+      { value: 'hover', label: en ? 'On hover' : '悬停时显示' },
+      { value: 'always', label: en ? 'Always' : '常驻' },
+    ], headingFoldArrows);
+  }
+
+  function applyHeadingFoldArrows(mode) {
+    const enabled = mode !== 'never', wasEnabled = headingFoldArrows !== 'never';
+    headingFoldArrows = mode;
+    root.dataset.headingFoldArrows = mode;
+    syncHeadingFoldArrowsSetting();
+    if (enabled === wasEnabled) return;
+    liveEditor?.headingSession.setEnabled(enabled);
+    if (state.current && state.viewMode === 'reading') {
+      rememberEditorState(state.current);
+      renderReadingDocument();
+    }
+  }
+
   function syncNoteSettingsFontScale() {
+    syncHeadingFoldArrowsSetting();
     linkCompletionSettings?.refresh();
     syncNoteThemeSettings();
     const preference = window.RelatumNotePreferences;
@@ -1627,7 +1669,7 @@
         reset: () => { resetNoteTheme(); resetNoteChartPalette(); pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
       { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing,
         keywords: 'highlight selection 高亮 双向链接 补全 候选 搜索 正文 排序 图片 文件名 路径 image filename path wiki link completion suggestions scope search content sort',
-        searchTargets: () => editing.querySelectorAll('label:not([for="note-database-pdf-open"]), [data-settings-keywords]'),
+        searchTargets: () => editing.querySelectorAll('label:not([for="note-database-pdf-open"], [for="note-heading-fold-arrows"]), [data-settings-keywords]'),
         reset: resetEditingSettings },
       { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings,
         keywords: '排序 命名 文件名开头优先 相同前缀后优先 高级排序 sort name timestamp file name prefix priority after a shared prefix advanced sorting',
@@ -1711,6 +1753,19 @@
     settingsChoices = window.RelatumReviewControls.createManager(settingsPop, themePortal);
     settingsChoices.enhance(themeSelect);
     if (appleSelectionSelect) settingsChoices.enhance(appleSelectionSelect);
+    if (headingFoldArrowsSelect) {
+      syncHeadingFoldArrowsSetting();
+      headingFoldArrowsSelect.addEventListener('change', () => {
+        const mode = headingFoldArrowsSelect.value;
+        try { localStorage.setItem(HEADING_FOLDING_KEY, mode); }
+        catch (error) {
+          settingsDialog.setStatus(language() === 'en' ? 'Could not save the heading fold arrow setting.' : '标题折叠箭头设置保存失败。');
+          syncHeadingFoldArrowsSetting();
+          return;
+        }
+        applyHeadingFoldArrows(mode);
+      });
+    }
     if (imagePathStyleSelect) {
       syncNoteImagePathSettings();
       settingsChoices.enhance(imagePathStyleSelect).element.querySelector('button').setAttribute('aria-describedby', 'note-image-path-hint');
@@ -1783,7 +1838,7 @@
       settingsChoices.close();
       finishLibrarySortMotion();
       syncNoteThemeSettings(); syncNoteChartPaletteSettings(); syncNoteImagePathSettings(); syncDatabasePdfOpenSettings();
-      linkCompletionSettings?.refresh();
+      linkCompletionSettings?.refresh(); syncHeadingFoldArrowsSetting();
     });
     settingsDialog.dialog.addEventListener('click', handleWorkspaceClick);
     settingsTrigger.setAttribute('aria-controls', 'note-settings-dialog');
@@ -1799,6 +1854,8 @@
     linkCompletionSettings?.refresh();
     try { localStorage.removeItem(SELECTION_MATCH_HIGHLIGHT_KEY); } catch (_) {}
     applySelectionMatchHighlight(false, false);
+    try { localStorage.removeItem(HEADING_FOLDING_KEY); } catch (error) {}
+    applyHeadingFoldArrows('never');
     localStorage.removeItem(NOTE_IMAGE_PATH_STYLE_KEY);
     noteImagePathStyle = 'relative';
     syncNoteImagePathSettings();
@@ -1906,12 +1963,14 @@
       anchor: Math.max(0, Math.floor(Number(view.anchor) || 0)),
       head: Math.max(0, Math.floor(Number(view.head) || 0)),
       scrollTop: Math.max(0, Number(view.scrollTop) || 0),
+      ...foldViewState(view),
     };
     const viewport = normalizeViewport(view.viewport);
     if (viewport) normalized.viewport = viewport;
     const previous = viewStates.get(path);
     if (previous && previous.anchor === normalized.anchor && previous.head === normalized.head
       && previous.scrollTop === normalized.scrollTop && JSON.stringify(previous.viewport) === JSON.stringify(normalized.viewport)
+      && previous.headingRevision === normalized.headingRevision && JSON.stringify(previous.headingFolds) === JSON.stringify(normalized.headingFolds)
       && Array.from(viewStates.keys()).pop() === path) return;
     viewStates.delete(path); viewStates.set(path, normalized);
     while (viewStates.size > VIEW_STATES_LIMIT) viewStates.delete(viewStates.keys().next().value);
@@ -2061,6 +2120,7 @@
       head: documentState ? (documentState.selectionEnd ?? documentState.selectionStart ?? 0) : 0,
       scrollTop: documentState && documentState.scrollTop || 0,
       viewport: documentState?.viewport,
+      headingFolds: documentState?.headingFolds,
       viewportCurrent: viewportRestoreCurrent(documentState),
     };
     if (state.titleScrollFrame) {
@@ -2157,11 +2217,26 @@
     wikiOpenTask = task;
     task.promise = (async () => {
       if (!(await flushSave(documentState)) || !valid()) return;
+      const writtenTarget = String(rawTarget || '').split('|', 1)[0];
+      const hashAt = writtenTarget.indexOf('#');
+      if (hashAt >= 0) {
+        try {
+          const resolved = await request('/api/note-links?target=' + encodeURIComponent(target));
+          if (!valid()) return;
+          if (resolved.state === 'resolved') {
+            if (await openNote(resolved.path, { reuseActiveTab })) scheduleHeadingJump(writtenTarget.slice(hashAt + 1), resolved.path, visibility);
+            return;
+          }
+          if (resolved.state === 'ambiguous') { showToast(tr('ambiguous'), 'warning'); return; }
+          if (resolved.state === 'indexing') {
+            showToast(language() === 'en' ? 'The note index is still loading.' : '正在整理笔记索引。');
+            return;
+          }
+        } catch (error) { if (!valid()) return; }
+      }
       if (!(await ensureLinks()) || !valid()) return;
       const outgoing = outgoingForWiki(rawTarget);
       if (outgoing && outgoing.path) {
-        const writtenTarget = String(rawTarget || '').split('|', 1)[0];
-        const hashAt = writtenTarget.indexOf('#');
         const fragment = hashAt >= 0 ? writtenTarget.slice(hashAt + 1) : '';
         if (await openNote(outgoing.path, { reuseActiveTab })) scheduleHeadingJump(fragment, outgoing.path, visibility);
         return;
@@ -2200,6 +2275,14 @@
   }
 
   function headingPosition(source, rawFragment) {
+    const syntax = window.RelatumNoteLiveSyntax;
+    if (syntax) {
+      const normal = window.MarkdownMini.structure.normalizeSource(source);
+      const matches = syntax.matchHeading(syntax.noteHeadingsFromString(normal), String(rawFragment || '').replace(/^#/, ''));
+      if (matches.length !== 1) return null;
+      const offset = matches[0].from;
+      return { offset, markerOffset: offset, line: normal.slice(0, offset).split('\n').length - 1 };
+    }
     const wanted = decodedLinkPart(rawFragment).replace(/^#/, '').trim().toLocaleLowerCase();
     if (!wanted) return { offset: 0, markerOffset: 0, line: 0 };
     const slug = (value) => String(value || '').trim().toLocaleLowerCase()
@@ -2222,6 +2305,7 @@
     const position = headingPosition(state.current.content, fragment);
     if (!position) return false;
     if (state.viewMode === 'reading' && readingHost) {
+      window.RelatumNoteLiveEditor?.revealReadingHeading(readingHost, position.offset);
       const heading = readingHost.querySelector(typeof window.RelatumNoteLiveEditor?.renderMarkdown === 'function'
         ? '[data-note-heading-from="' + position.markerOffset + '"]'
         : '[data-ln="' + position.line + '"]');
@@ -2285,6 +2369,7 @@
     }
     if (mode === 'reading') {
       cancelDocumentViewportRestore();
+      window.RelatumNoteLiveEditor?.revealReadingHeading(readingHost, position);
       const target = readingHost.querySelector('[data-note-heading-from="' + position + '"]');
       if (!target) return false;
       readingHost.scrollTop += target.getBoundingClientRect().top - readingHost.getBoundingClientRect().top - 12;
@@ -2315,6 +2400,7 @@
         getSurface: () => ({ kind: state.viewMode === 'reading' ? 'reading' : liveEditor ? 'editor' : 'fallback',
           scroller: editorScrollElement(), view: state.viewMode === 'reading' ? null : liveEditor?.view }),
         navigate: navigateOutline,
+        openHeadingMenu: (event, heading) => showHeadingMenu(event, heading.from),
       });
       noteOutline.resume();
     }).catch(() => {
@@ -2573,7 +2659,11 @@
     const documentState = payload || readingPayload();
     if (state.current && normalizeViewport(documentState.viewport) && !noteWorkspaceVisible()) deferredViewportDocument = state.current;
     if (window.RelatumNoteLiveEditor && typeof window.RelatumNoteLiveEditor.renderMarkdown === 'function') {
-      window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', { calloutSession: liveEditor?.calloutSession, onOpenExternal: openMarkdownTarget, database: noteDatabaseHost, htmlEmbed: noteHtmlHost, pdfEmbed: notePdfHost });
+      window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', {
+        calloutSession: liveEditor?.calloutSession, headingFolding: headingFoldArrows !== 'never', headingSession: liveEditor?.headingSession,
+        onOpenExternal: openMarkdownTarget, database: noteDatabaseHost, htmlEmbed: noteHtmlHost, pdfEmbed: notePdfHost,
+        sectionEmbed: sectionEmbedHost,
+      });
     } else {
       const result = window.MarkdownMini && window.MarkdownMini.renderResult
         ? window.MarkdownMini.renderResult(documentState.value || '', { localImages: true, noteBlocks: true, noteSyntax: true, mermaid: !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid') })
@@ -2639,7 +2729,8 @@
       try {
         liveEditor = window.RelatumNoteLiveEditor.create(editorHost, {
           value: '', notePath: '', sourceMode: state.viewMode === 'source', shortcutBindings: state.shortcutBindings,
-          selectionMatchHighlight: state.selectionMatchHighlight,
+          selectionMatchHighlight: state.selectionMatchHighlight, headingFolding: headingFoldArrows !== 'never', sectionEmbed: sectionEmbedHost,
+          onHeadingFoldsChanged: () => rememberHeadingFolds(state.current),
           linkCompletion: { query: (body, options) => post('/api/note-query', body, options), recent: () => Object.fromEntries(recentFiles),
             active: () => noteWorkspaceVisible() && !state.settingsOpen && state.viewMode !== 'reading' && !browserResultsActive() && !!state.current },
           extensionsActive: false,
@@ -2674,6 +2765,9 @@
     if (readingHost) {
       readingHost.addEventListener('scroll', scheduleInlineTitleScroll, { passive: true });
       readingHost.addEventListener('contextmenu', (event) => {
+        if (event.target.closest('.note-section-reference')) return;
+        const heading = event.target.closest('[data-note-heading-from]');
+        if (heading) { showHeadingMenu(event, Number(heading.dataset.noteHeadingFrom)); return; }
         const image = event.target.closest('.md-local-image')?.querySelector('[data-note-image]');
         if (!image || !state.active || !state.current || state.viewMode !== 'reading') return;
         event.preventDefault(); event.stopPropagation();
@@ -2684,6 +2778,7 @@
           event.clientX, event.clientY, 'image');
       });
       readingHost.addEventListener('click', (event) => {
+        if (event.target.closest('.note-section-reference')) return;
         const tag = event.target.closest('[data-note-tag]');
         if (tag) { event.preventDefault(); setBrowserMode(true, tag.dataset.noteTag); return; }
         const wiki = event.target.closest('[data-wikilink]');
@@ -3282,11 +3377,12 @@
       cancelDocumentViewportRestore();
       await new Promise(resolve => requestAnimationFrame(resolve));
       if (state.current !== target || sequence !== state.openSeq || visibility !== noteVisibilityEpoch) return false;
+      window.RelatumNoteLiveEditor?.revealReadingHeading(readingHost, range[0]);
       const highlight = result.highlights?.[0];
       const needle = (highlight ? result.excerpt.slice(...highlight) : target.content.slice(range[0], range[1]).replace(/[*~`]/g, '')).normalize('NFC').toLocaleLowerCase();
       const elements = readingHost.querySelectorAll('p,pre,li,td,th,h1,h2,h3,h4,h5,h6,.note-image-text-box');
       for (const element of elements) {
-        if (!needle || element.closest('.note-frontmatter') || !element.textContent.normalize('NFC').toLocaleLowerCase().includes(needle)) continue;
+        if (!needle || element.closest('.note-frontmatter, .note-section-reference') || !element.textContent.normalize('NFC').toLocaleLowerCase().includes(needle)) continue;
         for (let parent = element; parent && parent !== readingHost; parent = parent.parentElement) {
           if (parent.classList.contains('md-callout-body') && parent.hidden) parent.closest('.md-callout')?.querySelector('.note-callout-fold')?.click();
         }
@@ -3466,6 +3562,163 @@
     state.loadPromises.set(path, promise);
     return promise;
   }
+
+  const sectionEmbedHost = (() => {
+    const entries = new Set(), lookups = new Map(), sources = new Map(), mounted = new WeakMap();
+    const label = (zh, en) => language() === 'en' ? en : zh;
+    const reasons = {
+      missing: ['找不到源笔记', 'Source note was not found'], ambiguous: ['笔记名有歧义，请使用库内完整路径', 'Use a full vault path to disambiguate the note'],
+      heading: ['找不到源章节', 'Source heading was not found'], duplicate: ['源笔记有多个同名标题', 'The source note has duplicate headings'],
+      self: ['请选择另一篇笔记的章节', 'Choose a section from another note'], invalid: ['引用路径无效', 'Invalid reference path'],
+      indexing: ['正在整理笔记索引', 'Indexing notes'], failed: ['无法读取源笔记', 'Could not read the source note'],
+    };
+    let observer;
+    const active = entry => entry.visible && entry.element.isConnected && !entry.element.closest('[hidden], [inert]')
+      && state.current?.path === entry.reference.owner && noteWorkspaceVisible() && !graphPresentation && !browserResultsActive()
+      && (entry.reference.reading ? state.viewMode === 'reading' : state.viewMode === 'live');
+    const key = value => String(value).normalize('NFC').toLowerCase();
+    const trim = (cache, limit) => { while (cache.size > limit) cache.delete(cache.keys().next().value); };
+
+    function lookup(target) {
+      if (lookups.has(target)) return lookups.get(target);
+      const pending = request('/api/note-links?target=' + encodeURIComponent(target));
+      lookups.set(target, pending); trim(lookups, 128);
+      pending.catch(() => { if (lookups.get(target) === pending) lookups.delete(target); });
+      return pending;
+    }
+
+    function loadSource(path, revision) {
+      const previous = sources.get(path);
+      if (previous?.revision === revision) {
+        sources.delete(path); sources.set(path, previous);
+        return previous.promise;
+      }
+      const entry = { revision };
+      const cached = state.documentCache.get(path);
+      entry.promise = (async () => {
+        const note = cached && revision && cached.revision === revision && !hasPendingEdits(cached) ? cached : await fetchDocument(path);
+        const source = window.MarkdownMini.structure.normalizeSource(note.content), references = [];
+        const syntax = window.RelatumNoteLiveSyntax;
+        const scan = syntax.scanNoteHeadings(source, { sections: source.includes('![[') ? references : null });
+        let step;
+        do {
+          const deadline = performance.now() + 6;
+          do { step = scan.next(); } while (!step.done && performance.now() < deadline);
+          if (!step.done) await new Promise(resolve => setTimeout(resolve, 0));
+        } while (!step.done);
+        return { source, references, headings: syntax.headingSections(step.value, source.length) };
+      })();
+      sources.set(path, entry); trim(sources, 8);
+      entry.promise.catch(() => { if (sources.get(path) === entry) sources.delete(path); });
+      return entry.promise;
+    }
+
+    async function resolve(reference, current) {
+      const result = await lookup(reference.target);
+      if (!current() || result.state !== 'resolved') return result;
+      const { path, revision } = result;
+      if (key(path) === key(reference.owner)) return { state: 'self' };
+      const note = await loadSource(path, revision);
+      if (!current() || !note) return null;
+      const matches = window.RelatumNoteLiveSyntax.matchHeading(note.headings, reference.fragment);
+      if (matches.length !== 1) return { path, state: matches.length ? 'duplicate' : 'heading' };
+      const heading = matches[0], newline = note.source.indexOf('\n', heading.to);
+      const from = newline < 0 ? heading.end : Math.min(heading.end, newline + 1);
+      const body = note.source.slice(from, heading.end);
+      const references = note.references.filter(item => item.from >= from && item.from < heading.end);
+      if (references.length) {
+        const firstLine = references[0].line - note.source.slice(from, references[0].from).split('\n').length + 1;
+        return { path, heading, body, references: references.map(item => ({ ...item, line: item.line - firstLine })) };
+      }
+      return { path, heading, body };
+    }
+
+    function stop(entry) {
+      if (!entry.started) return;
+      entry.started = false; entry.version++;
+      if (entry.dispose && entry.element.offsetHeight) entry.element.style.minBlockSize = entry.element.offsetHeight + 'px';
+      entry.dispose?.(); entry.dispose = null;
+    }
+
+    function update(entry) {
+      if (!active(entry)) { stop(entry); return; }
+      if (entry.started) return;
+      entry.started = true;
+      const version = ++entry.version, current = () => entry.version === version && active(entry);
+      const render = data => {
+        if (!current() || !data) return;
+        entry.path = data.path || '';
+        entry.state = data.state || 'resolved';
+        entry.dispose?.(); entry.dispose = null;
+        entry.element.style.removeProperty('min-block-size');
+        entry.title.textContent = data.heading?.label || entry.reference.fragment;
+        entry.title.title = entry.path || entry.reference.target;
+        entry.title.disabled = !entry.path;
+        entry.message.hidden = !data.state;
+        entry.message.textContent = reasons[data.state] ? label(...reasons[data.state]) : '';
+        entry.retry.hidden = !['failed', 'indexing'].includes(data.state);
+        if (data.heading) entry.dispose = window.RelatumNoteLiveEditor.renderSectionFragment(entry.body, data, current, entry.reference.onLayout);
+        entry.reference.onLayout();
+      };
+      resolve(entry.reference, current).then(render).catch(() => render({ state: 'failed' }));
+    }
+
+    function relevant(target, path, changed) {
+      if (changed === '' || path === changed || path?.startsWith(changed + '/')) return true;
+      let part = target;
+      try { part = decodeURIComponent(part); } catch (error) { /* Retain invalid encodings for the resolver. */ }
+      part = key(part.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').replace(/\.md$/i, ''));
+      const changedKey = key(changed).replace(/\.md$/i, '');
+      return part === changedKey || part.startsWith(changedKey + '/') || !part.includes('/') && part === changedKey.split('/').pop();
+    }
+
+    return {
+      mount(element, reference) {
+        const title = document.createElement('button'), message = document.createElement('div'), body = document.createElement('div');
+        const retry = document.createElement('button');
+        title.type = retry.type = 'button'; title.className = 'note-section-source';
+        title.textContent = reference.target + ' › ' + reference.fragment; title.disabled = true;
+        message.className = 'note-section-message'; message.hidden = true;
+        retry.textContent = label('重试', 'Retry'); retry.hidden = true;
+        body.className = 'note-section-content'; element.replaceChildren(title, message, retry, body);
+        const entry = { element, reference, title, message, retry, body, version: 0, visible: !window.IntersectionObserver };
+        title.addEventListener('click', async event => {
+          event.stopPropagation();
+          const path = entry.path;
+          if (!path || !active(entry)) return;
+          const fragment = reference.fragment;
+          if (await openNote(path, { reuseActiveTab: false })) scheduleHeadingJump(fragment, path);
+        });
+        retry.addEventListener('click', event => { event.stopPropagation(); lookups.delete(reference.target); stop(entry); update(entry); });
+        entries.add(entry); mounted.set(element, entry);
+        if (window.IntersectionObserver) {
+          observer ||= new IntersectionObserver(items => items.forEach(item => {
+            const current = mounted.get(item.target);
+            if (current) { current.visible = item.isIntersecting; update(current); }
+          }));
+          observer.observe(element);
+        } else queueMicrotask(() => update(entry));
+        return () => { observer?.unobserve(element); mounted.delete(element); entries.delete(entry); stop(entry); };
+      },
+      sync() { entries.forEach(update); },
+      invalidate(changes = ['']) {
+        for (const path of sources.keys()) if (changes.some(changed => changed === '' || path === changed || path.startsWith(changed + '/'))) sources.delete(path);
+        for (const target of lookups.keys()) if (changes.some(changed => relevant(target, '', changed))) lookups.delete(target);
+        for (const entry of entries) {
+          if (entry.state !== 'indexing' && !changes.some(changed => relevant(entry.reference.target, entry.path, changed))) continue;
+          lookups.delete(entry.reference.target); stop(entry); update(entry);
+        }
+      },
+    };
+  })();
+
+  function rememberHeadingFolds(documentState, snapshot) {
+    if (!documentState || state.current !== documentState || !liveEditor) return;
+    const previous = viewStates.get(documentState.path) || {};
+    const folds = hasPendingEdits(documentState) ? foldViewState(previous)
+      : { headingFolds: liveEditor.headingSession.positions(), headingRevision: documentState.revision };
+    rememberViewState(documentState.path, { ...(snapshot || previous), ...folds });
+  }
   function rememberEditorState(documentState) {
     if (!documentState || state.current !== documentState) return;
     const snapshot = editorSnapshot(true);
@@ -3475,7 +3728,8 @@
     documentState.selectionEnd = snapshot.head ?? snapshot.anchor ?? 0;
     documentState.scrollTop = snapshot.scrollTop || 0;
     documentState.viewport = snapshot.viewport || null;
-    rememberViewState(documentState.path, snapshot);
+    if (liveEditor) rememberHeadingFolds(documentState, snapshot);
+    else rememberViewState(documentState.path, snapshot);
     scheduleStatistics(documentState);
     cacheDocument(documentState);
     updateDocumentStats(null, documentState.characterCount, documentState.wordCount);
@@ -4448,6 +4702,7 @@
       let result;
       let indexChanged = false;
       let graphRetired = false;
+      let sectionChanges;
       const reconcile = state.initialized && !options?.background && options?.reconcile !== false && noteWorkspaceVisible();
       if (state.indexGeneration !== undefined && directoryPageVersion === directoryOrderVersion && !options?.reset && !reconcile) {
         const delta = await request('/api/note-changes?since=' + state.indexGeneration
@@ -4458,7 +4713,11 @@
         indexChanged = delta.changes?.length > 0 || state.indexState?.phase !== delta.index?.phase;
         state.indexState = delta.index;
         if (!delta.reset && !delta.hasMore) {
-          if (!delta.changes.length && !announce) { if (indexChanged) noteBrowser?.invalidate(); state.externalSyncUnchanged = Math.min(EXTERNAL_SYNC_DELAYS.length - 1, state.externalSyncUnchanged + 1); return true; }
+          if (!delta.changes.length && !announce) {
+            if (indexChanged) { noteBrowser?.invalidate(); sectionEmbedHost.invalidate([]); }
+            state.externalSyncUnchanged = Math.min(EXTERNAL_SYNC_DELAYS.length - 1, state.externalSyncUnchanged + 1); return true;
+          }
+          sectionChanges = delta.changes.map(change => change.path);
           for (const change of delta.changes) {
             if (change.removed) {
               if (change.path === '' || isNotebookRoot(change.path)) { updateNoteGraphSession(change.path); graphRetired = true; }
@@ -4485,6 +4744,7 @@
       const flat = flattenEntries(entries, []);
       const signature = JSON.stringify(flat.map((entry) => [entry.path, entry.modifiedNs, entry.size, entry.revision]));
       const browserChanged = signature !== state.treeMetadataSignature;
+      if (sectionChanges?.length || !sectionChanges && browserChanged) sectionEmbedHost.invalidate(sectionChanges);
       if (signature !== state.treeMetadataSignature) { state.externalSyncUnchanged = 0; state.treeMetadataSignature = signature; }
       else if (options && options.background) state.externalSyncUnchanged = Math.min(EXTERNAL_SYNC_DELAYS.length - 1, state.externalSyncUnchanged + 1);
       const structureChanged = !state.treeRendered || !sameTreeStructure(state.entries, entries);
@@ -4612,6 +4872,7 @@
     fileColorHost?.refresh();
     liveEditor?.setExtensionsActive(noteWorkspaceVisible() && !!state.current && state.viewMode !== 'reading'
       && !graphPresentation && !browserResultsActive());
+    sectionEmbedHost.sync();
   }
   function setDocumentSwitchPending(active) {
     root.classList.toggle('note-document-switch-pending', !!active);
@@ -4635,6 +4896,8 @@
       : viewStates.get(data.path);
     clearTimeout(state.saveTimer); clearTimeout(state.retryTimer); state.editGeneration += 1;
     const documentState = typeof data.editGeneration === 'number' ? data : makeDocument(data);
+    const storedFolds = viewStates.get(documentState.path);
+    documentState.headingFolds = storedFolds?.headingRevision === documentState.revision ? storedFolds.headingFolds : [];
     if (preservedView) {
       const end = documentState.content.length;
       documentState.selectionStart = Math.max(0, Math.min(end, Number(preservedView.anchor) || 0));
@@ -4644,6 +4907,7 @@
     }
     rememberViewState(documentState.path, {
       anchor: documentState.selectionStart, head: documentState.selectionEnd, scrollTop: documentState.scrollTop, viewport: documentState.viewport,
+      headingFolds: documentState.headingFolds, headingRevision: documentState.revision,
     });
     setDocumentSwitchPending(false);
     state.current = documentState; cacheDocument(documentState); state.openingPath = '';
@@ -4711,6 +4975,7 @@
         if (target.editGeneration <= generation) target.content = content;
         cacheDocument(target);
         if (state.current === target) {
+          if (!hasPendingEdits(target)) rememberHeadingFolds(target);
           clearSaveError();
           if (!hasPendingEdits(target)) desktopDirty(false); else scheduleSave(0);
           scheduleLinksRefresh(target);
@@ -5216,6 +5481,37 @@
     const sequence = contextSequence;
     if (tabMotionPreference.matches) contextMenu.classList.add('is-open');
     else contextFrame = requestAnimationFrame(() => { contextFrame = 0; if (sequence === contextSequence && contextOpen) contextMenu.classList.add('is-open'); });
+  }
+
+  function copyHeadingButton(position) {
+    const owner = state.current;
+    const label = language() === 'en' ? 'Copy section link' : '复制章节链接';
+    const button = contextButton(label, async () => {
+      if (!owner || state.current !== owner || editorInputPending()) return;
+      const syntax = window.RelatumNoteLiveSyntax, source = editorSnapshot().value;
+      if (!syntax) return;
+      const headings = syntax.noteHeadingsFromString(source);
+      const heading = headings.find(item => source.lastIndexOf('\n', item.from - 1) + 1 <= position && position <= item.to
+        && (position >= item.from || !source.slice(position, item.from).trim()));
+      if (!heading) return;
+      const fragment = syntax.escapeSectionPart(heading.label);
+      if (syntax.matchHeading(headings, fragment).length !== 1) {
+        showToast(language() === 'en' ? 'Rename duplicate headings before copying a section link.' : '请先区分同名标题，再复制章节链接。', 'warning');
+        return;
+      }
+      await copyText('[[' + syntax.escapeSectionPart(owner.path.replace(/\.md$/i, '')) + '#' + fragment + ']]');
+    });
+    button.setAttribute('role', 'menuitem');
+    return button;
+  }
+
+  function showHeadingMenu(event, position) {
+    if (!state.current || editorInputPending()) return;
+    event.preventDefault(); event.stopPropagation();
+    const keyboard = event.clientX === 0 && event.clientY === 0;
+    const rect = keyboard && event.target.getBoundingClientRect();
+    showContext([copyHeadingButton(position)], keyboard ? rect.left : event.clientX, keyboard ? rect.bottom : event.clientY, 'section-link');
+    if (keyboard) menuButtons(contextMenu)[0]?.focus({ preventScroll: true });
   }
   const BODY_COMMAND_LABELS = {
     bullet: ['无序列表', 'Bulleted list'], ordered: ['有序列表', 'Numbered list'], task: ['任务列表', 'Task list'],
@@ -6093,6 +6389,13 @@
       return button;
     });
     items.push(separator(), ...['cut', 'copy', 'paste', 'paste-plain', 'select-all'].map(bodyCommandButton));
+    if (Number.isInteger(payload.headingPosition)) {
+      const doc = liveEditor.view.state.doc, line = doc.lineAt(payload.headingPosition);
+      if (liveEditor.headingSession.headingAt(line.from) || /^ {0,3}#{1,6}[ \t]+\S/.test(line.text)
+          || line.text.trim() && line.number < doc.lines && /^ {0,3}(?:=+|-+)\s*$/.test(doc.line(line.number + 1).text)) {
+        items.push(separator(), copyHeadingButton(line.from));
+      }
+    }
     if (payload.image) {
       if (liveEditor.queryCommand('image:media', bodyMenuContext).enabled) {
         const convert = bodyCommandButton('image:media'); convert.textContent = language() === 'en' ? 'Convert to media block' : '转换为图文块'; items.push(separator(), convert);
