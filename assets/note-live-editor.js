@@ -3433,6 +3433,7 @@
     const noteCallouts = hasCallouts ? readingCallouts(renderedSource, canvasRefs.length ? null : initialTree) : [];
     const result = safeIsolatedResult(renderedSource, { noteHeadings, noteCallouts, noteSourcePosition, noteSourceMap: true, noteContext: readingSyntax,
       noteTableDataCells: !printing,
+      deferCodeHighlight: printing ? null : readingCodeParser,
       renderFence(block) {
         if (block.language === 'database' && databasePositions?.has(block.from)) {
           return '<div class="note-database-carrier" data-database-id="' + databasePositions.get(block.from).id + '"></div>';
@@ -4074,6 +4075,10 @@
     return { button, destroy() { disposed = true; clearTimeout(timer); timer = 0; } };
   }
 
+  function readingCodeParser(language) {
+    return CM.highlightTree && CM.relatumCodeStyle ? CM.relatumCodeParser?.(language) : null;
+  }
+
   function prepareReadingCode(content, current) {
     const jobs = new Set(), visible = new Set(), copies = [];
     let handle = 0, idle = false, destroyed = false;
@@ -4135,10 +4140,10 @@
       const caption = document.createElement('span'); caption.className = 'note-code-label'; caption.textContent = label;
       const control = codeCopyControl(label, () => source, true); copies.push(control);
       toolbar.append(caption, control.button); pre.prepend(toolbar); pre.classList.add('has-note-code-toolbar');
-      const parser = CM.relatumCodeParser?.(label);
-      if (!parser || !CM.highlightTree || !CM.relatumCodeStyle) return;
-      // Replace the general renderer's approximate coloring, never its text.
-      code.textContent = source;
+      const parser = readingCodeParser(label);
+      if (!parser) return;
+      // The reading renderer emits plain text when this parser can take over.
+      if (code.firstElementChild) code.textContent = source;
       if (source.length > MAX_RICH_LINE) { pre.dataset.noteCodeReady = 'plain'; return; }
       const job = { pre, code, source, parser, parse: null }; jobs.add(job); byElement.set(pre, job);
       if (observer) observer.observe(pre); else visible.add(job);

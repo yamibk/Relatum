@@ -1,4 +1,4 @@
-"""Image transfers must not prevent note/asset moves; all files are disposable."""
+"""Note and image responses must not block other operations on the isolated library."""
 import base64
 import importlib
 import json
@@ -65,6 +65,52 @@ class NoteAssetStreamingTests(unittest.TestCase):
             response = error
         with response:
             return response.status, json.load(response)
+
+    def test_note_response_does_not_block_other_reads_and_saves(self):
+        original = self.store.load(self.note)
+        other = self.store.create('', 'Other', 'note', content='# Other')
+        note_route = '/api/note?' + urllib.parse.urlencode({'path': self.note})
+        other_route = '/api/note?' + urllib.parse.urlencode({'path': other['path']})
+        opened, release = threading.Event(), threading.Event()
+        send_headers = self.app.Handler.end_headers
+
+        def pause_note_response(handler):
+            send_headers(handler)
+            if handler.path == note_route:
+                opened.set()
+                release.wait(timeout=10)
+
+        def save(path, content, revision):
+            request = urllib.request.Request(
+                self.url + '/api/note-save',
+                data=json.dumps({'path': path, 'content': content, 'revision': revision}).encode('utf-8'),
+                headers={'Content-Type': 'application/json'},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                return json.load(response)
+
+        with mock.patch.object(self.app.Handler, 'end_headers', pause_note_response):
+            with urllib.request.urlopen(self.url + note_route, timeout=5) as pending:
+                try:
+                    self.assertEqual(pending.status, 200)
+                    self.assertTrue(opened.wait(timeout=5), 'first response did not reach the transfer gate')
+                    with urllib.request.urlopen(self.url + other_route, timeout=5) as response:
+                        self.assertEqual(response.status, 200)
+                        loaded = json.load(response)
+                    self.assertEqual(loaded['content'], '# Other')
+                    updated = save(other['path'], '# Updated other note', loaded['revision'])
+                    self.assertNotEqual(updated['revision'], loaded['revision'])
+                    changed = save(self.note, '# Updated first note', original['revision'])
+                    self.assertNotEqual(changed['revision'], original['revision'])
+                finally:
+                    release.set()
+                self.assertEqual(json.load(pending), original, 'the held response must return its original snapshot')
+
+        with urllib.request.urlopen(self.url + other_route, timeout=5) as response:
+            persisted = json.load(response)
+        self.assertEqual(persisted['content'], '# Updated other note')
+        self.assertEqual(persisted['revision'], updated['revision'])
 
     def stream_during_move(self, source, destination, moved_note, *, byte_range=None,
                            after_read=False, expected_error=None):

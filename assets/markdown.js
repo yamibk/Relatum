@@ -1240,7 +1240,8 @@
           + '<template class="mermaid-source">' + escapeHtml(b.code) + '</template>'
           + '<pre class="mermaid-fallback">' + escapeHtml(b.code) + '</pre></div>';
       }
-      const inner = CODE_LANGS[b.lang] ? highlightCode(b.code, b.lang) : escapeHtml(b.code);
+      const inner = CODE_LANGS[b.lang] && !options?.deferCodeHighlight?.(b.lang)
+        ? highlightCode(b.code, b.lang) : escapeHtml(b.code);
       const label = b.lang ? ' data-lang="' + escapeHtml(b.lang) + '"' : '';
       return '<pre class="md-code"' + attributes + label + '><code>' + inner + '</code></pre>';
     });
@@ -1394,13 +1395,11 @@
     const images = [];
     if (!enabled) return { protected: src, images: images };
     const source = String(src || '');
-    let output = '';
-    let cursor = 0;
-    while (cursor < source.length) {
-      if (source[cursor] !== '!' || source[cursor + 1] !== '[' || escapedAtSource(source, cursor)) {
-        output += source[cursor++];
-        continue;
-      }
+    const segments = [];
+    let copied = 0, next = 0;
+    for (let cursor = source.indexOf('!['); cursor >= 0; cursor = source.indexOf('![', next)) {
+      next = cursor + 2;
+      if (escapedAtSource(source, cursor)) continue;
       let end = -1;
       if (source[cursor + 2] === '[') {
         const close = source.indexOf(']]', cursor + 3);
@@ -1413,15 +1412,8 @@
           if (targetEnd >= 0 && source.slice(cursor, targetEnd + 1).indexOf('\n') < 0) end = targetEnd + 1;
         }
       }
-      if (end < 0) {
-        output += source[cursor++];
-        continue;
-      }
-      let parsed = parseImage(source.slice(cursor, end));
-      if (!parsed) {
-        output += source[cursor++];
-        continue;
-      }
+      let parsed = end < 0 ? null : parseImage(source.slice(cursor, end));
+      if (!parsed) continue;
       const lineStart = source.lastIndexOf('\n', cursor - 1) + 1;
       const lineBreak = source.indexOf('\n', end);
       const lineEnd = lineBreak < 0 ? source.length : lineBreak;
@@ -1433,10 +1425,12 @@
         }
       }
       images.push(parsed);
-      output += '\x00NIMAGE' + (images.length - 1) + '\x00';
-      cursor = end;
+      segments.push(source.slice(copied, cursor), '\x00NIMAGE' + (images.length - 1) + '\x00');
+      copied = next = end;
     }
-    return { protected: output, images: images };
+    if (!images.length) return { protected: source, images };
+    segments.push(source.slice(copied));
+    return { protected: segments.join(''), images };
   }
 
   function restoreLocalImages(html, images) {
@@ -2134,7 +2128,8 @@
           seen.add(use.key);
           const entry = noteContext.footnotes.get(use.key);
           const body = renderResult(entry.body, { noteSyntax: true, noteBlocks: true, localImages: opts.localImages, mermaid: opts.mermaid,
-            noteContext, noteFootnoteBody: true, noteSourcePosition: opts.noteSourcePosition, noteTableDataCells: opts.noteTableDataCells });
+            noteContext, noteFootnoteBody: true, noteSourcePosition: opts.noteSourcePosition, noteTableDataCells: opts.noteTableDataCells,
+            deferCodeHighlight: opts.deferCodeHighlight });
           features.math = features.math || body.features.math;
           features.mermaid = features.mermaid || body.features.mermaid;
           const position = typeof opts.noteSourcePosition === 'function' ? opts.noteSourcePosition : value => value;

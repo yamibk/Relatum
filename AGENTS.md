@@ -138,9 +138,9 @@ Windows 文件树「清理未使用的 PDF」复用 HTML 清理弹窗。列表�
 
 笔记实时预览的行内排版在 `assets/note-live-editor.js` 中按每个可见区间的完整行边界筛选富块候选；包含跨屏父块及相接边界，保留源码顺序，行内包含判断、公式查找及 Callout 装饰复用候选。Callout 的祖先及折叠模型仍使用完整块集合，每次行内排版只计算一次，多个可见区间共用；没有新增持久缓存、设置或公开接口。`tests/note-inline-candidates-browser.js` 对照原排版的装饰范围、样式和控件种类，并以隔离的 400KiB/1MiB/4MiB 合成长文交替测量初访、往返后的光标移动、输入和滚动；三轮为完整基准，`--quick` 用于浏览器回归。行为及测量边界见 `docs/note-scroll-preparation-2026-11-01.md`。
 
-笔记阅读模式在 `assets/note-live-editor.js` 中同步生成全文 HTML 和位置索引。含 Callout 且没有内嵌画布占位改写时，Callout 与标题扫描共用原始 Lezer 解析。前后有空行且已被 Lezer 完整识别的普通表格无需单独触发标题遮罩重解析，特殊表格、注释和公式仍按原规则处理。阅读渲染直接输出首行为数据单元格的笔记表格，打印和通用 Markdown 保留原表头。阅读位置恢复在首帧测量滚动几何，避免挂载正文后立即触发同步布局。MathJax 在原队列中按当前折叠状态搜集公式根。`tests/note-viewport-browser.js`、`tests/note-outline-regression.js` 和 `tests/note-math-preview-browser.js` 验证位置、语法边界和公式排版。
+笔记阅读模式在 `assets/note-live-editor.js` 中同步生成全文 HTML 和位置索引。含 Callout 且没有内嵌画布占位改写时，Callout 与标题扫描共用原始 Lezer 解析。前后有空行且已被 Lezer 完整识别的普通表格无需单独触发标题遮罩重解析，特殊表格、注释和公式仍按原规则处理。阅读渲染直接输出首行为数据单元格的笔记表格，打印和通用 Markdown 保留原表头。阅读位置恢复在首帧测量滚动几何，避免挂载正文后立即触发同步布局。交互阅读的代码围栏有 CodeMirror 解析器时先生成纯文本，到达视口附近才用原队列上色，保留代码工具栏和原文复制。其他语言、打印和通用 Markdown 沿用原高亮。代码和打印专项为 `tests/note-code-regression.js`、`tests/note-writing-browser.js` 和 `tests/note-pdf-browser.js`。MathJax 在原队列中按当前折叠状态搜集公式根。`tests/note-viewport-browser.js`、`tests/note-outline-regression.js` 和 `tests/note-math-preview-browser.js` 验证位置、语法边界和公式排版。
 
-笔记图片请求由 `notes_library.py` 打开所属 Markdown 并从文件句柄复核大小，保留存在性、读取权限和路径授权，图片的 200、304 和分段读均无需读取正文。实时预览与阅读通过 `prepareLocalImage()` 共享按请求 URL 保存的图片自然宽高，最多 256 项且估算 64 KiB。显式宽高优先，已见过的图片在异步加载期间按列宽及当前模式的高度限制占位，加载成功后使用实测尺寸，失败时淘汰提示。清理缓存或 pagehide 释放尺寸记录。没有新增磁盘数据。`node tests/note-viewport-browser.js --image-hints-only` 和 `py -B -m unittest tests.test_note_asset_streaming` 覆盖跨模式重开、文件替换、缺失、条件请求及授权。
+`assets/markdown.js` 的本地图片投影只检查 `![` 候选，保留现有的转义、路径、尺寸及图片文字解析。笔记图片请求由 `notes_library.py` 打开所属 Markdown 并从文件句柄复核大小，保留存在性、读取权限和路径授权，图片的 200、304 和分段读均无需读取正文。实时预览与阅读通过 `prepareLocalImage()` 共享按请求 URL 保存的图片自然宽高，最多 256 项且估算 64 KiB。显式宽高优先，已见过的图片在异步加载期间按列宽及当前模式的高度限制占位，加载成功后使用实测尺寸，失败时淘汰提示。清理缓存或 pagehide 释放尺寸记录。没有新增磁盘数据。`node tests/note-viewport-browser.js --image-hints-only` 和 `py -B -m unittest tests.test_note_asset_streaming` 覆盖跨模式重开、文件替换、缺失、条件请求及授权。
 
 Callout 的标题、图标、配色及颜色分量由 `completeSpec()` 生成随块存续的只读展示信息，正文编辑、位置映射及标题字段未变的重扫共用；类型、标题或折叠后缀改变时重新生成。折叠、焦点、选区及隐藏标题仍实时计算，普通提示块不再读取无关标题行，嵌套及完整祖先模型不变；不新增独立缓存、偏好、监听或任务。`tests/note-callout-performance-browser.js` 以 `30ff695` 为默认基线，对照原始 Callout 模型和行内装饰，三轮交替测量 400KiB/1MiB/4MiB 提示块混排及 4MiB 表格对照；`--quick` 已接入笔记浏览器回归。实现、复现及测量边界见 `docs/note-callout-performance-2026-11-01.md`。
 
@@ -775,6 +775,7 @@ Cards 快捷键 `cards` 使用 `Mod-f`，通过 `insert:cards-template` 插入�
 - 笔记图片在现有 `NOTES_MUTATION_LOCK` 内完成路径校验和打开，随后释放锁并交给 `_send_local_file` 分块发送。Windows 只登记仍持有原素材的在途读取；`/api/note-move` 在移动前将相关 `.assets` 或父目录中的在途读取，以及单笔记移动中即将迁走的同级图片读取按 256KiB 分块交接到自动清理的系统临时文件，保留读取位置和原响应元数据，并关闭原句柄，使目录移动与未完成图片响应兼容。仅实际重叠的移动触发复制，普通加载不复制；网络发送不持有笔记锁或读取锁。成功、取消、304/416 与异常均关闭流并注销，非 Windows 保留普通只读打开；真实外部占用仍走原失败回滚，不增加重试、整图内存副本、持久化数据或新 API。
 - 小型 `data/*.json` 读改写与画布/附件文件操作使用两把进程内锁；跨两类数据的路由固定先拿画布锁、再拿数据锁。不要倒置锁顺序，也不要让原生选择器打开期间持锁。
 - 笔记写操作使用独立 `NOTES_MUTATION_LOCK`，同时进入现有跨进程写锁；资源管理器打开接口不在持锁期间等待 Explorer。笔记正文和图片沿用同目录唯一临时文件 + `os.replace`，不要改成固定 `.tmp`。
+- `/api/note` 在笔记锁内读取并构造包含正文、修订号和文件元数据的快照。JSON 编码和发送在释放锁后进行，缓慢的响应不会占用其他请求需要的笔记锁。`tests.test_note_asset_streaming` 用暂停响应验证并发打开、保存和快照完整性。
 - 视口状态 `data/viewport.json` 最多保留 500 张画布记录，写入时按 `updatedAt` 淘汰旧项，避免长期使用后无界增长。
 - Windows 上，共用同一 `ROOT` 的多个 Relatum 服务还会通过命名互斥锁串行化写操作，避免两个实例把同一份 JSON 相互覆盖；进程内仍使用上述两把细分锁。非 Windows 源码运行目前只有进程内锁，不要误写成全平台单实例机制。
 

@@ -10489,7 +10489,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             q = urllib.parse.parse_qs(parsed.query)
             try:
                 with NOTES_MUTATION_LOCK:
-                    return self._send_json(200, NOTES_STORE.load(q.get("path", [""])[0]))
+                    result = NOTES_STORE.load(q.get("path", [""])[0])
+                return self._send_json(200, result)
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
         if parsed.path == "/api/note-links":

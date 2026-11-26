@@ -140,6 +140,23 @@ assert(nested.includes('class="md-task-item"'));
 
 const tildeFence = Markdown.render('~~~js\nconst x = 1;\n~~~');
 assert(tildeFence.includes('<pre class="md-code" data-lang="js">'));
+const escapedCode = "const value = '<tag & text>';";
+const deferredCodeSource = [
+  '~~~js', escapedCode, '~~~', '', '~~~rust', 'fn main() {}', '~~~', '',
+  'Ref[^code]', '', '[^code]: ~~~js', '    ' + escapedCode, '    ~~~',
+].join('\n');
+const codeOptions = { noteSyntax: true, noteBlocks: true };
+const defaultCode = Markdown.renderResult(deferredCodeSource, codeOptions);
+const jsCodeBody = /(<pre class="md-code" data-lang="js"><code>)(.*?)(<\/code>)/g;
+const initialCode = [...defaultCode.html.matchAll(jsCodeBody)];
+assert.strictEqual(initialCode.length, 2, 'the fixture has ordinary and footnote JavaScript blocks');
+assert(initialCode.every(match => match[2].includes('class="tok-kw"')));
+assert(defaultCode.html.includes('<pre class="md-code" data-lang="rust"><code><span class="tok-kw">fn</span>'));
+assert.deepStrictEqual(
+  Markdown.renderResult(deferredCodeSource, { ...codeOptions, deferCodeHighlight: language => language === 'js' }),
+  { ...defaultCode, html: defaultCode.html.replace(jsCodeBody, (_, start, body, end) => start + Markdown.escapeHtml(escapedCode) + end) },
+  'deferring known languages keeps escaped code intact, including in footnotes, and preserves other highlighting',
+);
 const unfinishedFence = Markdown.render('```js\nconst x = 1;');
 assert(unfinishedFence.includes('```js'));
 assert(!unfinishedFence.includes('<pre class="md-code"'));
@@ -239,6 +256,21 @@ assert(renderedImageText.includes('class="note-image-text-layer"'));
 assert(renderedImageText.includes('data-image-text-id="caption-1"'));
 assert(renderedImageText.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
 assert(!renderedImageText.includes('<script>alert(1)</script>'));
+const imageCandidates = [
+  'before \\![skipped](ignore.png) and ![malformed ![nested|80x40](dir/a(b).png) suffix',
+  imageTextSource,
+  'after ![[folder/next.webp|160]] and ![bad](no-close.png',
+].join('\n\n');
+const renderedImageCandidates = Markdown.render(imageCandidates, { localImages: true });
+assert.deepStrictEqual(
+  [...renderedImageCandidates.matchAll(/data-note-image="([^"]+)"/g)].map(match => match[1]),
+  ['dir/a(b).png', 'page.assets/images/diagram.png', 'folder/next.webp'],
+);
+assert(renderedImageCandidates.includes('before !<a') && renderedImageCandidates.includes(' and ![malformed '));
+assert(renderedImageCandidates.includes('aspect-ratio:80/40') && renderedImageCandidates.includes(' suffix</p>'));
+assert(renderedImageCandidates.includes(renderedImageText.replace('data-ln="0"', 'data-ln="2"')),
+  'scanning past other candidates keeps standalone image text and its line index intact');
+assert(renderedImageCandidates.includes('width:min(100%,160px)') && renderedImageCandidates.endsWith(' and ![bad](no-close.png</p>'));
 const unsupportedImageText = '![x](x.png) <!--relatum:image-text:v2:e30-->';
 assert.strictEqual(Markdown.parseImageBlock(unsupportedImageText).metadataStatus, 'unsupported');
 assert.strictEqual(Markdown.parseImageBlock(unsupportedImageText).imageTextEditable, false);
