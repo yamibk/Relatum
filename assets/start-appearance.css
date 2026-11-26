@@ -1,5 +1,8 @@
 /* Homepage palette. Workspace surfaces retain their own tokens. */
 html[data-start-appearance] {
+  --claude-shell: #f3f2ee;
+  --sky-shell: #e8eff8;
+  --apple-shell: #f5f5f7;
   --start-home-base: #fbfbfa;
   --start-header-base: #fbfbfa;
   --start-header-ink: #1b1d1b;
@@ -14,6 +17,9 @@ html[data-start-appearance] {
   background-color: var(--start-home-base);
 }
 html[data-start-appearance][data-start-theme="dark"] {
+  --claude-shell: #151515;
+  --sky-shell: #101a2a;
+  --apple-shell: #242426;
   --start-home-base: #111213;
   --start-header-base: #111213;
   --start-header-ink: #f2f1ed;
@@ -30,7 +36,7 @@ html[data-start-appearance="claude"]:where(:not([data-start-workspace="notes"]))
   --start-home-base: #faf9f5;
   --start-home-glow: #e9dbc8;
   --start-home-shade: #f0ebe0;
-  --start-header-base: #f3f2ee;
+  --start-header-base: var(--claude-shell);
   --start-header-ink: #141413;
   --start-header-muted: #595850;
   --start-header-control: #fff;
@@ -45,7 +51,7 @@ html[data-start-appearance="claude"][data-start-theme="dark"]:where(:not([data-s
   --start-home-base: #191919;
   --start-home-glow: #382c24;
   --start-home-shade: #24201c;
-  --start-header-base: #151515;
+  --start-header-base: var(--claude-shell);
   --start-header-ink: #faf9f5;
   --start-header-muted: #c3c2b7;
   --start-header-control: #242424;
@@ -60,7 +66,7 @@ html[data-start-appearance="sky"]:where(:not([data-start-workspace="notes"])) {
   --start-home-base: #f8fbff;
   --start-home-glow: #d3e4f5;
   --start-home-shade: #e8f0fb;
-  --start-header-base: #e8eff8;
+  --start-header-base: var(--sky-shell);
   --start-header-ink: #27364b;
   --start-header-muted: #52637a;
   --start-header-control: #f8fbff;
@@ -75,7 +81,7 @@ html[data-start-appearance="sky"][data-start-theme="dark"]:where(:not([data-star
   --start-home-base: #162338;
   --start-home-glow: #243d59;
   --start-home-shade: #111b2c;
-  --start-header-base: #101a2a;
+  --start-header-base: var(--sky-shell);
   --start-header-ink: #dde7f5;
   --start-header-muted: #a4b4cb;
   --start-header-control: #1d2d44;
@@ -90,7 +96,7 @@ html[data-start-appearance="apple"]:where(:not([data-start-workspace="notes"])) 
   --start-home-base: #f5f5f7;
   --start-home-glow: #e1e2e6;
   --start-home-shade: #eeeef1;
-  --start-header-base: #f5f5f7;
+  --start-header-base: var(--apple-shell);
   --start-header-ink: #1d1d1f;
   --start-header-muted: #626268;
   --start-header-control: #fff;
@@ -105,7 +111,7 @@ html[data-start-appearance="apple"][data-start-theme="dark"]:where(:not([data-st
   --start-home-base: #202022;
   --start-home-glow: #343438;
   --start-home-shade: #19191b;
-  --start-header-base: #242426;
+  --start-header-base: var(--apple-shell);
   --start-header-ink: #f5f5f7;
   --start-header-muted: #aeaeb2;
   --start-header-control: #2c2c2e;
@@ -117,6 +123,13 @@ html[data-start-appearance="apple"][data-start-theme="dark"]:where(:not([data-st
   --start-header-primary-ink: #1c1c1e;
 }
 
+/* Notes resolves its own shell. The flat background uses the header tint in each workspace. */
+html[data-start-workspace="notes"][data-note-theme="claude"] { --start-header-base: var(--claude-shell); }
+html[data-start-workspace="notes"][data-note-theme="sky"] { --start-header-base: var(--sky-shell); }
+html[data-start-workspace="notes"][data-note-theme="apple"] { --start-header-base: var(--apple-shell); }
+html[data-start-appearance][data-start-background="simple"]:where(:not([data-start-workspace="none"])) {
+  --start-home-base: var(--start-header-base);
+}
 html[data-start-appearance] body.start-page { background-color: var(--start-home-base); }
 html[data-start-appearance]:not([data-start-appearance="default"], [data-start-workspace="notes"], [data-start-workspace="none"]) body.start-page[data-start-background="scenic"] {
   background-image: radial-gradient(90% 75% at 78% 24%, var(--start-home-glow), transparent 76%),
@@ -179,6 +192,12 @@ html[data-start-appearance]:where(:not([data-start-workspace="notes"])) body.sta
 html[data-start-appearance]:where(:not([data-start-workspace="notes"])) body.start-page > .top-bar .top-actions .btn-primary:hover {
   background-color: color-mix(in srgb, var(--start-header-primary) 90%, var(--start-header-base));
 }
+
+/* The cover handles the visual handoff for the entire shell in one pass. */
+body.start-page.start-workspace-turning,
+body.start-page.start-workspace-turning > .top-bar,
+body.start-page.start-workspace-turning .top-actions { transition: none; }
+body.start-page.start-workspace-turning .top-actions { animation: none; }
 
 @media (prefers-reduced-motion: reduce) {
   html[data-start-appearance] body.start-page,

@@ -10,6 +10,62 @@ const appearanceKey = 'canvas:startAppearance:v1';
 const artifacts = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-global-settings-'));
 async function freePort() { const server = net.createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); const value = server.address().port; await new Promise(resolve => server.close(resolve)); return value; }
 
+async function checkWorkspaceHandoffs(page) {
+  const reports = await page.evaluate(async () => {
+    const root = document.documentElement, body = document.body;
+    const panels = Array.from(document.querySelectorAll('.start-workspace-stage > [data-start-workspace-panel]'));
+    const themes = ['default', 'claude', 'sky', 'apple'];
+    const original = { depth: root.dataset.startTheme, background: root.dataset.startBackground,
+      appearance: RelatumStartAppearance.read(), notes: RelatumNoteTheme.read() };
+    const setAppearance = (depth, background) => {
+      root.dataset.startTheme = body.dataset.startTheme = depth;
+      root.dataset.startBackground = body.dataset.startBackground = background;
+    };
+    const nextFrame = () => new Promise(requestAnimationFrame);
+    const reports = [];
+    for (const depth of ['light', 'dark']) for (const background of ['simple', 'scenic']) {
+      setAppearance(depth, background);
+      for (const appearance of themes) for (const notes of themes) {
+        RelatumStartAppearance.apply(appearance); RelatumNoteTheme.apply(notes);
+        const previous = RelatumStartWorkspace.current, next = previous === 'notes' ? 'canvas' : 'notes';
+        const report = { depth, background, appearance, notes, previous, next, covered: null, frames: 0, invalid: [] };
+        const surface = getComputedStyle(root).backgroundColor;
+        const observer = new MutationObserver(() => {
+          report.covered = Number(getComputedStyle(document.querySelector('.start-workspace-cover')).opacity);
+        });
+        observer.observe(root, { attributes: true, attributeFilter: ['data-start-workspace'] });
+        let complete = false;
+        const switching = RelatumStartWorkspace.set(next).finally(() => { complete = true; });
+        try {
+          do {
+            await nextFrame();
+            const cover = document.querySelector('.start-workspace-cover');
+            if (!cover) continue;
+            report.frames++;
+            const workspace = root.dataset.startWorkspace;
+            const painting = panels.filter(panel => !panel.hidden && Number(getComputedStyle(panel).opacity) > 0)
+              .map(panel => panel.dataset.startWorkspacePanel);
+            if (painting.join() !== workspace || body.dataset.startWorkspace !== workspace) report.invalid.push({ workspace, painting });
+            if (background === 'simple' && appearance === notes) {
+              if (getComputedStyle(root).backgroundColor !== surface || getComputedStyle(body).backgroundColor !== surface
+                || getComputedStyle(cover).backgroundColor !== surface) report.invalid.push({ surface });
+            }
+          } while (!complete || document.querySelector('.start-workspace-cover'));
+          report.switched = await switching;
+        } finally { observer.disconnect(); }
+        reports.push(report);
+      }
+    }
+    setAppearance(original.depth, original.background);
+    RelatumStartAppearance.apply(original.appearance); RelatumNoteTheme.apply(original.notes);
+    return reports;
+  });
+  assert.equal(reports.length, 64);
+  for (const report of reports) {
+    assert(report.switched && report.frames > 0 && report.covered === 1 && !report.invalid.length, JSON.stringify(report));
+  }
+}
+
 async function checkAppearance(page, context, library) {
   const dialog = page.locator('#global-settings-dialog');
   const select = dialog.locator('[data-role="global-interface-theme"]');
@@ -38,7 +94,7 @@ async function checkAppearance(page, context, library) {
     const failed = page.waitForEvent('requestfailed', { predicate: request => request.url().endsWith('/review-controls.css') });
     await open(); await failed;
     await select.selectOption('sky');
-    assert.equal((await palette()).backgroundColor, 'rgb(248, 251, 255)', 'native fallback applies the palette');
+    assert.equal((await palette()).backgroundColor, 'rgb(232, 239, 248)', 'native fallback applies the palette');
     await close(); await page.unroute('**/review-controls.css');
   }
   await open(); await choice.waitFor();
@@ -47,18 +103,18 @@ async function checkAppearance(page, context, library) {
   await page.keyboard.press('Escape'); assert(await popup.isHidden()); assert(await dialog.isVisible());
 
   const skins = [
-    ['默认', ['rgb(251, 251, 250)', 'rgb(17, 18, 19)'], ['rgb(24, 24, 23)', 'rgb(239, 238, 232)']],
-    ['Claude', ['rgb(250, 249, 245)', 'rgb(25, 25, 25)'], ['rgb(20, 20, 19)', 'rgb(250, 249, 245)']],
-    ['Sky', ['rgb(248, 251, 255)', 'rgb(22, 35, 56)'], ['rgb(210, 228, 250)', 'rgb(41, 65, 95)']],
-    ['Apple', ['rgb(245, 245, 247)', 'rgb(32, 32, 34)'], ['rgb(255, 255, 255)', 'rgb(58, 58, 60)']],
+    ['默认', ['rgb(251, 251, 250)', 'rgb(17, 18, 19)'], ['rgb(251, 251, 250)', 'rgb(17, 18, 19)'], ['rgb(24, 24, 23)', 'rgb(239, 238, 232)']],
+    ['Claude', ['rgb(243, 242, 238)', 'rgb(21, 21, 21)'], ['rgb(250, 249, 245)', 'rgb(25, 25, 25)'], ['rgb(20, 20, 19)', 'rgb(250, 249, 245)']],
+    ['Sky', ['rgb(232, 239, 248)', 'rgb(16, 26, 42)'], ['rgb(248, 251, 255)', 'rgb(22, 35, 56)'], ['rgb(210, 228, 250)', 'rgb(41, 65, 95)']],
+    ['Apple', ['rgb(245, 245, 247)', 'rgb(36, 36, 38)'], ['rgb(245, 245, 247)', 'rgb(32, 32, 34)'], ['rgb(255, 255, 255)', 'rgb(58, 58, 60)']],
   ];
-  for (const [label, bases, sliders] of skins) {
+  for (const [label, simple, scenic, sliders] of skins) {
     await choose(label);
     for (const mode of [0, 1]) {
       for (const background of ['simple', 'scenic']) {
         await dialog.locator(`[data-background-style="${background}"]`).click();
         const result = await palette();
-        assert.equal(result.backgroundColor, bases[mode], `${label} ${mode} ${background} homepage`);
+        assert.equal(result.backgroundColor, (background === 'simple' ? simple : scenic)[mode], `${label} ${mode} ${background} homepage`);
         assert.equal(result.slider, sliders[mode], `${label} ${mode} ${background} slider`);
         assert.equal(result.backdropFilter, 'none');
         assert.equal(result.ambient.includes('radial-gradient'), label !== '默认' && background === 'scenic');
@@ -88,6 +144,13 @@ async function checkAppearance(page, context, library) {
     assert.equal(simpleNotes.headerSurface, await page.locator('.note-tree-pane').evaluate(node => getComputedStyle(node).backgroundColor));
     await choose('Sky');
     assert.deepEqual(await palette(), simpleNotes, 'global appearance leaves the Notes palette intact');
+    await choose('Apple');
+    await close();
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await checkWorkspaceHandoffs(page);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await open();
+    await choose('Sky');
     await dialog.locator('[data-background-style="scenic"]').click();
     const scenicNotes = await palette();
     assert.equal(scenicNotes.ambient, 'none', 'Notes uses the existing environment instead of the custom global gradient');
