@@ -21,7 +21,7 @@
     catch (_) { return false; }
     preferences = next; closeAll(); return true;
   }
-  function targetAt(state) {
+  function targetAt(state, sectionEmbeds) {
     const ranges = state.selection.ranges, main = state.selection.main;
     if (ranges.length !== 1 || !main.empty) return null;
     const line = state.doc.lineAt(main.head);
@@ -30,25 +30,36 @@
     const before = line.text.slice(start, head), local = before.lastIndexOf('[[');
     if (local < 0) return null;
     const open = start + local;
-    if (line.text[open - 1] === '!' || line.text[open - 1] === '[') return null;
+    const embed = line.text[open - 1] === '!';
+    const tokenStart = open - Number(embed);
+    if (line.text[open - 1] === '[' || embed && (!sectionEmbeds || !/^ {0,3}$/.test(line.text.slice(0, tokenStart)))) return null;
     let escapes = 0;
-    for (let at = open - 1; at >= 0 && line.text[at] === '\\'; at--) escapes++;
+    for (let at = tokenStart - 1; at >= 0 && line.text[at] === '\\'; at--) escapes++;
     if (escapes % 2) return null;
-    const query = line.text.slice(open + 2, head);
-    if (/[\[\]#^|\r\n]/.test(query)) return null;
+    let query = line.text.slice(open + 2, head), note = '', contentFrom = line.from + open + 2;
+    const hash = embed ? query.indexOf('#') : -1;
+    if (hash >= 0) {
+      note = query.slice(0, hash).trim();
+      if (!note || /[\[\]^|]/.test(note)) return null;
+      query = query.slice(hash + 1);
+      contentFrom += hash + 1;
+    }
+    if (/[\[\]^|\r\n]/.test(query) || !note && query.includes('#')) return null;
     const close = line.text.indexOf(']]', head);
     if (close - open > 4096) return null;
     const tail = close >= 0 ? close : head;
+    const end = tail + (tail === close ? 2 : line.text[tail] === ']' ? 1 : 0);
     const inner = line.text.slice(open + 2, tail), delimiter = inner.search(/[#^|]/);
     const suffix = delimiter < 0 ? '' : inner.slice(delimiter);
-    return { from: line.from + open, to: line.from + tail + (tail === close ? 2 : line.text[tail] === ']' ? 1 : 0),
-      head: main.head, query, suffix };
+    if (embed && (line.text.slice(end).trim() || !note && window.MarkdownMini?.wikiAttachmentType(inner.split('|', 1)[0].trim()))) return null;
+    return { from: line.from + tokenStart, to: line.from + end, contentFrom, head: main.head, query, suffix, embed, note };
   }
   function syntaxAllowed(CM, view, target) {
     const { state } = view;
     let node = CM.syntaxTree(state).resolveInner(target.from, 1);
     while (node) {
       if (/^(?:FencedCode|CodeBlock|IndentedCode|InlineCode|HTMLBlock|HTMLTag|CommentBlock)$/.test(node.name)) return false;
+      if (target.embed && /^(?:Blockquote|ListItem|Table)$/.test(node.name)) return false;
       node = node.parent;
     }
     const line = state.doc.lineAt(target.from);
@@ -87,7 +98,7 @@
       }
       target() {
         if (!this.ready()) return null;
-        const target = targetAt(this.view.state);
+        const target = targetAt(this.view.state, !!options.sectionHeadings);
         return target && syntaxAllowed(CM, this.view, target) && options.allowed?.(this.view, target.from, target.head) !== false ? target : null;
       }
       cancel(close) {
@@ -137,25 +148,30 @@
         const view = this.view, version = this.version, doc = view.state.doc, selection = view.state.selection, path = options.notePath();
         const valid = () => this.ready() && version === this.version && doc === view.state.doc && selection.eq(view.state.selection) && path === options.notePath();
         const abort = this.abort = new AbortController();
-        this.status(ui('正在查找笔记…', 'Finding notes…'));
+        this.status(target.note ? ui('正在查找标题…', 'Finding headings…') : ui('正在查找笔记…', 'Finding notes…'));
         try {
-          const result = await options.query(this.requestBody(target), { signal: abort.signal });
+          const result = target.note
+            ? { items: await options.sectionHeadings(target.note, target.query, { signal: abort.signal }) }
+            : await options.query(this.requestBody(target), { signal: abort.signal });
           if (!valid()) return null;
+          if (target.embed && !target.note) result.items = result.items.filter(item => item.path !== path);
           this.result = result;
           if (!result.items.length) {
-            this.status(result.index?.incomplete || result.index?.phase !== 'ready'
+            this.status(target.embed ? (target.note ? ui('暂无匹配的章节', 'No matching sections') : ui('暂无匹配的笔记', 'No matching notes'))
+              : result.index?.incomplete || result.index?.phase !== 'ready'
               ? ui('暂无匹配，索引仍在准备；可以保留待创建链接', 'No matches yet; indexing is in progress. You can keep this unresolved link.')
               : ui('没有匹配的笔记，可保留此链接并在之后点击创建', 'No matching notes. Keep the link and click it later to create the note.'));
             return null;
           }
           this.status(null);
-          return { from: target.from + 2, to: target.head, filter: false, getMatch: completion => completion.item.titleHighlights,
+          return { from: target.contentFrom, to: target.head, filter: false, getMatch: completion => completion.item.titleHighlights || [],
             options: result.items.map(item => ({ label: item.title,
-              detail: /^CustomNotebook\//i.test(item.location) ? item.location.replace(/^CustomNotebook\//i, '')
+              detail: target.note ? 'H' + item.level : /^CustomNotebook\//i.test(item.location) ? item.location.replace(/^CustomNotebook\//i, '')
                 : ui('默认笔记本', 'Default notebook') + (item.location ? ' / ' + item.location : ''),
               type: 'text', item, apply: () => { if (valid()) this.choose(item, target); } })) };
         } catch (error) {
-          if (!abort.signal.aborted && valid()) this.status(ui('笔记查询失败，输入仍可继续', 'Could not find notes. You can keep typing.'), true);
+          if (!abort.signal.aborted && valid()) this.status(target.note ? ui('标题查询失败，输入仍可继续', 'Could not find headings. You can keep typing.')
+            : ui('笔记查询失败，输入仍可继续', 'Could not find notes. You can keep typing.'), true);
           return null;
         }
       }
@@ -163,6 +179,15 @@
         if (!this.target()) return;
         this.cancel(false);
         const view = this.view, doc = view.state.doc, selection = view.state.selection, version = this.version, path = options.notePath();
+        const insertLink = (inner, continueToHeading = false) => {
+          const insert = (target.embed ? '![[' : '[[') + inner + ']]';
+          view.dispatch({ changes: { from: target.from, to: target.to, insert },
+            selection: CM.EditorSelection.cursor(target.from + insert.length - (continueToHeading ? 2 : 0)),
+            annotations: CM.isolateHistory.of('full'), userEvent: 'input.note-link-completion' });
+          CM.closeCompletion(view); view.focus();
+          if (continueToHeading) this.kick();
+        };
+        if (target.note) { insertLink(target.note + '#' + item.insertTarget); return; }
         const abort = this.abort = new AbortController();
         const valid = () => this.ready() && version === this.version && doc === view.state.doc && selection.eq(view.state.selection) && path === options.notePath();
         try {
@@ -170,10 +195,7 @@
           if (!valid()) return;
           const current = result.items.find(candidate => candidate.path === item.path);
           if (!current) { this.kick(); return; }
-          const insert = '[[' + current.insertTarget + target.suffix + ']]';
-          view.dispatch({ changes: { from: target.from, to: target.to, insert },
-            selection: CM.EditorSelection.cursor(target.from + insert.length), annotations: CM.isolateHistory.of('full'), userEvent: 'input.note-link-completion' });
-          CM.closeCompletion(view); view.focus();
+          insertLink(current.insertTarget + (target.embed ? '#' : target.suffix), target.embed);
         } catch (error) {
           if (!abort.signal.aborted && valid()) this.status(ui('无法确认目标笔记，请重试', 'Could not verify the target note. Please retry.'), true);
         }

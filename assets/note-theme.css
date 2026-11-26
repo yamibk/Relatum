@@ -810,6 +810,7 @@ html:is([data-note-theme="claude"], [data-note-theme="apple"]) body.start-page:n
 .note-heading-fold:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
 .note-heading-fold svg { display: block; width: .75rem; height: .75rem; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .note-heading-fold[aria-expanded="true"] svg { transform: rotate(90deg); }
+.note-heading-ellipsis { margin-inline-start: .3em; color: var(--text-secondary, currentColor); opacity: .65; font-size: .78em; white-space: nowrap; }
 .note-reading-content > [hidden] { display: none !important; }
 
 .note-section-reference {

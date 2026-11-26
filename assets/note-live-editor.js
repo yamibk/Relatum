@@ -1124,18 +1124,45 @@
     }
   }
 
+  function headingEllipsis() {
+    const marker = document.createElement('span');
+    marker.className = 'note-heading-ellipsis'; marker.setAttribute('aria-hidden', 'true');
+    marker.textContent = '…';
+    return marker;
+  }
+
+  class HeadingEllipsisWidget extends WidgetType {
+    constructor(to) { super(); this.to = to; }
+    eq(other) { return this.to === other.to; }
+    toDOM(view) {
+      const marker = headingEllipsis();
+      marker.addEventListener('mousedown', event => {
+        if (event.button || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || compositionActive(view)) return;
+        event.preventDefault(); event.stopPropagation();
+        view.dispatch({ selection: EditorSelection.cursor(this.to), userEvent: 'select.pointer' });
+        view.focus();
+      });
+      return marker;
+    }
+  }
+
+  function headingFoldEnd(doc, heading) {
+    return heading.end === doc.length ? heading.end : doc.lineAt(heading.end).from - 1;
+  }
+
   function headingProjectionState(doc, sections, collapsed, enabled, toggle) {
     const buttons = [], hidden = [];
     let until = -1;
     if (enabled) for (const heading of sections) {
       if (heading.from < until) continue;
-      const lineEnd = doc.lineAt(heading.to).to;
-      const to = heading.end === doc.length ? heading.end : doc.lineAt(heading.end).from - 1;
+      const last = doc.lineAt(heading.to), lineEnd = last.to;
+      const to = headingFoldEnd(doc, heading);
       if (lineEnd >= to) continue;
       const folded = collapsed.has(heading.from);
       buttons.push(Decoration.widget({ widget: new HeadingFoldWidget(heading.from, folded, toggle), side: -1 }).range(heading.from));
       if (folded) {
-        hidden.push(Decoration.replace({ block: true, inclusive: false }).range(lineEnd, to));
+        const setext = last.from > heading.from && /^ {0,3}(?:=+|-+)[ \t]*$/.test(last.text);
+        hidden.push(Decoration.replace({ widget: new HeadingEllipsisWidget(to), inclusive: false }).range(setext ? last.from - 1 : lineEnd, to));
         until = heading.end;
       }
     }
@@ -1508,7 +1535,7 @@
             if (image && image.target && previewableImage(image.target) && line.length <= MAX_RICH_LINE && (!canvasImage(image) || canvasEnabled())) {
               push({
                 from: line.from, to: line.to, kind: canvasImage(image) ? 'canvas' : 'image', source: line.text,
-                target: image.target, alt: image.alt, width: image.width, height: image.height,
+                target: image.target, alt: image.alt, width: image.width, height: image.height, wikiAttachment: image.syntax === 'wiki',
               });
             }
           }
@@ -1589,7 +1616,7 @@
         push({
           from: line.from, to: line.to, kind: canvasImage(standaloneImage) ? 'canvas' : 'image', source: line.text,
           target: standaloneImage.target, alt: standaloneImage.alt,
-          width: standaloneImage.width, height: standaloneImage.height,
+          width: standaloneImage.width, height: standaloneImage.height, wikiAttachment: standaloneImage.syntax === 'wiki',
         });
         number += 1;
         continue;
@@ -3773,14 +3800,20 @@
         record.hidden = !!record.owner && (record.owner.hidden || folded.has(record.owner.heading.from));
         record.node.hidden = record.originallyHidden || record.hidden;
         record.node.toggleAttribute('data-note-heading-hidden', record.hidden);
-        if (record.button) updateHeadingFoldButton(record.button, folded.has(record.heading.from));
+        if (record.button) {
+          const collapsed = folded.has(record.heading.from);
+          updateHeadingFoldButton(record.button, collapsed);
+          record.ellipsis.hidden = !collapsed;
+        }
       }
     };
     for (const record of records) {
       if (!record.heading || !record.hasBody) continue;
       record.button = headingFoldButton(false, () => { session.toggle(record.heading.from); sync(); onLayout(); });
+      record.ellipsis = headingEllipsis();
       record.node.setAttribute('aria-label', record.heading.label);
       record.node.prepend(record.button);
+      record.node.append(record.ellipsis);
     }
     sync();
     return { reveal(position) { if (session.reveal(position)) { sync(); onLayout(); } } };
@@ -4371,6 +4404,10 @@
       // Opening a menu or switching native focus must not collapse an active
       // diagram source. Leaving its source range (or explicit Esc) ends editing.
       if (!focused && !composing && !(editableFence(spec) && previous?.has(spec.id))) return;
+      if (spec.wikiAttachment || spec.kind === 'section-embed') {
+        if (state.selection.ranges.some(range => range.from > spec.from && range.to < spec.to)) active.add(spec.id);
+        return;
+      }
       if (editableFence(spec)) {
         const main = state.selection.main;
         // Whole-block and cross-block ranges select rendered diagrams. A text
@@ -4406,6 +4443,7 @@
   }
 
   function blockIsProjected(spec, activeIds) {
+    if (spec.wikiAttachment) return !activeIds.has(spec.id);
     return usesBlockReplacement(spec) && (spec.kind === 'database' || Object.hasOwn(attachmentOpeners, spec.kind) || spec.kind === 'media' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'table' || !activeIds.has(spec.id));
   }
 
@@ -5657,7 +5695,7 @@
 
         matches(/!\[\[[^\]\n]+?\]\]/g, (match, from, to) => {
           protect(from, to);
-          if (options.sectionEmbed && window.MarkdownMini.parseNoteSectionEmbed(text)) return;
+          if (view.hasFocus && view.state.selection.ranges.some(range => range.from > from && range.to < to)) return;
           const parsed = parseStandaloneImage(match[0]);
           if (parsed && parsed.target && previewableImage(parsed.target) && !canvasImage(parsed)) {
             add(from, to, Decoration.replace({
@@ -5742,7 +5780,7 @@
           this.compositionPending = true;
           return;
         }
-        const lifecycleChanged = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(inputReconcileEffect) || effect.is(focusEffect) || effect.is(notePathEffect) || effect.is(viewportScanEffect) || effect.is(viewportParseRequestEffect) || effect.is(calloutFoldEffect)));
+        const lifecycleChanged = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(inputReconcileEffect) || effect.is(focusEffect) || effect.is(notePathEffect) || effect.is(viewportScanEffect) || effect.is(viewportParseRequestEffect) || effect.is(calloutFoldEffect) || effect.is(headingSectionFoldEffect)));
         if (validatedLocalCellViewUpdate(update, blockField) && !this.compositionPending && !update.viewportMoved && !update.focusChanged && !lifecycleChanged) {
           // The validated cell update keeps the table's shape and source block
           // boundaries. Inline decorations outside it only need position maps.
@@ -7571,8 +7609,9 @@
       else {
         collapsed.add(position);
         const lineEnd = editorView.state.doc.lineAt(heading.to).to;
-        const selection = selectionTouches(editorView.state.selection, lineEnd + 1, heading.end - 1)
-          ? EditorSelection.cursor(lineEnd) : undefined;
+        const end = headingFoldEnd(editorView.state.doc, heading);
+        const selection = selectionTouches(editorView.state.selection, lineEnd + 1, end)
+          ? EditorSelection.cursor(end) : undefined;
         applyHeadingFolds(collapsed, selection);
       }
     }
@@ -7584,6 +7623,22 @@
       for (const heading of sections) if (heading.to < position && position < heading.end) next.delete(heading.from);
       if (next.size === collapsed.size) return false;
       applyHeadingFolds(next);
+      return true;
+    }
+
+    function revealHeadingInputEdge(editorView, before = false) {
+      if (sourceMode || inputSession.pending() || editorView.state.readOnly) return false;
+      const { selection, doc } = editorView.state, { sections, hidden, collapsed } = editorView.state.field(sectionField);
+      if (!hidden.length || selection.ranges.length !== 1 || !selection.main.empty) return false;
+      const position = selection.main.head;
+      const range = hidden.find(item => position === (before ? item.from : item.to));
+      if (!range) return false;
+      const unfolded = new Set(collapsed);
+      for (const heading of sections) {
+        if (heading.to >= range.to || headingFoldEnd(doc, heading) < range.to) continue;
+        unfolded.delete(heading.from);
+      }
+      applyHeadingFolds(unfolded);
       return true;
     }
 
@@ -7866,6 +7921,7 @@
       active: () => highlightActive && !destroyed && !imageTextController.active });
     const linkCompletionExtension = (pending, cell = false, whenSettled = whenInputSettled) => options.linkCompletion && window.RelatumNoteLinkCompletion
       ? window.RelatumNoteLinkCompletion.createExtension({ ...options.linkCompletion, notePath: () => currentPath, pending, whenSettled,
+        sectionHeadings: cell ? null : options.sectionEmbed?.completeHeadings,
         allowed: (input, from, to) => {
           if (destroyed || imageTextController.active) return false;
           if (cell) return true;
@@ -7978,8 +8034,9 @@
           return [transaction, { selection: EditorSelection.cursor(task.contentFrom), sequential: true }];
         }),
         Prec.highest(keymap.of([
-          { key: 'Backspace', run: (view) => deleteImageObject(view, true) || deleteSelectedMermaid(view) || enterMermaidBoundary(view, true) || enterTableBoundary(view, true) || !sourceMode && deleteListPrefix(view) },
-          { key: 'Delete', run: (view) => deleteImageObject(view, false) || deleteSelectedMermaid(view) || enterMermaidBoundary(view, false) || enterTableBoundary(view, false) },
+          { key: 'Backspace', run: (view) => revealHeadingInputEdge(view) || deleteImageObject(view, true) || deleteSelectedMermaid(view) || enterMermaidBoundary(view, true) || enterTableBoundary(view, true) || !sourceMode && deleteListPrefix(view) },
+          { key: 'Delete', run: (view) => revealHeadingInputEdge(view, true) || deleteImageObject(view, false) || deleteSelectedMermaid(view) || enterMermaidBoundary(view, false) || enterTableBoundary(view, false) },
+          { key: 'Enter', run(view) { revealHeadingInputEdge(view); return false; } },
           { key: 'Enter', run: view => imageTextKeyCommand('edit') || editSelectedMermaid(view) },
           { key: 'Escape', run: view => imageTextKeyCommand('clear-selection') || finishMermaidEdit(view) },
           { key: 'ArrowLeft', run: (view) => imageTextKeyCommand('move', { dx: -1, dy: 0 }) || moveSelectedMediaCaret(view, true) || !sourceMode && moveBeforeTask(view) },
@@ -8090,6 +8147,11 @@
         // consume the event while the caret still points at hidden source.
         Prec.highest(EditorView.domEventHandlers({
           beforeinput(event, view) {
+            if (!event.isComposing && event.inputType.startsWith('delete')
+                && revealHeadingInputEdge(view, !event.inputType.endsWith('Backward'))) {
+              event.preventDefault(); return true;
+            }
+            if (!event.isComposing && event.inputType.startsWith('insert')) revealHeadingInputEdge(view);
             if (!event.isComposing && /^deleteContent(?:Backward|Forward)$/.test(event.inputType)
                 && (deleteSelectedMermaid(view) || enterMermaidBoundary(view, event.inputType === 'deleteContentBackward')
                   || enterTableBoundary(view, event.inputType === 'deleteContentBackward'))) {
@@ -8175,6 +8237,7 @@
             return false;
           },
           compositionstart(event, view) {
+            revealHeadingInputEdge(view);
             const mermaidBoundary = mermaidBodyBoundary(view);
             if (mermaidBoundary) safeOptions.onMermaidBodyRequest(mermaidBoundary.id, mermaidBoundary.side);
             if (!sourceMode && tableController && !inputPending()) {
@@ -8238,6 +8301,7 @@
             return true;
           },
           paste(event, view) {
+            revealHeadingInputEdge(view);
             const mermaidBoundary = mermaidBodyBoundary(view);
             if (mermaidBoundary) safeOptions.onMermaidBodyRequest(mermaidBoundary.id, mermaidBoundary.side);
             if (!sourceMode && tableController && !inputPending()) {
@@ -9304,6 +9368,7 @@
     noteHeadingsFromString,
     headingSections,
     matchHeading,
+    headingKey,
     escapeSectionPart,
     scanBlockSpecsFromString(source) {
       const state = EditorState.create({ doc: String(source || ''), extensions: [markdown({ base: markdownLanguage })] });

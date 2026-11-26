@@ -21,6 +21,9 @@ async function run() {
   fs.mkdirSync(papers, { recursive: true });
   fs.writeFileSync(path.join(notes, 'Review.md'), review);
   fs.writeFileSync(path.join(papers, 'Source.md'), original);
+  fs.mkdirSync(path.join(notes, 'canvases'));
+  fs.writeFileSync(path.join(notes, 'canvases', 'Example.canvas'), '{"version":2,"nodes":[],"edges":[]}');
+  fs.writeFileSync(path.join(notes, 'Canvas.md'), '![[canvases/Example.canvas|320x220]]\n');
   fs.writeFileSync(path.join(papers, 'sample.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+Xv4QAAAAASUVORK5CYII=', 'base64'));
   const socket = net.createServer();
   await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
@@ -133,6 +136,72 @@ async function run() {
     }, review);
     assert(printed.includes('Papers/Source › Methods') && printed.includes('Keep this visible.'));
     assert(!printed.includes('Updated method.'));
+
+    await page.evaluate(() => T.setViewMode('live'));
+    const value = () => page.evaluate(() => T.editor.snapshot().value);
+    const resetFold = async (source, title) => {
+      await page.evaluate(value => {
+        T.editor.setDocument({ value, notePath: T.state.current.path, anchor: 0, head: 0 });
+        T.editor.focus();
+      }, source);
+      const heading = editor.locator('.cm-line').filter({ hasText: title });
+      const arrow = heading.locator('.note-heading-fold');
+      await arrow.click();
+      const marker = heading.locator('.note-heading-ellipsis');
+      await marker.waitFor();
+      assert.equal(await arrow.getAttribute('aria-expanded'), 'false');
+      return { heading, marker, arrow };
+    };
+    const consecutive = '# First\nAlpha\n# Next\nBeta';
+    const first = await resetFold(consecutive, 'First');
+    assert.deepEqual(await editor.locator('.cm-line').allTextContents(), ['# First…', 'Next', 'Beta']);
+    const markerBox = await first.marker.boundingBox();
+    await page.mouse.click(markerBox.x + markerBox.width + 2, markerBox.y + markerBox.height / 2);
+    assert.equal(await page.evaluate(() => T.editor.view.state.selection.main.head), consecutive.indexOf('\n# Next'));
+    assert.equal(await first.arrow.getAttribute('aria-expanded'), 'false');
+    await page.keyboard.type('!');
+    assert.equal(await value(), consecutive.replace('Alpha', 'Alpha!'));
+    assert.equal(await first.arrow.getAttribute('aria-expanded'), 'true');
+    await page.keyboard.press('Control+z');
+    assert.equal(await value(), consecutive);
+    assert.equal(await first.arrow.getAttribute('aria-expanded'), 'true');
+
+    const atEnd = '# Final\n\nExisting text';
+    const last = await resetFold(atEnd, 'Final');
+    assert.equal(await editor.locator('.cm-line').count(), 1);
+    await page.evaluate(() => T.editor.view.dispatch({ selection: { anchor: T.editor.view.state.doc.line(1).to } }));
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.evaluate(() => T.editor.view.state.selection.main.head), atEnd.length);
+    await page.keyboard.press('Backspace');
+    assert.equal(await value(), atEnd);
+    assert.equal(await last.arrow.getAttribute('aria-expanded'), 'true');
+
+    const underlined = 'Setext\n------\n\nText here\n# Next\nBeta';
+    const setext = await resetFold(underlined, 'Setext');
+    assert.deepEqual(await editor.locator('.cm-line').allTextContents(), ['Setext…', 'Next', 'Beta']);
+    await setext.marker.click();
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Input.imeSetComposition', { text: 'zhong', selectionStart: 5, selectionEnd: 5 });
+    assert.equal(await setext.arrow.getAttribute('aria-expanded'), 'true');
+    assert.equal(await value(), underlined, 'preedit stays out of the committed snapshot');
+    await cdp.send('Input.insertText', { text: '中' });
+    await page.waitForFunction(() => T.editor.snapshot().value.includes('Text here中'));
+    assert.equal(await value(), underlined.replace('Text here', 'Text here中'));
+
+    const pasted = await resetFold(atEnd, 'Final');
+    await pasted.marker.click();
+    await page.evaluate(() => navigator.clipboard.writeText(' pasted'));
+    await page.keyboard.press('Control+v');
+    assert.equal(await value(), atEnd + ' pasted');
+    const entered = await resetFold(consecutive, 'First');
+    await entered.marker.click();
+    await page.keyboard.press('Enter');
+    assert.equal(await value(), consecutive.replace('Alpha', 'Alpha\n'));
+    await page.evaluate(() => T.openNote('Canvas.md', { reuseActiveTab: false }));
+    await editor.locator('[data-canvas-source="canvases/Example.canvas"]').waitFor();
+    await page.evaluate(() => T.setViewMode('reading'));
+    await reading.locator('[data-canvas-source="canvases/Example.canvas"]').waitFor();
+    assert(!requests.some(item => item.pathname === '/api/note-asset' && item.searchParams.get('src')?.endsWith('.canvas')));
     assert.deepEqual(errors.map(error => error.stack), []);
   } finally {
     await browser?.close();

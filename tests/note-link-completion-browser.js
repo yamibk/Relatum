@@ -7,8 +7,8 @@ const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..'), root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-link-completion-'));
 const notes = path.join(root, 'notes'); fs.mkdirSync(notes);
 for (const [file, content] of Object.entries({ 'Main.md': 'Main', 'Visited.md': 'visited', 'OlderVisit.md': 'older',
-  '电子学.md': '电路知识', 'Body.md': '独有正文needle', 'A/同名.md': 'A', 'B/同名.md': 'B',
-  'CustomNotebook/One/Cross.md': 'cross notebook' })) {
+  '电子学.md': '电路知识', 'Body.md': '独有正文needle', 'A/同名.md': '研究方法\n--------\n\n章节正文。\n\n## 附注\n\n补充。\n\n## 同标题\n\nA\n\n## 同标题\n\nB', 'B/同名.md': 'B',
+  'CustomNotebook/One/Cross.md': 'cross notebook', 'SlowHeadings.md': '# Late heading\n\nA section' })) {
   const target = path.join(notes, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, content);
 }
 for (let i = 0; i < 55; i++) fs.writeFileSync(path.join(notes, 'N' + String(i).padStart(3, '0') + '.md'), 'text');
@@ -16,7 +16,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 (async () => {
   const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
-  const url = 'http://127.0.0.1:' + port, errors = [], queries = [];
+  const url = 'http://127.0.0.1:' + port, errors = [], queries = [], imageRequests = [];
   const features = JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json'))).features;
   const profile = { version: 1, features: Object.fromEntries(features.map(feature => [feature.id, feature.id === 'notes'])) };
   const service = spawn(process.env.RELATUM_PYTHON || 'python', ['app.py', '--no-browser', '--port', String(port), '--launch-profile', JSON.stringify(profile)], {
@@ -33,6 +33,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const page = await browser.newPage({ viewport: { width: 1300, height: 900 }, reducedMotion: 'reduce' });
     page.on('pageerror', error => errors.push(error.stack));
     page.on('request', request => { if (request.url().endsWith('/api/note-query') && request.method() === 'POST') queries.push(request.postDataJSON()); });
+    page.on('request', request => { if (request.url().includes('/api/note-asset?')) imageRequests.push(request.url()); });
     const source = fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8').replace('  window.CanvasNoteWorkspace = {',
       '  window.__links={openNote,flushSave,setViewMode,setNoteSettingsOpen,state,get editor(){return liveEditor;}};\n  window.CanvasNoteWorkspace = {');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
@@ -76,6 +77,49 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await menu.locator('li').filter({ hasText: 'A' }).first().click(); await sleep(120); assert.equal(await value(), '[[A/同名]]');
     await suggestions('Cross'); await choose('Cross'); assert.equal(await value(), '[[Cross]]');
 
+    const imageCount = imageRequests.length;
+    await reset();
+    await page.keyboard.type('![[');
+    await page.keyboard.insertText('试');
+    await page.waitForFunction(() => __links.editor.snapshot().value === '![[试]]');
+    await status.waitFor();
+    assert.equal(imageRequests.length, imageCount);
+    assert.equal(await page.getByText('不支持这种图片格式', { exact: false }).count(), 0);
+    await page.keyboard.press('Escape');
+    await status.waitFor({ state: 'hidden' });
+    for (const sourceMode of [false, true]) {
+      await reset('', 0, sourceMode);
+      await page.keyboard.type('![['); await page.keyboard.insertText('同名'); await menu.waitFor();
+      await menu.locator('li').filter({ hasText: 'A' }).first().click();
+      await menu.getByText('研究方法', { exact: true }).waitFor();
+      assert.equal(await value(), '![[A/同名#]]');
+      assert.equal(await menu.getByText('同标题', { exact: true }).count(), 0);
+      await page.keyboard.insertText('研究');
+      await menu.getByText('研究方法', { exact: true }).waitFor();
+      await choose('研究方法', 'Tab');
+      assert.equal(await value(), '![[A/同名#研究方法]]');
+      if (!sourceMode) await page.locator('.note-section-content').getByText('章节正文。').waitFor();
+    }
+    await page.evaluate(() => RelatumNoteLinkCompletion.update({ ...RelatumNoteLinkCompletion.read(), automatic: false }));
+    await reset('![[A/同名#]]', '![[A/同名#'.length);
+    await page.keyboard.press('Control+Space'); await menu.waitFor();
+    await choose('附注');
+    assert.equal(await value(), '![[A/同名#附注]]');
+    await page.evaluate(() => RelatumNoteLinkCompletion.reset());
+
+    let releaseHeadings;
+    const heldHeadings = new Promise(resolve => { releaseHeadings = resolve; });
+    await page.route('**/api/note-links?target=SlowHeadings', async route => {
+      await heldHeadings; await route.continue();
+    });
+    await reset('![[SlowHeadings#]]', '![[SlowHeadings#'.length);
+    const lookup = page.waitForRequest(request => request.url().endsWith('/api/note-links?target=SlowHeadings'));
+    await page.keyboard.press('Control+Space'); await lookup;
+    await reset('Moved to a different selection');
+    releaseHeadings(); await sleep(250);
+    assert.equal(await menu.count(), 0, 'late heading candidates cannot reopen after a reset');
+    assert.equal(await value(), 'Moved to a different selection');
+
     await reset(); await page.keyboard.type('[[绝不存在'); await status.waitFor(); await sleep(200);
     assert((await status.textContent()).includes('没有匹配'));
     assert(!fs.existsSync(path.join(notes, '绝不存在.md')));
@@ -99,7 +143,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await manualIme.send('Input.insertText', { text: '电子' }); await menu.waitFor(); await choose('电子学');
     assert.equal(await value(), '[[电子学]]', 'manual session resumes after native Chinese composition');
     await page.evaluate(() => RelatumNoteLinkCompletion.reset());
-    for (const sourceMode of [false, true]) for (const text of ['`[[x]]`', '```js\n[[x]]\n```', '$[[x]]$', '$$\n[[x]]\n$$', '<!-- [[x]] -->', '%% [[x]] %%', '---\ntitle: [[x]]\n---\n', '![[x]]', '[[Name|alias]]', '[[Name#header]]']) {
+    for (const sourceMode of [false, true]) for (const text of ['`[[x]]`', '```js\n[[x]]\n```', '$[[x]]$', '$$\n[[x]]\n$$', '<!-- [[x]] -->', '%% [[x]] %%', '---\ntitle: [[x]]\n---\n', 'inline ![[x]]', '[[Name|alias]]', '[[Name#header]]']) {
       const head = text.includes('alias') ? text.indexOf('alias') + 2 : text.includes('header') ? text.indexOf('header') + 2 : text.indexOf('x') + 1;
       await reset(text, head, sourceMode); const count = queries.length; await page.keyboard.press('Control+Space'); await sleep(200);
       assert.equal(await menu.count(), 0, 'excluded context: ' + text); assert.equal(queries.length, count, 'no query in ' + text);

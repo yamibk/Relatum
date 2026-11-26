@@ -453,8 +453,6 @@
     return destination(source, '');
   }
 
-  // Parse one complete image token (optional surrounding horizontal whitespace included).
-  // Numeric labels follow Obsidian's pixel sizing convention; non-numeric pipes remain alt text.
   function parseNoteSectionEmbed(line) {
     const match = /^ {0,3}!\[\[([^#\[\]|\r\n]+)#([^\[\]|\r\n]+)\]\][ \t]*$/.exec(line);
     if (!match) return null;
@@ -462,11 +460,17 @@
     return target && fragment && !fragment.startsWith('^') ? { target, fragment } : null;
   }
 
-  function sectionEmbedLineAt(source, position) {
-    const from = source.lastIndexOf('\n', position - 1) + 1, end = source.indexOf('\n', position);
-    return parseNoteSectionEmbed(source.slice(from, end < 0 ? source.length : end));
+  function wikiAttachmentType(target) {
+    const raw = String(target || '');
+    // Split a fragment before decoding so a literal %23 in a file name is valid.
+    if (raw.includes('#')) return '';
+    let value = raw;
+    try { value = decodeURIComponent(raw); } catch (_) {}
+    if (/\.canvas$/i.test(value)) return 'canvas';
+    return /\.(?:png|jpe?g|webp|gif|bmp|svg)$/i.test(value) ? 'image' : '';
   }
 
+  // Numeric labels in image tokens are pixel sizes. Other labels remain alt text.
   function parseImage(source) {
     const value = String(source || '');
     const leading = /^[ \t]*/.exec(value)[0];
@@ -478,11 +482,12 @@
       const inner = token.slice(3, -2);
       const pipe = inner.indexOf('|');
       const target = (pipe >= 0 ? inner.slice(0, pipe) : inner).trim();
-      if (!target) return null;
+      if (!wikiAttachmentType(target)) return null;
+      const targetFrom = leading.length + 3 + inner.indexOf(target);
       const label = splitImageLabel(pipe >= 0 ? inner.slice(pipe + 1) : '');
       return {
         source: value, syntax: 'wiki', leading: leading, trailing: trailing,
-        target: target, rawAlt: label.rawAlt,
+        target: target, targetFrom, targetTo: targetFrom + target.length, rawAlt: label.rawAlt,
         alt: label.rawAlt.replace(/\\([\\\[\]])/g, '$1').trim(),
         title: '', rawDestination: '',
         width: label.dimensions ? label.dimensions.width : null,
@@ -519,7 +524,8 @@
   // Type recognition belongs to the existing Markdown layer, so a disabled
   // canvas can remain literal without loading any optional script or asset.
   function isCanvasImage(parsed) {
-    if (!parsed || parsed.syntax !== 'markdown') return false;
+    if (!parsed) return false;
+    if (parsed.syntax === 'wiki') return wikiAttachmentType(parsed.target) === 'canvas';
     try { return /\.canvas$/i.test(decodeURIComponent(parsed.target)); } catch (_) { return false; }
   }
   function canvasTarget(note, target) {
@@ -573,7 +579,7 @@
       let replacement = null;
       if (key && parsed.alt.toLowerCase() === oldName.toLowerCase()) replacement = newName;
       else if (key && parsed.alt.toLowerCase() === oldName.slice(0, -7).toLowerCase()) replacement = newName.slice(0, -7);
-      if (replacement !== null) {
+      if (replacement !== null && parsed.syntax === 'markdown') {
         const labelAt = parsed.leading.length + 2;
         const label = value.slice(labelAt, labelEnd), size = /\|[1-9]\d*(?:[xX][1-9]\d*)?$/.exec(label);
         value = value.slice(0, labelAt) + replacement.replace(/[\\\[\]]/g, '\\$&') + (size ? size[0] : '') + value.slice(labelEnd);
@@ -1403,7 +1409,7 @@
   // 笔记工作区显式启用的本地图片占位。这里绝不写入 src，也不解析远程 URL；
   // 调用方必须把 data-note-image 交给受后端路径沙箱保护的本地图片接口。
   // 其它 Markdown 消费者不传 localImages，继续保持原先“不生成 img”的安全行为。
-  function protectLocalImages(src, enabled, reserveSections) {
+  function protectLocalImages(src, enabled) {
     const images = [];
     if (!enabled) return { protected: src, images: images };
     const source = String(src || '');
@@ -1426,7 +1432,7 @@
       }
       let parsed = end < 0 ? null : parseImage(source.slice(cursor, end));
       if (!parsed) continue;
-      if (reserveSections && parsed.syntax === 'wiki' && parsed.target.includes('#') && sectionEmbedLineAt(source, cursor)) continue;
+      if (parsed.syntax === 'wiki' && isCanvasImage(parsed)) continue;
       const lineStart = source.lastIndexOf('\n', cursor - 1) + 1;
       const lineBreak = source.indexOf('\n', end);
       const lineEnd = lineBreak < 0 ? source.length : lineBreak;
@@ -1482,8 +1488,8 @@
     + '<path d="M6 3.5H4.2A1.7 1.7 0 0 0 2.5 5.2v5.6A1.7 1.7 0 0 0 4.2 12.5H6M10 3.5h1.8A1.7 1.7 0 0 1 13.5 5.2v5.6a1.7 1.7 0 0 1-1.7 1.7H10"/></svg>';
   function protectWikiLinks(src, reserveSections) {
     const wikis = [];
-    const s = src.replace(/(^|[^\\])\[\[([^\]\n|]+?)(?:\|([^\]\n]+?))?\]\]/g, function (whole, prefix, name, alias, index) {
-      if (reserveSections && prefix === '!' && name.includes('#') && sectionEmbedLineAt(src, index)) return whole;
+    const s = src.replace(/(^|[^\\])\[\[([^\]\n|]+?)(?:\|([^\]\n]+?))?\]\]/g, function (whole, prefix, name, alias) {
+      if (prefix === '!' && (reserveSections || wikiAttachmentType(name.trim()) === 'canvas')) return whole;
       wikis.push({ name: name.trim(), alias: (alias || '').trim() });
       return prefix + '\x00WIKI' + (wikis.length - 1) + '\x00';
     });
@@ -2109,7 +2115,7 @@
       const codeGuard = protectCode(mediaGuard.protected, opts.noteBlocks);
       if (mediaGuard.blocks.length) features.mermaid = opts.mermaid !== false && scanFeatures(mediaGuard.protected).mermaid;
       const inlineCodeGuard = protectInlineCode(codeGuard.protected);
-      const imageGuard = protectLocalImages(inlineCodeGuard.protected, opts.localImages === true, opts.noteSections != null);
+      const imageGuard = protectLocalImages(inlineCodeGuard.protected, opts.localImages === true);
       const wikiGuard = protectWikiLinks(imageGuard.protected, opts.noteSections != null);   // 先抠 [[双链]]（早于 [文字](url)）
       const noteGuard = noteContext ? protectNoteSyntax(wikiGuard.protected, noteContext, opts.noteHeadings, opts.noteSourcePosition) : null;
       const linkGuard = noteGuard ? { protected: noteGuard.protected, links: [] } : protectLinks(wikiGuard.protected);
@@ -2312,6 +2318,7 @@
     markIntervals: markIntervals,
     parseImage: parseImage,
     parseNoteSectionEmbed,
+    wikiAttachmentType,
     isCanvasImage: isCanvasImage,
     canvasReferences: canvasReferences,
     canvasTarget: canvasTarget,

@@ -1,6 +1,6 @@
 """Lightweight Markdown reference handling; no file reads or canvas runtime.
 
-Only standalone Markdown image tokens outside code, frontmatter and HTML are
+Only standalone Markdown image and Wiki attachment tokens outside protected regions are
 embeds. Shared by note moves and the optional canvas store.
 """
 from __future__ import annotations
@@ -88,6 +88,15 @@ def references(text: str) -> list[dict]:
                     html = bool(stripped)
             elif re.match(r"^ {0,3}!\[", line):
                 start = line.index("![")
+                wiki = re.fullmatch(r" {0,3}!\[\[([^#\[\]|\r\n]+)(?:\|[^\[\]\r\n]*)?\]\][ \t]*", line)
+                if wiki:
+                    target = wiki[1].strip()
+                    if urllib.parse.unquote(target).lower().endswith(".canvas"):
+                        target_at = line_offset + wiki.start(1) + wiki[1].index(target)
+                        result.append({"from": line_offset + start, "to": line_offset + len(line.rstrip()),
+                            "targetFrom": target_at, "targetTo": target_at + len(target), "target": target, "label": ""})
+                    offset += len(original)
+                    continue
                 end_label = _closing(line, start + 1, "[", "]")
                 if end_label >= 0 and line[end_label + 1:end_label + 2] == "(":
                     end = _closing(line, end_label + 1, "(", ")")

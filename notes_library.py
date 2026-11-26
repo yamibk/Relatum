@@ -1103,7 +1103,7 @@ class NotesStore:
         document["signature"] = signature
         needs_mentions = "mentions" not in document or not document.get('sectionMentions')
         needs_metadata = "tags" not in document or "excerpt" not in document
-        needs_canvas = "canvasTargets" not in document
+        needs_canvas = "canvasTargets" not in document or not document.get('wikiCanvasReferences')
         graph = graph or bool(cached and 'graphReferences' in cached)
         needs_graph = graph and "graphReferences" not in document
         if not (needs_mentions or needs_metadata or needs_canvas or needs_graph):
@@ -1123,6 +1123,7 @@ class NotesStore:
                     if ".canvas" in text.lower() or "%" in text else set()
                 document["canvasTargets"] = sorted(target for target in targets if target)
                 document["hasCanvasReferences"] = bool(document["canvasTargets"])
+                document['wikiCanvasReferences'] = True
             if needs_graph:
                 self.sync.cooperate()
                 document["graphReferences"] = graph_references(text)

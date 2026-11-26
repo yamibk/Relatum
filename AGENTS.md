@@ -316,7 +316,11 @@ Claude 与 Apple 的关系图谱在 `assets/note-theme.css` 中沿用单层主�
 
 正文折叠复用大纲标题识别，实时预览和阅读中从标题末尾收起到下一同级或更高级标题之前，保留子章节状态。源码和打印显示完整正文。大纲、搜索和链接跳入时展开遮挡章节。「笔记设置 → 编辑 → 标题折叠箭头」可选永不、悬停时显示、常驻，默认永不，复用 `canvas:noteHeadingFolding:v1` 并兼容旧开关值。悬停标题行或箭头取得键盘焦点时显示，箭头相对标题首行居中。永不暂时展开正文，保留折叠记录。`canvas:noteViewStates:v1` 按笔记保存折叠标题的 UTF-16 偏移及正文修订，改名随路径迁移，重开时修订不符即展开。折叠只改变视图。正文和大纲标题右键可复制 `[[库内路径#标题]]`，同名标题提示先区分。链接、复制和嵌入共用章节匹配。
 
-跨笔记章节引用用独占一行的 `![[论文笔记#实验方法]]`。实时预览及阅读只读显示该节的普通 Markdown、公式和源笔记的本地图片，嵌套引用和互动富块显示占位，来源标题点击可跳转。源码保留引用，PDF 导出显示来源名称。`assets/note-workspace.js` 仅为可见引用按需调用 `/api/note-links?target=` 和现有 `/api/note`，按路径及修订复用读取和标题索引。已有笔记同步负责刷新受影响的引用。`notes_library.py` 将章节引用纳入既有双链索引及移动改写，保留 `!` 和章节后缀；SQLite 只保存可重建的索引。既有索引由后台队列补齐章节引用。中英文「引导 → Markdown」提供说明和可复制示例。专项为 `node tests/note-sections-browser.js`、`node tests/note-outline-regression.js` 和 `py -B -m unittest tests.test_notes_library`，浏览器使用隔离数据根。
+折叠段落以内联省略号替换源码范围，保留下一标题前的分隔换行。实时预览的鼠标与方向键可停到省略号后，输入、回车、粘贴和组合输入从源码末端继续并即时展开。向折叠内容按 Backspace 或 Delete 先展开，展开独立于正文撤销。阅读面同样显示省略号。
+
+跨笔记章节引用用独占一行的 `![[论文笔记#实验方法]]`。实时预览及阅读只读显示该节的普通 Markdown、公式和源笔记的本地图片，嵌套引用和互动富块显示占位，来源标题点击可跳转。源码保留引用，PDF 导出显示来源名称。`assets/note-workspace.js` 为可见引用和当前标题补全按需调用 `/api/note-links?target=` 和现有 `/api/note`，按路径及修订复用读取和标题索引。已有笔记同步负责刷新受影响的引用。`notes_library.py` 将章节引用纳入既有双链索引及移动改写，保留 `!` 和章节后缀；SQLite 只保存可重建的索引。既有索引由后台队列补齐章节引用。中英文「引导 → Markdown」提供说明和可复制示例。专项为 `node tests/note-sections-browser.js`、`node tests/note-outline-regression.js` 和 `py -B -m unittest tests.test_notes_library`，浏览器使用隔离数据根。
+
+实时预览和源码的独占行 `![[` 复用双链笔记补全，选中笔记后进入 `#` 标题补全，沿用章节渲染的源笔记与标题索引。手输标题和 Ctrl/Cmd+Space 同样可用，同名标题从候选排除，过期请求不更新编辑器。草稿和仍在编辑的引用保持源码，合法章节在离开后投影。Wiki 附件只识别受支持的图片扩展名和 `.canvas`，画布沿用原库内画布目录及引用改写。输入验收为 `node tests/note-sections-browser.js`、`node tests/note-link-completion-browser.js`。
 
 `assets/note-live-editor.js` 的 `RelatumNoteLiveSyntax.scanNoteHeadings` 使用离线 Lezer 解析器及笔记扩展保护范围，提供可分批运行的标题索引；阅读面共用该索引，`MarkdownMini.renderResult` 的可选 `noteHeadings` 只用于笔记，以 `data-note-heading-from` 记录真实源码位置，保留前言、代码、公式、注释和画布占位之前的偏移并补齐下划线标题。普通画布 Markdown 不启用此扩展。原 `note-notebooks.json` 的 `ui.mode` 新增 `outline`，沿用既有接口和原子写入，无新持久化文件或 localStorage key；重启恢复页签但重置折叠。验证入口为 `node tests/note-outline-regression.js`、`node tests/note-outline-browser.js` 和 `python -m unittest tests.test_note_notebooks`，浏览器沿用宿主 Playwright/Python/Edge 变量及一次性数据根，覆盖完整/仅笔记/禁用画布、三种模式、原生 Chromium 预编辑及迟到操作、同名/跳级/排除语法、未保存修改与撤销、DOM 复用、闲置/关闭零解析、约 4MiB 长文、中英文、深浅和窄窗。真实微软拼音与 WebView2 仍需隔离人工验收。
 

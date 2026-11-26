@@ -3673,6 +3673,27 @@
     }
 
     return {
+      async completeHeadings(target, query, { signal }) {
+        const result = await lookup(target);
+        if (signal.aborted || result.state !== 'resolved' || key(result.path) === key(state.current?.path)) return [];
+        const note = await loadSource(result.path, result.revision);
+        if (signal.aborted) return [];
+        const { headingKey, escapeSectionPart } = window.RelatumNoteLiveSyntax, wanted = headingKey(query);
+        const counts = new Map();
+        for (const heading of note.headings) {
+          const label = headingKey(heading.label), raw = headingKey(heading.text);
+          counts.set(label, (counts.get(label) || 0) + 1);
+          if (raw !== label) counts.set(raw, (counts.get(raw) || 0) + 1);
+        }
+        const items = [];
+        for (const heading of note.headings) {
+          const label = headingKey(heading.label);
+          if (counts.get(label) !== 1 || !label.includes(wanted)) continue;
+          items.push({ title: heading.label, insertTarget: escapeSectionPart(heading.label), level: heading.level });
+          if (items.length === 50) break;
+        }
+        return items;
+      },
       mount(element, reference) {
         const title = document.createElement('button'), message = document.createElement('div'), body = document.createElement('div');
         const retry = document.createElement('button');
