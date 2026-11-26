@@ -66,16 +66,13 @@ async function run(browser, minimal) {
       await dialog.getByRole('option', { name, exact: true }).click();
       assert.deepEqual(await panelLayout(), before, 'closing a theme popup does not leave a grid row');
     };
+    const header = page.locator('.top-bar');
+    const headerPalette = () => header.evaluate(bar => [getComputedStyle(bar).backgroundColor,
+      getComputedStyle(bar.querySelector('.start-workspace-slider')).backgroundColor, getComputedStyle(bar, '::before').bottom]);
     await page.evaluate(() => {
       window.originalView = T.editor.view; window.originalDoc = T.editor.view.state.doc;
       window.originalSelection = T.editor.view.state.selection;
       window.originalGeneration = T.state.editGeneration;
-      window.readSharedChrome = () => {
-        const bar = document.querySelector('.top-bar');
-        return [getComputedStyle(bar, '::before').backgroundImage, getComputedStyle(bar).fontFamily,
-          getComputedStyle(bar.querySelector('.start-workspace-slider')).backgroundColor];
-      };
-      window.originalChrome = window.readSharedChrome();
       const graph = document.querySelector('.note-graph-panel'); window.originalGraphFont = graph && getComputedStyle(graph).fontFamily;
     });
     await open();
@@ -83,14 +80,14 @@ async function run(browser, minimal) {
     await page.waitForFunction(() => document.fonts.check('400 16px "Relatum Source Serif 4"'));
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTheme:v1')), 'claude');
     assert(await page.evaluate(() => T.editor.view === originalView && T.editor.view.state.doc === originalDoc && T.editor.view.state.selection === originalSelection && T.state.editGeneration === originalGeneration));
-    assert(await page.evaluate(() => JSON.stringify(readSharedChrome()) === JSON.stringify(originalChrome)), 'Claude leaves the global top bar independent');
+    assert.deepEqual(await headerPalette(), ['rgb(243, 242, 238)', 'rgb(20, 20, 19)', '0px']);
     assert(await page.locator('.note-live-editor-host .cm-editor').evaluate(n => getComputedStyle(n).fontFamily.includes('Relatum Source Serif 4')));
     await choose('Sky');
     await page.waitForFunction(() => document.fonts.check('400 16px "Noto Sans SC"'));
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTheme:v1')), 'sky');
     assert(await page.evaluate(() => T.editor.view === originalView && T.editor.view.state.doc === originalDoc && T.editor.view.state.selection === originalSelection && T.state.editGeneration === originalGeneration));
     assert(await page.locator('.cm-editor').evaluate(n => getComputedStyle(n).fontFamily.indexOf('Noto Sans SC') < getComputedStyle(n).fontFamily.indexOf('Microsoft YaHei')));
-    assert(await page.evaluate(() => JSON.stringify(readSharedChrome()) === JSON.stringify(originalChrome)), 'Sky leaves the global top bar independent');
+    assert.deepEqual(await headerPalette(), ['rgb(232, 239, 248)', 'rgb(210, 228, 250)', '0px']);
     await pause(500);
     const idle = await page.evaluate(async () => {
       let frames = 0; const original = window.requestAnimationFrame;
@@ -105,7 +102,8 @@ async function run(browser, minimal) {
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTheme:v1')), 'apple');
     assert(await page.evaluate(() => T.editor.view === originalView && T.editor.view.state.doc === originalDoc && T.editor.view.state.selection === originalSelection && T.state.editGeneration === originalGeneration));
     assert(await page.locator('.cm-editor').evaluate(n => getComputedStyle(n).fontFamily.includes('Relatum Inter')));
-    assert(await page.evaluate(() => JSON.stringify(readSharedChrome()) === JSON.stringify(originalChrome)), 'Apple leaves the global top bar independent');
+    assert.deepEqual(await headerPalette(), ['rgb(245, 245, 247)', 'rgb(255, 255, 255)', '0px']);
+    assert(await header.evaluate(bar => getComputedStyle(bar).fontFamily.includes('Relatum Inter')));
     if (!minimal) assert.equal(await page.locator('.note-graph-panel').evaluate(n => getComputedStyle(n).fontFamily), await page.evaluate(() => originalGraphFont), 'graph keeps its existing measurement font');
     await pause(300);
     assert.equal(await page.evaluate(async () => {

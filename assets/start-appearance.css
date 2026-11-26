@@ -26,7 +26,7 @@ html[data-start-appearance][data-start-theme="dark"] {
   --start-header-primary: #f2f1ed;
   --start-header-primary-ink: #151515;
 }
-html[data-start-appearance="claude"] {
+html[data-start-appearance="claude"]:where(:not([data-start-workspace="notes"])) {
   --start-home-base: #faf9f5;
   --start-home-glow: #e9dbc8;
   --start-home-shade: #f0ebe0;
@@ -41,7 +41,7 @@ html[data-start-appearance="claude"] {
   --start-header-primary: var(--start-header-selected);
   --start-header-primary-ink: var(--workspace-active-ink);
 }
-html[data-start-appearance="claude"][data-start-theme="dark"] {
+html[data-start-appearance="claude"][data-start-theme="dark"]:where(:not([data-start-workspace="notes"])) {
   --start-home-base: #191919;
   --start-home-glow: #382c24;
   --start-home-shade: #24201c;
@@ -56,7 +56,7 @@ html[data-start-appearance="claude"][data-start-theme="dark"] {
   --start-header-primary: var(--start-header-selected);
   --start-header-primary-ink: var(--workspace-active-ink);
 }
-html[data-start-appearance="sky"] {
+html[data-start-appearance="sky"]:where(:not([data-start-workspace="notes"])) {
   --start-home-base: #f8fbff;
   --start-home-glow: #d3e4f5;
   --start-home-shade: #e8f0fb;
@@ -71,7 +71,7 @@ html[data-start-appearance="sky"] {
   --start-header-primary: #2f6fa9;
   --start-header-primary-ink: #fff;
 }
-html[data-start-appearance="sky"][data-start-theme="dark"] {
+html[data-start-appearance="sky"][data-start-theme="dark"]:where(:not([data-start-workspace="notes"])) {
   --start-home-base: #162338;
   --start-home-glow: #243d59;
   --start-home-shade: #111b2c;
@@ -86,7 +86,7 @@ html[data-start-appearance="sky"][data-start-theme="dark"] {
   --start-header-primary: #8abff0;
   --start-header-primary-ink: #101a2a;
 }
-html[data-start-appearance="apple"] {
+html[data-start-appearance="apple"]:where(:not([data-start-workspace="notes"])) {
   --start-home-base: #f5f5f7;
   --start-home-glow: #e1e2e6;
   --start-home-shade: #eeeef1;
@@ -101,7 +101,7 @@ html[data-start-appearance="apple"] {
   --start-header-primary: #0066cc;
   --start-header-primary-ink: #fff;
 }
-html[data-start-appearance="apple"][data-start-theme="dark"] {
+html[data-start-appearance="apple"][data-start-theme="dark"]:where(:not([data-start-workspace="notes"])) {
   --start-home-base: #202022;
   --start-home-glow: #343438;
   --start-home-shade: #19191b;
@@ -118,15 +118,15 @@ html[data-start-appearance="apple"][data-start-theme="dark"] {
 }
 
 html[data-start-appearance] body.start-page { background-color: var(--start-home-base); }
-html[data-start-appearance]:not([data-start-appearance="default"], [data-start-workspace="none"]) body.start-page[data-start-background="scenic"] {
+html[data-start-appearance]:not([data-start-appearance="default"], [data-start-workspace="notes"], [data-start-workspace="none"]) body.start-page[data-start-background="scenic"] {
   background-image: radial-gradient(90% 75% at 78% 24%, var(--start-home-glow), transparent 76%),
                     linear-gradient(155deg, var(--start-home-shade), var(--start-home-base) 68%);
 }
-html[data-start-appearance]:not([data-start-appearance="default"]) body.start-page::before,
-html[data-start-appearance]:not([data-start-appearance="default"]) body.start-page::after,
+html[data-start-appearance]:not([data-start-appearance="default"], [data-start-workspace="notes"]) body.start-page::before,
+html[data-start-appearance]:not([data-start-appearance="default"], [data-start-workspace="notes"]) body.start-page::after,
 html[data-start-appearance][data-start-workspace="none"] body.start-page::before,
 html[data-start-appearance][data-start-workspace="none"] body.start-page::after { content: none; }
-html[data-start-appearance]:not([data-start-appearance="default"]) body.start-page > .start-sky { display: none; }
+html[data-start-appearance]:not([data-start-appearance="default"], [data-start-workspace="notes"]) body.start-page > .start-sky { display: none; }
 
 :where(html[data-start-appearance]) body.start-page > .top-bar {
   position: relative;
@@ -145,37 +145,38 @@ html[data-start-appearance] body.start-page > .top-bar::before {
 html[data-start-appearance] body.start-page[data-start-workspace="notes"] > .top-bar::before {
   bottom: 0;
 }
-html[data-start-appearance] body.start-page > :is(.top-bar, .desktop-note-focus-controls) {
+html[data-start-appearance]:where(:not([data-start-workspace="notes"])) body.start-page > .top-bar {
   --text: var(--start-header-ink);
   --text-secondary: var(--start-header-muted);
   --focus-ring: color-mix(in srgb, var(--start-header-primary) 72%, var(--start-header-base));
 }
-html[data-start-appearance] body.start-page > .desktop-note-focus-controls { background-color: var(--start-header-base); }
-html[data-start-appearance] .top-bar .start-workspace-slider {
+html[data-start-appearance]:where(:not([data-start-workspace="notes"])) .top-bar .start-workspace-slider {
   background-color: var(--start-header-selected);
   box-shadow: 0 1px 4px rgba(0, 0, 0, .16), inset 0 0 0 1px color-mix(in srgb, var(--start-header-line) 38%, transparent);
 }
 html[data-start-appearance] body.start-page > .top-bar .start-speed-trigger {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html[data-start-appearance]:where(:not([data-start-workspace="notes"])) body.start-page > .top-bar .start-speed-trigger {
   color: var(--text-secondary);
   background-color: var(--start-header-control);
   border-color: var(--start-header-line);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
   box-shadow: 0 1px 3px rgba(0, 0, 0, .12);
 }
-html[data-start-appearance] body.start-page > .top-bar .start-speed-trigger:is(:hover, [aria-expanded="true"]),
-html[data-start-appearance] body.start-page > .top-bar .top-actions .btn-text:hover,
-html[data-start-appearance] body.start-page > :is(.top-bar, .desktop-note-focus-controls) .desktop-window-btn:hover:not(.desktop-window-close) {
+html[data-start-appearance]:where(:not([data-start-workspace="notes"])) body.start-page > .top-bar .start-speed-trigger:is(:hover, [aria-expanded="true"]),
+html[data-start-appearance]:where(:not([data-start-workspace="notes"])) body.start-page > .top-bar .top-actions .btn-text:hover,
+html[data-start-appearance]:where(:not([data-start-workspace="notes"])) body.start-page > .top-bar .desktop-window-btn:hover:not(.desktop-window-close) {
   color: var(--text);
   background-color: var(--start-header-hover);
 }
-html[data-start-appearance] body.start-page > .top-bar .start-speed-trigger[aria-expanded="true"] { border-color: var(--text-secondary); }
-html[data-start-appearance] body.start-page > .top-bar .start-speed-trigger:focus-visible { box-shadow: 0 0 0 2px var(--focus-ring); }
-html[data-start-appearance] body.start-page > .top-bar .top-actions .btn-primary {
+html[data-start-appearance]:where(:not([data-start-workspace="notes"])) body.start-page > .top-bar .start-speed-trigger[aria-expanded="true"] { border-color: var(--text-secondary); }
+html[data-start-appearance]:where(:not([data-start-workspace="notes"])) body.start-page > .top-bar .start-speed-trigger:focus-visible { box-shadow: 0 0 0 2px var(--focus-ring); }
+html[data-start-appearance]:where(:not([data-start-workspace="notes"])) body.start-page > .top-bar .top-actions .btn-primary {
   color: var(--start-header-primary-ink);
   background-color: var(--start-header-primary);
 }
-html[data-start-appearance] body.start-page > .top-bar .top-actions .btn-primary:hover {
+html[data-start-appearance]:where(:not([data-start-workspace="notes"])) body.start-page > .top-bar .top-actions .btn-primary:hover {
   background-color: color-mix(in srgb, var(--start-header-primary) 90%, var(--start-header-base));
 }
 

@@ -23,7 +23,7 @@ async function checkAppearance(page, context, library) {
     const header = document.querySelector('.top-bar');
     const { backgroundImage, backdropFilter } = getComputedStyle(header, '::before');
     const { backgroundColor, backgroundImage: ambient } = getComputedStyle(document.body);
-    return { backgroundImage, backdropFilter, backgroundColor, ambient,
+    return { backgroundImage, backdropFilter, backgroundColor, ambient, headerSurface: getComputedStyle(header).backgroundColor,
       slider: getComputedStyle(header.querySelector('.start-workspace-slider')).backgroundColor,
       sky: getComputedStyle(document.querySelector('.start-sky')).display };
   });
@@ -73,12 +73,27 @@ async function checkAppearance(page, context, library) {
   assert.equal(await newCanvas.evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(0, 102, 204)');
   await page.screenshot({ path: path.join(artifacts, `appearance-${library ? 'library' : 'canvas'}-apple.png`) });
   if (!library) {
+    const canvasPaint = (await palette()).backgroundImage;
     await page.evaluate(async () => {
-      RelatumNoteTheme.apply('claude');
+      RelatumNoteTheme.apply('apple');
       await RelatumStartWorkspace.applyLayout({ order: RelatumStartWorkspace.layout.order, hidden: ['research', 'career'] });
       await RelatumStartWorkspace.set('notes');
     });
-    assert.equal(await page.locator('.note-workspace').evaluate(node => getComputedStyle(node).getPropertyValue('--note-theme-nav').trim()), '#f3f2ee');
+    await open();
+    await dialog.locator('[data-background-style="simple"]').click();
+    await choose('默认');
+    const simpleNotes = await palette();
+    assert.equal(simpleNotes.slider, 'rgb(255, 255, 255)');
+    assert.equal(simpleNotes.headerSurface, 'rgb(245, 245, 247)');
+    assert.equal(simpleNotes.headerSurface, await page.locator('.note-tree-pane').evaluate(node => getComputedStyle(node).backgroundColor));
+    await choose('Sky');
+    assert.deepEqual(await palette(), simpleNotes, 'global appearance leaves the Notes palette intact');
+    await dialog.locator('[data-background-style="scenic"]').click();
+    const scenicNotes = await palette();
+    assert.equal(scenicNotes.ambient, 'none', 'Notes uses the existing environment instead of the custom global gradient');
+    await choose('Apple');
+    assert.deepEqual(await palette(), scenicNotes);
+    await close();
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     const frames = await page.evaluate(async () => {
       const header = document.querySelector('.top-bar');
@@ -101,10 +116,12 @@ async function checkAppearance(page, context, library) {
     });
     assert.deepEqual(new Set(frames.map(frame => frame.workspace)), new Set(['notes', 'canvas', 'daily']));
     assert(frames.length > 10 && new Set(frames.map(frame => frame.transform)).size > 3, 'slider moves during handoff');
-    assert(frames.every(frame => frame.fill === 'rgb(255, 255, 255)' && frame.paint === frames[0].paint));
-    assert.equal(await page.evaluate(() => RelatumNoteTheme.read()), 'claude');
+    assert.notEqual(scenicNotes.backgroundImage, canvasPaint);
+    assert(frames.every(frame => frame.fill === 'rgb(255, 255, 255)'
+      && frame.paint === (frame.workspace === 'notes' ? scenicNotes.backgroundImage : canvasPaint)));
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.screenshot({ path: path.join(artifacts, 'appearance-mixed-notes-apple.png') });
+    await page.evaluate(() => RelatumNoteTheme.apply('claude'));
   }
   await context.addInitScript(() => {
     function firstFrame() {
@@ -116,7 +133,8 @@ async function checkAppearance(page, context, library) {
   });
   await page.reload();
   await page.waitForFunction(() => window.firstAppearanceFrame);
-  assert.deepEqual(await page.evaluate(() => firstAppearanceFrame), ['apple', 'rgb(255, 255, 255)']);
+  const savedSlider = library ? 'rgb(255, 255, 255)' : 'rgb(20, 20, 19)';
+  assert.deepEqual(await page.evaluate(() => firstAppearanceFrame), ['apple', savedSlider]);
   await open(); await choice.waitFor();
   await page.evaluate(key => {
     const original = Storage.prototype.setItem;
@@ -126,7 +144,7 @@ async function checkAppearance(page, context, library) {
   await choose('Sky');
   assert.equal(await select.inputValue(), 'apple');
   assert.equal(await page.evaluate(key => localStorage.getItem(key), appearanceKey), 'apple');
-  assert.equal((await palette()).slider, 'rgb(255, 255, 255)');
+  assert.equal((await palette()).slider, savedSlider);
   assert(await dialog.getByText('未能保存界面主题，请重试。').isVisible());
   await page.evaluate(() => restoreAppearanceStorage());
   await page.setViewportSize({ width: 560, height: 780 });

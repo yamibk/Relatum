@@ -1425,7 +1425,7 @@
       if (label) label.textContent = en ? 'Theme' : '主题';
       themeSelect.setAttribute('aria-label', en ? 'Theme' : '主题');
       const hint = $('#note-theme-hint');
-      if (hint) hint.textContent = en ? 'Change the colors and fonts of note content, sidebars and Notes settings. Light and dark modes follow the global setting.' : '调整笔记正文、侧栏和笔记设置的配色与字体，深浅色沿用全局设置';
+      if (hint) hint.textContent = en ? 'Change the top bar, colors and fonts of the Notes workspace. Light and dark modes follow the global setting.' : '调整笔记工作区的顶栏、配色与字体，深浅色沿用全局设置';
       if (appleSelectionSelect) {
         const selectionLabel = en ? 'Selection feedback' : '选中提示';
         $('[data-role="note-apple-selection-label"]').textContent = selectionLabel;

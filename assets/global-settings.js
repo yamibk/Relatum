@@ -375,7 +375,7 @@
     const appearanceLabel = text('界面主题', 'Interface theme');
     appearanceSetting.querySelector('strong').textContent = appearanceLabel;
     appearanceSelect.setAttribute('aria-label', appearanceLabel);
-    appearanceSetting.querySelector('small').textContent = text('统一各工作区的顶栏和主页背景。', 'Use the same top bar and homepage palette across workspaces.');
+    appearanceSetting.querySelector('small').textContent = text('设置画布、日常、研究和生涯的顶栏与主页背景。笔记外观由笔记设置管理。', 'Set the top bar and homepage colors for Canvas, Daily, Research and Career. Manage the Notes appearance in Notes settings.');
     const appearanceLabels = [text('默认', 'Default'), 'Claude', 'Sky', 'Apple'];
     const entries = appearance.choices.map((value, index) => ({ value, label: appearanceLabels[index] }));
     if (appearanceChoices) appearanceChoices.setOptions(appearanceSelect, entries, appearance.read());
