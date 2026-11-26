@@ -14,11 +14,14 @@ const { features } = require('../assets/feature-catalog.json');
 const args = process.argv.slice(2);
 const native = args.includes('--webview2');
 const notesOnly = args.includes('--notes-only');
+const navigationOnly = args.includes('--navigation-memory');
 const repo = path.join(__dirname, '..');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-pdf-embed-'));
 const notes = path.join(root, 'notes');
 const filename = '电路实验.pdf';
 const fixture = path.join(root, filename);
+const plainFilename = 'No outline.pdf';
+const plainId = '30000000-0000-4000-8000-000000000000';
 const annotatedOrphan = '40000000-0000-4000-8000-000000000000';
 const referencedLater = '50000000-0000-4000-8000-000000000000';
 const cleanupRoot = path.join(notes, 'Cleanup.assets', 'pdf');
@@ -26,10 +29,10 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const pageCount = 120;
 
-function makePdf() {
+function makePdf(withOutline = true) {
   const itemIds = Array.from({ length: pageCount }, (_, index) => 6 + 2 * index);
   const objects = [
-    '<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>',
+    '<< /Type /Catalog /Pages 2 0 R' + (withOutline ? ' /Outlines 4 0 R' : '') + ' >>',
     '<< /Type /Pages /Kids [' + itemIds.map(id => id + ' 0 R').join(' ') + '] /Count ' + pageCount + ' >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
     '<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>',
@@ -80,6 +83,10 @@ async function waitFor(check, description = 'the test host') {
   fs.writeFileSync(fixture, pdf);
   fs.writeFileSync(path.join(notes, 'Lab.md'), 'Before PDF\n\nAfter PDF\n');
   fs.writeFileSync(path.join(notes, 'Other.md'), 'Other document\n');
+  fs.writeFileSync(path.join(notes, 'Plain.md'), '```pdf-embed ' + plainId + '\n```\n');
+  const plainDirectory = path.join(notes, 'Plain.assets', 'pdf', plainId);
+  fs.mkdirSync(plainDirectory, { recursive: true });
+  fs.writeFileSync(path.join(plainDirectory, plainFilename), makePdf(false));
   if (native) {
     fs.writeFileSync(path.join(notes, 'Cleanup.md'), 'Cleanup fixture\n');
     for (const [identity, name] of [[annotatedOrphan, 'Marked.pdf'], [referencedLater, 'Plain.pdf']]) {
@@ -119,14 +126,14 @@ async function waitFor(check, description = 'the test host') {
   if (notesOnly) command.push('--launch-profile', JSON.stringify({
     version: 1, features: Object.fromEntries(features.map(({ id }) => [id, id === 'notes'])),
   }));
-  const host = spawn(python, command, { cwd: repo, windowsHide: true, env: {
-    ...process.env, RELATUM_DATA_ROOT: root,
-    ...(native ? { LOCALAPPDATA: root, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=' + port } : {}),
-  } });
-  const exited = new Promise(resolve => host.once('exit', resolve));
-  let browser, page, logs = '';
-  for (const stream of [host.stdout, host.stderr]) stream.on('data', data => { logs = (logs + data).slice(-12000); });
-  try {
+  let host, exited, browser, page, logs = '';
+  async function launch() {
+    host = spawn(python, command, { cwd: repo, windowsHide: true, env: {
+      ...process.env, RELATUM_DATA_ROOT: root,
+      ...(native ? { LOCALAPPDATA: root, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=' + port } : {}),
+    } });
+    exited = new Promise(resolve => host.once('exit', resolve));
+    for (const stream of [host.stdout, host.stderr]) stream.on('data', data => { logs = (logs + data).slice(-12000); });
     await waitFor(async () => {
       try { return (await fetch(origin + (native ? '/json/version' : '/api/runtime'))).ok; } catch { return false; }
     });
@@ -138,6 +145,10 @@ async function waitFor(check, description = 'the test host') {
     page.on('pageerror', error => { logs = (logs + '\n' + error.stack).slice(-12000); });
     page.on('console', message => { if (message.type() === 'error') logs = (logs + '\n' + message.text()).slice(-12000); });
     page.setDefaultTimeout(12000);
+  }
+
+  try {
+    await launch();
     await page.addInitScript(() => {
       localStorage.setItem('canvas:toolbarLanguage', 'en');
       localStorage.setItem('canvas:startWorkspace:v1', 'notes');
@@ -175,6 +186,87 @@ async function waitFor(check, description = 'the test host') {
     const pageNumber = panel.getByRole('textbox', { name: 'Go to page' });
     const tree = page.locator('.note-sidebar-scroll');
     const tab = page.getByRole('tab', { name: filename });
+    const plainTab = page.getByRole('tab', { name: plainFilename });
+    const pagesButton = panel.getByRole('button', { name: 'Pages', exact: true });
+    const outlineButton = navigation.getByRole('button', { name: 'Outline', exact: true });
+    const filesButton = navigation.getByRole('button', { name: 'Files', exact: true });
+    const openPlain = () => page.locator('[data-pdf-embed-id="' + plainId + '"]:visible')
+      .getByRole('button', { name: 'Open in new tab' }).click();
+    const waitForPdfTools = () => panel.locator('button[aria-controls="note-pdf-navigation"]:enabled').waitFor();
+    async function checkNavigationMemory() {
+      const chapter = navigation.getByRole('button', { name: 'Lab experiments' });
+      const currentThumbnail = navigation.locator('[aria-current="page"] canvas');
+
+      await tab.click();
+      await pagesButton.click();
+      await outlineButton.click();
+      await filesButton.click();
+      await pagesButton.click();
+      await chapter.waitFor();
+      if (!native) {
+        await page.setViewportSize({ width: 530, height: 780 });
+        await chapter.click();
+        await navigation.waitFor({ state: 'hidden' });
+        await page.setViewportSize({ width: 1260, height: 820 });
+      }
+
+      await open('Other.md');
+      assert.equal(await navigation.isVisible(), false);
+      await open('Plain.md');
+      await openPlain();
+      await waitForPdfTools();
+      assert.equal(await pagesButton.getAttribute('aria-expanded'), 'false');
+      await pagesButton.click();
+      await currentThumbnail.waitFor();
+      await tab.click();
+      await chapter.waitFor();
+      assert.equal(await outlineButton.getAttribute('aria-pressed'), 'true');
+      await plainTab.click();
+      await currentThumbnail.waitFor();
+      assert.equal(await outlineButton.isVisible(), false);
+      await plainTab.locator('.note-tab-close').click();
+      await plainTab.waitFor({ state: 'detached' });
+      await open('Plain.md');
+      await openPlain();
+      await waitForPdfTools();
+      assert.equal(await pagesButton.getAttribute('aria-expanded'), 'false', 'a closed PDF tab starts with files when reopened');
+      await tab.click();
+      await chapter.waitFor();
+
+      await page.evaluate(plainId => {
+        const key = 'canvas:noteOpenTabs:v1', tabs = JSON.parse(localStorage.getItem(key));
+        tabs.find(tab => tab?.id === plainId).pdfNavigation = { mode: 'pages', view: 'outline' };
+        localStorage.setItem(key, JSON.stringify(tabs));
+      }, plainId);
+      await page.reload();
+      await page.waitForFunction(() => window.__pdfTest?.state.initialized && __pdfTest.state.active);
+      await chapter.waitFor();
+      await plainTab.click();
+      await currentThumbnail.waitFor();
+      assert.equal(await outlineButton.isVisible(), false, 'a restored outline falls back when the PDF has no outline');
+      await pagesButton.click();
+      await tab.click();
+      await chapter.waitFor();
+      await plainTab.click();
+      await waitForPdfTools();
+      assert.equal(await pagesButton.getAttribute('aria-expanded'), 'false', 'closing Pages restores Files on the next visit');
+      await tab.click();
+      await chapter.waitFor();
+
+      if (native) {
+        await page.evaluate(() => { void window.pywebview.api.close_window(); }).catch(() => {});
+        await Promise.race([exited, delay(10000)]);
+        assert.notEqual(host.exitCode, null, 'the desktop instance exited');
+        await browser.close().catch(() => {});
+        await launch();
+        const restoredPanel = page.locator('#note-pdf-tab-panel');
+        await page.locator('#note-pdf-navigation .note-pdf-outline button').first().waitFor();
+        assert.equal(await restoredPanel.locator('button[aria-controls="note-pdf-navigation"]').getAttribute('aria-expanded'), 'true');
+        await page.evaluate(() => window.pywebview.api.minimize());
+        await page.waitForFunction(() => document.documentElement.dataset.desktopMinimized === '1');
+        assert.equal(await restoredPanel.locator('canvas').count(), 0);
+      }
+    }
     async function dragPdfText(span) {
       await span.waitFor();
       const { start, end } = await span.evaluate(node => {
@@ -329,6 +421,12 @@ async function waitFor(check, description = 'the test host') {
       assert.equal(await tree.isVisible(), true);
       await page.keyboard.press('Escape');
       await page.setViewportSize({ width: 1260, height: 820 });
+    }
+
+    if (navigationOnly) {
+      await checkNavigationMemory();
+      console.log('Note PDF navigation memory passed (' + (native ? 'WebView2' : 'Edge') + ')');
+      return;
     }
 
     await stage.evaluate(node => {
@@ -762,11 +860,6 @@ async function waitFor(check, description = 'the test host') {
       await dialog.getByRole('button', { name: 'Move to Recycle Bin' }).click();
       await waitFor(() => fs.existsSync(path.join(recycled, annotatedOrphan, 'annotations.json')));
       assert.ok(fs.existsSync(path.join(cleanupRoot, referencedLater, 'Plain.pdf')));
-      await tab.click();
-      await panel.locator('canvas').first().waitFor();
-      await page.evaluate(() => window.pywebview.api.minimize());
-      await page.waitForFunction(() => document.documentElement.dataset.desktopMinimized === '1');
-      assert.equal(await panel.locator('canvas').count(), 0);
     } else {
       assert.equal(await open('Failed.md'), true);
       const damaged = page.locator('[data-pdf-embed-id="' + failedId + '"]:visible');
@@ -796,6 +889,7 @@ async function waitFor(check, description = 'the test host') {
         assert.deepEqual(fs.readFileSync(canvasAttachment), pdf);
       } finally { await canvasPage.close(); }
     }
+    await checkNavigationMemory();
     console.log('Note PDF embeds passed (' + (native ? 'WebView2' : 'Edge') + (notesOnly ? ', notes-only' : '') + ')');
   } catch (error) {
     console.error(logs.slice(-5800));

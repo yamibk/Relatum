@@ -378,6 +378,11 @@
         persistTabs(); renderTabs();
       }, ...(pdf ? {
         navigation: pdfNavigation, onNavigation: setPdfNavigation,
+        onNavigationPreference(preference) {
+          if (!isCurrent()) return;
+          tab.pdfNavigation = preference;
+          persistTabs();
+        },
         onPosition: position => { tab.resume = position; },
       } : {}) });
       if (pdf) mount.reader = result;
@@ -868,7 +873,14 @@
             && typeof item.id === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(item.id)
             && typeof item.name === 'string' && item.name) {
           const { kind, path, id, name } = item, key = attachmentTabKey(kind, path, id);
-          attachmentTabs.set(key, { kind, path, id, name, interactive: false });
+          const tab = { kind, path, id, name, interactive: false };
+          if (kind === 'pdf' && item.pdfNavigation) {
+            tab.pdfNavigation = {
+              mode: item.pdfNavigation.mode === 'pages' ? 'pages' : 'files',
+              view: item.pdfNavigation.view === 'outline' ? 'outline' : 'thumbnails',
+            };
+          }
+          attachmentTabs.set(key, tab);
           state.tabs.push(key);
         }
       }
@@ -3432,7 +3444,9 @@
     try {
       localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(state.tabs.map(key => {
         const tab = attachmentTabs.get(key);
-        return tab ? { kind: tab.kind, path: tab.path, id: tab.id, name: tab.name } : key;
+        if (!tab) return key;
+        const { kind, path, id, name, pdfNavigation } = tab;
+        return { kind, path, id, name, pdfNavigation };
       })));
       if (state.activeTab && state.tabs.includes(state.activeTab)) localStorage.setItem(ACTIVE_TAB_KEY, state.activeTab);
       else localStorage.removeItem(ACTIVE_TAB_KEY);

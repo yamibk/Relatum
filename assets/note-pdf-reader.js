@@ -640,6 +640,7 @@ export function create({ language, isCurrent, icon, onDirty, confirmReload, noti
     stage.addEventListener('pointerdown', annotationTools.clearSelectionOnBlank, { capture: true, signal });
     stage.addEventListener('contextmenu', annotationTools.switchToSelection, { signal });
     let navigationOpen = false, outline, outlineIntent = 0, findIntent = 0, matches = [], selected = -1, timer = 0;
+    let navigationPreference = options.pdfNavigation || { mode: 'files', view: 'thumbnails' };
     const pageInput = element('input', 'note-pdf-page-input');
     pageInput.type = 'text'; pageInput.inputMode = 'numeric';
     pageInput.setAttribute('aria-label', copy('跳转页码', 'Go to page'));
@@ -721,11 +722,14 @@ export function create({ language, isCurrent, icon, onDirty, confirmReload, noti
 
     const navigation = options.navigation;
     const navigationHead = element('header', 'note-pdf-navigation-head');
-    const files = button(copy('文件', 'Files'), () => showNavigation(false, false, true), 'note-pdf-files-button', 'file-text');
+    const files = button(copy('文件', 'Files'), () => {
+      rememberNavigation('files');
+      void showNavigation(false, false, true);
+    }, 'note-pdf-files-button', 'file-text');
     files.append(document.createTextNode(copy('文件', 'Files')));
     const tabs = element('div', 'note-pdf-tool-group');
-    const thumbnails = button(copy('缩略图', 'Thumbnails'), () => showOutline(false));
-    const chapters = button(copy('目录', 'Outline'), () => showOutline(true));
+    const thumbnails = button(copy('缩略图', 'Thumbnails'), () => selectNavigationView('thumbnails'));
+    const chapters = button(copy('目录', 'Outline'), () => selectNavigationView('outline'));
     chapters.hidden = true; tabs.append(thumbnails, chapters); navigationHead.append(files, tabs);
     const thumbList = element('div', 'note-pdf-thumbnails');
     thumbList.setAttribute('aria-label', copy('页面缩略图', 'Page thumbnails'));
@@ -735,9 +739,22 @@ export function create({ language, isCurrent, icon, onDirty, confirmReload, noti
     const outlineContent = element('div');
     outlineList.append(outlineContent); outlineScroll.content(outlineContent);
     navigation.replaceChildren(navigationHead, thumbScroll.wrapper, outlineScroll.wrapper);
-    const pages = button(copy('页面', 'Pages'), () => showNavigation(!navigationOpen, true), '', 'panel-left');
+    const pages = button(copy('页面', 'Pages'), () => {
+      const show = !navigationOpen;
+      rememberNavigation(show ? 'pages' : 'files');
+      void showNavigation(show, true);
+    }, '', 'panel-left');
     pages.append(copy('页面', 'Pages'));
     pages.setAttribute('aria-controls', navigation.id);
+    function rememberNavigation(mode, view = navigationPreference.view) {
+      if (mode === navigationPreference.mode && view === navigationPreference.view) return;
+      navigationPreference = { mode, view };
+      options.onNavigationPreference(navigationPreference);
+    }
+    function selectNavigationView(view) {
+      rememberNavigation('pages', view);
+      showOutline(view === 'outline');
+    }
     function afterNavigate() {
       if (matchMedia('(max-width: 760px)').matches) {
         void showNavigation(false);
@@ -770,16 +787,16 @@ export function create({ language, isCurrent, icon, onDirty, confirmReload, noti
       pages.setAttribute('aria-expanded', String(show));
       options.onNavigation(show, showFiles);
       if (focus) (show ? files : pages).focus({ preventScroll: true });
-      showOutline(false);
-      if (!show || !entry.ready) return;
-      let data;
-      try { data = outline === undefined ? await entry.reader.outline() : outline; } catch { return; }
+      showOutline(show && navigationPreference.view === 'outline' && (outline === undefined || !chapters.hidden));
+      if (!show || !entry.ready || outline !== undefined) return;
+      const data = await entry.reader.outline().catch(() => undefined);
       if (intent !== outlineIntent || !present(entry)) return;
-      if (outline === undefined) {
+      if (data !== undefined) {
         outline = data;
         addOutline(outline, 0);
         chapters.hidden = !outlineContent.children.length;
       }
+      if (navigationPreference.view === 'outline' && chapters.hidden) showOutline(false);
     }
     const setTools = enabled => {
       for (const control of [pages, pageInput, minus, plus, fit, findButton, annotationTools.toggle]) control.disabled = !enabled;
@@ -790,7 +807,10 @@ export function create({ language, isCurrent, icon, onDirty, confirmReload, noti
         if (document.activeElement !== pageInput) pageInput.value = String(page);
         count.textContent = '/ ' + total;
       },
-      ready() { setTools(true); },
+      ready() {
+        setTools(true);
+        if (navigationPreference.mode === 'pages') void showNavigation(true);
+      },
       reset() { showFind(false); void showNavigation(false); setTools(false); },
     };
     const actions = element('div', 'note-pdf-tool-group');
