@@ -70,7 +70,12 @@ async function run(browser, minimal) {
       window.originalView = T.editor.view; window.originalDoc = T.editor.view.state.doc;
       window.originalSelection = T.editor.view.state.selection;
       window.originalGeneration = T.state.editGeneration;
-      window.originalChrome = getComputedStyle(document.querySelector('.top-bar')).backgroundColor;
+      window.readSharedChrome = () => {
+        const bar = document.querySelector('.top-bar');
+        return [getComputedStyle(bar, '::before').backgroundImage, getComputedStyle(bar).fontFamily,
+          getComputedStyle(bar.querySelector('.start-workspace-slider')).backgroundColor];
+      };
+      window.originalChrome = window.readSharedChrome();
       const graph = document.querySelector('.note-graph-panel'); window.originalGraphFont = graph && getComputedStyle(graph).fontFamily;
     });
     await open();
@@ -78,21 +83,14 @@ async function run(browser, minimal) {
     await page.waitForFunction(() => document.fonts.check('400 16px "Relatum Source Serif 4"'));
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTheme:v1')), 'claude');
     assert(await page.evaluate(() => T.editor.view === originalView && T.editor.view.state.doc === originalDoc && T.editor.view.state.selection === originalSelection && T.state.editGeneration === originalGeneration));
-    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.top-bar')).backgroundColor), 'rgb(243, 242, 238)');
-    assert.equal(await page.evaluate(() => {
-      const workspace = document.body.dataset.startWorkspace;
-      document.body.dataset.startWorkspace = 'canvas';
-      const color = getComputedStyle(document.querySelector('.top-bar')).backgroundColor;
-      document.body.dataset.startWorkspace = workspace;
-      return color;
-    }), await page.evaluate(() => originalChrome), 'shared chrome only follows the note theme while Notes is active');
+    assert(await page.evaluate(() => JSON.stringify(readSharedChrome()) === JSON.stringify(originalChrome)), 'Claude leaves the global top bar independent');
     assert(await page.locator('.note-live-editor-host .cm-editor').evaluate(n => getComputedStyle(n).fontFamily.includes('Relatum Source Serif 4')));
     await choose('Sky');
     await page.waitForFunction(() => document.fonts.check('400 16px "Noto Sans SC"'));
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTheme:v1')), 'sky');
     assert(await page.evaluate(() => T.editor.view === originalView && T.editor.view.state.doc === originalDoc && T.editor.view.state.selection === originalSelection && T.state.editGeneration === originalGeneration));
     assert(await page.locator('.cm-editor').evaluate(n => getComputedStyle(n).fontFamily.indexOf('Noto Sans SC') < getComputedStyle(n).fontFamily.indexOf('Microsoft YaHei')));
-    assert.equal(await page.locator('.top-bar').evaluate(n => getComputedStyle(n).backgroundColor), 'rgb(232, 239, 248)');
+    assert(await page.evaluate(() => JSON.stringify(readSharedChrome()) === JSON.stringify(originalChrome)), 'Sky leaves the global top bar independent');
     await pause(500);
     const idle = await page.evaluate(async () => {
       let frames = 0; const original = window.requestAnimationFrame;
@@ -107,14 +105,8 @@ async function run(browser, minimal) {
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTheme:v1')), 'apple');
     assert(await page.evaluate(() => T.editor.view === originalView && T.editor.view.state.doc === originalDoc && T.editor.view.state.selection === originalSelection && T.state.editGeneration === originalGeneration));
     assert(await page.locator('.cm-editor').evaluate(n => getComputedStyle(n).fontFamily.includes('Relatum Inter')));
-    assert.equal(await page.locator('.top-bar').evaluate(n => getComputedStyle(n).backgroundColor), 'rgb(245, 245, 247)');
-    assert.equal(await page.locator('.top-bar').evaluate(n => getComputedStyle(n).fontFamily.includes('Relatum Inter')), true);
+    assert(await page.evaluate(() => JSON.stringify(readSharedChrome()) === JSON.stringify(originalChrome)), 'Apple leaves the global top bar independent');
     if (!minimal) assert.equal(await page.locator('.note-graph-panel').evaluate(n => getComputedStyle(n).fontFamily), await page.evaluate(() => originalGraphFont), 'graph keeps its existing measurement font');
-    assert.equal(await page.evaluate(() => {
-      document.body.dataset.startWorkspace = 'canvas';
-      const color = getComputedStyle(document.querySelector('.top-bar')).backgroundColor;
-      document.body.dataset.startWorkspace = 'notes'; return color;
-    }), await page.evaluate(() => originalChrome), 'Apple chrome is scoped to active Notes');
     await pause(300);
     assert.equal(await page.evaluate(async () => {
       let frames = 0; const original = requestAnimationFrame;
@@ -213,7 +205,7 @@ async function run(browser, minimal) {
         if (bg === 'simple') {
           assert.equal(result.paperSurface, mode === 'light' ? 'rgb(250, 249, 245)' : 'rgb(25, 25, 25)');
           const nav = mode === 'light' ? 'rgb(243, 242, 238)' : 'rgb(21, 21, 21)';
-          assert(await page.evaluate(({ nav, overlay }) => ['.note-tree-pane', '.top-bar'].every(s => getComputedStyle(document.querySelector(s)).backgroundColor === nav)
+          assert(await page.evaluate(({ nav, overlay }) => getComputedStyle(document.querySelector('.note-tree-pane')).backgroundColor === nav
             && getComputedStyle(document.querySelector('.note-links-pane')).backgroundColor === overlay,
           { nav, overlay: width > 1120 ? nav : mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(36, 36, 36)' }));
         } else assert(result.paperSurface.includes(mode === 'light' ? '0.8)' : '0.84)'), 'Claude scenic retains paper transparency');
@@ -234,7 +226,7 @@ async function run(browser, minimal) {
             assert.equal(result.bg, 'rgb(22, 35, 56)'); assert.equal(result.paperImage, 'none');
           }
           const navigation = mode === 'light' ? 'rgb(232, 239, 248)' : 'rgb(16, 26, 42)';
-          assert(await page.evaluate(expected => ['.note-tree-pane', '.top-bar', '.note-links-pane'].every(selector =>
+          assert(await page.evaluate(expected => ['.note-tree-pane', '.note-links-pane'].every(selector =>
             getComputedStyle(document.querySelector(selector)).backgroundColor === expected), navigation));
         } else {
           assert(result.bg.includes(mode === 'light' ? '0.8)' : '0.84)'), 'scenic retains paper transparency');
@@ -251,7 +243,7 @@ async function run(browser, minimal) {
         if (bg === 'simple') {
           assert.equal(result.paperSurface, mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(28, 28, 30)');
           const nav = mode === 'light' ? 'rgb(245, 245, 247)' : 'rgb(36, 36, 38)';
-          assert(await page.evaluate(({ nav, overlay }) => ['.top-bar', '.note-tree-pane'].every(s => getComputedStyle(document.querySelector(s)).backgroundColor === nav)
+          assert(await page.evaluate(({ nav, overlay }) => getComputedStyle(document.querySelector('.note-tree-pane')).backgroundColor === nav
             && getComputedStyle(document.querySelector('.note-links-pane')).backgroundColor === overlay,
           { nav, overlay: width > 1120 ? nav : mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(44, 44, 46)' }));
         } else assert(result.paperSurface.includes(mode === 'light' ? '0.8)' : '0.84)'), 'Apple scenic retains transparency');

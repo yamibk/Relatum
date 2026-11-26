@@ -20,6 +20,23 @@
   border-radius: 9px; background: var(--settings-bg); color: var(--settings-text);
   box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
 }
+.global-settings-dialog .global-interface-theme {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, min(48%, 260px));
+  align-items: center; gap: 10px 14px; min-width: 0; padding: 18px 20px;
+  border-radius: 14px; background: var(--settings-card);
+}
+.global-interface-theme > strong { font-size: 13px; font-weight: 580; }
+.global-interface-theme > small { grid-column: 1 / -1; color: var(--settings-muted); font-size: 11px; line-height: 1.6; }
+.global-settings-dialog .global-interface-theme :is(select, .review-choice-trigger) {
+  width: 100%; min-height: 38px; padding: 8px 12px; border: 1px solid var(--settings-selected);
+  border-radius: 10px; background: var(--settings-bg); color: var(--settings-text); font-size: 13px;
+}
+.global-settings-dialog .global-interface-theme .review-choice-trigger:is(:hover, [aria-expanded="true"]) { background: var(--settings-nav); }
+.global-settings-dialog > .global-appearance-popovers { position: absolute; inset: 0; pointer-events: none; }
+.global-settings-dialog .global-appearance-popovers .review-choice-popup {
+  background: var(--settings-bg); color: var(--settings-text);
+  border-color: var(--settings-selected); border-radius: 14px; pointer-events: auto;
+}
 .global-settings-dialog .start-speed-head { margin-bottom: 12px; }
 .global-settings-dialog :is(.start-background-switch, .start-dark-card-ink-switch) { box-shadow: none; background: var(--settings-selected); border-color: transparent; }
 .global-settings-dialog .start-background-switch button { box-shadow: none; }
@@ -64,11 +81,8 @@
 .global-settings-dialog .global-window-size [data-size-error] { color: var(--settings-text); }
 .global-settings-dialog .global-window-size [hidden] { display: none; }
 @media (max-width: 520px) { .global-settings-dialog .global-window-size form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .global-settings-dialog .global-window-size form > button { grid-column: 1 / -1; } }
-html[data-start-theme="dark"] { --workspace-active-ink: #1b1d1b; }
 html[data-start-workspace="none"] body.start-page { height: 100vh; overflow: hidden; }
 html[data-start-workspace="none"] :is(.start-sky, .start-workspace-stage, .top-actions, .start-workspace-switch) { display: none !important; }
-html[data-start-workspace="none"] body.start-page { background: #fbfbfa; }
-html[data-start-theme="dark"][data-start-workspace="none"] body.start-page { background: #111213; }
 html[data-canvas-pages-empty="1"] #start-canvas-workspace,
 html[data-daily-pages-empty="1"] #start-daily-workspace > :is(.daily-navigation, .daily-stage),
 html[data-start-workspace="canvas"][data-canvas-pages-empty="1"] :is(.top-actions, .start-sky),

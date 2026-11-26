@@ -1,5 +1,6 @@
 (function () {
   'use strict';
+  if (window.RelatumReviewControls) return;
   let active = null, serial = 0;
   const ui = (zh, en) => window.RelatumI18n?.language === 'en' ? en : zh;
   const attr = (node, name, value) => {

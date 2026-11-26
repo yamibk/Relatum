@@ -131,6 +131,8 @@ class LaunchProfile:
         name = resource.lstrip("/").lower()
         if name in ("", "index.html") and not self.has_home:
             return False
+        if self.has_home and name in ("review-controls.js", "review-controls.css"):
+            return True
         owners = CATALOG["sharedScripts"].get(name, [])[:]
         for key, item in FEATURES.items():
             if name in item.get("pages", []) or any(name == src or (src.endswith("/") and name.startswith(src)) for src in item.get("scripts", [])):

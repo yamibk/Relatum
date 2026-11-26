@@ -58,6 +58,45 @@
   take('.start-panel-theme, .start-priority-background', 'appearance');
   const themeLabel = document.createElement('strong'); themeLabel.dataset.i18nManaged = 'true';
   panels.get('appearance').querySelector('.start-panel-theme')?.prepend(themeLabel);
+  const appearance = window.RelatumStartAppearance;
+  const appearanceSetting = document.createElement('div');
+  appearanceSetting.className = 'global-interface-theme';
+  appearanceSetting.dataset.i18nManaged = 'true';
+  appearanceSetting.dataset.settingsKeywords = '界面主题 顶栏 主页背景 Interface theme top bar homepage palette';
+  appearanceSetting.innerHTML = '<strong></strong><select id="global-interface-theme" data-role="global-interface-theme" aria-describedby="global-interface-theme-hint"></select><small id="global-interface-theme-hint"></small>';
+  panels.get('appearance').querySelector('.start-panel-theme').after(appearanceSetting);
+  const appearanceSelect = appearanceSetting.querySelector('select');
+  const appearancePortal = document.createElement('div'); appearancePortal.className = 'global-appearance-popovers';
+  let appearanceChoices, appearanceLoading;
+  function syncAppearanceChoice() {
+    appearanceSelect.value = appearance.read();
+    appearanceChoices?.sync(appearanceSelect);
+  }
+  appearanceSelect.addEventListener('change', () => {
+    const saved = appearance.apply(appearanceSelect.value);
+    syncAppearanceChoice();
+    dialog?.setStatus(saved ? '' : text('未能保存界面主题，请重试。', 'Could not save the interface theme. Please retry.'));
+  });
+  function prepareAppearanceChoice() {
+    if (appearanceLoading) return;
+    const installed = document.querySelector('link[href="review-controls.css"]');
+    const link = installed || document.createElement('link');
+    const style = link.sheet || new Promise((resolve, reject) => {
+      link.addEventListener('load', resolve, { once: true });
+      link.addEventListener('error', () => { link.remove(); reject(new Error('review-controls.css')); }, { once: true });
+      if (!installed) { link.rel = 'stylesheet'; link.href = 'review-controls.css'; document.head.append(link); }
+    });
+    appearanceLoading = Promise.all([window.RelatumDailyLoader.script('review-controls.js', () => window.RelatumReviewControls), style])
+      .then(([choices]) => {
+        const enhance = () => {
+          appearanceChoices = choices.createManager(content, appearancePortal);
+          const control = appearanceChoices.enhance(appearanceSelect);
+          control.anchor.setAttribute('aria-describedby', appearanceSelect.getAttribute('aria-describedby'));
+        };
+        if (document.activeElement === appearanceSelect) appearanceSelect.addEventListener('blur', enhance, { once: true });
+        else enhance();
+      }).catch(() => { appearanceLoading = null; });
+  }
   const languageSetting = document.createElement('div');
   languageSetting.className = 'start-priority-background'; languageSetting.dataset.i18nManaged = 'true';
   languageSetting.dataset.settingsKeywords = '界面语言 切换语言 中文 英文 language Chinese English';
@@ -254,21 +293,26 @@
     const activeCategories = visibleCategories;
     dialog = window.RelatumSettingsDialog.create({ id: 'global-settings-dialog', content, categories: activeCategories, language, motion,
       labels: { title: ['全局设置', 'Settings'], 'reset-all': ['恢复全部设置', 'Reset all settings'], confirmAll: ['恢复全部全局设置？', 'Reset all global settings?'],
-        confirmDescription: ['恢复工作区顺序、显示选择及本面板其他偏好。保留主题、语言、笔记设置、客户端窗口设置及所有内容。', 'Restore workspace order, visibility and other preferences in this panel. Keep theme, language, note settings, window settings and all content.'] },
+        confirmDescription: ['恢复界面主题、工作区顺序、显示选择及本面板其他偏好。保留深浅模式、语言、笔记设置、客户端窗口设置及所有内容。', 'Restore the interface theme, workspace order, visibility and other preferences in this panel. Keep light or dark mode, language, note settings, window settings and all content.'] },
       async resetAll() {
         await resetCategory('workspaces');
         for (const category of activeCategories) if (category.id !== 'workspaces') await resetCategory(category.id);
       },
       onCategoryChange(id) {
+        if (id === 'appearance') prepareAppearanceChoice(); else appearanceChoices?.close();
         usageVisibility(id === 'usage'); if (id !== 'workspaces') orderList?.suspend(); if (id !== 'navigation') pageLists.forEach(list => list.suspend());
         desktopSystemActive = id === 'system'; ++sizeRevision;
         if (desktopSystemActive) refreshWindowSize();
       },
-      onKeyDown(event) { return usageActive && usageManager?.onKeyDown(event); },
+      onKeyDown(event) {
+        if (appearanceChoices && appearanceSetting.contains(event.target) && ['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) dialog.finishContentMotion();
+        return appearanceChoices?.handleKey(event) || (usageActive && usageManager?.onKeyDown(event));
+      },
       onOpen() { trigger.setAttribute('aria-expanded', 'true'); orderList?.sync(); pageLists.forEach(list => list.sync()); refreshLauncher(); },
-      onClose() { desktopSystemActive = false; ++sizeRevision; editedSizeFields.clear(); usageVisibility(false); trigger.setAttribute('aria-expanded', 'false'); orderList?.suspend(); pageLists.forEach(list => list.suspend()); },
+      onClose() { appearanceChoices?.close(); desktopSystemActive = false; ++sizeRevision; editedSizeFields.clear(); usageVisibility(false); trigger.setAttribute('aria-expanded', 'false'); orderList?.suspend(); pageLists.forEach(list => list.suspend()); },
     });
-    dialog.dialog.classList.add('global-settings-dialog'); ensureOrderList(); ensurePageLists(); translate();
+    dialog.dialog.classList.add('global-settings-dialog'); dialog.dialog.append(appearancePortal);
+    ensureOrderList(); ensurePageLists(); translate();
     return dialog;
   }
   function ensureOrderList() {
@@ -301,7 +345,11 @@
     if (list) { const data = pageListData(workspace); pageAvailability.set(workspace, data.available); list.setItems(data.ids, data.names); }
   });
   async function resetCategory(id) {
-    if (id === 'workspaces') {
+    if (id === 'appearance') {
+      if (!appearance.reset()) throw new Error('Could not reset the interface theme');
+      syncAppearanceChoice();
+      await adapter?.reset(id);
+    } else if (id === 'workspaces') {
       if (!await window.RelatumStartWorkspace.applyLayout(null, { reset: true })) throw new Error('Workspace handoff failed');
       orderList?.sync();
     } else if (id === 'navigation') {
@@ -322,7 +370,16 @@
     renderLauncher(); renderWindowSize();
     trigger.title = text('全局设置', 'Settings');
     trigger.setAttribute('aria-label', text('全局设置', 'Settings'));
-    themeLabel.textContent = text('主题', 'Theme');
+    themeLabel.textContent = text('深浅模式', 'Light and dark mode');
+    appearanceChoices?.close();
+    const appearanceLabel = text('界面主题', 'Interface theme');
+    appearanceSetting.querySelector('strong').textContent = appearanceLabel;
+    appearanceSelect.setAttribute('aria-label', appearanceLabel);
+    appearanceSetting.querySelector('small').textContent = text('统一各工作区的顶栏和主页背景。', 'Use the same top bar and homepage palette across workspaces.');
+    const appearanceLabels = [text('默认', 'Default'), 'Claude', 'Sky', 'Apple'];
+    const entries = appearance.choices.map((value, index) => ({ value, label: appearanceLabels[index] }));
+    if (appearanceChoices) appearanceChoices.setOptions(appearanceSelect, entries, appearance.read());
+    else appearanceSelect.replaceChildren(...entries.map(({ value, label }) => new Option(label, value, false, value === appearance.read())));
     languageSetting.querySelector('.start-speed-head span').textContent = text('界面语言', 'Interface language');
     languageSwitch.setAttribute('aria-label', text('界面语言', 'Interface language'));
     languageSwitch.querySelectorAll('button').forEach(button => {

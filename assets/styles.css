@@ -10222,42 +10222,11 @@ body.start-page.theme-instant *::after {
   100% { transform: translate3d(0.2%, -1.4%, 0) scale(1.045); }
 }
 
-/* 顶栏：亚克力毛玻璃。本体透明（文字清晰），磨砂放在向下渐隐的伪元素上，
-   让模糊与底色从下沿柔和化开——消除与背景之间的硬分隔线。 */
-.start-page[data-start-state] .top-bar {
-  position: relative;
-  /* 顶栏保持高于工作区内部页面；设置使用原生 dialog 顶层。 */
-  z-index: 200;
-  background: transparent;
-}
-.start-page[data-start-state] .top-bar::before {
-  content: "";
-  position: absolute;
-  inset: -1px 0 -26px 0;        /* 向下延伸一截，给渐隐留空间 */
-  z-index: -1;
-  pointer-events: none;
-  background: linear-gradient(to bottom, rgba(251, 251, 250, 0.72), rgba(251, 251, 250, 0));
-  backdrop-filter: blur(22px) saturate(1.6);
-  -webkit-backdrop-filter: blur(22px) saturate(1.6);
-  -webkit-mask-image: linear-gradient(to bottom, #000 42%, transparent);
-  mask-image: linear-gradient(to bottom, #000 42%, transparent);
-}
-
-/* 画布工作区保留沉浸构图，常驻背景和顶栏不持续合成、采样背景。 */
+/* 画布工作区的默认沉浸背景保持静态构图。 */
 body.start-page[data-start-workspace="canvas"][data-start-state]::before,
 body.start-page[data-start-workspace="canvas"][data-start-state]::after {
   animation: none !important;
   will-change: auto;
-}
-body.start-page[data-start-workspace="canvas"][data-start-state] .top-bar::before {
-  background: linear-gradient(to bottom, rgba(251, 251, 250, .97) 0%, rgba(251, 251, 250, .9) 42%, rgba(251, 251, 250, 0) 100%);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  mask-image: none;
-  -webkit-mask-image: none;
-}
-body.start-page[data-start-workspace="canvas"][data-start-theme="dark"][data-start-state] .top-bar::before {
-  background: linear-gradient(to bottom, rgba(17, 18, 19, .98) 0%, rgba(17, 18, 19, .92) 42%, rgba(17, 18, 19, 0) 100%);
 }
 
 /* ─── 起步页 · 翻书式布局 ─────────────────────────
@@ -34943,10 +34912,6 @@ body.start-page[data-start-theme="dark"][data-start-state]::after {
     radial-gradient(42% 40% at 68% 22%, rgba(186, 166, 222, 0.07), transparent 76%),
     radial-gradient(46% 42% at 30% 78%, rgba(139, 203, 206, 0.06), transparent 76%),
     radial-gradient(42% 38% at 76% 82%, rgba(226, 168, 149, 0.06), transparent 76%);
-}
-
-body.start-page[data-start-theme="dark"][data-start-state] .top-bar::before {
-  background: linear-gradient(to bottom, rgba(17, 18, 19, 0.82), rgba(17, 18, 19, 0));
 }
 
 body.start-page[data-start-theme="dark"] .btn-primary {

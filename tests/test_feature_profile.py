@@ -147,7 +147,8 @@ class FeatureProfileTests(unittest.TestCase):
         payload = json.loads(profile.bootstrap().split("Object.freeze(", 1)[1].split(");</script>", 1)[0])
         self.assertEqual(payload["workspaces"], features.WORKSPACES)
         self.assertEqual(tuple(item["id"] for item in payload["workspaces"]), features.WORKSPACE_IDS)
-        for resource in ("settings-dialog.js", "settings-dialog.css", "settings-order-list.js", "global-settings.js", "global-settings.css", "start-shell.js"):
+        for resource in ("settings-dialog.js", "settings-dialog.css", "settings-order-list.js", "global-settings.js", "global-settings.css", "start-shell.js",
+                         "start-appearance.js", "start-appearance.css"):
             self.assertTrue(profile.resource_allowed(resource), resource)
         self.assertFalse(profile.resource_allowed("note-workspace.js"))
         self.assertFalse(profile.write_allowed("/api/note-save"))
@@ -187,15 +188,17 @@ class FeatureProfileTests(unittest.TestCase):
         self.assertFalse(profile.write_allowed("/api/study-task-update"))
         self.assertFalse(profile.write_allowed("/api/note-save"))
 
-    def test_review_controls_follow_review_feature(self):
+    def test_review_controls_are_available_to_home_settings(self):
         source = (features.RESOURCE_ROOT / "assets" / "index.html").read_text(encoding="utf8")
         review = self.only('canvas', 'canvas.review')
         other = self.only('canvas', 'canvas.library')
+        editor = self.only('canvas', 'canvas.editor')
         html = features.render_html(source, review, 'index.html')
         self.assertLess(html.index('src="review-controls.js"'), html.index('src="review.js"'))
         for resource in ('review-controls.js', 'review-controls.css'):
             self.assertTrue(review.resource_allowed(resource))
-            self.assertFalse(other.resource_allowed(resource))
+            self.assertTrue(other.resource_allowed(resource))
+            self.assertFalse(editor.resource_allowed(resource))
             self.assertNotIn(resource, features.render_html(source, other, 'index.html'))
 
     def test_notes_can_load_shared_choices_without_ai_or_review(self):
@@ -206,7 +209,7 @@ class FeatureProfileTests(unittest.TestCase):
         for name in ('review-controls.js', 'review-controls.css'):
             self.assertTrue(enabled.resource_allowed(name))
             self.assertTrue(disabled.resource_allowed(name), 'note themes and extensions also use shared choices')
-            self.assertNotIn(name, cold_html, 'shared controls load through the note runtime')
+            self.assertNotIn(name, cold_html, 'shared controls load on demand without review')
         for name in ('note-ai.js', 'note-ai.css'):
             self.assertTrue(enabled.resource_allowed(name))
             self.assertFalse(disabled.resource_allowed(name))

@@ -6,12 +6,158 @@ const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..'), catalog = JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json'), 'utf8'));
 const ids = catalog.workspaces.map(item => item.id), key = 'canvas:workspaceLayout:v1', pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const opacityKey = 'canvas:treePageDescendantOpacity:v1';
+const appearanceKey = 'canvas:startAppearance:v1';
 const artifacts = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-global-settings-'));
 async function freePort() { const server = net.createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); const value = server.address().port; await new Promise(resolve => server.close(resolve)); return value; }
+
+async function checkAppearance(page, context, library) {
+  const dialog = page.locator('#global-settings-dialog');
+  const select = dialog.locator('[data-role="global-interface-theme"]');
+  const choice = dialog.locator('.global-interface-theme .review-choice-trigger');
+  const popup = dialog.locator('.global-appearance-popovers .review-choice-popup');
+  const open = () => page.evaluate(() => RelatumGlobalSettings.open({ category: 'appearance' }));
+  const close = () => page.evaluate(() => RelatumGlobalSettings.close({ instant: true }));
+  const choose = async label => { await choice.click(); await popup.getByRole('option', { name: label, exact: true }).click(); };
+  const toggle = dialog.locator('.start-panel-theme button');
+  const palette = () => page.evaluate(() => {
+    const header = document.querySelector('.top-bar');
+    const { backgroundImage, backdropFilter } = getComputedStyle(header, '::before');
+    const { backgroundColor, backgroundImage: ambient } = getComputedStyle(document.body);
+    return { backgroundImage, backdropFilter, backgroundColor, ambient,
+      slider: getComputedStyle(header.querySelector('.start-workspace-slider')).backgroundColor,
+      sky: getComputedStyle(document.querySelector('.start-sky')).display };
+  });
+  assert.equal(await page.evaluate(key => localStorage.getItem(key), appearanceKey), null);
+  if (library) {
+    await page.evaluate(key => localStorage.setItem(key, 'unknown-theme'), appearanceKey);
+    await page.reload();
+    assert.equal(await page.evaluate(() => RelatumStartAppearance.read()), 'default');
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), appearanceKey), 'unknown-theme', 'startup leaves old values on disk');
+    assert.equal(await page.request.get(new URL('/review.js', page.url()).href).then(r => r.ok()), false);
+    await page.route('**/review-controls.css', route => route.abort());
+    const failed = page.waitForEvent('requestfailed', { predicate: request => request.url().endsWith('/review-controls.css') });
+    await open(); await failed;
+    await select.selectOption('sky');
+    assert.equal((await palette()).backgroundColor, 'rgb(248, 251, 255)', 'native fallback applies the palette');
+    await close(); await page.unroute('**/review-controls.css');
+  }
+  await open(); await choice.waitFor();
+  await choice.click();
+  assert.deepEqual(await popup.getByRole('option').allTextContents(), ['默认', 'Claude', 'Sky', 'Apple']);
+  await page.keyboard.press('Escape'); assert(await popup.isHidden()); assert(await dialog.isVisible());
+
+  const skins = [
+    ['默认', ['rgb(251, 251, 250)', 'rgb(17, 18, 19)'], ['rgb(24, 24, 23)', 'rgb(239, 238, 232)']],
+    ['Claude', ['rgb(250, 249, 245)', 'rgb(25, 25, 25)'], ['rgb(20, 20, 19)', 'rgb(250, 249, 245)']],
+    ['Sky', ['rgb(248, 251, 255)', 'rgb(22, 35, 56)'], ['rgb(210, 228, 250)', 'rgb(41, 65, 95)']],
+    ['Apple', ['rgb(245, 245, 247)', 'rgb(32, 32, 34)'], ['rgb(255, 255, 255)', 'rgb(58, 58, 60)']],
+  ];
+  for (const [label, bases, sliders] of skins) {
+    await choose(label);
+    for (const mode of [0, 1]) {
+      for (const background of ['simple', 'scenic']) {
+        await dialog.locator(`[data-background-style="${background}"]`).click();
+        const result = await palette();
+        assert.equal(result.backgroundColor, bases[mode], `${label} ${mode} ${background} homepage`);
+        assert.equal(result.slider, sliders[mode], `${label} ${mode} ${background} slider`);
+        assert.equal(result.backdropFilter, 'none');
+        assert.equal(result.ambient.includes('radial-gradient'), label !== '默认' && background === 'scenic');
+        assert.equal(result.sky !== 'none', label === '默认' && mode === 1 && background === 'scenic');
+      }
+      await toggle.click();
+    }
+  }
+  await close();
+  const newCanvas = page.locator('.top-actions .btn-primary');
+  await newCanvas.waitFor();
+  assert.equal(await newCanvas.evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(0, 102, 204)');
+  await page.screenshot({ path: path.join(artifacts, `appearance-${library ? 'library' : 'canvas'}-apple.png`) });
+  if (!library) {
+    await page.evaluate(async () => {
+      RelatumNoteTheme.apply('claude');
+      await RelatumStartWorkspace.applyLayout({ order: RelatumStartWorkspace.layout.order, hidden: ['research', 'career'] });
+      await RelatumStartWorkspace.set('notes');
+    });
+    assert.equal(await page.locator('.note-workspace').evaluate(node => getComputedStyle(node).getPropertyValue('--note-theme-nav').trim()), '#f3f2ee');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    const frames = await page.evaluate(async () => {
+      const header = document.querySelector('.top-bar');
+      const slider = header.querySelector('.start-workspace-slider');
+      const frames = [];
+      let running = true;
+      const sample = () => {
+        const style = getComputedStyle(slider);
+        frames.push({ workspace: document.body.dataset.startWorkspace, fill: style.backgroundColor,
+          paint: getComputedStyle(header, '::before').backgroundImage, transform: style.transform });
+        if (running) requestAnimationFrame(sample);
+      };
+      sample();
+      for (const workspace of ['canvas', 'daily', 'notes', 'canvas', 'notes']) {
+        await RelatumStartWorkspace.set(workspace);
+        await new Promise(requestAnimationFrame);
+      }
+      await new Promise(resolve => setTimeout(resolve, 360)); running = false;
+      return frames;
+    });
+    assert.deepEqual(new Set(frames.map(frame => frame.workspace)), new Set(['notes', 'canvas', 'daily']));
+    assert(frames.length > 10 && new Set(frames.map(frame => frame.transform)).size > 3, 'slider moves during handoff');
+    assert(frames.every(frame => frame.fill === 'rgb(255, 255, 255)' && frame.paint === frames[0].paint));
+    assert.equal(await page.evaluate(() => RelatumNoteTheme.read()), 'claude');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.screenshot({ path: path.join(artifacts, 'appearance-mixed-notes-apple.png') });
+  }
+  await context.addInitScript(() => {
+    function firstFrame() {
+      const slider = document.querySelector('.start-workspace-slider');
+      if (!slider) { requestAnimationFrame(firstFrame); return; }
+      window.firstAppearanceFrame = [document.documentElement.dataset.startAppearance, getComputedStyle(slider).backgroundColor];
+    }
+    requestAnimationFrame(firstFrame);
+  });
+  await page.reload();
+  await page.waitForFunction(() => window.firstAppearanceFrame);
+  assert.deepEqual(await page.evaluate(() => firstAppearanceFrame), ['apple', 'rgb(255, 255, 255)']);
+  await open(); await choice.waitFor();
+  await page.evaluate(key => {
+    const original = Storage.prototype.setItem;
+    window.restoreAppearanceStorage = () => { Storage.prototype.setItem = original; };
+    Storage.prototype.setItem = function (name, value) { if (name === key) throw Error('test quota'); original.call(this, name, value); };
+  }, appearanceKey);
+  await choose('Sky');
+  assert.equal(await select.inputValue(), 'apple');
+  assert.equal(await page.evaluate(key => localStorage.getItem(key), appearanceKey), 'apple');
+  assert.equal((await palette()).slider, 'rgb(255, 255, 255)');
+  assert(await dialog.getByText('未能保存界面主题，请重试。').isVisible());
+  await page.evaluate(() => restoreAppearanceStorage());
+  await page.setViewportSize({ width: 560, height: 780 });
+  for (const [language, label] of [['zh-CN', '界面主题'], ['en', 'Interface theme']]) {
+    await page.evaluate(lang => RelatumI18n.setLanguage(lang), language);
+    await dialog.locator('[data-settings-search]').fill(label);
+    await dialog.locator('.relatum-settings-result').filter({ hasText: label }).click();
+    assert(await choice.evaluate(node => document.activeElement === node));
+    await page.keyboard.press('ArrowDown');
+    assert(await popup.evaluate(node => { const { left, right, top, bottom } = node.getBoundingClientRect(); return left >= 0 && right <= innerWidth && top >= 0 && bottom <= innerHeight; }));
+    await page.keyboard.press('Home'); await page.keyboard.press('Enter');
+    assert.equal(await select.inputValue(), 'default');
+    await choose('Apple');
+  }
+  await toggle.click();
+  for (const action of ['reset-category', 'reset-all']) {
+    await dialog.locator(`[data-settings-action="${action}"]`).click();
+    await dialog.locator('[data-settings-action="accept-reset"]').click();
+    await page.waitForFunction(themeKey => localStorage.getItem(themeKey) === null && document.body.dataset.startBackground === 'simple', appearanceKey);
+    assert.equal(await page.evaluate(() => document.body.dataset.startTheme), 'dark');
+    assert.equal(await page.evaluate(() => RelatumI18n.language), 'en');
+    if (!library) assert.equal(await page.evaluate(() => RelatumNoteTheme.read()), 'claude');
+    if (action === 'reset-category') {
+      await choose('Apple'); await dialog.locator('[data-background-style="scenic"]').click();
+    }
+  }
+}
 async function run(browser, mode) {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-global-data-'));
   fs.mkdirSync(path.join(data, 'notes')); fs.writeFileSync(path.join(data, 'notes/Main.md'), '# Main\n\nOriginal text\n');
-  const enabled = { notes: ['notes'], 'system-notes': ['notes'], 'system-late': ['notes'], research: ['research'], career: ['career'], library: ['canvas', 'canvas.library'], mixed: ['notes', 'career'] }[mode];
+  const enabled = { notes: ['notes'], 'system-notes': ['notes'], 'system-late': ['notes'], research: ['research'], career: ['career'], library: ['canvas', 'canvas.library'], 'appearance-library': ['canvas', 'canvas.library', 'canvas.editor'], mixed: ['notes', 'career'] }[mode];
   const choices = Object.fromEntries(catalog.features.map(item => [item.id, enabled ? enabled.includes(item.id) : mode === 'cold' || item.id !== 'runtime.preload']));
   const args = ['app.py', '--no-browser', '--port', String(await freePort()), '--launch-profile', JSON.stringify({ version: 1, features: choices })];
   const url = 'http://127.0.0.1:' + args[3];
@@ -29,6 +175,9 @@ async function run(browser, mode) {
   const check = async (id, checked) => { await input(id).setChecked(checked); await page.waitForFunction(id => !document.querySelector('#global-settings-dialog [data-sidebar-visible="' + id + '"]').disabled, id); };
   try {
     for (let i = 0; i < 150; i++) { try { if ((await fetch(url + '/api/runtime')).ok) break; } catch (_) {} await pause(100); }
+    if (mode.startsWith('appearance')) {
+      assert((await fetch(url + '/api/new', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).ok);
+    }
     await context.addInitScript(() => { localStorage.setItem('canvas:noteFocusMode:v1', '0'); localStorage.setItem('canvas:noteActivePath:v1', 'Main.md'); localStorage.setItem('canvas:noteOpenTabs:v1', '["Main.md"]'); });
     if (mode.startsWith('system')) await context.addInitScript(({ late }) => {
       window.__launcherSupported = true; window.__launcherCalls = []; window.__sizeCalls = [];
@@ -68,6 +217,13 @@ async function run(browser, mode) {
       requestAnimationFrame(firstFrame);
     }, { ids, key });
     await page.goto(url + (mode.startsWith('system') ? '/?desktop=1' : '')); await page.waitForFunction(() => window.RelatumStartWorkspace && window.RelatumGlobalSettings);
+    if (mode.startsWith('appearance')) {
+      await checkAppearance(page, context, mode === 'appearance-library');
+      assert.deepEqual(errors, []);
+      if (!choices.notes) assert(!requests.some(url => /note-workspace|note-theme|review\.js/.test(url)), 'appearance is available without notes or review');
+      console.log(mode + ': palettes, persistence and shared chrome passed');
+      return;
+    }
     if (mode.startsWith('system')) {
       await page.waitForFunction(() => !document.querySelector('[data-role="global-launcher-skip-selection"]').disabled);
       await page.evaluate(() => RelatumGlobalSettings.open({ category: 'system' }));
@@ -335,6 +491,6 @@ async function run(browser, mode) {
 }
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
-  try { for (const mode of process.argv.length > 2 ? process.argv.slice(2) : ['full', 'notes', 'research', 'career', 'library', 'mixed', 'cold']) await run(browser, mode); }
+  try { for (const mode of process.argv.length > 2 ? process.argv.slice(2) : ['full', 'notes', 'research', 'career', 'library', 'mixed', 'cold', 'appearance', 'appearance-library']) await run(browser, mode); }
   finally { await browser.close(); console.log('Artifacts: ' + artifacts); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
