@@ -157,33 +157,81 @@
       quizzes = options.attachQuiz(host, { isolated: true, notePath: 'guide:quiz', isCurrent: () => current() && topic === 'quiz', whenSettled: options.whenSettled });
     }
     function cards() {
-      heading('单张卡片', 'Single card');
-      example('```cards\n' + text('### [layers] [!blue] 第三章：把零散知识串起来\n@style: soft\n@span: full\n@subtitle: 课程笔记 · 章节总结\n@badge: 待复习\n@value: 3 个概念，连成一条思路\n@footer: 来源：课程讲义 · 第三章\n\n整理本章的核心概念，说明它们之间的关系，并记录一个容易混淆的问题。', '### [layers] [!blue] Chapter 3: Connect the ideas\n@style: soft\n@span: full\n@subtitle: Course notes · Chapter summary\n@badge: To review\n@value: 3 concepts, one connected idea\n@footer: Source: Course handout · Chapter 3\n\nSummarize the key concepts in this chapter, explain how they relate, and note one common point of confusion.') + '\n```');
-      const shortcutHelp = document.createElement('p'); shortcutHelp.textContent = text('默认按 Ctrl/Cmd+F 插入空 Cards 模板，光标停在 ### 后；有选区时保留为卡片正文。在“笔记设置 → 快捷键”可修改绑定。Ctrl/Cmd+Shift+F 仍用于笔记全文搜索。', 'By default, Ctrl/Cmd+F inserts an empty Cards template with the caret after ###. Selected text becomes the card body. Change the binding in Note Settings → Shortcuts. Ctrl/Cmd+Shift+F still opens note search.'); host.append(shortcutHelp);
-      const intro = document.createElement('p'); intro.textContent = text('在闭合的 cards 围栏中用 # 到 ###### 写标题，井号后可以不加空格；下一个标题自动开始新卡片，--- 可省略。用 --- 分卡时，标题也可以不写井号。单张卡片自动通栏，多张默认宽处两列、窄处一列。单击选中后可点“样式”：只有一张时自动选择这张卡片，多张时默认整组，均可通过“作用于”切换。双击或 Enter 编辑源码，Esc 收起。', 'Inside a closed cards fence, use one to six # characters for a title; the following space is optional. Each heading starts a new card, so --- separators are optional. With explicit --- separators, titles need no #. A single card fills the width; multiple cards use two columns when space allows. Click to select and open Style: a single card is selected automatically, while multiple cards default to the entire group. Use the Apply to dropdown to switch targets. Double-click or Enter edits the source; Esc closes it.'); host.append(intro);
-      heading('概念卡片', 'Concept cards');
-      example('```cards\n' + text('### [book] 整理学习笔记\n用自己的话概括**核心概念**，记录疑问与实例。\n\n---\n\n### [target] 推进工作任务\n明确**下一步行动**，记录截止时间与预期成果。', '### [book] Organize study notes\nSummarize **key concepts** in your own words, and record questions and examples.\n\n---\n\n### [target] Move work forward\nDefine the **next action**, deadline and expected outcome.') + '\n```');
-      heading('卡片染色', 'Card colors');
-      const colorHelp = document.createElement('p'); colorHelp.textContent = text('标题前加 [!颜色名] 和可选的 [图标名]。例如 ##[book][!Purple]整理笔记：连写、大小写与多余空格都可以，图标与颜色顺序可交换。各最多识别一个，遇到未知或重复标记后，其余内容作为标题；反斜杠可转义。颜色沿用以下 37 色，自动适配深浅模式。', 'Add [!color-name] and an optional [icon-name] before the title. For example, ##[book][!Purple]Study notes works: adjacent tokens, mixed case and extra spaces are accepted in either order. Each is recognized once; unknown or repeated tokens start literal title text. Escape tokens with a backslash. These 37 colors adapt to light and dark mode.'); host.append(colorHelp);
-      example('```cards\n' + text('### [book] [!purple] 整理学习笔记\n概括**核心概念**，记录疑问与实例。\n\n---\n\n### [!blue] [target] 推进工作任务\n明确下一步行动和预期成果。\n\n---\n\n### [check] [!green] 检查完成情况\n记录已经完成的事项。\n\n---\n\n### [!rose] 回顾与反思\n没有图标也可以单独染色。', '### [book] [!purple] Organize study notes\nSummarize **key concepts**, questions and examples.\n\n---\n\n### [!blue] [target] Move work forward\nDefine the next action and expected outcome.\n\n---\n\n### [check] [!green] Check progress\nRecord completed tasks.\n\n---\n\n### [!rose] Review and reflect\nAdd a color with or without an icon.') + '\n```');
-      const colorNames = document.createElement('p'); colorNames.textContent = window.MarkdownMini.noteBlockCatalog.colors.map(color => color.name).join(' · '); host.append(colorNames);
-      heading('简洁信息卡', 'Simple information card');
-      example('```cards\n@style: outline\n\n' + text('## 整理学习笔记\n@subtitle: 第三章 · 知识摘要\n@badge: 待复习\n@value: 3 个核心概念\n@footer: 来源：[课程资料](https://example.com)\n\n用自己的话概括**核心概念**，记录疑问与实例。', '## Organize study notes\n@subtitle: Chapter 3 · Summary\n@badge: To review\n@value: 3 key concepts\n@footer: Source: [Course material](https://example.com)\n\nSummarize **key concepts** in your own words, and record questions and examples.') + '\n```');
-      heading('布局与样式', 'Layout and style');
-      const layoutHelp = document.createElement('p'); layoutHelp.textContent = text('首张标题前的 @columns、@style、@density 设置整组；标题后、正文前可写 @style、@span: full 及上例的信息字段，正文开始后的 @ 行按普通文字显示。支持英文冒号、中文冒号或空格分隔。未知/无效选项保留原文并提示，单卡出错不影响其他卡片。', 'Before the first title, @columns, @style and @density configure the group. After a title and before body text, use @style, @span: full and the information fields above. Once body text starts, @ lines are literal text. Separate names and values with a colon, a full-width colon or spaces. Unknown or invalid options remain visible with a hint; a bad card does not prevent other cards from rendering.'); host.append(layoutHelp);
-      const optionsHelp = document.createElement('p'); optionsHelp.textContent = text('columns：auto / 1 / 2 / 3，表示每行最多排列的卡片数，窄处自动减少；引导栏较窄，复制到正文中可查看三列效果。style：soft（柔和彩底）/ outline（简洁描边）/ stripe（侧边色条）/ band（顶部色带）；density：comfortable（舒展）/ compact（紧凑）。样式工具可选择整组或某张卡片，点击“应用”后生效，一次撤销即可恢复；取消不会修改正文。', 'columns: auto / 1 / 2 / 3 sets the maximum number of cards per row; narrow layouts use fewer columns. Copy this example into the note body to see three columns, since the guide sidebar is narrow. style: soft / outline / stripe / band; density: comfortable / compact. Style tools can target the group or an individual card. Click Apply to save changes in one undo step; Cancel leaves the source unchanged.'); host.append(optionsHelp);
-      example('```cards\n@columns: 3\n@style: stripe\n@density: compact\n\n' + text('# 理解\n用自己的话解释概念。\n\n# 练习\n用实例检验理解。\n\n# 回顾\n记录最重要的收获。\n\n# 总结\n@span: full\n把三个步骤串成自己的学习方法。', '# Understand\nExplain a concept in your own words.\n\n# Practice\nTest your understanding with examples.\n\n# Reflect\nRecord the most important lesson.\n\n# Summarize\n@span: full\nCombine the three steps into your own learning method.') + '\n```');
-      const lineHelp = document.createElement('p');
-      lineHelp.textContent = text('正文行首可连写命令：\\B 加粗，\\b 到 \\bbb 提高对比度，\\red 等颜色名上色，\\# 到 \\### 放大字号。空格或无法识别的内容结束命令。\\check 和 \\!check 表示已完成与未完成，收起卡片后可单击修改。\\bar 统计本卡任务，\\bar1:6 显示固定进度。',
-        'Combine commands at the start of a body line: \\B bolds, \\b through \\bbb increase contrast, color names like \\red add color, and \\# through \\### increase the size. A space or unrecognized text ends the commands. \\check and \\!check show completed and incomplete tasks. Click a checkbox in a collapsed card to change it. \\bar counts this card’s tasks, and \\bar1:6 shows fixed progress.');
-      heading('逐行样式与任务进度', 'Line styles and task progress'); host.append(lineHelp);
-      example('```cards\n' + text('### 谐振复习\n\\B\\bbb\\red\\## 本周重点\n\\check 理解串联谐振\n\\!check 完成并联谐振练习\n\\bar 复习进度\n\\bar1:6 全部课程',
-        '### Resonance review\n\\B\\bbb\\red\\## This week’s focus\n\\check Understand series resonance\n\\!check Complete parallel resonance exercises\n\\bar Review progress\n\\bar1:6 Whole course') + '\n```');
-      heading('列表与公式', 'Lists and math');
-      example('```cards\n' + text('### 本周计划\n- 阅读并整理一篇资料\n- 完成一项重要任务\n- 留出时间回顾与复盘\n\n完成进度：$3/5=60\\%$。\n\n[参考资料](https://example.com)', '### Weekly plan\n- Read and summarize one resource\n- Complete one important task\n- Set aside time to review and reflect\n\nProgress: $3/5=60\\%$.\n\n[Reference](https://example.com)') + '\n```');
-      heading('可选图标', 'Optional icons');
-      const names = document.createElement('p'); names.textContent = window.RelatumNoteCards.icons.join(' · '); host.append(names);
-      const detail = document.createElement('p'); detail.textContent = text('标题前写 [图标名]，省略时不占位；未知名称显示为标题文字。支持段落、列表、强调、行内代码、普通链接和行内公式；不支持图片、表格、块公式或嵌套卡片。', 'Add [icon-name] before a title, or omit it. Unknown names remain title text. Supports paragraphs, lists, emphasis, inline code, regular links and inline math; images, tables, display math and nested cards are not supported.'); host.append(detail);
+      const reference = document.createElement('div');
+      reference.className = 'note-guide-cards-reference';
+      function rules(zh, en, rows) {
+        const title = document.createElement('h3');
+        title.textContent = text(zh, en);
+        const list = document.createElement('ul');
+        rows.forEach(([zhRule, enRule]) => {
+          const item = document.createElement('li');
+          item.innerHTML = window.MarkdownMini.renderLabelResult(text(zhRule, enRule)).html;
+          list.append(item);
+        });
+        reference.append(title, list);
+      }
+      rules('开始使用', 'Getting started', [
+        ['默认按 `Ctrl/Cmd+F` 插入模板，选中的文字会带入正文。也可右键选「插入 → Cards」。快捷键可在笔记设置中修改。',
+          'Press `Ctrl/Cmd+F` to insert a template and use selected text as the body. Or right-click and choose Insert → Cards. Change the shortcut in Note Settings.'],
+        ['首行写三个反引号和 `cards`，末行只写三个反引号。每个 `# 标题` 开始一张卡，可用 1–6 个井号，后面可省空格。用 `---` 分卡时可省略井号。',
+          'Start with three backticks followed by `cards`, and end with three backticks on their own line. Each `# Title` starts a card. Use one to six hashes with an optional space, or divide cards with `---` and skip the hashes.'],
+        ['单击选中后点「样式」，再选整组或单张卡片。双击或按 `Enter` 改源码，按 `Esc` 收起。',
+          'Select the cards and click Style to change the group or one card. Double-click or press `Enter` to edit the source. Press `Esc` to close it.'],
+        ['正文可用段落、列表、强调、链接、行内代码和行内公式。图片、表格和块公式可以写在卡片外面。',
+          'Use paragraphs, lists, emphasis, links, inline code and inline math in the body. Put images, tables and display math outside the cards.'],
+      ]);
+      rules('图标、字段和布局', 'Icons, fields and layout', [
+        ['`# [book][!blue] 标题` 加一个图标和一种底色。两个标记都可省略，名字不区分大小写。',
+          '`# [book][!blue] Title` adds an icon and a card tint. Both are optional and their names are case-insensitive.'],
+        ['**整组**设置写在首个标题前，例如 `@columns: 3`。列数可用 `auto` 或 `1`–`3`，窄处自动减列。`@density` 选 `comfortable`（舒展）或 `compact`（紧凑）。',
+          '**Group** settings go before the first title, as in `@columns: 3`. Use `auto` or `1`–`3` columns. Narrow spaces fit fewer cards. `@density` takes `comfortable` or `compact`.'],
+        ['**单卡**写在标题后、正文前。`@span: full` 让这张卡通栏，只有一张卡时自动通栏。`@subtitle`、`@badge`、`@value`、`@footer` 分别添加副标题、标签、重点和来源。',
+          '**Card** settings go after the title and before the body. `@span: full` spans the row. A lone card spans it automatically. `@subtitle`, `@badge`, `@value` and `@footer` add a subtitle, badge, key point and source.'],
+        ['`@style` 可用于整组或单卡。`soft` 柔和彩底，`outline` 描边，`stripe` 侧边色条，`band` 顶部色带。',
+          'Use `@style` on the group or one card. `soft` uses a tinted background, `outline` a border, `stripe` a side stripe and `band` a top stripe.'],
+      ]);
+      rules('文字样式和任务', 'Text styles and tasks', [
+        ['样式写在正文行首，或标题井号和方括号标记之后。命令可以连写，文字前留空格，例如 `\\red\\B 重点`。用双反斜杠显示字面命令。',
+          'Put styles at the start of a body line or after a title’s hashes and bracket markers. Join commands and leave a space before the text, as in `\\red\\B Key point`. Use two backslashes for a literal command.'],
+        ['`\\B` 加粗，`\\b` 到 `\\bbb` 提高对比度，`\\red` 等颜色名给文字上色。',
+          '`\\B` makes text bold, `\\b` through `\\bbb` increase contrast, and names like `\\red` color the text.'],
+        ['`\\#` 到 `\\######` 放大字号。井号可累计到六级，旧笔记里写了四个及以上字号井号的文字会变大。',
+          '`\\#` through `\\######` increase the size. Hashes add up to six levels. Existing size commands with four or more hashes now display larger text.'],
+        ['`\\center` 居中，`\\right` 右对齐，`\\num` 让数字等宽。正文独占一行写 `\\divider` 加分隔线。',
+          '`\\center` centers text, `\\right` aligns it right, and `\\num` uses equal-width digits. Write `\\divider` on its own body line for a divider.'],
+        ['正文用 `\\check` 标记已完成，`\\!check` 标记待完成，收起源码后可点选。`\\bar` 统计本卡任务，`\\bar1:6` 显示固定的 1/6。',
+          'In the body, `\\check` marks a task done and `\\!check` marks it to do. Close the source to click the checkboxes. `\\bar` counts this card’s tasks, and `\\bar1:6` shows a fixed 1/6.'],
+      ]);
+      const names = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = text('查看可用图标和颜色', 'Available icons and colors');
+      const iconNames = document.createElement('p');
+      iconNames.textContent = text('图标　', 'Icons · ') + window.RelatumNoteCards.icons.join(' · ');
+      const colorNames = document.createElement('p');
+      colorNames.textContent = text('颜色　', 'Colors · ') + window.MarkdownMini.noteBlockCatalog.colors.map(color => color.name).join(' · ');
+      names.append(summary, iconNames, colorNames);
+      reference.append(names);
+      host.append(reference);
+
+      heading('可复制示例', 'Copyable examples');
+      const samples = [
+        ['阅读摘要', 'Reading summary',
+          '### [book][!blue] 第一章阅读摘要\n@style: soft\n@subtitle: 读书笔记\n@badge: 待复习\n@value: 用一句话记下本章主旨\n@footer: 来源：阅读材料第一章\n\n- 已读 $12/20$ 页。\n- 写下一个**关键观点**和一个还想弄懂的问题。',
+          '### [book][!blue] Chapter 1 reading summary\n@style: soft\n@subtitle: Reading notes\n@badge: To review\n@value: Summarize the chapter in one sentence\n@footer: Source: Chapter 1\n\n- Read $12/20$ pages so far.\n- Write down one **main idea** and one open question.'],
+        ['一周学习计划', 'Weekly study plan',
+          '@columns: 3\n@style: stripe\n@density: compact\n\n# [!blue] 阅读\n读完这一节，记下三个关键词。\n\n# [!green] 练习\n做两道练习，标出拿不准的地方。\n\n# [!rose] 回顾\n合上笔记，用自己的话讲一遍。\n\n# 本周总结\n@span: full\n写下一个收获和下周想继续学的内容。',
+          '@columns: 3\n@style: stripe\n@density: compact\n\n# [!blue] Read\nFinish the section and record three keywords.\n\n# [!green] Practice\nTry two exercises and mark any uncertain answers.\n\n# [!rose] Review\nClose your notes and explain what you learned.\n\n# Weekly reflection\n@span: full\nWrite down one takeaway and what to study next.'],
+        ['复习清单', 'Review checklist',
+          '# [check]\\blue\\B 本周复习\n\\center\\num\\######\\B 50%\n\\divider\n\\right 本周目标\n\\check 回顾课堂笔记\n\\!check 整理错题和疑问\n\\bar 清单进度\n\\bar1:6 章节进度',
+          '# [check]\\blue\\B This week’s review\n\\center\\num\\######\\B 50%\n\\divider\n\\right This week’s goals\n\\check Revisit class notes\n\\!check Collect mistakes and open questions\n\\bar Checklist progress\n\\bar1:6 Chapters reviewed'],
+      ];
+      samples.forEach(([zh, en, zhSource, enSource]) => {
+        const title = document.createElement('h4');
+        title.className = 'note-guide-cards-example-title';
+        title.textContent = text(zh, en);
+        host.append(title);
+        example('```cards\n' + text(zhSource, enSource) + '\n```');
+      });
     }
     function suspend() { active = false; sequence++; clearTimeout(feedbackTimer); diagrams?.destroy(); diagrams = null; quizzes?.destroy(); quizzes = null; cardsControl?.destroy(); cardsControl = null; }
     function media() {

@@ -6,8 +6,8 @@ const repo = path.resolve(__dirname, '..'), output = fs.mkdtempSync(path.join(os
 const body = '### [zap] [!purple] 提高供电效率\n减少**转换损耗**，优化电力分配。\n\n---\n\n### [!blue] [shield] 提升可靠性\n- 降低风险\n- 持续运行\n\n---\n\n### 学习资料\n[参考资料](https://example.com) 与 `code`';
 const fence = '```cards\n' + body + '\n```', source = 'before\n\n' + fence + '\n\nafter';
 const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><base href="/assets/">
-<link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="note-theme.css"><style>body{margin:0}.note-document-pane{height:100vh;display:flex;flex-direction:column}#reading,#guide{height:100vh;overflow:auto;padding:32px;box-sizing:border-box}[hidden]{display:none!important}</style></head>
-<body class="start-page" data-start-theme="light" data-start-workspace="notes"><main class="note-workspace note-document-pane"><div class="note-document-body"><div id="editor" class="note-live-editor-host"></div></div><div id="reading" hidden></div><div id="guide" hidden></div></main>
+<link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="note-theme.css"><link rel="stylesheet" href="settings-dialog.css"><style>body{margin:0}.note-document-pane{height:100vh;display:flex;flex-direction:column}#reading,#guide{height:100vh;overflow:auto;padding:32px;box-sizing:border-box}#guide{width:360px;padding-inline:16px}[hidden]{display:none!important}</style></head>
+<body class="start-page" data-start-theme="light" data-start-workspace="notes"><main class="note-workspace note-document-pane"><div class="note-document-body"><div id="editor" class="note-live-editor-host"></div></div><div id="reading" hidden></div><div id="guide" class="note-guide" hidden></div></main>
 <script>window.RelatumFeatureRuntime={enabled:key=>key!=='notes.mermaid'&&key!=='notes.canvas'&&key!=='notes.quiz'};</script>
 ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.js','note-table-editor.js','note-cards.js','note-live-editor.js','note-guide.js'].map(name => '<script src="' + name + '"></script>').join('')}
 <script>window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{value:'',notePath:'cards.md',onOpenExternal:target=>window.opened=target});</script></body></html>`;
@@ -144,13 +144,15 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
     await reset(source); await openStyle(); await page.evaluate(()=>editor.setDocument({value:'new note',notePath:'new.md'})); await styleDialog().waitFor({state:'detached'}); assert.equal(await value(),'new note');
     await reset(source); await openStyle(); await page.evaluate(()=>{document.documentElement.dataset.desktopMinimized='1';window.dispatchEvent(new Event('canvasdesktop:visibility'));}); await styleDialog().waitFor({state:'detached'});
     await page.evaluate(()=>{document.documentElement.dataset.desktopMinimized='0';window.dispatchEvent(new Event('canvasdesktop:visibility'));});
-    const nested = '> [!note]\n>\n> ```cards\n> ##[book][!Purple]卡片\n> 正文\n> ```';
-    await reset(nested); await openStyle(); await choose('target','group'); await choose('style','outline'); await choose('target','0'); await styleDialog().locator('[data-cards-field="badge"]').fill('重点');
+    const nested = '> [!note]\n>\n> ```cards\n> ##[book][!Purple]\\red\\right\\B 卡片\n> 正文\n> ```';
+    await reset(nested); await openStyle(); await choose('target','group'); await choose('style','outline'); await choose('target','0'); await choose('color','blue'); await styleDialog().locator('[data-cards-field="badge"]').fill('重点');
     await styleDialog().getByRole('button',{name:'应用',exact:true}).click(); await styleDialog().waitFor({state:'detached'});
-    assert((await value()).includes('> @style: outline\n> ##[book][!Purple]卡片\n> @badge: 重点\n> 正文'),'style edits preserve quote prefixes');
+    assert((await value()).includes('> @style: outline\n> ##[book][!blue]\\red\\right\\B 卡片\n> @badge: 重点\n> 正文'),'style edits preserve quote prefixes and title commands');
     await page.keyboard.press('Control+z'); assert.equal(await value(),nested);
-    const taskSource = ['before', '', '> [!note]', '>', '> ```cards', '> # Tasks', '> \\B\\bbb\\red\\## 逐行加大提高对比度',
-      '>\\!check\\!check 第一项任务需要在窄窗折行显示', '> \\check 已完成', '> \\bar Summary', '> \\bar1:6 Fixed',
+    const longTitle = 'LongUnbrokenCourseTitle123456';
+    const taskSource = ['before', '', '> [!note]', '>', '> ```cards', '> #\\red\\right\\B\\##### ' + longTitle, '> \\B\\bbb\\red\\#### 逐行加大提高对比度',
+      '> \\center\\num\\###### 67%', '> \\divider', '>\\right\\!check\\!check 第一项任务需要在窄窗折行显示',
+      '> \\check 已完成', '> \\center\\bar Summary', '> \\bar1:6 Fixed',
       '> # Other', '> \\bar Other progress', '> ```', '', 'after'].join('\n');
     const toggledTask = taskSource.replace('\\!check\\!check', '\\check\\check');
     const box = () => group().locator('.note-card-task').first();
@@ -184,6 +186,7 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
     await reset('another note');
     await stale.evaluate(node => node.click());
     assert.equal(await value(), 'another note');
+    const titleColors = [];
     for (const theme of ['light', 'dark']) {
       await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
       await reset(toggledTask);
@@ -191,12 +194,37 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
       assert(await box().isChecked());
       const rows = await group().evaluate(root => {
         const task = root.querySelector('.is-check > span'), fixed = root.querySelectorAll('.note-card-progress-track')[1];
+        const [title, plainTitle] = root.querySelectorAll('.note-card-title');
+        const large = root.querySelector('.note-card-line[data-size="4"]');
+        const number = root.querySelector('.note-card-line[data-size="6"]');
+        const titleStyle = getComputedStyle(title), numberStyle = getComputedStyle(number);
+        const separator = root.querySelector('hr.note-card-divider');
         return { wrapped: task.offsetHeight > parseFloat(getComputedStyle(task).lineHeight),
-          fraction: fixed.firstElementChild.getBoundingClientRect().width / fixed.getBoundingClientRect().width };
+          fraction: fixed.firstElementChild.getBoundingClientRect().width / fixed.getBoundingClientRect().width,
+          title: title.textContent, titleFits: title.scrollWidth === title.clientWidth && title.offsetHeight > parseFloat(titleStyle.lineHeight),
+          titleColor: titleStyle.color, otherTitleColor: getComputedStyle(plainTitle).color,
+          fontWeight: titleStyle.fontWeight, titleAlign: titleStyle.textAlign,
+          titleScale: parseFloat(titleStyle.fontSize) / parseFloat(getComputedStyle(plainTitle).fontSize),
+          numberScale: parseFloat(numberStyle.fontSize) / parseFloat(getComputedStyle(number.parentElement).fontSize),
+          mediumScale: parseFloat(getComputedStyle(large).fontSize) / parseFloat(getComputedStyle(large.parentElement).fontSize),
+          numberAlign: numberStyle.textAlign, digits: numberStyle.fontVariantNumeric,
+          taskAlign: getComputedStyle(task).textAlign,
+          progressAlign: getComputedStyle(root.querySelector('.note-card-progress-label > span')).textAlign,
+          divider: separator.getBoundingClientRect().height };
       });
       assert(rows.wrapped);
       assert(Math.abs(rows.fraction - 1/6) < .002);
+      assert.equal(rows.title, longTitle);
+      assert(rows.titleFits);
+      assert.deepEqual([rows.fontWeight, rows.titleAlign, rows.numberAlign, rows.digits, rows.taskAlign, rows.progressAlign, rows.divider],
+        ['700', 'right', 'center', 'tabular-nums', 'right', 'center', 1]);
+      for (const [actual, expected] of [[rows.mediumScale, 1.45], [rows.titleScale, 1.6], [rows.numberScale, 1.8]]) {
+        assert(Math.abs(actual - expected) < .001);
+      }
+      assert.notEqual(rows.titleColor, rows.otherTitleColor);
+      titleColors.push(rows.titleColor);
     }
+    assert.notEqual(titleColors[0], titleColors[1], 'title ink adapts to the theme');
     await page.evaluate(() => {
       document.body.dataset.startTheme = 'light';
       const host = document.getElementById('reading'); host.hidden = false;
@@ -204,6 +232,8 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
     });
     assert(await page.locator('#reading .note-card-task').first().isDisabled());
     assert(await page.locator('#reading .note-card-task').first().isChecked());
+    assert.equal(await page.locator('#reading .note-card-title[data-size="5"]').textContent(), longTitle);
+    assert.equal(await page.locator('#reading hr.note-card-divider').count(), 1);
     await page.evaluate(() => RelatumNoteLiveEditor.releaseReadingDocument(document.getElementById('reading')));
     await reset('before\n\nafter'); await page.locator('.cm-line').filter({hasText:/^after$/}).click();
     await page.evaluate(()=>editor.executeCommand('insert:cards',editor.commandContext())); await preview().waitFor();
@@ -241,34 +271,66 @@ ${['markdown.js','markdown-table.js','vendor/codemirror/relatum-codemirror.min.j
     await checkTints('#reading');
     await page.evaluate(()=>{RelatumNoteLiveEditor.releaseReadingDocument(document.getElementById('reading'));document.getElementById('reading').hidden=true;const host=document.getElementById('guide');host.hidden=false;window.guideLanguage='zh';window.cardsGuide=RelatumNoteGuide.create({host,language:()=>window.guideLanguage,isCurrent:()=>!host.hidden,renderFence:RelatumNoteLiveEditor.renderFence,attachCards:RelatumNoteLiveEditor.attachCards});cardsGuide.show('cards');});
     await page.locator('#guide .note-cards').first().waitFor(); await page.locator('#guide mjx-container').first().waitFor();
-    await page.locator('#guide .note-guide-copy').first().click(); assert((await page.evaluate(()=>navigator.clipboard.readText())).startsWith('```cards'));
     for (const language of ['zh', 'en']) {
-      await page.evaluate(language => { window.guideLanguage = language; cardsGuide.show('cards'); }, language);
-      const singleExample = page.locator('#guide .note-guide-example').first();
-      assert.equal(await singleExample.evaluate(node=>node.previousElementSibling.textContent),language==='zh'?'单张卡片':'Single card');
-      assert.equal(await singleExample.locator('.note-card').count(),1,'the guide starts with a complete single-card example');
+      const guide = page.locator('#guide');
+      await page.evaluate(language => { window.guideLanguage = language; cardsGuide.show('cards'); document.getElementById('guide').scrollTop = 0; }, language);
+      const reference = guide.locator('.note-guide-cards-reference');
+      assert.deepEqual(await reference.locator('h3').allTextContents(), language === 'zh'
+        ? ['开始使用', '图标、字段和布局', '文字样式和任务']
+        : ['Getting started', 'Icons, fields and layout', 'Text styles and tasks']);
+      const referenceTokens = await reference.locator('code').allTextContents();
+      for (const token of ['Ctrl/Cmd+F', 'cards', '---', '@columns: 3', '@span: full', '@style', '@footer',
+        '\\B', '\\b', '\\######', '\\center', '\\right', '\\num', '\\divider', '\\check', '\\!check', '\\bar', '\\bar1:6']) {
+        assert(referenceTokens.includes(token), 'the reference includes ' + token);
+      }
+      assert.equal(await reference.evaluate(node => node.nextElementSibling.textContent), language === 'zh' ? '可复制示例' : 'Copyable examples');
+      assert.equal(await reference.locator('.note-guide-copy').count(), 0);
+      assert(await guide.evaluate(node => node.scrollWidth === node.clientWidth), 'the guide fits a narrow sidebar');
+      const catalog = reference.locator('details');
+      assert.equal(await catalog.getAttribute('open'), null);
+      await catalog.locator('summary').click();
+      assert(await catalog.locator('p').first().isVisible());
+      const [icons, colors] = await catalog.locator('p').allTextContents();
+      assert.match(icons, /\bbook\b/); assert.match(colors, /\bred\b/);
+      await catalog.locator('summary').click();
+
+      assert.deepEqual(await guide.locator('.note-guide-cards-example-title').allTextContents(), language === 'zh'
+        ? ['阅读摘要', '一周学习计划', '复习清单'] : ['Reading summary', 'Weekly study plan', 'Review checklist']);
+      const examples = guide.locator('.note-guide-example');
+      assert.equal(await examples.count(), 3);
+      assert(await reference.evaluate(node => [...node.parentElement.querySelectorAll('.note-guide-example')]
+        .every(example => node.compareDocumentPosition(example) & Node.DOCUMENT_POSITION_FOLLOWING)));
+      async function copyExample(example) {
+        await example.locator('.note-guide-copy').click();
+        const copied = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, '\n');
+        assert.equal(copied, await example.locator(':scope > pre').textContent());
+        assert(copied.startsWith('```cards\n') && copied.endsWith('\n```'));
+        return copied;
+      }
+      const singleExample = examples.nth(0);
+      assert.equal(await singleExample.locator('.note-card').count(),1);
       assert.equal(await singleExample.locator('.note-card').getAttribute('data-note-card-color'),'blue');
       assert.equal(await singleExample.locator('.note-card').getAttribute('data-style'),'soft');
-      assert.equal(await singleExample.locator('.note-card').getAttribute('data-span'),'full');
+      assert.equal(await singleExample.locator('.note-cards').getAttribute('data-single'),'1');
       for(const selector of ['.note-card-icon','.note-card-subtitle','.note-card-badge','.note-card-value','.note-card-body','.note-card-footer']) assert(await singleExample.locator(selector).isVisible());
-      await singleExample.locator('.note-guide-copy').click();
-      const singleSource = await page.evaluate(()=>navigator.clipboard.readText());
-      for(const field of ['[layers] [!blue]','@style: soft','@span: full','@subtitle:','@badge:','@value:','@footer:']) assert(singleSource.includes(field),'the single-card copy includes '+field);
-      assert(singleSource.includes(language==='zh'?'第三章：把零散知识串起来':'Chapter 3: Connect the ideas'));
-      assert(await page.locator('#guide h3').filter({hasText:language === 'zh' ? '卡片染色' : 'Card colors'}).isVisible());
-      const colorExample = page.locator('#guide .note-guide-example').nth(2);
-      await colorExample.locator('.note-guide-copy').click();
-      const copied = await page.evaluate(() => navigator.clipboard.readText());
-      assert(copied.includes('[book] [!purple]')); assert(copied.includes('[!rose]'));
-      assert.equal(await colorExample.locator('[data-note-card-color]').count(), 4);
-      assert(await page.locator('#guide .note-card-value').first().isVisible());
-      const layoutExample = page.locator('#guide .note-guide-example').nth(4);
+      const singleSource = await copyExample(singleExample);
+      for(const field of ['[book][!blue]','@style: soft','@subtitle:','@badge:','@value:','@footer:']) assert(singleSource.includes(field),'the reading summary includes '+field);
+      assert(singleSource.includes(language === 'zh' ? '第一章阅读摘要' : 'Chapter 1 reading summary'));
+      const layoutExample = examples.nth(1);
       assert.equal(await layoutExample.locator('.note-card').count(),4);
+      assert.equal(await layoutExample.locator('[data-note-card-color]').count(), 3);
       assert.equal(await layoutExample.locator('.note-card:not([data-span="full"])').count(),3,'layout example has three ordinary cards before its full-width summary');
-      const taskExample = page.locator('#guide .note-guide-example').filter({ has: page.locator('.note-card-task') });
+      const layoutSource = await copyExample(layoutExample);
+      assert(layoutSource.includes('@columns: 3') && layoutSource.includes('@span: full'));
+      const taskExample = examples.nth(2);
       assert.equal(await taskExample.locator('.note-card-task').count(), 2);
-      await taskExample.locator('.note-guide-copy').click();
-      assert((await page.evaluate(() => navigator.clipboard.readText())).includes('\\bar1:6'));
+      assert.equal(await taskExample.locator('.note-card-title').textContent(), language === 'zh' ? '本周复习' : 'This week’s review');
+      assert.equal(await taskExample.locator('.note-card-line[data-size="6"]').textContent(), '50%');
+      assert.equal(await taskExample.locator('hr.note-card-divider').count(), 1);
+      const taskExampleSource = await copyExample(taskExample);
+      for (const syntax of ['[check]\\blue\\B', '\\center\\num\\######\\B 50%', '\\divider', '\\right', '\\bar1:6']) {
+        assert(taskExampleSource.includes(syntax));
+      }
     }
     await reset(source.replace('减少**转换损耗**','公式 $I=U/R$ 与**转换损耗**')); await group().locator('mjx-container').waitFor();
     await page.evaluate(()=>document.querySelector('.note-workspace').style.width='700px');await settle();await page.locator('.cm-line').filter({hasText:/^after$/}).click();assert.equal(await page.evaluate(()=>editor.view.state.doc.lineAt(editor.view.state.selection.main.head).text),'after');await page.evaluate(()=>document.querySelector('.note-workspace').style.width='');await settle();

@@ -28,7 +28,7 @@ const source = [
   '$$\\notARealMathCommand$$', '', fence + 'mermaid', 'flowchart LR', 'A[', fence, '',
   '![Tall|100x1500](研究笔记.assets/tall.svg)', '',
   fence + 'quiz', 'Quiz question', '- [x] Answer', '- [ ] Distractor', fence, '',
-  fence + 'cards', '# Course', '\\check Reviewed', '\\!check Practice', '\\bar Progress', '\\bar1:6 Whole course', fence, '',
+  fence + 'cards', '#\\red\\B Course', '\\center\\num\\###### 67%', '\\divider', '\\check Reviewed', '\\!check Practice', '\\bar Progress', '\\bar1:6 Whole course', fence, '',
   '[^a]: Footnote content', '', '## Tail marker', '', fence + 'database records', fence, '',
 ].join('\n');
 fs.writeFileSync(path.join(notes, note), source);
@@ -98,6 +98,13 @@ async function verifyPrintFrame(frame) {
       folded: article.querySelector('.md-callout-body').hidden,
       cardTasks: [...article.querySelectorAll('.note-card-task')].map(box => [box.checked, box.disabled]),
       cardProgress: [...article.querySelectorAll('.note-card-progress-track')].map(track => track.getAttribute('aria-valuetext')),
+      cardTitle: article.querySelector('.note-card-title')?.textContent,
+      cardTitleWeight: getComputedStyle(article.querySelector('.note-card-title')).fontWeight,
+      cardMetric: [...article.querySelectorAll('.note-card-line[data-size="6"]')].map(line => {
+        const style = getComputedStyle(line);
+        return [line.textContent, style.textAlign, style.fontVariantNumeric];
+      }),
+      cardDividers: article.querySelectorAll('hr.note-card-divider').length,
     };
   });
   assert.equal(contents.title, note.replace('.md', '.pdf'));
@@ -123,6 +130,8 @@ async function verifyPrintFrame(frame) {
   assert(!contents.folded);
   assert.deepEqual(contents.cardTasks, [[true, true], [false, true]]);
   assert.deepEqual(contents.cardProgress, ['1/2', '1/6']);
+  assert.deepEqual([contents.cardTitle, contents.cardTitleWeight, contents.cardDividers], ['Course', '700', 1]);
+  assert.deepEqual(contents.cardMetric, [['67%', 'center', 'tabular-nums']]);
   for (const text of ['Shared.canvas', 'Quiz question', 'Tail marker', 'Table row 65']) assert(contents.text.includes(text));
 }
 

@@ -29,10 +29,11 @@
     return match ? { key: match[1].toLowerCase(), value: match[2].trim() } : /^\s*@\S/.test(text) ? { key: '', value: '' } : null;
   }
   const lineCommand = /\\(bar-?\d+:-?\d+|#+|!?[a-zA-Z]+)/y;
-  function parseLine(text, number) {
-    if (text[0] !== '\\') return { text, number };
-    let end = 0, bold = false, depth = 0, size = 0, component = '', progress, checked, conflict = false;
-    const lineColors = new Set(), checks = [];
+  function parseCommands(text, titleOnly) {
+    if (text[0] !== '\\') return null;
+    let end = 0, bold = false, depth = 0, size = 0, tabular = false;
+    let component = '', progress, checked, conflict = false;
+    const lineColors = new Set(), alignments = new Set(), checks = [];
     while (true) {
       lineCommand.lastIndex = end;
       const match = lineCommand.exec(text);
@@ -40,8 +41,11 @@
       const token = match[1];
       if (token === 'B') bold = true;
       else if (/^b+$/.test(token)) depth = Math.min(3, depth + token.length);
-      else if (token[0] === '#') size = Math.min(3, size + token.length);
+      else if (token[0] === '#') size = Math.min(6, size + token.length);
       else if (colors.has(token)) lineColors.add(token);
+      else if (token === 'center' || token === 'right') alignments.add(token);
+      else if (token === 'num') tabular = true;
+      else if (titleOnly) break;
       else if (token === 'check' || token === '!check') {
         const next = token === 'check';
         conflict ||= !!component && (component !== 'check' || next !== checked);
@@ -62,10 +66,17 @@
       } else break;
       end = lineCommand.lastIndex;
     }
-    if (!end) return { text, number };
-    return { text: text.slice(end).replace(/^[ \t]+/, ''), number, styled: true, bold, depth, size,
-      color: lineColors.size === 1 ? lineColors.values().next().value : '',
-      component: conflict ? '' : component, progress, checked, checks };
+    if (!end) return null;
+    const style = { bold, depth, size, tabular, color: lineColors.size === 1 ? lineColors.values().next().value : '',
+      align: alignments.size === 1 ? alignments.values().next().value : '' };
+    return { end, style, component: conflict ? '' : component, progress, checked, checks };
+  }
+  function parseLine(text, number) {
+    if (/^\\divider[ \t]*$/.test(text)) return { text: '', number, styled: true, component: 'divider' };
+    const commands = parseCommands(text, false);
+    if (!commands) return { text, number };
+    const { end, style, ...component } = commands;
+    return { text: text.slice(end).replace(/^[ \t]+/, ''), number, styled: true, ...style, ...component };
   }
   function parse(value) {
     const source = String(value || '').replace(/\r\n?/g, '\n');
@@ -116,6 +127,13 @@
         card.markers[key] = { from: card.header.contentFrom + consumed, to: card.header.contentFrom + consumed + token[0].trimEnd().length };
         consumed += token[0].length; title = title.slice(token[0].length);
       }
+      const commands = match && parseCommands(title, true);
+      if (commands) {
+        const suffix = title.slice(commands.end);
+        title = suffix.trimStart();
+        consumed += commands.end + suffix.length - title.length;
+        card.titleStyle = commands.style;
+      }
       card.title = title.trim();
       card.header.titleFrom = card.header.contentFrom + consumed;
       if (!card.title) { raw('missing-title'); return; }
@@ -165,7 +183,7 @@
       } else if (range) edits.push({ ...range, insert: '@' + key + ': ' + next });
       else if (next) additions.push('@' + key + ': ' + next);
     }
-    if (!group) {
+    if (!group && !owner.titleStyle) {
       const literal = /^\[[ \t]*(![ \t]*)?([a-z-]+)[ \t]*\]/i.exec(owner.title);
       if (literal) {
         const key = literal[1] ? 'color' : 'icon', name = literal[2].toLowerCase(), next = Object.hasOwn(fields, key) ? String(fields[key] ?? '').trim() : owner[key];
@@ -204,6 +222,14 @@
     };
     const escape = window.MarkdownMini.escapeHtml;
     const english = documentLanguage() === 'en';
+    function styledAttributes(className, style) {
+      if (!style) return ' class="' + className + '"';
+      const color = colors.get(style.color);
+      return ' class="' + className + ' note-card-styled' + (style.bold ? ' is-bold' : '') + (style.tabular ? ' is-tabular' : '')
+        + '" data-size="' + style.size + '" data-depth="' + style.depth + '"'
+        + (style.align ? ' data-align="' + style.align + '"' : '')
+        + (color ? ' style="--note-card-line-color:' + color.base + '"' : '');
+    }
     function body(lines) {
       const blocks = []; let paragraph = [], list = [], ordered = false, start = 1;
       const flushParagraph = () => { if (paragraph.length) blocks.push('<p>' + inline(paragraph.join('\n')) + '</p>'); paragraph = []; };
@@ -213,10 +239,11 @@
       for (const [index, row] of lines.entries()) {
         if (row.styled) {
           flushParagraph(); flushList();
-          const lineColor = colors.get(row.color);
-          const style = lineColor ? ' style="--note-card-line-color:' + lineColor.base + '"' : '';
-          const classes = 'note-card-line' + (row.bold ? ' is-bold' : '') + (row.component ? ' is-' + row.component : '');
-          const attrs = ' class="' + classes + '" data-size="' + row.size + '" data-depth="' + row.depth + '"' + style;
+          if (row.component === 'divider') {
+            blocks.push('<hr class="note-card-divider">');
+            continue;
+          }
+          const attrs = styledAttributes('note-card-line' + (row.component ? ' is-' + row.component : ''), row);
           if (row.component === 'check') {
             const name = row.text.trim() || (english ? 'Task' : '任务');
             blocks.push('<div' + attrs + '><input class="note-card-task" type="checkbox" data-note-card-task="' + row.number
@@ -255,7 +282,7 @@
       const tint = color ? ' data-note-card-color="' + color.name + '" style="--note-card-bg-light:' + color.light + ';--note-card-bg-dark:' + color.dark + ';--note-card-accent:' + color.base + ';"' : '';
       return '<article class="note-card" data-card-index="' + segment.index + '" data-style="' + (card.style || model.settings.style) + '" data-span="' + card.span + '"' + tint + '>'
         + (card.icon ? '<svg class="note-card-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">' + icons[card.icon] + '</svg>' : '')
-        + '<div class="note-card-heading"><div class="note-card-title">' + inline(card.title) + '</div>' + (card.badge ? '<span class="note-card-badge">' + inline(card.badge) + '</span>' : '') + '</div>'
+        + '<div class="note-card-heading"><div' + styledAttributes('note-card-title', card.titleStyle) + '>' + inline(card.title) + '</div>' + (card.badge ? '<span class="note-card-badge">' + inline(card.badge) + '</span>' : '') + '</div>'
         + (card.subtitle ? '<div class="note-card-subtitle">' + inline(card.subtitle) + '</div>' : '')
         + (card.value ? '<div class="note-card-value">' + inline(card.value) + '</div>' : '')
         + '<div class="note-card-body">' + body(card.lines) + '</div>'

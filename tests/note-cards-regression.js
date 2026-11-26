@@ -75,6 +75,31 @@ assert.equal(cards.patch(patchSource, 'group', { style: 'url(evil)' }), null);
 assert.equal(cards.patch(patchSource, 0, { color: '#fff' }), null);
 assert.equal(cards.parse(patched('# [!blue] [!red] 字面标题', 0, { color: '' })).cards[0].color, '', 'removing a tint cannot promote a literal duplicate to metadata');
 assert.equal(cards.parse(patched('# [book] [target] 字面标题', 0, { icon: '' })).cards[0].icon, '', 'removing an icon preserves literal title markers');
+const styledHeader = String.raw`##[book][!blue]\red\B\bbb\##\####\num\right [target] 67%` + '\r\n正文';
+const styledCard = cards.parse(styledHeader).cards[0];
+assert.deepEqual(styledCard.titleStyle, { bold: true, depth: 3, size: 6, tabular: true, color: 'red', align: 'right' });
+assert.equal(styledCard.title, '[target] 67%');
+assert.equal(styledHeader.slice(styledCard.header.titleFrom, styledCard.header.to), '[target] 67%');
+const updatedHeader = patched(styledHeader, 0, { color: 'rose', icon: '' });
+assert.equal(updatedHeader, styledHeader.replace('[book][!blue]', '[!rose]'));
+assert.deepEqual(cards.parse(updatedHeader).cards[0].titleStyle, styledCard.titleStyle);
+const compactHeader = String.raw`#\red456`;
+assert.equal(patched(compactHeader, 0, { icon: 'book' }), String.raw`#[book] \red456`);
+assert.equal(cards.parse(compactHeader).cards[0].title, '456');
+assert.equal(cards.parse(String.raw`###\red\456`).cards[0].title, String.raw`\456`);
+assert.equal(cards.parse(String.raw`#\red \center 标题`).cards[0].title, String.raw`\center 标题`);
+assert.equal(cards.parse(String.raw`#\red\unknown 标题`).cards[0].title, String.raw`\unknown 标题`);
+for (const command of ['check', '!check', 'bar1:6', 'divider', 'unknown']) {
+  const literal = '\\' + command + ' 标题';
+  const card = cards.parse('#' + literal).cards[0];
+  assert.equal(card.title, literal);
+  assert.equal(card.titleStyle, undefined);
+  assert.equal(cards.parse('#\\red' + literal).cards[0].title, literal);
+}
+assert.equal(cards.parse(String.raw`#\B\###`).valid, false, 'style commands alone do not supply a title');
+assert.equal(cards.parse('\\red 字面标题\n---\n# B').cards[0].title, '\\red 字面标题', 'plain headings keep their existing syntax');
+assert(cards.render(String.raw`#\\red 字面标题`).html.includes(String.raw`>\red 字面标题<`));
+assert(cards.render(String.raw`#\red $x$`).features.math);
 const cleared = cards.parse(patched('# A\n@subtitle: 原值\n@subtitle: 重复值\n@badge: 重点\n正文', 0, { subtitle: '' }));
 assert.equal(cleared.cards[0].subtitle, ''); assert.equal(cleared.cards[0].badge, '重点'); assert.equal(cleared.cards[0].diagnostics.length, 1, 'clearing a field does not promote duplicates or consume later fields as body text');
 const rendered = cards.render(body);
@@ -104,7 +129,7 @@ const commands = String.raw`# 任务
 const [taskCard, emptyCard] = cards.parse(commands).cards;
 const [style, reordered, suffixed, unknown, escaped, indented, colorConflict] = taskCard.lines;
 const appearance = ({ bold, color, depth, size }) => ({ bold, color, depth, size });
-assert.deepEqual(appearance(style), { bold: true, color: 'red', depth: 3, size: 3 });
+assert.deepEqual(appearance(style), { bold: true, color: 'red', depth: 3, size: 4 });
 assert.deepEqual(appearance(style), appearance(reordered));
 assert.equal(suffixed.text, String.raw`abcdefg\red`);
 assert.equal(suffixed.size, 1);
@@ -123,6 +148,32 @@ assert.equal((commandHtml.match(/type="checkbox"/g) || []).length, 2);
 assert.deepEqual([...commandHtml.matchAll(/aria-valuetext="([^"]+)"/g)].map(match => match[1]), ['0/6', '6/6', '1/6', '1/2', '0/0']);
 assert(commandHtml.includes(String.raw`\check 字面命令`));
 assert(!commandHtml.includes(String.raw`\\check 字面命令`));
+const layoutCommands = String.raw`#\center\right\blue\red\B\B 标题
+\######\#\b\b\b\b\center\center\num 67%
+\#\#\#
+\divider
+\divider 带文字
+\\divider
+\red\divider
+\right\num\!check\!check 任务
+\center\bar 进度`;
+const layoutCard = cards.parse(layoutCommands).cards[0];
+assert.deepEqual(layoutCard.titleStyle, { bold: true, depth: 0, size: 0, tabular: false, color: '', align: '' });
+assert.equal(layoutCard.lines[0].size, 6);
+assert.equal(layoutCard.lines[0].depth, 3);
+assert.equal(layoutCard.lines[0].align, 'center');
+assert.equal(layoutCard.lines[0].tabular, true);
+assert.equal(layoutCard.lines[1].size, 3);
+assert.equal(layoutCard.lines[3].text, '\\divider 带文字');
+assert.equal(layoutCard.lines[5].text, '\\divider');
+const layoutHtml = cards.render(layoutCommands).html;
+assert.equal((layoutHtml.match(/<hr class="note-card-divider">/g) || []).length, 1);
+assert(layoutHtml.includes('is-tabular" data-size="6" data-depth="3" data-align="center">67%'));
+assert(layoutHtml.includes('aria-valuetext="0/1"'));
+assert.deepEqual(cards.taskEdit(layoutCommands, 0, layoutCard.lines[6].number), [
+  { from: 10, to: 17, expected: '\\!check', insert: '\\check' },
+  { from: 17, to: 24, expected: '\\!check', insert: '\\check' },
+]);
 assert(rendered.features.math); assert(rendered.html.includes('<ul>')); assert(rendered.html.includes('<ol start="1">'));
 assert(rendered.html.includes('<strong>标题</strong>')); assert(rendered.html.includes('href="https://example.com"'));
 assert.equal((rendered.html.match(/note-card-icon/g) || []).length, 1);

@@ -124,6 +124,16 @@
 .note-guide .note-guide-topic-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; }
 .note-guide-topic-head h3 { margin: 0; }
 .note-guide-topic-head button { border: 0; border-radius: 7px; background: rgba(128,128,128,.08); color: var(--text-secondary); padding: 5px 8px; cursor: pointer; font: 11px var(--font-ui); }
+.note-guide-cards-reference { margin-block-end: 24px; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.note-guide-cards-reference ul { margin: 0 0 12px; padding-inline-start: 1.3em; }
+.note-guide-cards-reference li + li { margin-block-start: 5px; }
+.note-guide-cards-reference code {
+  padding: .07em .22em; border-radius: 3px;
+  background: color-mix(in srgb, currentColor 8%, transparent); font: .9em var(--note-font-mono, Consolas, monospace);
+}
+.note-guide-cards-reference summary { cursor: pointer; }
+.note-guide-cards-reference details p { margin: .45em 0 0; }
+.note-guide-cards-example-title { margin: 12px 0 7px; font-size: 13px; font-weight: 600; }
 .note-guide .note-guide-example { border-bottom: 0; margin-bottom: 20px; padding: 0 0 16px; }
 .note-guide-example > pre { margin-top: 10px; padding: 11px 30px 11px 11px; background: rgba(128,128,128,.06); border-radius: 9px; }
 .note-guide-example > .node-text { overflow: hidden; }
