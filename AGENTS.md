@@ -168,7 +168,7 @@ Sky 使用云白与雾蓝：浅色正文基色 `#f8fbff`，普通背景在 `.not
 
 左上角齿轮由 `assets/global-settings.js` 与专用 CSS 提供独立的全局设置，复用 `assets/settings-dialog.js` 的原生居中弹窗；外观、工作区、导航、日常、学习与树状、星图、生涯、使用统计、系统按顺序注册，启动未启用的控件与空分类不显示，隐藏工作区仍可修改其偏好。静态偏好控件先移入隐藏容器供两种外壳绑定，弹窗与排序列表首次打开才创建；共享资源不再属于笔记独占资源，不加载笔记编辑器或研究运行时。全局与笔记弹窗拥有独立身份、标题和恢复文案，全局动效只跟随系统低动态，笔记继续跟随笔记系统偏好。分类恢复只删除对应偏好，全部恢复先完成工作区交接，再恢复其他分类。两者保留深浅模式、语言、笔记设置、客户端窗口设置和内容。隐藏、原生最小化和 pagehide 立即关闭；全局设置自身引起工作区切换时仍保持打开。
 
-全局“外观”的“界面主题”位于深浅模式与主页背景之间，提供默认、Claude、Sky、Apple。`assets/start-appearance.js` 在首帧前读取独立的 `canvas:startAppearance:v1`，缺失或无效使用默认，保存失败时恢复控件原值，桌面沿用偏好快照。`assets/start-appearance.css` 为共享顶栏、专注态窗口按钮和主页背景提供配色，顶栏用实色承托控件、下缘静态渐隐，工作区切换沿用滑块位移。简洁档为主题纯色，沉浸档在原默认构图以外的主题下使用配套静态渐变。笔记等工作区的内容表面沿用各自的样式。下拉在全局弹窗内按需复用 `review-controls`，所有主页配置均可使用，加载失败时保留原生选择。外观及全部全局恢复将界面主题和主页背景恢复为默认、简洁。专项使用 `node tests/global-settings-browser.js appearance appearance-library` 与 `py -B -m unittest tests.test_feature_profile`。
+全局“外观”的“界面主题”位于深浅模式与主页背景之间，提供默认、Claude、Sky、Apple。`assets/start-appearance.js` 在首帧前读取独立的 `canvas:startAppearance:v1`，缺失或无效使用默认，保存失败时恢复控件原值，桌面沿用偏好快照。`assets/start-appearance.css` 为共享顶栏、专注态窗口按钮和主页背景提供配色，顶栏用实色承托控件、下缘静态渐隐，工作区切换沿用滑块位移。笔记工作区的渐隐在共享顶栏下缘结束，避开紧贴顶栏的标签和工具按钮。简洁档为主题纯色，沉浸档在原默认构图以外的主题下使用配套静态渐变。笔记等工作区的内容表面沿用各自的样式。下拉在全局弹窗内按需复用 `review-controls`，所有主页配置均可使用，加载失败时保留原生选择。外观及全部全局恢复将界面主题和主页背景恢复为默认、简洁。专项使用 `node tests/global-settings-browser.js appearance appearance-library` 与 `py -B -m unittest tests.test_feature_profile`。
 
 全局“外观”在“主页背景”下方提供“界面语言”，左右为中文、英文；复用背景设置的圆角容器与双选项样式，支持原生按钮键盘操作、语言搜索及 `aria-pressed` 选中语义。两种首页外壳共用 `assets/global-settings.js`，不依赖画布编辑器启用；调用 `RelatumI18n.setLanguage()` 即时切换且保持弹窗打开，沿用 `canvas:toolbarLanguage` 与编辑器共享偏好，初始化及 `relatum:languagechange` 同步文案和选中态，启动不回写。外观恢复及全部恢复仍保留语言。验收关注位置与样式一致、即时切换、重开及重启恢复；本次按用户要求未运行测试、浏览器验证、构建或打包。
 

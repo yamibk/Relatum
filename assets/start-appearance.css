@@ -141,6 +141,10 @@ html[data-start-appearance] body.start-page > .top-bar::before {
   pointer-events: none;
   background: linear-gradient(to bottom, var(--start-header-base) calc(100% - 26px), transparent);
 }
+/* The Notes toolbar starts immediately below the header. */
+html[data-start-appearance] body.start-page[data-start-workspace="notes"] > .top-bar::before {
+  bottom: 0;
+}
 html[data-start-appearance] body.start-page > :is(.top-bar, .desktop-note-focus-controls) {
   --text: var(--start-header-ink);
   --text-secondary: var(--start-header-muted);
