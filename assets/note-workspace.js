@@ -741,11 +741,12 @@
   const DATABASE_PDF_OPEN_KEY = 'canvas:noteDatabasePdfOpen:v1';
   const VIEW_STATES_KEY = 'canvas:noteViewStates:v1';
   const HEADING_FOLDING_KEY = 'canvas:noteHeadingFolding:v1';
-  let headingFoldArrows = 'never';
+  const DEFAULT_HEADING_FOLD_ARROWS = 'hover';
+  let headingFoldArrows = DEFAULT_HEADING_FOLD_ARROWS;
   try {
     const stored = localStorage.getItem(HEADING_FOLDING_KEY);
     if (stored === 'always' || stored === '1') headingFoldArrows = 'always';
-    else if (stored === 'hover') headingFoldArrows = 'hover';
+    else if (stored === 'never' || stored === '0') headingFoldArrows = 'never';
   } catch (error) {}
   root.dataset.headingFoldArrows = headingFoldArrows;
 
@@ -1359,7 +1360,7 @@
     headingFoldArrowsSelect.setAttribute('aria-label', title);
     settingsChoices.setOptions(headingFoldArrowsSelect, [
       { value: 'never', label: en ? 'Never' : '永不' },
-      { value: 'hover', label: en ? 'On hover' : '悬停时显示' },
+      { value: 'hover', label: en ? 'On hover (default)' : '悬停时显示（默认）' },
       { value: 'always', label: en ? 'Always' : '常驻' },
     ], headingFoldArrows);
   }
@@ -1855,7 +1856,7 @@
     try { localStorage.removeItem(SELECTION_MATCH_HIGHLIGHT_KEY); } catch (_) {}
     applySelectionMatchHighlight(false, false);
     try { localStorage.removeItem(HEADING_FOLDING_KEY); } catch (error) {}
-    applyHeadingFoldArrows('never');
+    applyHeadingFoldArrows(DEFAULT_HEADING_FOLD_ARROWS);
     localStorage.removeItem(NOTE_IMAGE_PATH_STYLE_KEY);
     noteImagePathStyle = 'relative';
     syncNoteImagePathSettings();

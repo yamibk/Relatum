@@ -100,7 +100,7 @@
     }
     function markdown() {
       const samples = [
-        ['标题', 'Headings', '# ' + text('一级标题', 'Heading one') + '\n\n## ' + text('二级标题', 'Heading two'), text('使用 1–6 个 #，后面留一个空格。可在「笔记设置 → 编辑」开启折叠箭头。折叠后的标题显示 …，在实时预览中把光标放到 … 后输入，即可展开并接着写。', 'Use one to six # characters followed by a space. Enable fold arrows under Note Settings → Editing. Folded headings end with …. In Live Preview, type after the ellipsis to expand the section and continue writing.')],
+        ['标题', 'Headings', '# ' + text('一级标题', 'Heading one') + '\n\n## ' + text('二级标题', 'Heading two'), text('使用 1–6 个 #，后面留一个空格。折叠箭头默认在悬停标题时显示，可在「笔记设置 → 编辑」调整。折叠后的标题显示 …，在实时预览中把光标放到 … 后输入，即可展开并接着写。', 'Use one to six # characters followed by a space. Fold arrows appear on hover by default. Change this under Note Settings → Editing. In Live Preview, type after the ellipsis to expand the section and continue writing.')],
         ['强调与标记', 'Emphasis and marks', text('**粗体** · *斜体* · ~~删除线~~ · ==高亮==', '**Bold** · *Italic* · ~~Deleted~~ · ==Highlight==')],
         ['彩色高亮', 'Highlight colors', text('==默认== · ==🔴红色== · ==🟠橙色== · ==🟡黄色== · ==🟢绿色== · ==🔵蓝色== · ==🟣紫色==', '==Default== · ==🔴Red== · ==🟠Orange== · ==🟡Yellow== · ==🟢Green== · ==🔵Blue== · ==🟣Purple==')],
         ['列表与任务', 'Lists and tasks', text('- 第一项\n- 第二项\n\n1. 有序项目\n2. 下一项\n\n- [ ] 待完成\n- [x] 已完成', '- First item\n- Second item\n\n1. Ordered item\n2. Next item\n\n- [ ] To do\n- [x] Completed')],
