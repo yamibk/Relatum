@@ -897,19 +897,38 @@ class NoteDatabases:
                       'location': row.get('location', ''), 'exists': True} for row in notes[:20])
         return {'items': items}
 
-    def _unused(self, connection, directory):
+    def _unused(self, connection, directory, protected):
+        from note_pdf_annotations import FILENAME, read, signature
+
         candidates = []
         token = hashlib.sha256()
         for row in connection.execute(
             'SELECT id,name FROM attachments AS a WHERE NOT EXISTS(SELECT 1 FROM cells WHERE attachment_id=a.id) '
             'ORDER BY id',
         ):
-            path = self._attachment_path(directory, row['id'], row['name'])
-            if _check_path(path):
-                file = path.stat()
-                token.update(repr((row['id'], row['name'], file.st_dev, file.st_ino,
-                                   file.st_size, file.st_mtime_ns)).encode('utf-8'))
-                candidates.append((row['id'], path))
+            identity, name = row['id'], row['name']
+            path = self._attachment_path(directory, identity, name)
+            if not _check_path(path):
+                continue
+            target = path
+            identities = [signature(path.stat())]
+            if path.suffix.casefold() == '.pdf':
+                if identity in protected:
+                    continue
+                sidecar = path.with_name(FILENAME)
+                entries = set(path.parent.iterdir())
+                if path not in entries or entries - {path, sidecar}:
+                    continue
+                try:
+                    read(sidecar)
+                    if sidecar in entries:
+                        identities.append(signature(sidecar.stat()))
+                except (NotesError, OSError):
+                    continue
+                target = path.parent
+                identities.append(signature(target.stat()))
+            token.update(repr((identity, name, identities)).encode('utf-8'))
+            candidates.append((identity, path, target))
         return candidates, token.hexdigest()
 
     @staticmethod
@@ -972,8 +991,11 @@ class NoteDatabases:
             table['viewCount'] = markers.get(table['id'], 0)
         files = self._files_inventory(directory / 'files')
         registered = [tuple(row) for row in connection.execute('SELECT id,name FROM attachments ORDER BY id')]
+        from note_pdf_annotations import FILENAME
+        sidecars = {f'{identity}/{FILENAME}' for identity, name in registered if Path(name).suffix.casefold() == '.pdf'}
+        file_count = sum(file[0] not in sidecars for file in files)
         token = hashlib.sha256(repr((_revision(content), tables, files, registered)).encode('utf-8')).hexdigest()
-        return {'tables': tables, 'fileCount': len(files), 'registeredCount': len(registered), 'token': token,
+        return {'tables': tables, 'fileCount': file_count, 'registeredCount': len(registered), 'token': token,
                 'cleanupPending': (directory / PURGE_DIRECTORY).exists()}
 
     @staticmethod
@@ -985,7 +1007,7 @@ class NoteDatabases:
         connection.executemany('DELETE FROM columns WHERE database_id=?', ((identity,) for identity in identities))
         connection.executemany('UPDATE databases SET name=NULL,revision=NULL WHERE id=?', ((identity,) for identity in identities))
 
-    def _purge(self, database, content, token):
+    def _purge(self, database, content, token, detach_readers):
         files = database.parent / 'files'
         stage = database.parent / PURGE_DIRECTORY
         moved = False
@@ -1001,6 +1023,8 @@ class NoteDatabases:
             try:
                 connection.execute('BEGIN IMMEDIATE')
                 if _check_path(files, directory=True):
+                    if detach_readers:
+                        detach_readers([files])
                     files.rename(stage)
                     moved = True
                 identities = [table['id'] for table in catalog['tables']]
@@ -1015,12 +1039,17 @@ class NoteDatabases:
                 raise
         return {'deletedIds': identities, 'cleanupPending': not self._recover_purge(database)}
 
-    def action(self, note, database_id, action, query=None, recycle=None) -> dict:
+    def action(self, note, database_id, action, query=None, recycle=None, *, detach_readers=None) -> dict:
         if not isinstance(action, dict) or not isinstance(action.get('type'), str):
             raise NotesError('数据库操作格式无效')
         if query is not None and not isinstance(query, dict):
             raise NotesError('数据库查询格式无效')
         kind = action['type']
+        if kind in ('previewCleanup', 'cleanup'):
+            protected_ids = action.get('protectedIds', [])
+            if not isinstance(protected_ids, list):
+                raise NotesError('数据库附件标识列表无效')
+            protected = {_id(identity) for identity in protected_ids}
         note_actions = ('list', 'deleteTables', 'purge', 'previewCleanup', 'cleanup')
         if kind not in note_actions:
             database_id = _database_id(database_id)
@@ -1046,7 +1075,7 @@ class NoteDatabases:
                 return {'count': 0, 'candidateToken': None}
             raise NotesError('数据库已移除，请刷新后重试', status=409, code='revision_conflict')
         if kind == 'purge':
-            return self._purge(database, content, action.get('token'))
+            return self._purge(database, content, action.get('token'), detach_readers)
         if kind == 'deleteTables':
             selected = action.get('tables')
             if not isinstance(selected, list) or not selected or any(not isinstance(item, dict) for item in selected):
@@ -1062,7 +1091,7 @@ class NoteDatabases:
             return {'deletedIds': identities}
         if kind == 'previewCleanup':
             with self._connection(database) as connection:
-                candidates, token = self._unused(connection, database.parent)
+                candidates, token = self._unused(connection, database.parent, protected)
                 return {'count': len(candidates), 'candidateToken': token}
         with self._connection(database, 'rw') as connection:
             if kind in ('setChartView', 'setChartAppearance', 'setChartCard'):
@@ -1086,16 +1115,26 @@ class NoteDatabases:
                     result['changedChartId'] = chart_id
                 return result
             if kind == 'cleanup':
-                candidates, token = self._unused(connection, database.parent)
+                candidates, token = self._unused(connection, database.parent, protected)
                 if token != action.get('candidateToken'):
                     raise NotesError('附件候选已变化，请重新确认', status=409, code='revision_conflict')
-                self._recycle(recycle, [target for _, target in candidates])
-                connection.executemany('DELETE FROM attachments WHERE id=?', ((identity,) for identity, _ in candidates))
-                for _, target in candidates:
+                recycle_error = None
+                try:
+                    self._recycle(recycle, [target for _, _, target in candidates])
+                except NotesError as error:
+                    recycle_error = error
+                    candidates = [item for item in candidates if not os.path.lexists(item[2])]
+                connection.executemany('DELETE FROM attachments WHERE id=?', ((identity,) for identity, _, _ in candidates))
+                for _, path, target in candidates:
+                    if path != target:
+                        continue
                     try:
-                        target.parent.rmdir()
+                        path.parent.rmdir()
                     except OSError:
                         pass
+                if recycle_error:
+                    connection.commit()
+                    raise recycle_error
                 return {'deletedCount': len(candidates)}
             else:
                 self._require_revision(connection, database_id, action.get('revision'))

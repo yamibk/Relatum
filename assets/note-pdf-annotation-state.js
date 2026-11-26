@@ -25,7 +25,16 @@ async function request(url, options) {
   return data;
 }
 
-function createSession(path, id, assetRevision, onDirty, sticky) {
+export function matchesPdfAttachment(attachment, { path, id, source } = {}) {
+  if (source && (attachment.source || 'embed') !== source) return false;
+  if (!path) return true;
+  if (id) return attachment.path === path && attachment.id === id;
+  return attachment.path === path || attachment.path.startsWith(path + '/');
+}
+
+function createSession({ path, id, source = 'embed' }, assetRevision, onDirty, sticky) {
+  const location = { note: path, id, ...(source === 'database' && { source }) };
+  const stickyKey = source === 'database' ? JSON.stringify([source, path, id]) : id;
   const records = new Map(), pages = new Map(), pending = new Map(), subscribers = new Set();
   const undo = [], redo = [];
   let pdfHash, revision, loading, saving, timer, firstEdit = 0, loaded = false, error = '';
@@ -34,7 +43,7 @@ function createSession(path, id, assetRevision, onDirty, sticky) {
     subscribers.forEach(listener => listener(affected));
     onDirty();
   };
-  const query = () => new URLSearchParams({ note: path, id, assetRevision });
+  const query = () => new URLSearchParams({ ...location, assetRevision });
 
   function load({ edit = false, reload = false } = {}) {
     if (loading) return loading.then(ok => ok && edit && !pdfHash ? load({ edit, reload }) : ok);
@@ -48,10 +57,10 @@ function createSession(path, id, assetRevision, onDirty, sticky) {
       records.clear(); pages.clear(); pending.clear();
       inFlight = null;
       result.annotations.forEach(record => put(record.id, record));
-      const expanded = sticky.read(id);
+      const expanded = sticky.read(stickyKey);
       const count = expanded.size;
       for (const key of expanded) if (records.get(key)?.kind !== 'note') expanded.delete(key);
-      if (expanded.size !== count) sticky.write(id, expanded);
+      if (expanded.size !== count) sticky.write(stickyKey, expanded);
       pdfHash = result.pdfHash;
       revision = result.revision;
       lastRead = Date.now();
@@ -89,14 +98,14 @@ function createSession(path, id, assetRevision, onDirty, sticky) {
       if (previous) affected.add(previous.page);
       if (value) affected.add(value.page);
       if (!value && previous?.kind === 'note') {
-        expanded ??= sticky.read(id);
+        expanded ??= sticky.read(stickyKey);
         if (expanded.delete(key)) expansionChanged = true;
       }
       put(key, value);
       // Distinct queue entries prevent a late acknowledgement clearing a newer edit.
       pending.set(key, { value });
     }
-    if (expansionChanged) sticky.write(id, expanded);
+    if (expansionChanged) sticky.write(stickyKey, expanded);
     if (!firstEdit) firstEdit = Date.now();
     clearTimeout(timer);
     if (!error && !saving) timer = setTimeout(() => void flush(), Math.max(0, Math.min(600, 3000 - (Date.now() - firstEdit))));
@@ -152,7 +161,7 @@ function createSession(path, id, assetRevision, onDirty, sticky) {
           if (entry.value) upsert.push(entry.value);
           else remove.push(key);
         }
-        inFlight = { batch, body: JSON.stringify({ note: path, id, assetRevision, pdfHash, revision, upsert, remove }) };
+        inFlight = { batch, body: JSON.stringify({ ...location, assetRevision, pdfHash, revision, upsert, remove }) };
       }
       // Retry the exact same write if transport failed after the server committed it.
       const { batch, body } = inFlight;
@@ -169,7 +178,7 @@ function createSession(path, id, assetRevision, onDirty, sticky) {
   }
 
   return {
-    path, id, load, flush, commit,
+    path, id, source, load, flush, commit,
     get assetRevision() { return assetRevision; },
     replaced(version) {
       replacementVersion = version;
@@ -195,14 +204,14 @@ function createSession(path, id, assetRevision, onDirty, sticky) {
     get canUndo() { return !!undo.length; },
     get canRedo() { return !!redo.length; },
     get: key => records.get(key),
-    expandedNotes: () => sticky.read(id),
+    expandedNotes: () => sticky.read(stickyKey),
     setNoteExpanded(key, open) {
       const record = records.get(key);
       if (record?.kind !== 'note') return;
-      const expanded = sticky.read(id);
+      const expanded = sticky.read(stickyKey);
       if (expanded.has(key) === open) return;
       if (open) expanded.add(key); else expanded.delete(key);
-      sticky.write(id, expanded);
+      sticky.write(stickyKey, expanded);
       notify(new Set([record.page]));
     },
     onPage: number => (replacementVersion ? null : pages.get(number))?.values() || [],
@@ -222,12 +231,12 @@ export function createAnnotationStore(onDirty) {
     if (lastDirty !== value) { lastDirty = value; onDirty?.(value); }
   };
   return {
-    open(path, id, version) {
-      const key = JSON.stringify([path, id]);
+    open(attachment, version) {
+      const key = JSON.stringify([attachment.source || 'embed', attachment.path, attachment.id]);
       let session = sessions.get(key);
       if (session && session.assetRevision !== version && session.dirty) session.replaced(version);
       else if (!session || session.assetRevision !== version) {
-        session = createSession(path, id, version, notify, sticky);
+        session = createSession(attachment, version, notify, sticky);
       }
       sessions.delete(key);
       sessions.set(key, session);
@@ -239,10 +248,9 @@ export function createAnnotationStore(onDirty) {
       return session;
     },
     dirty,
-    async flush({ path, id, keepalive, retry } = {}) {
-      const matching = Array.from(sessions.values()).filter(session => session.dirty && (!path
-        || (id ? session.path === path && session.id === id : session.path === path || session.path.startsWith(path + '/'))));
-      const results = await Promise.all(matching.map(session => session.flush({ keepalive, retry })));
+    async flush(options) {
+      const matching = Array.from(sessions.values()).filter(session => session.dirty && matchesPdfAttachment(session, options));
+      const results = await Promise.all(matching.map(session => session.flush(options)));
       return results.every(Boolean);
     },
   };

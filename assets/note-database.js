@@ -1425,6 +1425,14 @@
           const current = page.rows.find(item => item.id === row.id)?.values[column.id];
           if (JSON.stringify(originalPage) !== JSON.stringify(page)) applyPage(session, page);
           if (current?.exists && current.kind === 'note' && current.path === value.path) await options.onOpenNote?.(current.path);
+        } else if (/\.pdf$/i.test(value.name) && options.onOpenPdf && options.openPdfInternally?.()) {
+          const path = session.path;
+          const isCurrent = () => {
+            if (!visiblyCurrent() || !present(session) || session.path !== path || view.host.closest('[hidden], [inert]')) return false;
+            const cell = visibleRows(view).find(item => item.id === row.id)?.values[column.id];
+            return cell?.kind === 'attachment' && cell.id === value.id;
+          };
+          if (isCurrent()) await options.onOpenPdf({ path, id: value.id, name: value.name }, isCurrent);
         } else {
           await request('/api/open-external', { note: session.path, target: value.id, kind: 'note-database-attachment' });
         }
@@ -1484,7 +1492,7 @@
         if (liveLink && (event.ctrlKey || event.metaKey) && event.key === 'Enter') {
           event.preventDefault();
           event.stopPropagation();
-          void openLink(view, row, column, value);
+          void afterCellSave(view, () => openLink(view, row, column, value));
         } else if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(event.key)) {
           const next = adjacentCell(view, row, column, event.key, event.shiftKey);
           if (!next && event.key === 'Tab') return;
@@ -3583,9 +3591,9 @@
       return result;
     }
 
-    async function cleanup(path, callback) {
+    async function cleanup(path, callback, protectedIds = () => []) {
       try {
-        const preview = await noteAction(path, { type: 'previewCleanup' });
+        const preview = await noteAction(path, { type: 'previewCleanup', protectedIds: protectedIds() });
         if (destroyed) return false;
         if (!preview.count) {
           options.onNotice?.(tr(label('没有可清理的附件。', 'There are no unused attachments.')));
@@ -3593,7 +3601,9 @@
         }
         const message = label(`将 ${preview.count} 个未使用附件移到系统回收站？`, `Move ${preview.count} unused attachment(s) to the Recycle Bin?`);
         if (!await confirm(message, callback) || destroyed) return false;
-        const { deletedCount } = await noteAction(path, { type: 'cleanup', candidateToken: preview.candidateToken });
+        const { deletedCount } = await noteAction(path, {
+          type: 'cleanup', candidateToken: preview.candidateToken, protectedIds: protectedIds(),
+        });
         if (!destroyed) options.onNotice?.(tr(label(`已回收 ${deletedCount} 个未使用附件。`, `Moved ${deletedCount} unused attachment(s) to the Recycle Bin.`)));
         return true;
       } catch (error) {

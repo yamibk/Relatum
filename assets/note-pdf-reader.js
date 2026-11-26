@@ -1,6 +1,6 @@
 import { loadPdfLibrary, openPdfDocument } from './pdf-runtime.js';
 import { startEmbedResize } from './note-embed-resize.js';
-import { createAnnotationStore } from './note-pdf-annotation-state.js';
+import { createAnnotationStore, matchesPdfAttachment } from './note-pdf-annotation-state.js';
 import { createAnnotationTools, mountAnnotationPage, mountTextSelection } from './note-pdf-annotation-layer.js';
 import { wrapPdfScroll } from './note-pdf-scrollbar.js';
 
@@ -14,7 +14,8 @@ const element = (tag, className, value) => {
   return node;
 };
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-const queryFor = ({ path, id }) => new URLSearchParams({ note: path, id });
+const queryFor = ({ path, id, source }) =>
+  new URLSearchParams({ note: path, id, ...(source === 'database' && { source }) });
 const cancel = task => task?.cancel();
 
 function pageText(items) {
@@ -429,7 +430,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
       const response = await fetch('/api/note-pdf?' + query, { signal });
       const metadata = await response.json();
       if (!alive()) return false;
-      if (!response.ok) throw Object.assign(new Error(metadata.error), { code: metadata.code });
+      if (!response.ok) throw Object.assign(new Error(metadata.error), { code: metadata.code, status: response.status });
       onName(metadata.name);
       query.set('assetRevision', metadata.assetRevision);
       library = await loadPdfLibrary();
@@ -442,7 +443,7 @@ function createReader(stage, { copy, button, initial, current, onPage, onError, 
       first = page.getViewport({ scale: 1 });
       metrics.set(1, first);
       pdf = document;
-      annotations = store.open(attachment.path, attachment.id, metadata.assetRevision);
+      annotations = store.open(attachment, metadata.assetRevision);
       annotationTools?.attach(annotations);
       onAnnotation?.(annotations);
       schedule();
@@ -569,6 +570,20 @@ export function create({ language, isCurrent, icon, onDirty, confirmReload, noti
           start(entry);
         });
         status.replaceChildren(element('span', '', errorMessage(error)), retry);
+        if (entry.onOpenExternal) {
+          const external = button(copy('用系统应用打开', 'Open in system app'), async () => {
+            if (!current()) return;
+            external.disabled = true;
+            try {
+              await entry.onOpenExternal();
+            } catch (failure) {
+              if (current()) notify?.(failure.message || copy('无法使用系统应用打开 PDF', 'Could not open PDF in the system app'), 'error');
+            } finally {
+              external.disabled = false;
+            }
+          });
+          status.append(external);
+        }
       },
     });
     entry.reader = reader;
@@ -842,9 +857,7 @@ export function create({ language, isCurrent, icon, onDirty, confirmReload, noti
     dirty: store.dirty,
     flush(options) {
       entries.forEach(entry => {
-        if (!options?.path || entry.path === options.path || (!options.id && entry.path.startsWith(options.path + '/'))) {
-          if (!options?.id || entry.id === options.id) entry.annotationTools?.settle();
-        }
+        if (matchesPdfAttachment(entry, options)) entry.annotationTools?.settle();
       });
       return store.flush(options);
     },

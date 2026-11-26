@@ -81,6 +81,7 @@
   const settingsShortcutStatus = $('[data-role="note-shortcut-status"]');
   const selectionMatchHighlightToggle = $('[data-role="note-selection-match-highlight"]');
   const imagePathStyleSelect = $('[data-role="note-image-path-style"]');
+  const databasePdfOpenSelect = $('[data-role="note-database-pdf-open"]');
   const sortTrigger = $('[data-note-action="toggle-sort"]');
   const sortMenu = $('[data-role="note-sort-menu"]');
   const libraryTrigger = $('[data-note-action="toggle-library-settings"]');
@@ -132,6 +133,8 @@
           return !target.savedDatabaseIds.has(databaseId);
         },
         onOpenNote: path => openNote(path, { reuseActiveTab: false }),
+        openPdfInternally: () => databasePdfOpen === 'internal',
+        onOpenPdf: (attachment, isSourceCurrent) => openAttachment('pdf', { ...attachment, source: 'database' }, { isSourceCurrent }),
         onError: error => { if (noteWorkspaceVisible()) showToast(error.message || tr('saveFailed'), 'error'); },
         onNotice: message => { if (noteWorkspaceVisible()) showToast(message); },
         onDirtyChange: () => desktopDirty(hasPendingEdits()), confirm: confirmNoteDatabase,
@@ -293,13 +296,13 @@
     return ok;
   }
   async function waitForNoteMove(path) {
-    const html = attachmentTabs.get(path);
-    if (html) path = html.path;
+    const tab = attachmentTabs.get(path);
+    if (tab) path = tab.path;
     while (noteMovePromise) {
       const operation = noteMovePromise, paths = noteMovePaths;
       if (await operation && paths && typeof path === 'string') path = mapPath(path, paths.source, paths.destination);
     }
-    return html ? attachmentTabKey(html.kind, path, html.id) : path;
+    return tab ? attachmentTabKey(tab.kind, path, tab.id, tab.source) : path;
   }
   const browserNavigation = $('[data-role="note-browser-navigation"]');
   const browserDisclosure = $('[data-role="note-browser-disclosure"]');
@@ -313,7 +316,10 @@
   }
   function isGraphTab(tab) { return tab === GRAPH_TAB; }
   function isAttachmentTab(tab) { return typeof tab === 'string' && (tab.startsWith(HTML_TAB_PREFIX) || tab.startsWith(PDF_TAB_PREFIX)); }
-  function attachmentTabKey(kind, path, id) { return (kind === 'pdf' ? PDF_TAB_PREFIX : HTML_TAB_PREFIX) + JSON.stringify([path, id]); }
+  function attachmentTabKey(kind, path, id, source) {
+    return (kind === 'pdf' ? PDF_TAB_PREFIX : HTML_TAB_PREFIX)
+      + JSON.stringify(source === 'database' ? [path, id, source] : [path, id]);
+  }
   function isSpecialTab(tab) { return isGraphTab(tab) || isBlankTab(tab) || isAttachmentTab(tab); }
 
   function setPdfNavigation(show, showFiles = false) {
@@ -378,6 +384,9 @@
         persistTabs(); renderTabs();
       }, ...(pdf ? {
         navigation: pdfNavigation, onNavigation: setPdfNavigation,
+        onOpenExternal: tab.source === 'database' && /^win/i.test(navigator.userAgentData?.platform || navigator.platform)
+          ? () => post('/api/open-external', { note: tab.path, target: tab.id, kind: 'note-database-attachment' })
+          : undefined,
         onNavigationPreference(preference) {
           if (!isCurrent()) return;
           tab.pdfNavigation = preference;
@@ -414,9 +423,11 @@
     const current = () => intent === attachmentTabIntent && state.activeTab === previousTab && state.current === previous
       && state.openSeq === openSequence && visibility === noteVisibilityEpoch && noteWorkspaceVisible()
       && (!attachment || state.current?.path === attachment.path)
+      && (!options?.isSourceCurrent || options.isSourceCurrent())
       && !state.openingPath && !noteMovePromise && attachmentTabs.get(key) === existing;
     if (key !== previousTab) {
       if (!(await finishInlineTitle()) || !current() || !(await flushCanvases()) || !current()) return false;
+      if (options?.isSourceCurrent && (!(await noteDatabase.whenInputSettled(attachment.path)) || !current())) return false;
       if (editorInputPending()) await whenEditorInputSettled();
       if (!current() || editorInputPending() || (previous && !options?.skipSave && !(await flushSave(previous)))) return false;
       if (!current()) return false;
@@ -438,8 +449,9 @@
     return true;
   }
 
-  function openAttachment(kind, attachment) {
-    return activateAttachmentTab(attachmentTabKey(kind, attachment.path, attachment.id), { userSelected: true }, { ...attachment, kind });
+  function openAttachment(kind, attachment, options) {
+    const key = attachmentTabKey(kind, attachment.path, attachment.id, attachment.source);
+    return activateAttachmentTab(key, { userSelected: true, ...options }, { ...attachment, kind });
   }
 
   function remapAttachmentTabs(source, destination) {
@@ -447,7 +459,7 @@
     for (const [key, tab] of Array.from(attachmentTabs)) {
       const path = mapPath(tab.path, source, destination);
       if (tab.path === path) continue;
-      const next = attachmentTabKey(tab.kind, path, tab.id);
+      const next = attachmentTabKey(tab.kind, path, tab.id, tab.source);
       attachmentTabs.delete(key);
       attachmentTabs.set(next, { ...tab, path });
       state.tabs[state.tabs.indexOf(key)] = next;
@@ -725,6 +737,7 @@
   const NOTE_VIEW_KEY = 'canvas:noteView:v1';
   const SELECTION_MATCH_HIGHLIGHT_KEY = 'canvas:noteSelectionMatchHighlight:v1';
   const NOTE_IMAGE_PATH_STYLE_KEY = 'canvas:noteImagePathStyle:v1';
+  const DATABASE_PDF_OPEN_KEY = 'canvas:noteDatabasePdfOpen:v1';
   const VIEW_STATES_KEY = 'canvas:noteViewStates:v1';
   const IMAGE_TEXT_DEFAULTS_KEY = 'canvas:noteImageTextDefaults:v1';
   const NOTE_FOCUS_KEY = 'canvas:noteFocusMode:v1';
@@ -870,10 +883,13 @@
       for (const item of stored) {
         if (typeof item === 'string' && !isAttachmentTab(item)) state.tabs.push(item);
         else if (['html', 'pdf'].includes(item?.kind) && typeof item.path === 'string' && /\.md$/i.test(item.path)
-            && typeof item.id === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(item.id)
-            && typeof item.name === 'string' && item.name) {
-          const { kind, path, id, name } = item, key = attachmentTabKey(kind, path, id);
-          const tab = { kind, path, id, name, interactive: false };
+            && typeof item.id === 'string' && typeof item.name === 'string' && item.name) {
+          const { kind, path, id, name, source } = item;
+          const valid = source === 'database' ? kind === 'pdf' && /^[0-9a-f]{32}$/.test(id)
+            : (source === undefined || source === 'embed') && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id);
+          if (!valid) continue;
+          const key = attachmentTabKey(kind, path, id, source);
+          const tab = { kind, path, id, name, source, interactive: false };
           if (kind === 'pdf' && item.pdfNavigation) {
             tab.pdfNavigation = {
               mode: item.pdfNavigation.mode === 'pages' ? 'pages' : 'files',
@@ -897,6 +913,8 @@
   try { state.selectionMatchHighlight = localStorage.getItem(SELECTION_MATCH_HIGHLIGHT_KEY) === '1'; } catch (error) {}
   let noteImagePathStyle = 'relative';
   try { if (localStorage.getItem(NOTE_IMAGE_PATH_STYLE_KEY) === 'filename') noteImagePathStyle = 'filename'; } catch (_) {}
+  let databasePdfOpen = 'internal';
+  try { if (localStorage.getItem(DATABASE_PDF_OPEN_KEY) === 'external') databasePdfOpen = 'external'; } catch (_) {}
   try { const savedSort = localStorage.getItem(TREE_SORT_KEY); if (SORT_MODES.includes(savedSort)) state.treeSort = savedSort; } catch (error) {}
   try { const savedPriority = localStorage.getItem(TREE_NAME_PRIORITY_KEY); if (NAME_PRIORITIES.includes(savedPriority)) state.treeNamePriority = savedPriority; } catch (error) {}
   try { const savedPriority = localStorage.getItem(TREE_SHARED_PREFIX_PRIORITY_KEY); if (NAME_PRIORITIES.includes(savedPriority)) state.treeSharedPrefixPriority = savedPriority; } catch (error) {}
@@ -1410,6 +1428,18 @@
     ], noteImagePathStyle);
   }
 
+  function syncDatabasePdfOpenSettings() {
+    if (!databasePdfOpenSelect || !settingsChoices) return;
+    const en = language() === 'en';
+    const title = en ? 'Open database PDFs with' : '数据库 PDF 打开方式';
+    $('[data-role="note-database-pdf-open-label"]').textContent = title;
+    databasePdfOpenSelect.setAttribute('aria-label', title);
+    settingsChoices.setOptions(databasePdfOpenSelect, [
+      { value: 'internal', label: en ? 'Relatum (default)' : '在 Relatum 中打开（默认）' },
+      { value: 'external', label: en ? 'System default app' : '使用系统默认应用' },
+    ], databasePdfOpen);
+  }
+
   function syncNoteChartPaletteSettings() {
     const palette = window.RelatumNoteChartPalette;
     if (!chartPaletteSelect || !palette) return;
@@ -1595,7 +1625,10 @@
         searchTargets: () => Array.from(appearance.querySelectorAll('label, [data-settings-keywords], .note-canvas-default-tabs button, .note-shortcut-row'))
           .filter(element => !element.closest('[data-role="note-apple-selection-setting"]') || (element === appleSelectionSetting && !appleSelectionSetting.hidden)),
         reset: () => { resetNoteTheme(); resetNoteChartPalette(); pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
-      { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮 双向链接 补全 候选 搜索 正文 排序 图片 文件名 路径 image filename path wiki link completion suggestions scope search content sort', reset: resetEditingSettings },
+      { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing,
+        keywords: 'highlight selection 高亮 双向链接 补全 候选 搜索 正文 排序 图片 文件名 路径 image filename path wiki link completion suggestions scope search content sort',
+        searchTargets: () => editing.querySelectorAll('label:not([for="note-database-pdf-open"]), [data-settings-keywords]'),
+        reset: resetEditingSettings },
       { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings,
         keywords: '排序 命名 文件名开头优先 相同前缀后优先 高级排序 sort name timestamp file name prefix priority after a shared prefix advanced sorting',
         searchTargets: () => libraryNameSortOptions.inert ? [libraryNameField] : [libraryNamePrioritySetting, librarySharedPrefixSetting, libraryNameField],
@@ -1691,6 +1724,19 @@
         }
       });
     }
+    if (databasePdfOpenSelect) {
+      syncDatabasePdfOpenSettings();
+      settingsChoices.enhance(databasePdfOpenSelect);
+      databasePdfOpenSelect.addEventListener('change', () => {
+        try {
+          localStorage.setItem(DATABASE_PDF_OPEN_KEY, databasePdfOpenSelect.value);
+          databasePdfOpen = databasePdfOpenSelect.value;
+        } catch (_) {
+          settingsDialog.setStatus(language() === 'en' ? 'Could not save how database PDFs open.' : '数据库 PDF 打开方式保存失败。');
+          syncDatabasePdfOpenSettings();
+        }
+      });
+    }
     if (chartPaletteSelect && window.RelatumNoteChartPalette) {
       syncNoteChartPaletteSettings();
       settingsChoices.enhance(chartPaletteSelect);
@@ -1733,7 +1779,12 @@
       }
     });
     settingsDialog.dialog.querySelector('[data-settings-search]').addEventListener('input', () => { settingsChoices.close(); linkCompletionSettings?.close(); });
-    document.addEventListener('relatum:languagechange', () => { settingsChoices.close(); finishLibrarySortMotion(); syncNoteThemeSettings(); syncNoteChartPaletteSettings(); syncNoteImagePathSettings(); linkCompletionSettings?.refresh(); });
+    document.addEventListener('relatum:languagechange', () => {
+      settingsChoices.close();
+      finishLibrarySortMotion();
+      syncNoteThemeSettings(); syncNoteChartPaletteSettings(); syncNoteImagePathSettings(); syncDatabasePdfOpenSettings();
+      linkCompletionSettings?.refresh();
+    });
     settingsDialog.dialog.addEventListener('click', handleWorkspaceClick);
     settingsTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     libraryTrigger.setAttribute('aria-controls', 'note-settings-dialog');
@@ -1751,6 +1802,9 @@
     localStorage.removeItem(NOTE_IMAGE_PATH_STYLE_KEY);
     noteImagePathStyle = 'relative';
     syncNoteImagePathSettings();
+    localStorage.removeItem(DATABASE_PDF_OPEN_KEY);
+    databasePdfOpen = 'internal';
+    syncDatabasePdfOpenSettings();
     return true;
   }
   function resetNoteSettings() {
@@ -3445,8 +3499,8 @@
       localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(state.tabs.map(key => {
         const tab = attachmentTabs.get(key);
         if (!tab) return key;
-        const { kind, path, id, name, pdfNavigation } = tab;
-        return { kind, path, id, name, pdfNavigation };
+        const { kind, path, id, name, pdfNavigation, source } = tab;
+        return { kind, path, id, name, pdfNavigation, source };
       })));
       if (state.activeTab && state.tabs.includes(state.activeTab)) localStorage.setItem(ACTIVE_TAB_KEY, state.activeTab);
       else localStorage.removeItem(ACTIVE_TAB_KEY);
@@ -5478,8 +5532,8 @@
         list.replaceChildren();
         if (purgeMode) {
           const warning = document.createElement('p');
-          warning.textContent = caption(`将永久删除 ${catalog.tables.length} 张表和 ${catalog.fileCount} 个共享附件文件。此操作无法撤销。`,
-            `Permanently delete ${catalog.tables.length} table(s) and ${catalog.fileCount} shared attachment file(s). This cannot be undone.`);
+          warning.textContent = caption(`将永久删除 ${catalog.tables.length} 张表和 ${catalog.fileCount} 个共享附件文件，包括相关的 PDF 批注。此操作无法撤销。`,
+            `Permanently delete ${catalog.tables.length} table(s) and ${catalog.fileCount} shared attachment file(s), including their PDF annotations. This cannot be undone.`);
           list.append(warning);
           actions.replaceChildren(back, remove);
         } else {
@@ -5519,7 +5573,12 @@
         };
         busy = true; message(''); updateButtons();
         try {
+          if (purgeMode && (!await flushPdfAnnotations({ path, source: 'database' }) || !alive())) return;
           const result = await database.deleteTables(path, action);
+          if (purgeMode && attachmentTabMount?.tab.source === 'database' && attachmentTabMount.tab.path === path) {
+            releaseAttachmentTab();
+            syncAttachmentTab();
+          }
           if (!alive()) return;
           if (result.cleanupPending) showToast(caption('表格已删除，部分附件正在等待解除占用。', 'The tables were deleted. Some attachments are still awaiting release.'));
           finish(true);
@@ -5555,8 +5614,12 @@
       const target = source?.path === path ? source : state.documentCache.get(path);
       if (!current() || target && !(await flushSave(target)) || !current()) return;
       if (action === 'remove') await openDatabaseManager(database, path, current);
-      else await database.cleanup(path, message => current() && confirmNoteDatabase(message, current, false,
-        language() === 'en' ? 'Clean up unused database attachments' : '清理未使用的数据库附件'));
+      else if (await flushPdfAnnotations({ path, source: 'database' }) && current()) {
+        const protectedIds = () => Array.from(attachmentTabs.values())
+          .filter(tab => tab.source === 'database' && tab.path === path).map(tab => tab.id);
+        await database.cleanup(path, message => current() && confirmNoteDatabase(message, current, false,
+          language() === 'en' ? 'Clean up unused database attachments' : '清理未使用的数据库附件'), protectedIds);
+      }
     } catch (error) {
       if (current()) showToast(error.message || tr('saveFailed'), 'error');
     } finally {
@@ -5576,7 +5639,7 @@
       && noteWorkspaceVisible() && !noteMovePromise;
     const text = (zh, en) => language() === 'en' ? en : zh;
     const protectedIds = () => Array.from(attachmentTabs.values())
-      .filter(item => item.kind === 'pdf' && item.path === path).map(item => item.id);
+      .filter(item => item.kind === 'pdf' && item.source !== 'database' && item.path === path).map(item => item.id);
     const run = (action, token) => pdf ? api.note_pdf_cleanup(action, path, token || null, protectedIds())
       : api.note_html(action, path, token);
     const title = text('清理未使用的 ' + type, 'Clean up unused ' + type);
@@ -5589,7 +5652,7 @@
       for (const note of relevant) {
         if (note && hasPendingEdits(note) && (!current() || !await flushSave(note))) throw new Error(tr('saveFailed'));
       }
-      if (pdf && !await flushPdfAnnotations({ path })) return;
+      if (pdf && !await flushPdfAnnotations({ path, source: 'embed' })) return;
       while (current()) {
         const plan = await run('plan-cleanup');
         if (!current()) return;

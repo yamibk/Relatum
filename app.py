@@ -32,7 +32,7 @@ import urllib.request
 import uuid
 import unicodedata
 import webbrowser
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
@@ -10077,6 +10077,17 @@ def _open_note_asset(target: Path):
     return target.open("rb")
 
 
+def _resolve_note_pdf(note, identity, source):
+    if source == 'embed':
+        return NOTES_STORE.resolve_pdf_embed(note, identity)
+    if source != 'database':
+        raise NotesError('PDF 附件来源无效', code='invalid_pdf_source')
+    target = NOTES_STORE.database.resolve_attachment(note, identity)
+    if target.suffix.casefold() != '.pdf':
+        raise NotesError('附件不是 PDF 文件', code='invalid_pdf')
+    return target
+
+
 def _detach_note_assets_for_move(source):
     if sys.platform != "win32" or not _NOTE_ASSET_STREAMS:
         return
@@ -10512,22 +10523,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except (sqlite3.Error, RuntimeError) as err:
                 return self._send_json(503, {'error': str(err), 'code': 'index_unavailable'})
         if parsed.path == "/api/note-pdf/annotations":
-            query = urllib.parse.parse_qs(parsed.query)
+            query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
             return self._api_note_pdf_annotations(query.get('note', [''])[0], query.get('id', [''])[0],
                                                   query.get('assetRevision', [''])[0],
+                                                  source=query.get('source', ['embed'])[0],
                                                   edit=query.get('edit') == ['1'])
         if parsed.path in {"/api/note-pdf", "/api/note-pdf/file"}:
-            query = urllib.parse.parse_qs(parsed.query)
+            query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+            source = query.get('source', ['embed'])[0]
             try:
-                with NOTES_MUTATION_LOCK:
-                    target = NOTES_STORE.resolve_pdf_embed(query.get("note", [""])[0], query.get("id", [""])[0])
+                with (_cross_process_mutation_lock() if source == 'database' else nullcontext()), NOTES_MUTATION_LOCK:
+                    target = _resolve_note_pdf(query.get("note", [""])[0], query.get("id", [""])[0], source)
                     stream = _open_note_asset(target)
                     try:
                         NOTES_STORE._validate_pdf_stream(stream)
                         info = stream.stat if isinstance(stream, _NoteAssetStream) else os.fstat(stream.fileno())
                         version = note_pdf_annotations.asset_revision(info)
-                        if query.get('assetRevision') and query['assetRevision'][0] != version:
-                            note_pdf_annotations.check_asset(info, query['assetRevision'][0])
+                        expected = query.get('assetRevision', [''])[0]
+                        if expected and expected != version:
+                            note_pdf_annotations.check_asset(info, expected)
                     except BaseException:
                         stream.close()
                         raise
@@ -10538,7 +10552,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                                              opened_file=stream, download_name="document.pdf")
             except NotesError as err:
                 return self._send_notes_error(err)
-            except OSError:
+            except FileNotFoundError:
+                return self._send_json(404, {"error": "PDF 文件不存在", "code": "not_found"})
+            except (OSError, sqlite3.Error):
                 return self._send_json(500, {"error": "读取笔记 PDF 失败", "code": "read_failed"})
         if parsed.path == "/api/note-asset":
             q = urllib.parse.parse_qs(parsed.query)
@@ -10937,7 +10953,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/note-upload-image":
             return self._api_note_upload_image(body)
         if path == "/api/note-pdf/annotations":
-            return self._api_note_pdf_annotations(body.get('note'), body.get('id'), body.get('assetRevision'), body=body)
+            return self._api_note_pdf_annotations(body.get('note'), body.get('id'), body.get('assetRevision'),
+                                                  source=body.get('source', 'embed'), body=body)
         if path in {"/api/note-database/action", "/api/note-database/attachment/import"}:
             return self._api_note_database(body, upload=path.endswith('/import'))
         if path == "/api/note-database/chart":
@@ -11227,7 +11244,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 result = NOTES_STORE.database.import_file(note, body.get('name'), content, body.get('candidates'),
                                                           target=body.get('target'), query=query)
             else:
-                result = NOTES_STORE.database.action(note, body.get('databaseId'), body.get('action'), query, recycle=_move_paths_to_recycle_bin)
+                result = NOTES_STORE.database.action(note, body.get('databaseId'), body.get('action'), query,
+                                                     recycle=_recycle_note_media, detach_readers=_detach_note_asset_readers)
             return self._send_json(200, result)
         except NotesError as err:
             return self._send_notes_error(err)
@@ -11424,10 +11442,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             _usage_event("notes", result["path"], Path(result["path"]).name, "modified", fingerprint=result.get("revision"))
         return self._send_json(200, result)
 
-    def _api_note_pdf_annotations(self, path, identity, version, *, edit=False, body=None):
+    def _api_note_pdf_annotations(self, path, identity, version, *, source='embed', edit=False, body=None):
         def resolve():
-            pdf = NOTES_STORE.resolve_pdf_embed(path, identity)
-            note_pdf_annotations.check_asset(pdf.stat(), version)
+            pdf = _resolve_note_pdf(path, identity, source)
+            if source == 'database':
+                with pdf.open('rb') as stream:
+                    note_pdf_annotations.check_asset(os.fstat(stream.fileno()), version)
+                    NOTES_STORE._validate_pdf_stream(stream)
+            else:
+                note_pdf_annotations.check_asset(pdf.stat(), version)
             return pdf, pdf.with_name(note_pdf_annotations.FILENAME)
 
         try:
@@ -11454,7 +11477,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_notes_error(error)
         except FileNotFoundError:
             return self._send_json(404, {"error": "PDF 文件不存在", "code": "not_found"})
-        except OSError:
+        except (OSError, sqlite3.Error):
             return self._send_json(500, {"error": "无法读取或保存 PDF 批注", "code": "annotation_io"})
 
     def _api_note_pdf_import(self, query: dict):

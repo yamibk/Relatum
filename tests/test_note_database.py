@@ -7,10 +7,12 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+import uuid
 from contextlib import closing
 from pathlib import Path
 from unittest import mock
 from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from note_database import DATABASE_DIRECTORY, PURGE_DIRECTORY, copy_attachment_to_downloads, database_fences
 from notes_library import NotesError, NotesStore
@@ -197,9 +199,17 @@ class NoteDatabaseTests(unittest.TestCase):
         self.save()
         imported = self.database.import_file('Source.md', 'file.pdf', b'before')
         attachment = self.database.resolve_attachment('Source.md', imported['attachmentId'])
+        sidecar = attachment.with_name('annotations.json')
+        sidecar.write_bytes(b'original annotations')
         files, stage = self.directory / 'files', self.directory / PURGE_DIRECTORY
         catalog = self.action('list')
         attachment.write_bytes(b'after confirmation')
+        with self.assertRaises(NotesError) as stale:
+            self.action('purge', token=catalog['token'])
+        self.assertEqual(stale.exception.code, 'revision_conflict')
+        catalog = self.action('list')
+        self.assertEqual(catalog['fileCount'], 1)
+        sidecar.write_bytes(b'annotation changed after confirmation')
         with self.assertRaises(NotesError) as stale:
             self.action('purge', token=catalog['token'])
         self.assertEqual(stale.exception.code, 'revision_conflict')
@@ -219,12 +229,14 @@ class NoteDatabaseTests(unittest.TestCase):
         files.rename(stage)
         self.assertTrue(self.read()['exists'])
         self.assertTrue(attachment.exists(), 'uncommitted staging is restored')
+        self.assertEqual(sidecar.read_bytes(), b'annotation changed after confirmation')
         with mock.patch.object(shutil, 'rmtree', side_effect=PermissionError('locked after commit')):
             self.assertTrue(self.action('purge', token=catalog['token'])['cleanupPending'])
             self.assertTrue(self.read()['deleted'])
         self.assertTrue(stage.exists())
         self.assertTrue(self.read()['deleted'])
         self.assertFalse(stage.exists(), 'committed staging is removed on the next access')
+        self.assertFalse(sidecar.exists())
 
     def test_creation_failure_can_retry_only_a_saved_fence(self):
         with mock.patch.object(self.database, '_initialize', side_effect=OSError('disk is full')):
@@ -346,6 +358,37 @@ class NoteDatabaseTests(unittest.TestCase):
         referenced.unlink()
         missing = self.read({'page': 2})['rows'][0]['values'][attachment_col]
         self.assertEqual(missing, {**expected, 'exists': False})
+
+    def test_cleanup_groups_pdf_and_annotations_and_rechecks_protected_tabs(self):
+        import note_pdf_annotations as pdf
+
+        self.save()
+        identity = self.database.import_file('Source.md', 'Shared.pdf', b'%PDF-1.7\n%%EOF')['attachmentId']
+        target = self.database.resolve_attachment('Source.md', identity)
+        sidecar = target.with_name(pdf.FILENAME)
+        digest = pdf.fingerprint(target, pdf.asset_revision(target.stat()))
+        mark = {'id': str(uuid.uuid4()), 'page': 1, 'kind': 'note', 'color': '#f4b740',
+                'point': [10, 20], 'text': 'Read together'}
+        preview = self.action('previewCleanup')
+        self.assertEqual(preview['count'], 1)
+        self.assertEqual(self.action('previewCleanup', protectedIds=[identity])['count'], 0)
+        with self.assertRaisesRegex(NotesError, '附件候选已变化'):
+            self.action('cleanup', candidateToken=preview['candidateToken'], protectedIds=[identity])
+        pdf.save(sidecar, pdf.read(sidecar), digest, {'revision': None, 'upsert': [mark], 'remove': []},
+                 self.store.atomic_bytes)
+        self.assertEqual(self.action('list')['fileCount'], 1)
+        with self.assertRaisesRegex(NotesError, '附件候选已变化'):
+            self.action('cleanup', candidateToken=preview['candidateToken'])
+        extra = target.with_name('unmanaged.txt')
+        extra.touch()
+        self.assertEqual(self.action('previewCleanup')['count'], 0)
+        extra.unlink()
+        preview = self.action('previewCleanup')
+        self.assertEqual(self.action('cleanup', candidateToken=preview['candidateToken'])['deletedCount'], 1)
+        self.assertFalse(target.parent.exists())
+        group = self.home / 'recycled' / '0'
+        self.assertEqual((group / target.name).read_bytes(), b'%PDF-1.7\n%%EOF')
+        self.assertEqual(pdf.read(group / pdf.FILENAME)['annotations'], [mark])
 
     def test_relative_note_links_move_rollback_and_companion_moves(self):
         self.save()
@@ -746,6 +789,64 @@ class NoteDatabaseTests(unittest.TestCase):
 
 
 class NoteDatabaseHttpTests(unittest.TestCase):
+    def test_pdf_attachment_routes_check_source_version_and_note_authority(self):
+        import app
+        from feature_profile import FEATURES, LaunchProfile
+        from tests.usage_v2_test_support import IsolatedUsage
+
+        with IsolatedUsage() as fixture:
+            note = 'Source.md'
+            (fixture.notes / note).write_text(FENCE, encoding='utf-8')
+            (fixture.notes / 'Other.md').touch()
+            database = app.NOTES_STORE.database
+            raw = b'%PDF-1.7\nexample\n%%EOF'
+            identity = database.import_file(note, 'Lecture.PDF', raw)['attachmentId']
+            broken = database.import_file(note, 'Broken.pdf', b'plain text')['attachmentId']
+            text = database.import_file(note, 'Example.txt', raw)['attachmentId']
+            endpoint = '/api/note-pdf'
+            query = {'note': note, 'id': identity, 'source': 'database'}
+            url = lambda route, params: route + '?' + urlencode(params)
+            status, meta = fixture.request(url(endpoint, query))
+            self.assertEqual((status, meta['name']), (200, 'Lecture.PDF'))
+            versioned = {**query, 'assetRevision': meta['assetRevision']}
+            request = Request(fixture.url + url(endpoint + '/file', versioned), headers={'Range': 'bytes=3-9'})
+            with urlopen(request, timeout=10) as response:
+                self.assertEqual(response.status, 206)
+                self.assertEqual(response.headers['Content-Range'], f'bytes 3-9/{len(raw)}')
+                self.assertEqual(response.read(), raw[3:10])
+            for params, expected in [
+                ({'id': broken}, (400, 'invalid_pdf')),
+                ({'id': text}, (400, 'invalid_pdf')),
+                ({'note': 'Other.md'}, (404, 'not_found')),
+                ({'source': ''}, (400, 'invalid_pdf_source')),
+                ({'source': 'other'}, (400, 'invalid_pdf_source')),
+                ({'source': 'embed'}, (400, 'invalid_pdf')),
+            ]:
+                status, result = fixture.request(url(endpoint, {**query, **params}))
+                self.assertEqual((status, result['code']), expected)
+            annotations = endpoint + '/annotations'
+            status, snapshot = fixture.request(url(annotations, {**versioned, 'edit': 1}))
+            self.assertEqual(status, 200)
+            mark = {'id': str(uuid.uuid4()), 'page': 1, 'kind': 'note', 'color': '#f4b740',
+                    'point': [50, 50], 'text': 'Annotation'}
+            payload = {**versioned, 'revision': snapshot['revision'], 'pdfHash': snapshot['pdfHash'],
+                       'upsert': [mark], 'remove': []}
+            self.assertEqual(fixture.request(annotations, {**payload, 'note': 'Other.md'})[0], 404)
+            self.assertEqual(fixture.request(annotations, payload)[0], 200)
+            target = database.resolve_attachment(note, identity)
+            self.assertEqual(target.read_bytes(), raw)
+            sidecar = target.with_name('annotations.json')
+            self.assertEqual(json.loads(sidecar.read_bytes())['annotations'], [mark])
+            target.write_bytes(raw + b'changed')
+            self.assertEqual(fixture.request(url(endpoint + '/file', versioned))[1]['code'], 'pdf_changed')
+            self.assertEqual(fixture.request(annotations, payload)[1]['code'], 'pdf_changed')
+            target.unlink()
+            self.assertEqual(fixture.request(url(endpoint, query))[0], 404)
+            self.assertTrue(sidecar.exists())
+            fixture.server.launch_profile = LaunchProfile({key: key == 'canvas' for key in FEATURES}, restricted=True)
+            for route in (endpoint, endpoint + '/file', annotations):
+                self.assertEqual(fixture.request(url(route, versioned))[0], 403)
+
     def test_chart_route_is_read_only_and_notes_owned(self):
         from feature_profile import FEATURES, LaunchProfile
         from tests.usage_v2_test_support import IsolatedUsage

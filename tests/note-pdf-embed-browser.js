@@ -15,6 +15,7 @@ const args = process.argv.slice(2);
 const native = args.includes('--webview2');
 const notesOnly = args.includes('--notes-only');
 const navigationOnly = args.includes('--navigation-memory');
+const databaseOnly = args.includes('--database-attachment');
 const repo = path.join(__dirname, '..');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-pdf-embed-'));
 const notes = path.join(root, 'notes');
@@ -83,6 +84,7 @@ async function waitFor(check, description = 'the test host') {
   fs.writeFileSync(fixture, pdf);
   fs.writeFileSync(path.join(notes, 'Lab.md'), 'Before PDF\n\nAfter PDF\n');
   fs.writeFileSync(path.join(notes, 'Other.md'), 'Other document\n');
+  if (databaseOnly) fs.writeFileSync(path.join(notes, 'Database.md'), '```database main\n```\n\n```database second\n```\n');
   fs.writeFileSync(path.join(notes, 'Plain.md'), '```pdf-embed ' + plainId + '\n```\n');
   const plainDirectory = path.join(notes, 'Plain.assets', 'pdf', plainId);
   fs.mkdirSync(plainDirectory, { recursive: true });
@@ -157,7 +159,7 @@ async function waitFor(check, description = 'the test host') {
     const workspace = fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: workspace.replace(
       '  window.CanvasNoteWorkspace = {',
-      '  window.__pdfTest = { state, openNote, setViewMode, movePath };\n  window.CanvasNoteWorkspace = {',
+      '  window.__pdfTest = { state, openNote, setViewMode, movePath, setSideOpen };\n  window.CanvasNoteWorkspace = {',
     ) }));
     const runtime = fs.readFileSync(path.join(repo, 'assets/pdf-runtime.js'), 'utf8');
     await page.route('**/pdf-runtime.js*', route => route.fulfill({ contentType: 'text/javascript', body: runtime.replace(
@@ -193,6 +195,162 @@ async function waitFor(check, description = 'the test host') {
     const openPlain = () => page.locator('[data-pdf-embed-id="' + plainId + '"]:visible')
       .getByRole('button', { name: 'Open in new tab' }).click();
     const waitForPdfTools = () => panel.locator('button[aria-controls="note-pdf-navigation"]:enabled').waitFor();
+    if (databaseOnly) {
+      const note = 'Database.md', movedNote = 'Moved database.md', name = 'Shared reading.PDF';
+      const api = new URL(page.url()).origin;
+      async function post(route, data) {
+        const response = await page.request.post(api + '/api/note-database/' + route, { data });
+        assert(response.ok(), await response.text());
+        return response.json();
+      }
+      const action = (databaseId, type, fields = {}) => post('action', { path: note, databaseId, action: { type, ...fields } });
+      const addFile = (name, bytes) => post('attachment/import', { path: note, name, data: bytes.toString('base64') });
+      const shared = (await addFile(name, pdf)).attachmentId;
+      const broken = (await addFile('Invalid.pdf', Buffer.from('Not a PDF'))).attachmentId;
+      const text = (await addFile('Plain.txt', Buffer.from('Plain text'))).attachmentId;
+      for (const table of ['main', 'second']) {
+        let data = await action(table, 'create');
+        data = await action(table, 'addColumn', { name: 'File', columnType: 'attachment', revision: data.revision });
+        const column = data.addedColumn;
+        for (const id of table === 'main' ? [shared, broken, text] : [shared]) {
+          data = await action(table, 'addRow', {
+            values: { [column]: { kind: 'attachment', id } }, revision: data.revision,
+          });
+        }
+      }
+      const appTab = page.getByRole('tab', { name, exact: true });
+      const cell = title => page.locator('.note-database-cell-value:visible').filter({ hasText: title });
+      const sourceDir = path.join(notes, 'Database.assets', '.relatum-databases', 'files', shared);
+      const external = [];
+      await page.route('**/api/open-external', route => {
+        external.push(route.request().postDataJSON());
+        return route.fulfill({ json: { ok: true } });
+      });
+      assert.equal(await open(note), true);
+      await cell(name).first().waitFor();
+      assert.equal(await page.evaluate(() => Boolean(window.pdfjsLib)), false);
+      await cell(name).first().click();
+      const input = page.locator('.note-database input[data-db-type="attachment"]');
+      await input.waitFor();
+      await input.press('Escape');
+      assert.equal(await appTab.count(), 0);
+      let received = false, releaseMetadata;
+      const holdMetadata = new Promise(resolve => { releaseMetadata = resolve; });
+      await page.route('**/api/note-pdf?*', async route => {
+        received = true;
+        await holdMetadata;
+        await route.continue().catch(() => {});
+      }, { times: 1 });
+      await cell(name).first().click({ modifiers: ['Control'] });
+      try {
+        await waitFor(() => received, 'the database PDF metadata request');
+        assert.equal(await open('Other.md'), true);
+      } finally { releaseMetadata(); }
+      assert.equal(await stage.count(), 0, 'leaving during loading releases the PDF');
+      await open(note);
+      await cell(name).first().click({ modifiers: ['Control'] });
+      await waitForPdfTools();
+      await panel.locator('.note-pdf-page[data-page="1"] canvas').waitFor();
+      assert.equal(await appTab.count(), 1);
+      assert.equal(external.length, 0);
+      await panel.getByRole('button', { name: 'Annotate', exact: true }).click();
+      const pen = panel.getByRole('button', { name: 'Pen', exact: true });
+      await pen.click();
+      await page.route('**/api/note-pdf/annotations', route => route.fulfill({
+        status: 500, json: { code: 'annotation_io', error: 'Test write failure' },
+      }), { times: 1 });
+      const paper = await panel.locator('.note-pdf-page[data-page="1"]').boundingBox();
+      await page.mouse.move(paper.x + 70, paper.y + 150);
+      await page.mouse.down();
+      await page.mouse.move(paper.x + 135, paper.y + 170, { steps: 5 });
+      await page.mouse.up();
+      await panel.getByText('Unable to save or read annotations.').waitFor();
+      await panel.getByRole('button', { name: 'Retry', exact: true }).click();
+      const sidecar = path.join(sourceDir, 'annotations.json');
+      await waitFor(() => fs.existsSync(sidecar) && JSON.parse(fs.readFileSync(sidecar)).annotations.some(mark => mark.kind === 'pen'));
+      assert.deepEqual(fs.readFileSync(path.join(sourceDir, name)), pdf);
+      assert.equal(await open(note), true);
+      assert.equal(await stage.count(), 0, 'switching to the note releases the reader');
+      await cell(name).last().press('Control+Enter');
+      await waitForPdfTools();
+      await panel.locator('.note-pdf-annotations [data-annotation-id]').first().waitFor();
+      assert.equal(await appTab.count(), 1);
+
+      const settings = page.locator('[data-role="note-settings-dialog"]');
+      async function setOpenMode(label) {
+        await page.evaluate(() => __pdfTest.setSideOpen(true));
+        await page.locator('[data-note-action="toggle-settings"]').click();
+        await settings.locator('nav [data-settings-category="editing"]').click();
+        await settings.getByRole('combobox', { name: 'Open database PDFs with' }).click();
+        await settings.getByRole('option', { name: label, exact: true }).click();
+        await settings.locator('[data-settings-action="close"]').click();
+        await page.evaluate(() => __pdfTest.setSideOpen(false));
+      }
+      await open(note);
+      await setOpenMode('System default app');
+      await cell(name).first().click({ modifiers: ['Control'] });
+      await waitFor(() => external.length === 1);
+      assert.equal(external[0].target, shared);
+      assert.equal(await stage.count(), 0);
+      await setOpenMode('Relatum (default)');
+      await cell('Plain.txt').click({ modifiers: ['Control'] });
+      await waitFor(() => external.length === 2);
+      assert.equal(external[1].target, text);
+      await cell('Invalid.pdf').click({ modifiers: ['Control'] });
+      await panel.getByText('The PDF file is damaged or invalid').waitFor();
+      if (process.platform === 'win32') {
+        await panel.getByRole('button', { name: 'Open in system app' }).click();
+        await waitFor(() => external.length === 3);
+        assert.equal(external[2].target, broken);
+      }
+      await open(note);
+      fs.unlinkSync(path.join(path.dirname(sourceDir), broken, 'Invalid.pdf'));
+      await page.getByRole('tab', { name: 'Invalid.pdf', exact: true }).click();
+      await panel.getByText('PDF attachment not found').waitFor();
+      await open(note);
+      await mode('reading');
+      await cell(name).last().click();
+      await waitForPdfTools();
+      assert.equal(await appTab.count(), 1, 'reading mode uses the same tab');
+
+      const moved = await page.evaluate(async ({ note, movedNote }) => {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          if (await __pdfTest.movePath(note, movedNote, true)) return true;
+          if (!['move_changed', 'statistics_incomplete'].includes(__pdfTest.state.lastMoveCode)) break;
+          await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        return __pdfTest.state.lastMoveError;
+      }, { note, movedNote });
+      assert.equal(moved, true);
+      const movedDir = path.join(notes, 'Moved database.assets', '.relatum-databases', 'files', shared);
+      assert.ok(fs.existsSync(path.join(movedDir, 'annotations.json')));
+      assert.equal(fs.existsSync(sourceDir), false);
+      await appTab.click();
+      await waitForPdfTools();
+      if (native) {
+        await page.evaluate(() => { void window.pywebview.api.close_window(); }).catch(() => {});
+        await Promise.race([exited, delay(10000)]);
+        assert.notEqual(host.exitCode, null, 'the desktop instance exited');
+        await browser.close().catch(() => {});
+        await launch();
+      } else {
+        await page.reload();
+      }
+      const restored = page.locator('#note-pdf-tab-panel');
+      await restored.locator('.note-pdf-annotations [data-annotation-id]').first().waitFor();
+      const remembered = await page.evaluate(() => JSON.parse(localStorage.getItem('canvas:noteOpenTabs:v1'))
+        .find(tab => tab?.source === 'database' && tab.name === 'Shared reading.PDF'));
+      assert.deepEqual([remembered.path, remembered.id], [movedNote, shared]);
+      await page.evaluate(native => {
+        if (native) return window.pywebview.api.minimize();
+        document.documentElement.dataset.desktopMinimized = '1';
+        window.dispatchEvent(new Event('canvasdesktop:visibility'));
+      }, native);
+      await page.waitForFunction(() => document.documentElement.dataset.desktopMinimized === '1');
+      await restored.locator('.note-pdf-scroll').waitFor({ state: 'detached' });
+      console.log('Database PDF attachments passed (' + (native ? 'WebView2' : 'Edge') + ')');
+      return;
+    }
     async function checkNavigationMemory() {
       const chapter = navigation.getByRole('button', { name: 'Lab experiments' });
       const currentThumbnail = navigation.locator('[aria-current="page"] canvas');
