@@ -31,6 +31,39 @@ function metrics() {
     titleLeft: title.hidden ? null : title.getBoundingClientRect().left };
 }
 
+async function checkTitleScroll(page, mode) {
+  const title = page.locator('.note-inline-title');
+  const samples = await title.evaluate((input, mode) => {
+    const shell = input.parentElement;
+    const reading = mode === 'reading';
+    const scroller = reading ? document.querySelector('[data-role="note-reading-view"]') : T.editor.view.scrollDOM;
+    const body = reading ? scroller.querySelector('.note-reading-content') : T.editor.view.contentDOM;
+    T.editor.cancelViewportRestore(); RelatumNoteLiveEditor.cancelViewportRestore(scroller);
+    const samples = [0, 8, 22, 70, 18, 0].map(top => {
+      scroller.scrollTop = top;
+      const titleRect = shell.getBoundingClientRect(), bodyRect = body.getBoundingClientRect();
+      return { top: scroller.scrollTop, title: titleRect.top, body: bodyRect.top, widthDelta: titleRect.width - bodyRect.width };
+    });
+    return { native: shell.parentElement === scroller && getComputedStyle(shell).transform === 'none', samples };
+  }, mode);
+  assert(samples.native, `${mode} title is physically inside the scroll surface`);
+  const first = samples.samples[0];
+  assert(samples.samples.every(({ top, title, body, widthDelta }) =>
+    Math.abs(first.title - title - top) <= 1 && Math.abs(first.body - body - top) <= 1 && Math.abs(widthDelta) <= 1),
+  'filename and text move the same distance within the same frame, including reversal: ' + JSON.stringify({ mode, samples }));
+
+  const box = await title.boundingBox();
+  const point = { x: box.x + 25, y: box.y + box.height / 2 };
+  const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.className, point);
+  assert.equal(hit, 'note-inline-title', `${mode} wheel starts over the filename input`);
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.wheel(0, 12);
+  await page.waitForFunction(() => document.querySelector('.note-inline-title-shell').parentElement.scrollTop > 0, null, { timeout: 2000 })
+    .catch(error => { throw new Error(`${mode} wheel over the filename did not scroll`, { cause: error }); });
+  await page.mouse.wheel(0, -64);
+  await page.waitForFunction(() => document.querySelector('.note-inline-title-shell').parentElement.scrollTop === 0);
+}
+
 (async () => {
   const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
@@ -52,7 +85,7 @@ function metrics() {
       const page = await context.newPage(), errors = [];
       page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));
       const source = fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8').replace('  window.CanvasNoteWorkspace = {',
-        '  window.T = {state, openNote, flushSave, closeAllTabs, setViewMode, setSideOpen, setSideMode, get editor(){return liveEditor;}};\n  window.CanvasNoteWorkspace = {');
+        '  window.T = {state, openNote, flushSave, closeAllTabs, setViewMode, setSideOpen, setSideMode, renderReadingDocument, get editor(){return liveEditor;}};\n  window.CanvasNoteWorkspace = {');
       await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
       await page.addInitScript(() => {
         localStorage.setItem('canvas:startWorkspace:v1', 'notes');
@@ -71,6 +104,19 @@ function metrics() {
         for (const mode of ['live', 'source', 'reading']) {
           await page.evaluate(mode => T.setViewMode(mode), mode);
           await page.waitForTimeout(350);
+          if (width === 1920 || width === 760) await checkTitleScroll(page, mode);
+          if (width === 1920 && mode === 'reading') {
+            const title = page.locator('.note-inline-title');
+            const preserved = await title.evaluate(input => {
+              input.focus(); input.value = 'Uncommitted filename'; input.setSelectionRange(2, 7);
+              T.renderReadingDocument();
+              return input === document.activeElement && input.value === 'Uncommitted filename'
+                && input.selectionStart === 2 && input.selectionEnd === 7;
+            });
+            assert(preserved, 'rebuilding the reading body preserves the active filename draft and selection');
+            await title.press('Escape');
+            assert.equal(await title.inputValue(), 'Long', 'Escape restores the filename without renaming');
+          }
           await page.evaluate(() => {
             const area = T.state.viewMode === 'reading' ? document.querySelector('[data-role="note-reading-view"]') : T.editor.view.scrollDOM;
             // Fixture navigation explicitly supersedes the mode's content restore.
@@ -164,6 +210,19 @@ function metrics() {
         await page.reload();
         const fallback = page.locator('[data-role="note-editor-fallback"]');
         await fallback.waitFor({ state: 'visible' });
+        await page.waitForFunction(() => T.state.current?.path === 'Long.md' && T.state.active);
+        await fallback.evaluate(area => { area.scrollTop = 0; });
+        const title = page.locator('.note-inline-title');
+        const titleBox = await title.boundingBox();
+        await page.mouse.move(titleBox.x + 25, titleBox.y + titleBox.height / 2);
+        await page.mouse.wheel(0, 12);
+        await page.waitForFunction(() => {
+          const offset = document.querySelector('[data-role="note-editor-fallback"]').scrollTop;
+          const shell = document.querySelector('.note-inline-title-shell');
+          return offset > 0 && Math.abs(new DOMMatrix(getComputedStyle(shell).transform).m42 + offset) <= 1;
+        });
+        await page.mouse.wheel(0, -64);
+        await page.waitForFunction(() => document.querySelector('[data-role="note-editor-fallback"]').scrollTop === 0);
         for (const width of [1920, 1121]) {
           await page.setViewportSize({ width, height: 900 });
           for (const open of [false, true]) {

@@ -237,8 +237,9 @@ assert(live.includes('function renderMarkdown(host, source, notePath, options)')
 assert(notes.includes('function commitInlineTitle()') && notes.includes("rawValue + '.md'"), 'the inline title must rename the backing Markdown file');
 assert(notes.includes("state.lastMoveCode === 'exists' ? tr('duplicateTitle')"), 'duplicate inline titles need the Obsidian-style floating warning');
 assert(notes.includes("document.body.classList.toggle('note-focus-mode'"), 'the Notes focus toggle must collapse the global top bar without replacing the workspace');
-assert(notes.includes("liveEditor.view.scrollDOM.addEventListener('scroll', scheduleInlineTitleScroll"), 'the inline filename title must follow the shared editor scroll surface');
-assert(notes.includes("root.style.setProperty('--note-title-scroll-offset'"), 'the inline filename title needs a bounded scroll projection');
+assert(notes.includes('const host = scroller === fallbackEditor ? documentBody : scroller;')
+  && notes.includes('host.prepend(inlineTitleShell)'), 'the inline filename must be inside the active Markdown scroll surface');
+assert(!notes.includes('scheduleInlineTitleScroll'), 'the native editors must not mirror scroll offsets in JavaScript');
 assert(notes.includes('DOCUMENT_CACHE_LIMIT = 24'), 'multi-tab documents need a bounded inactive-document cache');
 assert(notes.includes("words: '{count} 个词'") && notes.includes("characters: '{count} 个字符'"), 'word and character counts must be localized');
 const changeListener = live.slice(live.indexOf('EditorView.updateListener'), live.indexOf('EditorView.domEventHandlers'));
@@ -302,7 +303,7 @@ assert(css.includes('--note-content-left: clamp(42px, 6vw, 112px)')
 assert(css.includes('font-size: calc(16px * var(--note-font-scale, 1))') && css.includes('line-height: 1.6;'), 'Markdown typography must use the 16px/1.6 reading baseline');
 assert(css.includes('--note-font-text: "Relatum Open Sans", "Microsoft YaHei"'), 'Markdown must use the offline Open Sans / YaHei font stack');
 assert(css.includes('font-size: 2.25em; line-height: 1.2;'), 'H1 must use the reference 2.25em scale');
-assert(css.includes("transform: translateY(calc(-1 * var(--note-title-scroll-offset, 0px)))"), 'the inline filename title must scroll away instead of staying fixed');
+assert(css.includes('.note-document-body > .note-inline-title-shell {'), 'the mirrored title is scoped to the fallback textarea');
 assert(css.includes('padding: calc(var(--note-inline-title-space) + 10px) 0 120px'), 'the title reservation must live inside the editor scroller');
 assert(live.includes('replace(nodeRef.from, headingMarkerProjectionEnd'), 'inactive ATX markers must not leave a visible separator indent');
 assert(css.includes('.note-links-pane') && css.includes('transform: translateX(100%)'), 'shared sidebar must preserve its slide transition');

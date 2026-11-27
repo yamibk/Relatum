@@ -41,6 +41,7 @@
   const tabCloseAnimations = new Map();
   let tabCloseMotionPending = false, tabCloseClipActive = false, tabScrollFrame = 0, tabCloseMotionScrollLeft = 0;
   let tabCloseMotionUntil = 0, tabCloseScrollPending = null;
+  const documentBody = $('.note-document-body');
   const editorHost = $('[data-role="note-editor"]');
   const fallbackEditor = $('[data-role="note-editor-fallback"]');
   const readingHost = $('[data-role="note-reading-view"]');
@@ -882,7 +883,7 @@
     openingPath: '', documentGeneration: 0, documentCache: new Map(), loadPromises: new Map(), entryIndex: new Map(), prefetchTimer: 0,
     initializePromise: null, tabs: [], activeTab: '', renderedActiveTab: '', draggedTabPath: '', titleRenamePromise: null, lastMoveCode: '',
     externalSyncTimer: 0, externalSyncFailures: 0, externalSyncUnchanged: 0, treeMetadataSignature: '', externalSyncChain: Promise.resolve(true), recycleRunning: false,
-    focusMode: document.body.classList.contains('note-focus-mode'), focusMotionTimer: 0, focusMotionSeq: 0, titleScrollFrame: 0, titleResizeObserver: null,
+    focusMode: document.body.classList.contains('note-focus-mode'), focusMotionTimer: 0, focusMotionSeq: 0,
     viewMode: 'live', selectionMatchHighlight: false, settingsOpen: false, recordingShortcutCommand: '',
     treeSort: 'modified-desc', treeNamePriority: 'auto', treeSharedPrefixPriority: 'auto',
     newName: { mode: 'timestamp', baseName: '' }, libraryPanel: '', libraryPanelTimers: {}, pendingTreeReorder: false, renderedOrder: '',
@@ -2056,20 +2057,16 @@
     return liveEditor.view && liveEditor.view.scrollDOM || fallbackEditor;
   }
 
-  function syncInlineTitleScroll(scrollTop) {
-    const maximum = inlineTitleShell && !inlineTitleShell.hidden ? inlineTitleShell.offsetHeight : 0;
-    const offset = Math.min(Math.max(0, Number(scrollTop) || 0), maximum);
-    const value = offset + 'px';
-    if (root.style.getPropertyValue('--note-title-scroll-offset') !== value) root.style.setProperty('--note-title-scroll-offset', value);
+  function mountInlineTitle() {
+    const scroller = editorScrollElement();
+    const host = scroller === fallbackEditor ? documentBody : scroller;
+    if (inlineTitleShell && host && inlineTitleShell.parentNode !== host) host.prepend(inlineTitleShell);
   }
 
-  function scheduleInlineTitleScroll() {
-    if (state.titleScrollFrame) return;
-    state.titleScrollFrame = requestAnimationFrame(() => {
-      state.titleScrollFrame = 0;
-      const scroller = editorScrollElement();
-      syncInlineTitleScroll(scroller && scroller.scrollTop);
-    });
+  function syncFallbackTitleScroll() {
+    if (state.viewMode === 'reading' || !inlineTitleShell) return;
+    // A textarea scrolls its text internally and cannot contain the filename input.
+    inlineTitleShell.style.setProperty('--note-fallback-title-scroll', Math.max(0, fallbackEditor.scrollTop) + 'px');
   }
 
   function updateFocusToggle() {
@@ -2112,7 +2109,7 @@
     closeContextMenu();
     if (!documentState) {
       cancelStatistics();
-      if (window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
+      if (window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost, inlineTitleShell);
     }
     const payload = {
       value: documentState && documentState.content || '',
@@ -2124,11 +2121,6 @@
       headingFolds: documentState?.headingFolds,
       viewportCurrent: viewportRestoreCurrent(documentState),
     };
-    if (state.titleScrollFrame) {
-      cancelAnimationFrame(state.titleScrollFrame);
-      state.titleScrollFrame = 0;
-    }
-    syncInlineTitleScroll(payload.scrollTop);
     if (liveEditor) liveEditor.setDocument(payload);
     if (!liveEditor) {
       fallbackEditor.value = payload.value;
@@ -2137,7 +2129,6 @@
     } else fallbackEditor.value = '';
     if (state.viewMode === 'reading' && documentState) renderReadingDocument(payload);
     noteOutline?.documentChanged();
-    requestAnimationFrame(() => requestAnimationFrame(scheduleInlineTitleScroll));
   }
 
   function focusEditor() {
@@ -2663,13 +2654,14 @@
       window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', {
         calloutSession: liveEditor?.calloutSession, headingFolding: headingFoldArrows !== 'never', headingSession: liveEditor?.headingSession,
         onOpenExternal: openMarkdownTarget, database: noteDatabaseHost, htmlEmbed: noteHtmlHost, pdfEmbed: notePdfHost,
-        sectionEmbed: sectionEmbedHost,
+        sectionEmbed: sectionEmbedHost, preserveElement: inlineTitleShell,
       });
     } else {
       const result = window.MarkdownMini && window.MarkdownMini.renderResult
         ? window.MarkdownMini.renderResult(documentState.value || '', { localImages: true, noteBlocks: true, noteSyntax: true, mermaid: !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.mermaid') })
         : { html: '' };
-      readingHost.innerHTML = '<article class="note-reading-content node-text">' + (result.html || '') + '</article>';
+      readingHost.querySelector(':scope > .note-reading-content')?.remove();
+      readingHost.insertAdjacentHTML('beforeend', '<article class="note-reading-content node-text">' + (result.html || '') + '</article>');
     }
     const current = viewportRestoreCurrent(), epoch = readingHost.dataset.noteReadingEpoch;
     const valid = () => current() && epoch === readingHost.dataset.noteReadingEpoch;
@@ -2684,7 +2676,7 @@
     if (noteMovePromise) await waitForNoteMove();
     const next = normalizeViewMode(mode);
     if (next === state.viewMode) return;
-    if (!(await flushCanvases())) return false;
+    if (!(await finishInlineTitle()) || !(await flushCanvases())) return false;
     if (editorInputPending()) await whenEditorInputSettled();
     if (next === state.viewMode) return;
     // Read the current viewport before closing tools invalidates page layout.
@@ -2695,12 +2687,13 @@
     cancelDocumentViewportRestore();
     if (next === 'reading' && state.current) flushSave(state.current);
     state.viewMode = next;
+    mountInlineTitle();
     if (next !== 'reading' && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
     try { localStorage.setItem(NOTE_VIEW_KEY, next); } catch (error) {}
     if (liveEditor) liveEditor.setSourceMode(next === 'source');
     if (state.current) {
       const payload = readingPayload(state.current);
-      if (next === 'source' && !liveEditor) {
+      if (next !== 'reading' && !liveEditor) {
         fallbackEditor.value = payload.value;
         fallbackEditor.scrollTop = payload.scrollTop;
         requestAnimationFrame(() => fallbackEditor.setSelectionRange(payload.anchor, payload.head));
@@ -2720,12 +2713,10 @@
     }
     updateEditorVisibility();
     updateViewToggle();
-    scheduleInlineTitleScroll();
   }
 
   function initializeEditor() {
-    const body = $('.note-document-body');
-    for (const name of ['wheel', 'pointerdown', 'touchstart', 'keydown']) body?.addEventListener(name, cancelDocumentViewportRestore, { capture: true, passive: true });
+    for (const name of ['wheel', 'pointerdown', 'touchstart', 'keydown']) documentBody?.addEventListener(name, cancelDocumentViewportRestore, { capture: true, passive: true });
     if (window.RelatumNoteLiveEditor && typeof window.RelatumNoteLiveEditor.create === 'function') {
       try {
         liveEditor = window.RelatumNoteLiveEditor.create(editorHost, {
@@ -2756,15 +2747,24 @@
           onCanvasContextMenu: (payload) => openCanvasContextMenu(payload),
           onCommandContextChanged: () => { if (bodyMenuContext) closeContextMenu(); },
         });
-        liveEditor.view.scrollDOM.addEventListener('scroll', scheduleInlineTitleScroll, { passive: true });
       } catch (error) {
         liveEditor = null;
         showSaveError(language() === 'en' ? 'Live Preview failed to start; source editor is active.' : '实时预览启动失败，已启用源码编辑器。');
       }
     }
-    fallbackEditor.addEventListener('scroll', scheduleInlineTitleScroll, { passive: true });
+    mountInlineTitle();
+    if (!liveEditor) fallbackEditor.addEventListener('scroll', syncFallbackTitleScroll, { passive: true });
+    // Chromium's single-line text input does not chain vertical wheel scrolling.
+    inlineTitleEl?.addEventListener('wheel', (event) => {
+      if (!event.cancelable || event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      const mode = event.deltaMode, delta = event.deltaY;
+      if (!delta || Math.abs(event.deltaX) > Math.abs(delta)) return;
+      const scroller = editorScrollElement();
+      const unit = mode === 2 ? scroller.clientHeight : mode === 1 ? parseFloat(getComputedStyle(scroller).lineHeight) || 24 : 1;
+      event.preventDefault();
+      scroller.scrollBy(0, delta * unit);
+    }, { passive: false });
     if (readingHost) {
-      readingHost.addEventListener('scroll', scheduleInlineTitleScroll, { passive: true });
       readingHost.addEventListener('contextmenu', (event) => {
         if (event.target.closest('.note-section-reference')) return;
         const heading = event.target.closest('[data-note-heading-from]');
@@ -2793,10 +2793,6 @@
           openMarkdownTarget(link.dataset.href || '');
         }
       });
-    }
-    if (inlineTitleShell && window.ResizeObserver) {
-      state.titleResizeObserver = new ResizeObserver(scheduleInlineTitleScroll);
-      state.titleResizeObserver.observe(inlineTitleShell);
     }
     fallbackEditor.addEventListener('input', () => markChanged(editorSnapshot()));
     let fallbackPastePlain = false;
@@ -4925,6 +4921,7 @@
     fallbackEditor.hidden = !hasNote || state.viewMode === 'reading' || !!liveEditor;
     if (readingHost) readingHost.hidden = !hasNote || state.viewMode !== 'reading';
     restoreDeferredViewport();
+    if (!liveEditor) syncFallbackTitleScroll();
     syncEditorExtensions();
     updateViewToggle();
     updateImageTextTools();
@@ -7285,7 +7282,7 @@
     indexActivity(noteWorkspaceVisible());
     if (noteBrowser && noteWorkspaceVisible()) noteBrowser.resume();
     state.externalSyncUnchanged = 0;
-    if (state.current && state.viewMode === 'reading' && !readingHost.firstChild) renderReadingDocument();
+    if (state.current && state.viewMode === 'reading' && !readingHost.querySelector(':scope > .note-reading-content')) renderReadingDocument();
     if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(true);
     root.classList.add('active');
     const initialized = await initializeWorkspace();
@@ -7302,7 +7299,7 @@
       restoreDeferredViewport();
       resumeLinksRefresh();
       scheduleStatistics(state.current); scheduleDocumentPrefetch();
-      if (state.viewMode === 'reading' && !readingHost.firstChild) renderReadingDocument();
+      if (state.viewMode === 'reading' && !readingHost.querySelector(':scope > .note-reading-content')) renderReadingDocument();
       requestAnimationFrame(() => {
         if (noteWorkspaceVisible() && state.current && !graphPresentation) focusEditor();
       });
@@ -7345,7 +7342,7 @@
     }
     if (root.hidden) { cancelDocumentViewportRestore(); closeNoteModal(); wikiOpenTask = null; noteGraphIntentSequence++; noteGraph?.deactivate(); cancelSideClose(); clearClosedNotebookTree(); }
     else if (state.active && graphPresentation) resumeNoteGraph();
-    if (root.hidden && !state.active && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
+    if (root.hidden && !state.active && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost, inlineTitleShell);
   }).observe(root, { attributes: true, attributeFilter: ['hidden'] });
 
   async function handleWorkspaceClick(event) {

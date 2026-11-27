@@ -3499,7 +3499,7 @@
     });
   }
 
-  function releaseReadingDocument(host) {
+  function releaseReadingDocument(host, preserveElement) {
     if (!host) return;
     cancelViewportRestore(host); delete host.__relatumReadingPosition;
     releaseImageFailures(host);
@@ -3526,7 +3526,9 @@
     }
     if (host.__relatumImageTextSizer) host.__relatumImageTextSizer.destroy();
     delete host.__relatumImageTextSizer;
-    host.replaceChildren();
+    if (preserveElement?.parentNode === host) {
+      for (const node of Array.from(host.childNodes)) if (node !== preserveElement) node.remove();
+    } else host.replaceChildren();
   }
 
   function renderMarkdown(host, source, notePath, options) {
@@ -3537,7 +3539,7 @@
       },
     }, options || {});
     const printing = safeOptions.print === true;
-    releaseReadingDocument(host);
+    releaseReadingDocument(host, safeOptions.preserveElement);
     const epoch = host.dataset.noteReadingEpoch;
     const imageTextSizer = createImageTextSizer();
     host.__relatumImageTextSizer = imageTextSizer;
@@ -3711,7 +3713,7 @@
       }
     });
     content.querySelectorAll('input.md-task-box').forEach((box) => { box.disabled = true; });
-    host.replaceChildren(content);
+    host.append(content);
     if (printing) {
       return { ...result, content, measureImages() {
         content.querySelectorAll('.md-local-image.has-image-text').forEach(imageTextSizer.update);

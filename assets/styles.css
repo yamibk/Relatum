@@ -2291,8 +2291,10 @@ body.start-page[data-start-theme="dark"] .note-browser-more:hover { background: 
   max-width: var(--note-content-width);
   margin: 0 var(--note-content-right) 0 var(--note-content-left);
   padding-top: var(--note-inline-title-top);
-  transform: translateY(calc(-1 * var(--note-title-scroll-offset, 0px)));
   pointer-events: none;
+}
+.note-document-body > .note-inline-title-shell {
+  transform: translateY(max(-100%, calc(-1 * var(--note-fallback-title-scroll, 0px))));
 }
 .note-inline-title-shell[hidden] { display: none; }
 .note-inline-title {
@@ -2340,6 +2342,7 @@ body.start-page[data-start-theme="dark"] .note-browser-more:hover { background: 
   line-height: 1.65;
 }
 .note-reading-view {
+  position: relative;
   grid-row: 1;
   min-height: 0;
   overflow: auto;
