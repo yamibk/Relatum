@@ -1,14 +1,16 @@
 'use strict';
-// Real API and Edge; Markdown, SQLite and browser preferences are all disposable.
+// Real API in Edge or WebView2; Markdown, SQLite and preferences are disposable.
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), net = require('node:net');
 const { spawn } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..'), root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-link-completion-'));
+const native = process.argv.includes('--webview2');
 const notes = path.join(root, 'notes'); fs.mkdirSync(notes);
 for (const [file, content] of Object.entries({ 'Main.md': 'Main', 'Visited.md': 'visited', 'OlderVisit.md': 'older',
   '电子学.md': '电路知识', 'Body.md': '独有正文needle', 'A/同名.md': '研究方法\n--------\n\n章节正文。\n\n## 附注\n\n补充。\n\n## 同标题\n\nA\n\n## 同标题\n\nB', 'B/同名.md': 'B',
-  'CustomNotebook/One/Cross.md': 'cross notebook', 'SlowHeadings.md': '# Late heading\n\nA section' })) {
+  'CustomNotebook/One/Cross.md': 'cross notebook', 'SlowHeadings.md': '# Late heading\n\nA section',
+  '0😀中0尾.md': 'literal title ranges' })) {
   const target = path.join(notes, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, content);
 }
 for (let i = 0; i < 55; i++) fs.writeFileSync(path.join(notes, 'N' + String(i).padStart(3, '0') + '.md'), 'text');
@@ -16,24 +18,46 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 (async () => {
   const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
-  const url = 'http://127.0.0.1:' + port, errors = [], queries = [], imageRequests = [];
+  const origin = 'http://127.0.0.1:' + port, errors = [], queries = [], imageRequests = [], noteReads = [];
   const features = JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json'))).features;
   const profile = { version: 1, features: Object.fromEntries(features.map(feature => [feature.id, feature.id === 'notes'])) };
-  const service = spawn(process.env.RELATUM_PYTHON || 'python', ['app.py', '--no-browser', '--port', String(port), '--launch-profile', JSON.stringify(profile)], {
-    cwd: repo, env: { ...process.env, RELATUM_DATA_ROOT: root }, windowsHide: true, stdio: 'ignore',
+  const python = process.env[native ? 'RELATUM_WEBVIEW_PYTHON' : 'RELATUM_PYTHON'] || 'python';
+  const args = native ? ['desktop.py'] : ['app.py', '--no-browser', '--port', String(port)];
+  const service = spawn(python, ['-B', ...args, '--launch-profile', JSON.stringify(profile)], {
+    cwd: repo, windowsHide: true, env: { ...process.env, RELATUM_DATA_ROOT: root,
+      ...(native ? { LOCALAPPDATA: root, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=' + port } : {}) },
   });
-  let browser;
+  let browser, page, logs = '', ready = false;
+  const exited = new Promise(resolve => service.once('exit', resolve));
+  for (const stream of [service.stdout, service.stderr]) stream.on('data', data => { logs = (logs + data).slice(-12000); });
   try {
-    for (let n = 0; n < 100; n++) {
-      try { if ((await fetch(url + '/api/runtime')).ok) break; } catch (_) {}
-      assert.equal(service.exitCode, null, 'isolated API stays running'); await sleep(100);
+    for (let n = 0; n < 200 && !ready; n++) {
+      try { ready = (await fetch(origin + (native ? '/json/version' : '/api/runtime'))).ok; } catch (_) {}
+      if (!ready) await sleep(100);
+      assert.equal(service.exitCode, null, logs);
     }
-    browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'],
-      ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
-    const page = await browser.newPage({ viewport: { width: 1300, height: 900 }, reducedMotion: 'reduce' });
+    assert(ready, logs || 'isolated note host did not start');
+    if (native) {
+      browser = await chromium.connectOverCDP(origin);
+      for (let n = 0; n < 100 && !page; n++) {
+        page = browser.contexts()[0].pages().find(item => item.url().startsWith('http://127.0.0.1'));
+        if (!page) await sleep(100);
+      }
+      assert(page, logs || 'WebView2 did not open a note host');
+      await page.setViewportSize({ width: 1300, height: 900 }); await page.emulateMedia({ reducedMotion: 'reduce' });
+    } else {
+      browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'], executablePath: process.env.RELATUM_EDGE_PATH });
+      page = await browser.newPage({ viewport: { width: 1300, height: 900 }, reducedMotion: 'reduce' });
+    }
+    const appUrl = native ? page.url() : origin, url = new URL(appUrl).origin;
+    page.setDefaultTimeout(12000);
     page.on('pageerror', error => errors.push(error.stack));
     page.on('request', request => { if (request.url().endsWith('/api/note-query') && request.method() === 'POST') queries.push(request.postDataJSON()); });
     page.on('request', request => { if (request.url().includes('/api/note-asset?')) imageRequests.push(request.url()); });
+    page.on('request', request => {
+      const url = new URL(request.url());
+      if (url.pathname === '/api/note') noteReads.push(url.searchParams.get('path'));
+    });
     const source = fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8').replace('  window.CanvasNoteWorkspace = {',
       '  window.__links={openNote,flushSave,setViewMode,setNoteSettingsOpen,state,get editor(){return liveEditor;}};\n  window.CanvasNoteWorkspace = {');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
@@ -41,10 +65,12 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
       localStorage.setItem('canvas:startWorkspace:v1', 'notes'); localStorage.setItem('canvas:noteFocusMode:v1', '0');
       localStorage.setItem('canvas:noteRecentFiles:v1', JSON.stringify([['Visited.md', 200], ['OlderVisit.md', 100]]));
     });
-    await page.goto(url); await page.waitForFunction(() => window.__links?.state.initialized && __links.state.active);
+    await page.goto(appUrl); await page.waitForFunction(() => window.__links?.state.initialized && __links.state.active);
     await page.evaluate(() => __links.openNote('Main.md'));
     for (let i = 0; i < 200; i++) { if ((await (await fetch(url + '/api/note-index-state')).json()).phase === 'ready') break; await sleep(50); }
-    const menu = page.locator('.note-link-completion'), status = page.locator('.note-link-completion-status');
+    const popup = page.locator('.note-link-completion');
+    const menu = popup.filter({ has: page.locator('ul:not([hidden])[aria-busy="false"]') });
+    const status = popup.locator('.note-link-completion-status');
     const value = () => page.evaluate(() => __links.editor.snapshot().value);
     const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     async function reset(text = '', head = text.length, sourceMode = false) {
@@ -60,10 +86,93 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
       for (let i = 0; i < index; i++) await page.keyboard.press('ArrowDown');
       await page.keyboard.press(key); await menu.waitFor({ state: 'hidden' }); await sleep(80);
     }
+    if (process.argv.includes('--timing')) {
+      const report = {};
+      for (const opener of ['[[', '![[']) {
+        const samples = [];
+        for (let run = 0; run < 31; run++) {
+          await reset(); await page.keyboard.type(opener); await menu.waitFor();
+          await page.evaluate(() => {
+            const popup = document.querySelector('.note-link-completion');
+            const editor = __links.editor.view.contentDOM;
+            window.completionSample = null;
+            editor.addEventListener('beforeinput', () => {
+              const start = performance.now();
+              const observer = new MutationObserver(() => {
+                if (popup.querySelector('ul[aria-busy="false"] .cm-completionLabel')?.textContent !== '电子学') return;
+                observer.disconnect();
+                requestAnimationFrame(now => { window.completionSample = now - start; });
+              });
+              observer.observe(popup, { childList: true, subtree: true, attributes: true });
+            }, { once: true });
+          });
+          await page.keyboard.insertText('电子');
+          const result = await page.waitForFunction(() => window.completionSample ?? false);
+          const sample = await result.jsonValue(); await result.dispose();
+          if (run) samples.push(sample);
+        }
+        samples.sort((a, b) => a - b);
+        const p95 = samples[Math.ceil(samples.length * .95) - 1];
+        report[opener] = { p50: samples[14], p95, samples: samples.length };
+        assert(p95 <= 100, JSON.stringify(report));
+      }
+      console.log(JSON.stringify({ milliseconds: report }));
+      return;
+    }
+
+    async function verifyStableRefresh(opener) {
+      await reset(); await page.keyboard.type(opener); await page.keyboard.insertText('N'); await menu.waitFor();
+      const selectedIndex = (await menu.locator('.cm-completionLabel').allTextContents()).indexOf('N009');
+      assert(selectedIndex >= 9);
+      for (let i = 0; i < selectedIndex; i++) await page.keyboard.press('ArrowDown');
+      const initial = await menu.evaluate(node => {
+        window.completionPopup = node;
+        return { label: node.querySelector('[aria-selected="true"] .cm-completionLabel').textContent,
+          scroll: node.querySelector('ul').scrollTop, top: node.getBoundingClientRect().top };
+      });
+      assert.equal(initial.label, 'N009'); assert(initial.scroll > 0);
+      let release;
+      const wait = new Promise(resolve => { release = resolve; });
+      const late = async route => {
+        if (route.request().postDataJSON()?.q !== 'N0') return route.continue();
+        await wait;
+        await route.fulfill({ json: { items: [{ path: 'Late.md', title: 'Late', location: '', insertTarget: 'Late' }] } }).catch(() => {});
+      };
+      await page.route('**/api/note-query', late);
+      try {
+        const arrived = page.waitForRequest(request => request.url().endsWith('/api/note-query') && request.postDataJSON()?.q === 'N0');
+        await page.keyboard.type('0');
+        await arrived;
+        assert.deepEqual(await popup.evaluate(node => ({
+          same: node === window.completionPopup, connected: node.isConnected, scroll: node.querySelector('ul').scrollTop,
+          top: node.getBoundingClientRect().top, blocked: node.querySelector('ul').getAttribute('aria-disabled'),
+        })), { same: true, connected: true, scroll: initial.scroll, top: initial.top, blocked: 'true' });
+        await page.keyboard.press('Enter'); await page.keyboard.press('Tab');
+        await popup.locator('li[aria-selected="true"]').click({ force: true });
+        assert.equal(await value(), opener + 'N0]]');
+        await page.keyboard.type('0'); await menu.waitFor();
+        assert(await popup.evaluate(node => node === window.completionPopup));
+        assert.equal(await menu.locator('li[aria-selected="true"] .cm-completionLabel').textContent(), 'N009');
+        assert.equal(await menu.locator('li').count(), 10);
+        release(); await settle();
+        assert.equal(await popup.getByText('Late', { exact: true }).count(), 0);
+      } finally {
+        release(); await page.unroute('**/api/note-query', late);
+      }
+    }
+    await page.evaluate(() => RelatumNoteLinkCompletion.update({ ...RelatumNoteLinkCompletion.read(), sort: 'name' }));
+    for (const opener of ['[[', '![[']) await verifyStableRefresh(opener);
+    await page.evaluate(() => RelatumNoteLinkCompletion.reset());
+    for (const [query, marks] of [['0', ['0', '0']], ['0 尾', ['0', '0尾']]]) {
+      await suggestions(query);
+      const title = menu.locator('.cm-completionLabel').filter({ hasText: /^0😀中0尾$/ });
+      assert.equal(await title.textContent(), '0😀中0尾');
+      assert.deepEqual(await title.locator('.cm-completionMatchedText').allTextContents(), marks);
+    }
     for (const sourceMode of [false, true]) {
       await reset('', 0, sourceMode); await page.keyboard.type('[['); await menu.waitFor();
       assert.equal(await menu.locator('.cm-completionLabel').first().textContent(), 'Visited');
-      assert(await menu.evaluate(node => node.classList.contains('note-link-completion-more')));
+      assert.equal(await menu.locator('li').count(), 50);
       assert(await menu.locator('ul').evaluate(node => node.scrollHeight > node.clientHeight));
       assert(await menu.locator('ul').evaluate(node => node.clientHeight >= 350 && !getComputedStyle(node).fontFamily.includes('monospace')), 'eight-row menu uses the UI font');
       await choose('Visited', 'Tab'); assert.equal(await value(), '[[Visited]]');
@@ -90,8 +199,10 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     for (const sourceMode of [false, true]) {
       await reset('', 0, sourceMode);
       await page.keyboard.type('![['); await page.keyboard.insertText('同名'); await menu.waitFor();
+      await menu.evaluate(node => { window.completionPopup = node; });
       await menu.locator('li').filter({ hasText: 'A' }).first().click();
       await menu.getByText('研究方法', { exact: true }).waitFor();
+      assert(await menu.evaluate(node => node === window.completionPopup));
       assert.equal(await value(), '![[A/同名#]]');
       assert.equal(await menu.getByText('同标题', { exact: true }).count(), 0);
       await page.keyboard.insertText('研究');
@@ -100,6 +211,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
       assert.equal(await value(), '![[A/同名#研究方法]]');
       if (!sourceMode) await page.locator('.note-section-content').getByText('章节正文。').waitFor();
     }
+    assert.equal(noteReads.filter(path => path === 'A/同名.md').length, 1, 'heading filters and quoted previews share the cached revision');
     await page.evaluate(() => RelatumNoteLinkCompletion.update({ ...RelatumNoteLinkCompletion.read(), automatic: false }));
     await reset('![[A/同名#]]', '![[A/同名#'.length);
     await page.keyboard.press('Control+Space'); await menu.waitFor();
@@ -121,7 +233,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(await value(), 'Moved to a different selection');
 
     await reset(); await page.keyboard.type('[[绝不存在');
-    await status.filter({ hasText: '没有匹配' }).waitFor();
+    await status.filter({ hasText: /没有匹配|暂无匹配/ }).waitFor();
     assert(!fs.existsSync(path.join(notes, '绝不存在.md')));
     await page.keyboard.press('Escape'); await status.waitFor({ state: 'hidden' });
     await reset(); await page.keyboard.type('[[独有正文needle'); await status.waitFor(); await sleep(200); assert.equal(await menu.count(), 0);
@@ -138,9 +250,18 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await choose('电子学'); assert.equal(await value(), '[[电子学]]', 'manual session keeps filtering with automatic display off');
     await reset('[[]]', 2); await page.keyboard.press('Control+Space'); await menu.waitFor();
     const manualIme = await page.context().newCDPSession(page), beforeManualIme = queries.length;
+    await menu.evaluate(node => { window.completionPopup = node; });
     await manualIme.send('Input.imeSetComposition', { text: '电子', selectionStart: 2, selectionEnd: 2 });
+    await popup.waitFor({ state: 'hidden' });
+    assert(await popup.evaluate(node => node === window.completionPopup && node.isConnected));
     await sleep(220); assert.equal(queries.length, beforeManualIme);
-    await manualIme.send('Input.insertText', { text: '电子' }); await menu.waitFor(); await choose('电子学');
+    await manualIme.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
+    await menu.waitFor();
+    assert.equal(await value(), '[[]]'); assert.equal(queries.length, beforeManualIme);
+    await manualIme.send('Input.imeSetComposition', { text: '电子', selectionStart: 2, selectionEnd: 2 });
+    await manualIme.send('Input.insertText', { text: '电子' }); await menu.waitFor();
+    assert(await menu.evaluate(node => node === window.completionPopup));
+    await choose('电子学');
     assert.equal(await value(), '[[电子学]]', 'manual session resumes after native Chinese composition');
     await page.evaluate(() => RelatumNoteLinkCompletion.reset());
     for (const sourceMode of [false, true]) for (const text of ['`[[x]]`', '```js\n[[x]]\n```', '$[[x]]$', '$$\n[[x]]\n$$', '<!-- [[x]] -->', '%% [[x]] %%', '---\ntitle: [[x]]\n---\n', 'inline ![[x]]', '[[Name|alias]]', '[[Name#header]]']) {
@@ -172,8 +293,14 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
         await page.evaluate(dark => { document.body.dataset.startTheme = dark ? 'dark' : 'light'; }, dark);
         await suggestions();
         assert(await menu.evaluate(node => { const rect = node.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight; }));
-        const colors = await menu.evaluate(node => { const css = getComputedStyle(node); return [css.backgroundColor, css.color]; });
-        assert.notEqual(colors[0], colors[1]);
+        const colors = await menu.evaluate(node => ({
+          popup: getComputedStyle(node).backgroundColor,
+          text: getComputedStyle(node).color,
+          selected: getComputedStyle(node.querySelector('li[aria-selected="true"]')).backgroundColor,
+        }));
+        assert.notEqual(colors.popup, colors.text);
+        assert.notEqual(colors.selected, colors.popup);
+        assert.notEqual(colors.selected, 'rgba(0, 0, 0, 0)');
         if (theme === 'apple' && !dark) await page.screenshot({ path: path.join(root, 'completion-apple-light.png') });
       }
     }
@@ -208,8 +335,11 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert(held); await reset('new document'); releaseHeld(); await sleep(200);
     assert.equal(await value(), 'new document'); assert.equal(await menu.count(), 0, 'late results never reopen in another document');
     await reset(); await page.keyboard.type('[[retry'); await status.getByRole('button', { name: '重试' }).waitFor();
-    await status.getByRole('button', { name: '重试' }).click(); await sleep(400);
-    assert((await status.textContent()).includes('匹配') && !(await status.getByRole('button').count()), 'retry displays the available-index empty result');
+    await popup.evaluate(node => { window.completionPopup = node; });
+    await status.getByRole('button', { name: '重试' }).click();
+    await status.filter({ hasText: /没有匹配|暂无匹配/ }).waitFor();
+    assert(await popup.evaluate(node => node === window.completionPopup));
+    assert.equal(await status.getByRole('button').count(), 0, 'retry displays the available-index empty result');
     assert.equal(queries.filter(query => query.q === 'retry').length, 2);
     assert(await page.evaluate(() => __links.editor.view.hasFocus), 'retry preserves editor focus');
     await page.unroute('**/api/note-query', handler);
@@ -237,6 +367,16 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await menu.waitFor({ state: 'hidden' });
     await page.evaluate(() => { delete document.documentElement.dataset.desktopMinimized; window.dispatchEvent(new Event('canvasdesktop:visibility')); });
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ ok: true, queries: queries.length, isolatedRoot: root }));
-  } finally { await browser?.close(); service.kill(); }
+    console.log(JSON.stringify({ ok: true, host: native ? 'WebView2' : 'Edge', queries: queries.length, isolatedRoot: root }));
+  } finally {
+    if (native && page && service.exitCode == null) {
+      await page.evaluate(() => { void window.pywebview?.api?.close_window(); }).catch(() => {});
+      await Promise.race([exited, sleep(3000)]);
+    }
+    await browser?.close().catch(() => {});
+    if (service.exitCode == null && !service.signalCode) {
+      service.kill();
+      await Promise.race([exited, sleep(1000)]);
+    }
+  }
 })().catch(error => { console.error(error); process.exitCode = 1; });

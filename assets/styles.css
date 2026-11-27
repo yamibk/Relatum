@@ -575,26 +575,29 @@ body.start-page[data-start-theme="dark"] :is(.note-workspace, .note-document-bod
   color: inherit; background: transparent; border: 0; border-radius: 5px; text-align: left; font: inherit; cursor: pointer;
 }
 .note-highlight-menu button[aria-selected="true"] { background: var(--note-theme-hover, rgba(128,128,128,.12)); }
-body.start-page .cm-tooltip.note-link-completion,
-body.start-page .cm-tooltip.note-link-completion-status {
+body.start-page .cm-tooltip.note-link-completion {
   width: min(440px, calc(100vw - 24px)); box-sizing: border-box; padding: 6px;
   color: var(--note-theme-text, var(--text)); background: var(--note-theme-surface, var(--surface));
   border: 1px solid var(--note-theme-line-strong, var(--border-strong)); border-radius: 12px;
   box-shadow: var(--note-theme-shadow, 0 8px 26px rgba(0,0,0,.13)); font: 13px/1.4 var(--font-ui);
 }
-body.start-page .cm-tooltip.note-link-completion > ul { max-height: min(384px, 52vh); overflow-y: auto; padding: 0; font: inherit; }
+.note-link-completion.is-composing { visibility: hidden !important; }
+body.start-page .cm-tooltip.note-link-completion > ul {
+  max-height: min(384px, 52vh); overflow-y: auto; overflow-anchor: none; list-style: none; margin: 0; padding: 0; font: inherit;
+  margin-inline-end: -3px; padding-inline-end: 3px;
+}
 body.start-page .note-link-completion > ul > li { padding: 6px 9px; border-radius: 7px; white-space: normal; min-height: 44px; box-sizing: border-box; }
-body.start-page .note-link-completion > ul > li[aria-selected] { color: inherit; background: var(--note-theme-selected, var(--bg-secondary)); }
+body.start-page .note-link-completion > ul[aria-disabled="true"] > li { cursor: progress; }
+body.start-page .note-link-completion > ul > li[aria-selected="true"] {
+  color: inherit; background: var(--note-theme-nav-selected, var(--note-theme-selected, color-mix(in srgb, currentColor 10%, transparent)));
+}
 body.start-page .note-link-completion :is(.cm-completionLabel, .cm-completionDetail) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 body.start-page .note-link-completion .cm-completionLabel { font-weight: 600; }
+body.start-page .note-link-completion .cm-completionMatchedText { text-decoration: underline; }
 body.start-page .note-link-completion .cm-completionDetail { font: inherit; font-size: 11px; opacity: .7; margin: 2px 0 0; }
 .note-link-completion-excerpt { display: block; font-size: 11px; opacity: .75; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-top: 3px; }
-.note-link-completion-more::after, .note-link-completion-incomplete::before { display: block; padding: 5px 9px; font-size: 11px; opacity: .7; }
-.note-link-completion-more::after { content: '继续输入以缩小范围'; }
-.note-link-completion-incomplete::before { content: '笔记索引仍在准备，当前显示已有结果'; }
-html[lang="en"] .note-link-completion-more::after { content: 'Keep typing to narrow the results'; }
-html[lang="en"] .note-link-completion-incomplete::before { content: 'Indexing is in progress; showing available results'; }
-body.start-page .cm-tooltip.note-link-completion-status { padding: 12px; display: flex; gap: 8px; align-items: center; }
+body.start-page .note-link-completion-status { padding: 6px; display: flex; gap: 8px; align-items: center; }
+.note-link-completion [hidden] { display: none !important; }
 .note-link-completion-status button { flex: none; font: inherit; color: inherit; background: var(--note-theme-hover, var(--bg-secondary)); border: 1px solid var(--border); border-radius: 6px; padding: 4px 9px; cursor: pointer; }
 .note-link-completion-settings { margin-top: 26px; }
 .note-link-completion-settings h4 { font-size: 14px; margin: 0 0 14px; }
@@ -2069,6 +2072,7 @@ body.start-page[data-start-theme="dark"] :is(.note-workspace, .note-link-complet
 }
 :is(.note-workspace, .note-link-completion) ::-webkit-scrollbar,
 .note-search-popover::-webkit-scrollbar { width: 10px; height: 10px; }
+.note-link-completion > ul::-webkit-scrollbar { width: 8px; }
 :is(.note-workspace, .note-link-completion) ::-webkit-scrollbar-track,
 :is(.note-workspace, .note-link-completion) ::-webkit-scrollbar-corner,
 .note-search-popover::-webkit-scrollbar-track,

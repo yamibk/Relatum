@@ -610,11 +610,11 @@ html[data-note-theme="apple"] body.start-page[data-start-theme="dark"][data-star
   --apple-hl-blue: rgba(10,132,255,.30); --apple-hl-purple: rgba(191,90,242,.28);
 }
 
-/* Navigation/settings feedback has its own token; content selections stay blue. */
-html[data-note-theme="apple"][data-note-apple-selection="gray"] body.start-page :is(.note-workspace, #note-settings-dialog) {
+/* Shared selection feedback for navigation, settings and link suggestions. */
+html[data-note-theme="apple"][data-note-apple-selection="gray"] body.start-page :is(.note-workspace, #note-settings-dialog, .note-link-completion) {
   --note-theme-nav-selected: #e5e5e5;
 }
-html[data-note-theme="apple"][data-note-apple-selection="gray"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog) {
+html[data-note-theme="apple"][data-note-apple-selection="gray"] body.start-page[data-start-theme="dark"] :is(.note-workspace, #note-settings-dialog, .note-link-completion) {
   --note-theme-nav-selected: #3a3a3c;
 }
 

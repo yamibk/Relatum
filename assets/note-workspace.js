@@ -1433,8 +1433,8 @@
         appleSelectionSelect.setAttribute('aria-label', selectionLabel);
         appleSelectionSelect.replaceChildren(new Option(en ? 'Blue' : '蓝色', 'blue'), new Option(en ? 'Gray' : '灰色', 'gray'));
         $('#note-apple-selection-hint').textContent = en
-          ? 'Change the selected backgrounds in Apple file lists, sidebar navigation and settings.'
-          : '调整 Apple 主题的文件列表、侧栏导航和设置选中背景';
+          ? 'Change the selected backgrounds in Apple file lists, sidebar navigation, settings and link suggestions.'
+          : '调整 Apple 主题的文件列表、侧栏导航、设置和链接候选的选中背景';
       }
       settingsChoices?.refresh([themeSelect, appleSelectionSelect]);
     }
@@ -3698,17 +3698,23 @@
         const note = await loadSource(result.path, result.revision);
         if (signal.aborted) return [];
         const { headingKey, escapeSectionPart } = window.RelatumNoteLiveSyntax, wanted = headingKey(query);
-        const counts = new Map();
-        for (const heading of note.headings) {
-          const label = headingKey(heading.label), raw = headingKey(heading.text);
-          counts.set(label, (counts.get(label) || 0) + 1);
-          if (raw !== label) counts.set(raw, (counts.get(raw) || 0) + 1);
+        if (!note.completionHeadings) {
+          const counts = new Map();
+          const normalized = note.headings.map(heading => {
+            const label = headingKey(heading.label), raw = headingKey(heading.text);
+            counts.set(label, (counts.get(label) || 0) + 1);
+            if (raw !== label) counts.set(raw, (counts.get(raw) || 0) + 1);
+            return { label, heading };
+          });
+          note.completionHeadings = normalized.filter(({ label }) => counts.get(label) === 1)
+            .map(({ label, heading }) => ({ label, item: {
+              title: heading.label, insertTarget: escapeSectionPart(heading.label), level: heading.level,
+            } }));
         }
         const items = [];
-        for (const heading of note.headings) {
-          const label = headingKey(heading.label);
-          if (counts.get(label) !== 1 || !label.includes(wanted)) continue;
-          items.push({ title: heading.label, insertTarget: escapeSectionPart(heading.label), level: heading.level });
+        for (const { label, item } of note.completionHeadings) {
+          if (!label.includes(wanted)) continue;
+          items.push(item);
           if (items.length === 50) break;
         }
         return items;
