@@ -104,9 +104,9 @@ async function checkAppearance(page, context, library) {
   const toggle = dialog.locator('.start-panel-theme button');
   const palette = () => page.evaluate(() => {
     const header = document.querySelector('.top-bar');
-    const { backgroundImage, backdropFilter } = getComputedStyle(header, '::before');
+    const { backgroundImage, backdropFilter, content: headerOverlay } = getComputedStyle(header, '::before');
     const { backgroundColor, backgroundImage: ambient } = getComputedStyle(document.body);
-    return { backgroundImage, backdropFilter, backgroundColor, ambient, headerSurface: getComputedStyle(header).backgroundColor,
+    return { backgroundImage, backdropFilter, backgroundColor, ambient, headerOverlay, headerSurface: getComputedStyle(header).backgroundColor,
       slider: getComputedStyle(header.querySelector('.start-workspace-slider')).backgroundColor,
       sky: getComputedStyle(document.querySelector('.start-sky')).display };
   });
@@ -191,6 +191,25 @@ async function checkAppearance(page, context, library) {
             assert(header.every(([red, green, blue]) => red > 220 && blue > Math.max(red, green) + 5),
               `light scenic paints the pastel gradient at the top edge: ${JSON.stringify(header)}`);
           }
+          await open();
+        } else if (background === 'scenic') {
+          assert.equal(result.headerOverlay, 'none', `${label} uses the homepage gradient behind the header`);
+          if (mode === 1 && (label === 'Sky' || label === 'Apple')) {
+            const activeTab = page.locator('.top-bar .start-workspace-switch button.active');
+            const ink = await activeTab.evaluate(async node => {
+              await Promise.allSettled(node.getAnimations().map(animation => animation.finished));
+              return getComputedStyle(node).color;
+            });
+            assert.equal(ink,
+              label === 'Sky' ? 'rgb(221, 231, 245)' : 'rgb(245, 245, 247)', `${label} dark scenic active label`);
+          }
+          await close();
+          await dialog.waitFor({ state: 'hidden' });
+          const depth = mode === 1 ? 'dark' : 'light';
+          const screenshotPath = path.join(artifacts, `appearance-${library ? 'library' : 'canvas'}-${label.toLowerCase()}-scenic-${depth}.png`);
+          const { body: pixels, header } = await sampleHomepageBackground(page, screenshotPath);
+          assert.notDeepEqual(header[0], header[1], `${label} ${depth} gradient reaches the window edge`);
+          assert(new Set(pixels.map(pixel => pixel.join(','))).size > 3, `${label} ${depth} gradient covers the canvas homepage`);
           await open();
         }
       }

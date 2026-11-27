@@ -10156,12 +10156,12 @@ body.start-page[data-start-workspace="career"] > .top-bar:is(:hover, :focus-with
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-/* ─── 起步页 · 微软风毛玻璃/液态玻璃背景 ───
-   仅 index（start.js 设 data-start-state；trash 不设，故回收站不受影响）。
+/* ─── 起步页 · 柔和渐变背景 ───
+   由首页状态或笔记的默认沉浸外观启用。
    底层几团低饱和粉彩光晕（Copilot 丝带感）+ 顶层暖白薄纱压住饱和度（Mica 的克制）。
    两个超低速合成层轻轻错向漂移：正常使用时安静，停下来观察才会感觉背景在呼吸。 */
-.start-page[data-start-state]::before {
-  content: "";
+.start-page:is([data-start-state], [data-start-workspace="notes"])::before {
+  content: var(--start-ambient-content, none);
   position: fixed;
   inset: -8%;
   z-index: -1;
@@ -10177,8 +10177,8 @@ body.start-page[data-start-workspace="career"] > .top-bar:is(:hover, :focus-with
   animation: startAmbientDriftA 76s var(--easing-soft) infinite alternate;
 }
 
-.start-page[data-start-state]::after {
-  content: "";
+.start-page:is([data-start-state], [data-start-workspace="notes"])::after {
+  content: var(--start-ambient-content, none);
   position: fixed;
   inset: -10%;
   z-index: -1;
@@ -10205,6 +10205,7 @@ body.start-page[data-start-workspace="career"] > .top-bar:is(:hover, :focus-with
 }
 
 .start-page[data-start-state] {
+  --start-ambient-content: "";
   transition: background-color 150ms var(--easing-page),
               color 150ms var(--easing-page);
 }
@@ -35383,10 +35384,7 @@ body.start-page[data-start-theme="dark"][data-start-state]::after {
   will-change: auto;
 }
 
-/* ─── 深色起始页夜空层（.start-sky）──────────────────────────
-   浅色模式整层隐藏；仅 data-start-theme=dark + 有 data-start-state 时显示。
-   低饱和光带 + 透明帘幕 + 少量微闪星星。极光只在独立 SVG 层里慢速流动，
-   不牵动画布布局；整体沉进黑底，只留一条薄亮边。 */
+/* 深色起始页的静态夜空。仅笔记配置由 start-appearance.css 按外观启用。 */
 .start-sky {
   position: fixed;
   inset: 0;
@@ -35397,7 +35395,7 @@ body.start-page[data-start-theme="dark"][data-start-state]::after {
 }
 body.start-page[data-start-theme="dark"][data-start-state] .start-sky { display: block; }
 
-/* ── 深色背景 = 静态极光照片（assets/sky-dark.jpg）──
+/* ── 深色背景 = 静态极光照片（assets/sky-dark.png）──
    彻底停用旧的动画 feTurbulence 极光（满屏噪声+位移+模糊一直重算，是深色卡顿的元凶），
    改为一张静态照片：零动画开销。UI 可读性由 .sky-scrim 一层压暗渐变承载。 */
 .start-sky .sky-photo {

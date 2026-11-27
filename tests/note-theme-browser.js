@@ -5,7 +5,58 @@ const { spawn } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..'), pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const artifacts = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-theme-artifacts-'));
+const scenicHeaderOnly = process.argv.includes('--scenic-header');
 async function port() { const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r)); const p = s.address().port; await new Promise(r => s.close(r)); return p; }
+
+async function checkDefaultScenicHeader(page, shell) {
+  const dialog = page.locator('#global-settings-dialog');
+  const changeAppearance = async selector => {
+    await page.evaluate(() => RelatumGlobalSettings.open({ category: 'appearance' }));
+    await dialog.locator(selector).click();
+    await page.evaluate(() => RelatumGlobalSettings.close({ instant: true }));
+    await dialog.waitFor({ state: 'hidden' });
+  };
+  const sampleHeader = async label => {
+    const screenshot = await page.screenshot({ path: label ? path.join(artifacts, `${shell}-default-${label}-scenic.png`) : undefined });
+    return page.evaluate(async data => {
+      const image = new Image();
+      image.src = 'data:image/png;base64,' + data;
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const drawing = canvas.getContext('2d');
+      drawing.drawImage(image, 0, 0);
+      return [0.15, 0.85].map(x => Array.from(drawing.getImageData(
+        Math.floor(x * image.width), Math.floor(0.01 * image.height), 1, 1).data.subarray(0, 3)));
+    }, screenshot.toString('base64'));
+  };
+  const animation = () => page.evaluate(() => getComputedStyle(document.body, '::before').animationName);
+
+  await changeAppearance('[data-background-style="scenic"]');
+  assert.equal(await animation(), 'none', 'the default Notes backdrop is static');
+  const light = await sampleHeader('light');
+  assert(light.every(([red, green, blue]) => red > 220 && blue > Math.max(red, green) + 5),
+    `${shell} Notes paints the light gradient at the window edge: ${JSON.stringify(light)}`);
+  await page.evaluate(() => RelatumNoteTheme.apply('apple', { persist: false }));
+  assert.deepEqual(await sampleHeader(), light, 'the window gradient follows the global appearance');
+  assert.equal(await page.locator('.start-workspace-slider').evaluate(node => getComputedStyle(node).backgroundColor),
+    'rgb(255, 255, 255)', 'the selected tab follows the Notes appearance');
+  await page.evaluate(() => RelatumNoteTheme.apply('default', { persist: false }));
+  await changeAppearance('.start-panel-theme button');
+  await page.evaluate(async () => {
+    const photo = new Image();
+    photo.src = '/sky-dark.png';
+    await photo.decode();
+  });
+  const dark = await sampleHeader('dark');
+  assert.notDeepEqual(dark, [[17, 18, 19], [17, 18, 19]], `${shell} Notes paints the aurora behind the header`);
+  assert(await page.locator('.start-sky').isVisible());
+  await changeAppearance('[data-background-style="simple"]');
+  assert.deepEqual(await sampleHeader(), [[17, 18, 19], [17, 18, 19]]);
+  await changeAppearance('.start-panel-theme button');
+}
+
 async function run(browser, minimal) {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-theme-data-'));
   fs.mkdirSync(path.join(data, 'notes')); fs.mkdirSync(path.join(data, 'data'));
@@ -44,6 +95,13 @@ async function run(browser, minimal) {
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTheme:v1')), 'unknown-old-theme');
     assert(!requests.some(u => /source-serif-4/.test(u)), 'default keeps new fonts cold');
     assert(!requests.some(u => /inter-variable/.test(u)), 'default does not request Apple fonts');
+    if (scenicHeaderOnly) {
+      const shell = minimal ? 'minimal' : 'full';
+      await checkDefaultScenicHeader(page, shell);
+      assert.deepEqual(errors, []);
+      console.log(`${shell} scenic Notes header passed`);
+      return;
+    }
     const dialog = page.locator('#note-settings-dialog'), trigger = dialog.locator('.note-settings-theme:has(#note-theme-select) .review-choice-trigger');
     const panelLayout = async () => {
       const layout = await dialog.evaluate(node => {

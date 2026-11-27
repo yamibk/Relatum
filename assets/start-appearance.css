@@ -33,9 +33,12 @@ html[data-start-appearance][data-start-theme="dark"] {
 }
 html[data-start-appearance="claude"]:where(:not([data-start-workspace="notes"])) {
   --start-home-base: #faf9f5;
-  --start-home-glow: #e9dbc8;
-  --start-home-shade: #f0ebe0;
   --start-header-base: var(--claude-shell);
+  --start-home-scenery:
+    radial-gradient(ellipse 80% 55% at 24% -8%, #f6eee0, transparent 74%),
+    radial-gradient(ellipse 59% 65% at 100% 30%, #ead0b7, #f2e2d2 33%, transparent 80%),
+    radial-gradient(ellipse 72% 52% at 9% 100%, #ecdfcc, #f4ebdd 44%, transparent 85%),
+    linear-gradient(160deg, var(--start-header-base), var(--start-home-base) 57%);
   --start-header-ink: #141413;
   --start-header-muted: #595850;
   --start-header-control: #fff;
@@ -48,9 +51,12 @@ html[data-start-appearance="claude"]:where(:not([data-start-workspace="notes"]))
 }
 html[data-start-appearance="claude"][data-start-theme="dark"]:where(:not([data-start-workspace="notes"])) {
   --start-home-base: #191919;
-  --start-home-glow: #382c24;
-  --start-home-shade: #24201c;
   --start-header-base: var(--claude-shell);
+  --start-home-scenery:
+    radial-gradient(ellipse 67% 61% at 96% 72%, #523827, #30241e 49%, transparent 87%),
+    radial-gradient(ellipse 62% 48% at 16% 106%, #3f3026, transparent 83%),
+    radial-gradient(ellipse 85% 55% at 34% -9%, #2f2824, transparent 85%),
+    linear-gradient(162deg, var(--start-header-base) 8%, #211d1a 56%, var(--start-home-base));
   --start-header-ink: #faf9f5;
   --start-header-muted: #c3c2b7;
   --start-header-control: #242424;
@@ -63,9 +69,12 @@ html[data-start-appearance="claude"][data-start-theme="dark"]:where(:not([data-s
 }
 html[data-start-appearance="sky"]:where(:not([data-start-workspace="notes"])) {
   --start-home-base: #f8fbff;
-  --start-home-glow: #d3e4f5;
-  --start-home-shade: #e8f0fb;
   --start-header-base: var(--sky-shell);
+  --start-home-scenery:
+    radial-gradient(ellipse 84% 45% at 35% 64%, #fcfdff, #f4f9fe 49%, transparent 88%),
+    radial-gradient(ellipse 72% 68% at 92% -8%, #bad9f2, #d5e8f8 53%, transparent 92%),
+    radial-gradient(ellipse 88% 42% at -3% 96%, #d3e6f7, transparent 85%),
+    linear-gradient(170deg, var(--start-header-base), var(--start-home-base) 58%, #eff6fc);
   --start-header-ink: #27364b;
   --start-header-muted: #52637a;
   --start-header-control: #f8fbff;
@@ -78,9 +87,11 @@ html[data-start-appearance="sky"]:where(:not([data-start-workspace="notes"])) {
 }
 html[data-start-appearance="sky"][data-start-theme="dark"]:where(:not([data-start-workspace="notes"])) {
   --start-home-base: #162338;
-  --start-home-glow: #243d59;
-  --start-home-shade: #111b2c;
   --start-header-base: var(--sky-shell);
+  --start-home-scenery:
+    radial-gradient(ellipse 62% 63% at 93% 3%, #2a4564, #1c334f 43%, transparent 86%),
+    radial-gradient(ellipse 76% 41% at 26% 96%, #25495d, #1a3049 52%, transparent 89%),
+    linear-gradient(155deg, var(--start-header-base), var(--start-home-base) 53%, #111c2c);
   --start-header-ink: #dde7f5;
   --start-header-muted: #a4b4cb;
   --start-header-control: #1d2d44;
@@ -93,9 +104,11 @@ html[data-start-appearance="sky"][data-start-theme="dark"]:where(:not([data-star
 }
 html[data-start-appearance="apple"]:where(:not([data-start-workspace="notes"])) {
   --start-home-base: #f5f5f7;
-  --start-home-glow: #e1e2e6;
-  --start-home-shade: #eeeef1;
   --start-header-base: var(--apple-shell);
+  --start-home-scenery:
+    radial-gradient(ellipse 105% 64% at 18% -13%, #fff, #f9f9fb 43%, transparent 89%),
+    radial-gradient(ellipse 70% 74% at 100% 38%, #d0d5df, #e3e6ec 42%, transparent 88%),
+    linear-gradient(151deg, var(--start-header-base) 12%, #ebeef3 43%, #fbfbfc 69%, #e5e8ee);
   --start-header-ink: #1d1d1f;
   --start-header-muted: #626268;
   --start-header-control: #fff;
@@ -108,9 +121,11 @@ html[data-start-appearance="apple"]:where(:not([data-start-workspace="notes"])) 
 }
 html[data-start-appearance="apple"][data-start-theme="dark"]:where(:not([data-start-workspace="notes"])) {
   --start-home-base: #202022;
-  --start-home-glow: #343438;
-  --start-home-shade: #19191b;
   --start-header-base: var(--apple-shell);
+  --start-home-scenery:
+    radial-gradient(ellipse 76% 65% at 92% -9%, #42454e, #32343b 44%, transparent 86%),
+    radial-gradient(ellipse 69% 62% at -13% 108%, #3a3c43, #292a30 46%, transparent 88%),
+    linear-gradient(145deg, var(--start-header-base), #1a1b20 43%, #303138 67%, var(--start-home-base) 91%);
   --start-header-ink: #f5f5f7;
   --start-header-muted: #aeaeb2;
   --start-header-control: #2c2c2e;
@@ -139,12 +154,24 @@ html[data-canvas-route-appearance] > body.editor-page::after {
 }
 html[data-start-appearance] body.start-page { background-color: var(--start-home-base); }
 /* Keep the negative-z-index scenery above the body's solid navigation color. */
-html:is([data-start-appearance="default"], [data-start-workspace="notes"]):not([data-start-workspace="none"]) body.start-page[data-start-background="scenic"][data-start-state] {
+html:is([data-start-appearance="default"], [data-start-workspace="notes"]):not([data-start-workspace="none"]) body.start-page[data-start-background="scenic"][data-start-state],
+html[data-start-appearance="default"] body.start-page[data-start-workspace="notes"][data-start-background="scenic"] {
   isolation: isolate;
 }
+/* The Notes-only shell has no canvas page state. Reuse the same artwork there. */
+html[data-start-appearance="default"] body.start-page[data-start-workspace="notes"][data-start-background="scenic"][data-start-theme="light"] {
+  --start-ambient-content: "";
+}
+html[data-start-appearance="default"] body.start-page[data-start-workspace="notes"][data-start-background="scenic"][data-start-theme="dark"] > .start-sky {
+  display: block;
+}
+html[data-start-appearance="default"] body.start-page[data-start-workspace="notes"][data-start-background="scenic"]::before,
+html[data-start-appearance="default"] body.start-page[data-start-workspace="notes"][data-start-background="scenic"]::after {
+  animation: none;
+  will-change: auto;
+}
 html[data-start-appearance]:not([data-start-appearance="default"], [data-start-workspace="notes"], [data-start-workspace="none"]) body.start-page[data-start-background="scenic"] {
-  background-image: radial-gradient(90% 75% at 78% 24%, var(--start-home-glow), transparent 76%),
-                    linear-gradient(155deg, var(--start-home-shade), var(--start-home-base) 68%);
+  background-image: var(--start-home-scenery);
 }
 html[data-start-appearance]:not([data-start-appearance="default"], [data-start-workspace="notes"]) body.start-page::before,
 html[data-start-appearance]:not([data-start-appearance="default"], [data-start-workspace="notes"]) body.start-page::after,
@@ -165,8 +192,10 @@ html[data-start-appearance] body.start-page > .top-bar::before {
   pointer-events: none;
   background: linear-gradient(to bottom, var(--start-header-base) calc(100% - 26px), transparent);
 }
-/* The light canvas header shares the full-window gradient behind it. */
-html[data-start-appearance="default"] body.start-page[data-start-workspace="canvas"][data-start-background="scenic"][data-start-theme="light"] > .top-bar::before {
+/* The header shares the full-window gradient in scenic modes that use one. */
+html[data-start-appearance]:not([data-start-appearance="default"], [data-start-workspace="notes"], [data-start-workspace="none"]) body.start-page[data-start-background="scenic"] > .top-bar::before,
+html[data-start-appearance="default"] body.start-page[data-start-workspace="canvas"][data-start-background="scenic"][data-start-theme="light"] > .top-bar::before,
+html[data-start-appearance="default"] body.start-page[data-start-workspace="notes"][data-start-background="scenic"] > .top-bar::before {
   content: none;
 }
 html[data-start-appearance="default"] body.start-page[data-start-workspace="canvas"][data-start-background="scenic"][data-start-theme="dark"] > .top-bar::before {
@@ -187,6 +216,9 @@ html[data-start-appearance]:where(:not([data-start-workspace="notes"])) body.sta
 html[data-start-appearance]:where(:not([data-start-workspace="notes"])) .top-bar .start-workspace-slider {
   background-color: var(--start-header-selected);
   box-shadow: 0 1px 4px rgba(0, 0, 0, .16), inset 0 0 0 1px color-mix(in srgb, var(--start-header-line) 38%, transparent);
+}
+html:is([data-start-appearance="sky"], [data-start-appearance="apple"]):not([data-start-workspace="notes"]) body.start-page[data-start-theme="dark"][data-start-background="scenic"] > .top-bar .start-workspace-switch button.active {
+  color: var(--workspace-active-ink);
 }
 html[data-start-appearance] body.start-page > .top-bar .start-speed-trigger {
   backdrop-filter: none;
