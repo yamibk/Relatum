@@ -873,12 +873,19 @@ html:is([data-note-theme="claude"], [data-note-theme="apple"]) body.start-page:n
 .note-reading-content > [hidden] { display: none !important; }
 
 .note-section-reference {
+  box-sizing: border-box;
+  min-inline-size: 0;
   margin-block: .35em;
   padding: .25em .65em;
   border-inline-start: 2px solid color-mix(in srgb, currentColor 22%, transparent);
   overflow-wrap: anywhere;
+  white-space: normal;
 }
 
+.cm-content > .note-section-reference { margin-block: 0; }
+.has-section-boundary-selection > .cm-scroller > .cm-cursorLayer { visibility: hidden; }
+
+.note-section-header { display: flex; align-items: start; justify-content: space-between; gap: .5em; }
 .note-section-source {
   border: 0;
   padding: 0;
@@ -887,9 +894,44 @@ html:is([data-note-theme="claude"], [data-note-theme="apple"]) body.start-page:n
   text-align: start;
   color: inherit;
   background: transparent;
+  overflow-wrap: anywhere;
+  min-inline-size: 0;
 }
 
 .note-section-source:enabled { cursor: pointer; }
 .note-section-source:enabled:hover { text-decoration: underline; }
-.note-section-message, .note-section-placeholder { opacity: .72; }
+.note-section-actions { display: flex; flex: none; gap: 2px; opacity: 0; }
+.note-section-reference:is(:hover, :focus-within) .note-section-actions { opacity: 1; }
+@media (hover: none) { .note-section-actions { opacity: 1; } }
+.note-section-actions button {
+  display: grid;
+  place-items: center;
+  inline-size: 24px;
+  block-size: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary, currentColor);
+  cursor: pointer;
+}
+.note-section-actions button:is(:hover, :focus-visible) { background: color-mix(in srgb, currentColor 10%, transparent); }
+.note-section-actions .note-icon { inline-size: 15px; block-size: 15px; }
+[data-note-section-action="before"] .note-icon { transform: rotate(90deg); }
+[data-note-section-action="after"] .note-icon { transform: rotate(-90deg); }
+
+.note-section-message { color: var(--text-secondary, currentColor); }
+.note-section-placeholder {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary, currentColor);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.note-section-placeholder:hover { text-decoration: underline; }
 .note-section-content:empty { display: none; }
+.note-section-content { margin-block-start: .24em; }
+.note-section-content .note-section-rendered > :first-child { margin-block-start: 0; }
+.note-section-content .note-section-rendered > :last-child { margin-block-end: 0; }

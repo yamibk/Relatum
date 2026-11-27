@@ -120,8 +120,8 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(await menu.count(), 0, 'late heading candidates cannot reopen after a reset');
     assert.equal(await value(), 'Moved to a different selection');
 
-    await reset(); await page.keyboard.type('[[绝不存在'); await status.waitFor(); await sleep(200);
-    assert((await status.textContent()).includes('没有匹配'));
+    await reset(); await page.keyboard.type('[[绝不存在');
+    await status.filter({ hasText: '没有匹配' }).waitFor();
     assert(!fs.existsSync(path.join(notes, '绝不存在.md')));
     await page.keyboard.press('Escape'); await status.waitFor({ state: 'hidden' });
     await reset(); await page.keyboard.type('[[独有正文needle'); await status.waitFor(); await sleep(200); assert.equal(await menu.count(), 0);

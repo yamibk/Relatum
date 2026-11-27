@@ -3821,32 +3821,66 @@
 
   function renderSectionFragment(element, data, current, onLayout) {
     const english = document.documentElement.lang === 'en';
-    const source = data.body;
-    const rich = /^(?:database|html-embed|pdf-embed|mermaid|mmd|cards|quiz|derive)$/;
+    const labels = {
+      database: ['数据库', 'Database'], 'html-embed': ['HTML 网页', 'HTML page'], 'pdf-embed': ['PDF 附件', 'PDF attachment'],
+      mermaid: ['Mermaid 图表', 'Mermaid diagram'], mmd: ['Mermaid 图表', 'Mermaid diagram'], cards: ['卡片', 'Cards'],
+      quiz: ['选择题', 'Quiz'], derive: ['推导链', 'Derivation'], canvas: ['画布', 'Canvas'], section: ['章节引用', 'Section reference'],
+    };
+    const language = english ? 1 : 0, openLabel = english ? 'Open source section' : '打开源章节';
+    const placeholder = kind => '<button type="button" class="note-section-placeholder" data-note-section-open>'
+      + labels[kind][language] + ' · ' + openLabel + '</button>';
+    const canvas = data.body.includes('![') ? window.MarkdownMini.canvasReferences(data.body) : [];
+    let source = data.body;
+    for (let index = canvas.length - 1; index >= 0; index--) {
+      const { from, to } = canvas[index];
+      source = source.slice(0, from) + '![](relatum-section-canvas-' + index + ')' + source.slice(to);
+    }
     const result = safeIsolatedResult(source, { mermaid: false, noteTags: false, noteSections: data.references || [],
       renderFence(block) {
-        return rich.test(block.language) ? '<p class="note-section-placeholder">'
-          + (english ? 'Open the source note to view this block' : '打开源笔记查看此块') + ' · ' + block.language + '</p>' : null;
+        return Object.hasOwn(labels, block.language) && block.language !== 'canvas' && block.language !== 'section'
+          ? '<p>' + placeholder(block.language) + '</p>' : null;
       },
     });
-    element.innerHTML = result.html;
-    element.querySelectorAll('input').forEach(input => { input.disabled = true; });
-    element.querySelectorAll('[data-note-section]').forEach(node => {
-      node.className = 'note-section-placeholder'; node.removeAttribute('data-note-section');
+    const root = document.createElement('div');
+    root.className = 'note-section-rendered'; root.innerHTML = result.html;
+    element.replaceChildren(root);
+    root.querySelectorAll('input').forEach(input => { input.disabled = true; });
+    root.querySelectorAll('[data-note-section]').forEach(node => {
+      node.outerHTML = '<p>' + placeholder('section') + '</p>';
     });
     const cleanup = [];
-    for (const image of element.querySelectorAll('[data-note-image]')) {
+    let imageTextSizer;
+    const layout = () => { if (current()) onLayout(); };
+    element.addEventListener('load', layout, true);
+    element.addEventListener('error', layout, true);
+    for (const image of root.querySelectorAll('[data-note-image]')) {
       const target = image.dataset.noteImage, syntax = image.dataset.noteImageSyntax || 'markdown';
-      if (isRemoteTarget(target) || absoluteImageTarget(target)) continue;
+      const frame = image.closest('.md-local-image');
+      const canvasId = /^relatum-section-canvas-(\d+)$/.exec(target);
+      if (canvasId && canvas[Number(canvasId[1])]) { frame.outerHTML = placeholder('canvas'); continue; }
+      if (isRemoteTarget(target) && !absoluteImageTarget(target)) {
+        frame.classList.add('is-failed');
+        frame.querySelector('.md-local-image-fallback').textContent = (english ? 'Remote image' : '远程图片') + ' · ' + image.alt;
+        continue;
+      }
       const url = '/api/note-asset?note=' + encodeURIComponent(data.path) + '&src=' + encodeURIComponent(target) + '&syntax=' + encodeURIComponent(syntax);
-      cleanup.push(prepareLocalImage(image, image.closest('.md-local-image'), url, target, current));
+      cleanup.push(prepareLocalImage(image, frame, url, target, current));
+      if (frame.classList.contains('has-image-text')) {
+        imageTextSizer ||= createImageTextSizer();
+        imageTextSizer.observe(frame);
+      }
     }
-    if (result.features.math) typesetMath(element, current).then(() => { if (current()) onLayout(); }).catch(() => {});
-    element.addEventListener('load', onLayout, true);
+    if (result.features.math) {
+      // Each mount owns its MathJax root. A previous mount may still be
+      // typesetting when the reference returns to the viewport.
+      typesetMath(root, current).then(layout).catch(() => {});
+      cleanup.push(() => { try { window.MathJax?.typesetClear?.([root]); } catch (_) {} });
+    }
     return () => {
-      element.removeEventListener('load', onLayout, true);
+      element.removeEventListener('load', layout, true);
+      element.removeEventListener('error', layout, true);
       cleanup.forEach(dispose => dispose?.());
-      window.MathJax?.typesetClear?.([element]);
+      imageTextSizer?.destroy();
       element.replaceChildren();
     };
   }
@@ -4448,16 +4482,27 @@
   }
 
   class SectionEmbedWidget extends WidgetType {
-    constructor(spec, path, controller) { super(); Object.assign(this, { spec, path, controller }); }
-    eq(other) { return this.spec.id === other.spec.id && this.spec.source === other.spec.source && this.path === other.path; }
+    constructor(spec, notePath, options, coordinator) {
+      super(); Object.assign(this, { spec, notePath, options, coordinator, epoch: coordinator.epoch });
+    }
+    get estimatedHeight() { return 48; }
+    eq(other) {
+      return this.spec.id === other.spec.id && this.spec.source === other.spec.source
+        && this.notePath === other.notePath && this.epoch === other.epoch;
+    }
     toDOM(view) {
       const element = document.createElement('div');
       element.className = 'note-section-reference'; element.contentEditable = 'false';
-      element.__relatumSectionDispose = this.controller.mount(element, { ...this.spec.section, owner: this.path,
-        onLayout: () => { if (element.isConnected) view.requestMeasure(); },
+      element.__relatumSectionDispose = this.options.sectionEmbed.mount(element, {
+        ...this.spec.section, owner: this.notePath,
+        action: view.state.readOnly ? null : action => this.options.onSectionAction(this.spec.id, this.notePath, this.epoch, action),
+        onLayout: () => {
+          if (element.isConnected && this.epoch === this.coordinator.epoch) this.coordinator.layout.schedule();
+        },
       });
       return element;
     }
+    ignoreEvent() { return true; }
     destroy(element) { element.__relatumSectionDispose?.(); }
   }
 
@@ -4537,7 +4582,7 @@
     destroy(element) { element.__relatumHtmlEmbed?.dispose(); }
   }
 
-  const remembersBlockLayout = spec => /^(?:image|math|table|mermaid|media)$/.test(spec.kind);
+  const remembersBlockLayout = spec => /^(?:image|math|table|mermaid|media|section-embed)$/.test(spec.kind);
   function layoutFingerprint(source) {
     let a = 2166136261, b = 2246822519;
     for (let index = 0; index < source.length; index++) {
@@ -4611,7 +4656,7 @@
       // mutating its captured estimate or rebuilding the editor state.
       const height = !this.memory.restoring && this.signature === this.memory.signature
         ? this.memory.get(this.key)?.height ?? (this.hinted ? this.layoutHeight : -1) : -1;
-      if (height > 0 && this.inner.spec.kind !== 'table' && !this.ready(dom)) {
+      if (height > 0 && this.inner.spec.kind !== 'table' && this.inner.spec.kind !== 'section-embed' && !this.ready(dom)) {
         if (!entry.reserved) { entry.heightStyle = dom.style.height; entry.overflowStyle = dom.style.overflow; }
         // A minimum alone still lets raw TeX exceed its final rendered height.
         // Use the known box until the real resource finishes, then release it.
@@ -4620,6 +4665,7 @@
       this.memory.schedule(); return dom;
     }
     ready(dom) {
+      if (this.inner.spec.kind === 'section-embed') return dom.hasAttribute('data-note-section-ready');
       if (this.inner.spec.kind === 'image') {
         const image = dom.querySelector('.note-live-image-frame img');
         return !!image && (image.complete && image.naturalWidth > 0 || !!image.closest('.is-failed'));
@@ -4736,7 +4782,7 @@
     }
     if (spec.kind === 'quiz') return new QuizBlockWidget(spec, path, options, coordinator, selected);
     if (spec.kind === 'database') return new DatabaseBlockWidget(spec, path, options.database, options.onMoveDatabaseBlock);
-    if (spec.kind === 'section-embed') return new SectionEmbedWidget(spec, path, options.sectionEmbed);
+    if (spec.kind === 'section-embed') return new MeasuredBlockWidget(new SectionEmbedWidget(spec, path, options, coordinator), coordinator);
     if (Object.hasOwn(attachmentOpeners, spec.kind)) return new AttachmentEmbedWidget(spec, path, options);
     if (spec.kind === 'canvas') return new CanvasBlockWidget(spec, path, options, coordinator, selected);
     const widget = spec.kind === 'table' && options.tableController && spec.tableModel
@@ -4750,17 +4796,39 @@
     // to deliver native input without a keydown to the selected image text box.
     const imageTextInput = spec.kind === 'image' && spec.from === 0 && spec.to === state.doc.length
       && options.imageTextController?.active;
-    return !imageTextInput && (spec.kind === 'media' || spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz' || spec.kind === 'table' || spec.kind === 'database' || Object.hasOwn(attachmentOpeners, spec.kind) || editableFence(spec));
+    return !imageTextInput && (spec.kind === 'media' || spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule' || spec.kind === 'quiz' || spec.kind === 'table' || spec.kind === 'database' || spec.kind === 'section-embed' || Object.hasOwn(attachmentOpeners, spec.kind) || editableFence(spec));
   }
 
   function blockAtomicRange(spec, state) {
-    const media = spec.kind === 'image' || spec.kind === 'canvas';
-    // Media stay projected when selected. Their adjacent newline positions
-    // have no visible caret line, so keyboard navigation skips to the actual
-    // preceding/following paragraph. Formula boundaries still reveal source.
-    const from = media && spec.from > 0 ? spec.from - 1 : spec.from;
-    const to = media && spec.to < state.doc.length ? spec.to + 1 : spec.to;
+    // Skip the invisible line endpoints when moving to real body text.
+    const skipEdges = spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'section-embed';
+    const from = skipEdges && spec.from > 0 ? spec.from - 1 : spec.from;
+    const to = skipEdges && spec.to < state.doc.length ? spec.to + 1 : spec.to;
     return Decoration.replace({ block: true, inclusive: false, blockId: spec.id }).range(from, to);
+  }
+
+  function projectedSectionAt(blocks, pos) {
+    let section = null;
+    blocks?.decorations.between(pos, pos, (from, to, decoration) => {
+      const spec = blocks.byId.get(decoration.spec.blockId);
+      if (spec?.kind !== 'section-embed' || !decoration.spec.widget || pos < from || pos > to) return;
+      section = spec;
+      return false;
+    });
+    return section;
+  }
+
+  function sectionBodyPosition(state, blocks, spec, before) {
+    const pos = before ? spec.from - 1 : spec.to + 1;
+    if (pos < 0 || pos > state.doc.length) return null;
+    const line = state.doc.lineAt(pos);
+    let hidden = false;
+    blocks.decorations.between(line.from, line.to, (from, to, decoration) => {
+      if (!decoration.block || from > line.from || to < line.to) return;
+      hidden = true;
+      return false;
+    });
+    return hidden ? null : pos;
   }
 
   function mergeBlockAtomicRanges(ranges) {
@@ -7643,6 +7711,58 @@
     }
 
     const blockField = createBlockField(notePath, safeOptions, coordinator, inputSession, sectionField);
+    function sectionBodyBoundary(view) {
+      if (!options.sectionEmbed || sourceMode || inputPending() || view.state.readOnly) return null;
+      const { main, ranges } = view.state.selection;
+      if (ranges.length !== 1 || !main.empty) return null;
+      const blocks = view.state.field(blockField, false), spec = projectedSectionAt(blocks, main.head);
+      return spec ? { spec, blocks, before: main.head === spec.from } : null;
+    }
+
+    function moveToSectionBody(view, blocks, spec, before) {
+      const position = sectionBodyPosition(view.state, blocks, spec, before);
+      const at = before ? spec.from : spec.to;
+      view.dispatch({
+        ...(position == null ? { changes: { from: at, insert: '\n' }, userEvent: 'input.section-boundary',
+          annotations: CM.isolateHistory.of('full') } : {}),
+        selection: EditorSelection.cursor(position ?? (before ? at : at + 1)),
+        scrollIntoView: true,
+      });
+      view.focus();
+    }
+
+    safeOptions.onSectionAction = (id, path, epoch, action) => {
+      const run = () => {
+        if (destroyed || sourceMode || view.state.readOnly || path !== currentPath || epoch !== coordinator.epoch || !noteRenderForeground(view)) return;
+        const blocks = view.state.field(blockField, false), spec = blocks?.byId.get(id);
+        if (spec?.kind !== 'section-embed' || blocks.activeIds.has(id)) return;
+        if (action === 'edit') {
+          const head = spec.from + spec.source.indexOf(']]');
+          view.dispatch({ selection: EditorSelection.cursor(head), effects: focusEffect.of(true), scrollIntoView: true });
+          view.focus();
+        } else moveToSectionBody(view, blocks, spec, action === 'before');
+      };
+      if (inputPending()) whenInputSettled().then(run); else run();
+    };
+
+    function routeSectionBody(view) {
+      const boundary = sectionBodyBoundary(view);
+      if (!boundary) return false;
+      moveToSectionBody(view, boundary.blocks, boundary.spec, boundary.before);
+      return true;
+    }
+
+    function protectSectionBoundary(view, backward) {
+      if (sourceMode || inputPending() || !options.sectionEmbed) return false;
+      const { main, ranges } = view.state.selection;
+      if (ranges.length !== 1 || !main.empty) return false;
+      const blocks = view.state.field(blockField, false);
+      if (projectedSectionAt(blocks, main.head)) return true;
+      const line = view.state.doc.lineAt(main.head);
+      if (main.head !== (backward ? line.from : line.to)) return false;
+      const next = main.head + (backward ? -1 : 1);
+      return next >= 0 && next <= view.state.doc.length && !!projectedSectionAt(blocks, next);
+    }
     const mathPreviewPlugin = createMathEditPreviewPlugin(coordinator);
     const mermaidPreviewPlugin = createMermaidEditPreviewPlugin(coordinator);
     const inlinePlugin = createInlinePlugin(blockField, notePath, safeOptions);
@@ -7835,6 +7955,11 @@
         EditorView.decorations.from(sectionField, value => value.decorations),
         EditorView.atomicRanges.of(view => view.state.field(sectionField).atomic),
         blockField, viewportParsePlugin, blockLayoutPlugin, inlinePlugin, inlineMathPreview.extensions, mathPreviewPlugin, mermaidPreviewPlugin,
+        ...(options.sectionEmbed ? [EditorView.editorAttributes.compute([blockField, 'selection'], state => {
+          const { main, ranges } = state.selection;
+          return ranges.length === 1 && main.empty && projectedSectionAt(state.field(blockField), main.head)
+            ? { class: 'has-section-boundary-selection' } : {};
+        })] : []),
       ];
     }
 
@@ -8033,10 +8158,23 @@
           // never in the source prefix. Nonempty selections retain exact source.
           return [transaction, { selection: EditorSelection.cursor(task.contentFrom), sequential: true }];
         }),
+        EditorState.transactionFilter.of(transaction => {
+          if (!options.sectionEmbed || sourceMode || inputPending() || transaction.docChanged || !transaction.isUserEvent('select')
+              || transaction.newSelection.ranges.length !== 1 || !transaction.newSelection.main.empty) return transaction;
+          const state = transaction.startState, blocks = state.field(blockField, false);
+          const head = transaction.newSelection.main.head, spec = projectedSectionAt(blocks, head);
+          if (!spec) return transaction;
+          const previous = state.selection.main;
+          const before = head === spec.from || head !== spec.to && head < previous.head;
+          const target = sectionBodyPosition(state, blocks, spec, before);
+          if (target != null) return [transaction, { selection: EditorSelection.cursor(target), sequential: true }];
+          if (!transaction.isUserEvent('select.pointer') && previous.empty && !projectedSectionAt(blocks, previous.head)) return [];
+          return transaction;
+        }),
         Prec.highest(keymap.of([
-          { key: 'Backspace', run: (view) => revealHeadingInputEdge(view) || deleteImageObject(view, true) || deleteSelectedMermaid(view) || enterMermaidBoundary(view, true) || enterTableBoundary(view, true) || !sourceMode && deleteListPrefix(view) },
-          { key: 'Delete', run: (view) => revealHeadingInputEdge(view, true) || deleteImageObject(view, false) || deleteSelectedMermaid(view) || enterMermaidBoundary(view, false) || enterTableBoundary(view, false) },
-          { key: 'Enter', run(view) { revealHeadingInputEdge(view); return false; } },
+          { key: 'Backspace', run: (view) => revealHeadingInputEdge(view) || protectSectionBoundary(view, true) || deleteImageObject(view, true) || deleteSelectedMermaid(view) || enterMermaidBoundary(view, true) || enterTableBoundary(view, true) || !sourceMode && deleteListPrefix(view) },
+          { key: 'Delete', run: (view) => revealHeadingInputEdge(view, true) || protectSectionBoundary(view, false) || deleteImageObject(view, false) || deleteSelectedMermaid(view) || enterMermaidBoundary(view, false) || enterTableBoundary(view, false) },
+          { key: 'Enter', run(view) { revealHeadingInputEdge(view); return routeSectionBody(view); } },
           { key: 'Enter', run: view => imageTextKeyCommand('edit') || editSelectedMermaid(view) },
           { key: 'Escape', run: view => imageTextKeyCommand('clear-selection') || finishMermaidEdit(view) },
           { key: 'ArrowLeft', run: (view) => imageTextKeyCommand('move', { dx: -1, dy: 0 }) || moveSelectedMediaCaret(view, true) || !sourceMode && moveBeforeTask(view) },
@@ -8148,10 +8286,13 @@
         Prec.highest(EditorView.domEventHandlers({
           beforeinput(event, view) {
             if (!event.isComposing && event.inputType.startsWith('delete')
-                && revealHeadingInputEdge(view, !event.inputType.endsWith('Backward'))) {
+                && (revealHeadingInputEdge(view, !event.inputType.endsWith('Backward'))
+                  || protectSectionBoundary(view, event.inputType.endsWith('Backward')))) {
               event.preventDefault(); return true;
             }
-            if (!event.isComposing && event.inputType.startsWith('insert')) revealHeadingInputEdge(view);
+            if (!event.isComposing && event.inputType.startsWith('insert')) {
+              revealHeadingInputEdge(view); routeSectionBody(view);
+            }
             if (!event.isComposing && /^deleteContent(?:Backward|Forward)$/.test(event.inputType)
                 && (deleteSelectedMermaid(view) || enterMermaidBoundary(view, event.inputType === 'deleteContentBackward')
                   || enterTableBoundary(view, event.inputType === 'deleteContentBackward'))) {
@@ -8195,6 +8336,9 @@
           keydown(event, view) {
             pastePlain = (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'v';
             if (!event.isComposing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+              // A compact document can start with no native caret line at all.
+              // Give typing and Windows IME a real editable line before input.
+              if (event.key.length === 1 || event.key === 'Process' || event.keyCode === 229) routeSectionBody(view);
               const boundary = mermaidBodyBoundary(view);
               if (boundary && (event.key.length === 1 || event.key === 'Enter' || event.key === 'Process' || event.keyCode === 229 || /^Arrow(?:Down|Right|Up|Left)$/.test(event.key))) {
                 if (/^Arrow/.test(event.key)) boundary.side = /Up|Left/.test(event.key) ? 'before' : 'after';
@@ -8238,6 +8382,7 @@
           },
           compositionstart(event, view) {
             revealHeadingInputEdge(view);
+            routeSectionBody(view);
             const mermaidBoundary = mermaidBodyBoundary(view);
             if (mermaidBoundary) safeOptions.onMermaidBodyRequest(mermaidBoundary.id, mermaidBoundary.side);
             if (!sourceMode && tableController && !inputPending()) {
@@ -8302,6 +8447,7 @@
           },
           paste(event, view) {
             revealHeadingInputEdge(view);
+            routeSectionBody(view);
             const mermaidBoundary = mermaidBodyBoundary(view);
             if (mermaidBoundary) safeOptions.onMermaidBodyRequest(mermaidBoundary.id, mermaidBoundary.side);
             if (!sourceMode && tableController && !inputPending()) {

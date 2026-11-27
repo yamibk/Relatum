@@ -3573,8 +3573,8 @@
       self: ['请选择另一篇笔记的章节', 'Choose a section from another note'], invalid: ['引用路径无效', 'Invalid reference path'],
       indexing: ['正在整理笔记索引', 'Indexing notes'], failed: ['无法读取源笔记', 'Could not read the source note'],
     };
-    let observer;
-    const active = entry => entry.visible && entry.element.isConnected && !entry.element.closest('[hidden], [inert]')
+    let observer, sizes, pageActive = true;
+    const active = entry => pageActive && entry.visible && entry.element.isConnected && !entry.element.closest('[hidden], [inert]')
       && state.current?.path === entry.reference.owner && noteWorkspaceVisible() && !graphPresentation && !browserResultsActive()
       && (entry.reference.reading ? state.viewMode === 'reading' : state.viewMode === 'live');
     const key = value => String(value).normalize('NFC').toLowerCase();
@@ -3637,7 +3637,10 @@
     function stop(entry) {
       if (!entry.started) return;
       entry.started = false; entry.version++;
-      if (entry.dispose && entry.element.offsetHeight) entry.element.style.minBlockSize = entry.element.offsetHeight + 'px';
+      sizes?.unobserve(entry.element);
+      const height = entry.height || (!sizes && entry.element.offsetHeight);
+      if (entry.dispose && height) entry.element.style.minBlockSize = height + 'px';
+      entry.element.removeAttribute('data-note-section-ready');
       entry.dispose?.(); entry.dispose = null;
     }
 
@@ -3659,6 +3662,21 @@
         entry.message.textContent = reasons[data.state] ? label(...reasons[data.state]) : '';
         entry.retry.hidden = !['failed', 'indexing'].includes(data.state);
         if (data.heading) entry.dispose = window.RelatumNoteLiveEditor.renderSectionFragment(entry.body, data, current, entry.reference.onLayout);
+        entry.element.setAttribute('data-note-section-ready', '');
+        if (window.ResizeObserver) {
+          sizes ||= new ResizeObserver(items => {
+            for (const item of items) {
+              const mountedEntry = mounted.get(item.target);
+              if (!mountedEntry?.started || !active(mountedEntry)) continue;
+              const height = item.borderBoxSize?.[0]?.blockSize ?? item.target.offsetHeight;
+              if (height > 0 && Math.abs((mountedEntry.height || 0) - height) >= .5) {
+                mountedEntry.height = height;
+                mountedEntry.reference.onLayout();
+              }
+            }
+          });
+          sizes.observe(entry.element, { box: 'border-box' });
+        }
         entry.reference.onLayout();
       };
       resolve(entry.reference, current).then(render).catch(() => render({ state: 'failed' }));
@@ -3696,21 +3714,42 @@
         return items;
       },
       mount(element, reference) {
-        const title = document.createElement('button'), message = document.createElement('div'), body = document.createElement('div');
+        const header = document.createElement('div'), title = document.createElement('button');
+        const message = document.createElement('div'), body = document.createElement('article');
         const retry = document.createElement('button');
+        header.className = 'note-section-header'; header.append(title);
         title.type = retry.type = 'button'; title.className = 'note-section-source';
         title.textContent = reference.target + ' › ' + reference.fragment; title.disabled = true;
         message.className = 'note-section-message'; message.hidden = true;
         retry.textContent = label('重试', 'Retry'); retry.hidden = true;
-        body.className = 'note-section-content'; element.replaceChildren(title, message, retry, body);
+        body.className = 'note-section-content node-text'; element.replaceChildren(header, message, retry, body);
         const entry = { element, reference, title, message, retry, body, version: 0, visible: !window.IntersectionObserver };
-        title.addEventListener('click', async event => {
-          event.stopPropagation();
+        const openSource = async event => {
+          event.preventDefault(); event.stopPropagation();
           const path = entry.path;
           if (!path || !active(entry)) return;
           const fragment = reference.fragment;
           if (await openNote(path, { reuseActiveTab: false })) scheduleHeadingJump(fragment, path);
+        };
+        title.addEventListener('click', openSource);
+        body.addEventListener('click', event => {
+          if (event.target.closest('[data-note-section-open]')) openSource(event);
         });
+        if (reference.action) {
+          const actions = document.createElement('div'); actions.className = 'note-section-actions';
+          for (const [action, icon, zh, en] of [
+            ['before', 'arrow-left', '在上方添加正文', 'Add text above'],
+            ['after', 'arrow-left', '在下方添加正文', 'Add text below'],
+            ['edit', 'code-xml', '编辑引用', 'Edit reference'],
+          ]) {
+            const button = document.createElement('button'), text = label(zh, en);
+            button.type = 'button'; button.dataset.noteSectionAction = action;
+            button.title = text; button.setAttribute('aria-label', text); button.append(noteIcon(icon));
+            button.addEventListener('click', event => { event.stopPropagation(); reference.action(action); });
+            actions.append(button);
+          }
+          header.append(actions);
+        }
         retry.addEventListener('click', event => { event.stopPropagation(); lookups.delete(reference.target); stop(entry); update(entry); });
         entries.add(entry); mounted.set(element, entry);
         if (window.IntersectionObserver) {
@@ -3723,6 +3762,7 @@
         return () => { observer?.unobserve(element); mounted.delete(element); entries.delete(entry); stop(entry); };
       },
       sync() { entries.forEach(update); },
+      setPageActive(active) { pageActive = active; entries.forEach(update); },
       invalidate(changes = ['']) {
         for (const path of sources.keys()) if (changes.some(changed => changed === '' || path === changed || path.startsWith(changed + '/'))) sources.delete(path);
         for (const target of lookups.keys()) if (changes.some(changed => relevant(target, '', changed))) lookups.delete(target);
@@ -4901,6 +4941,7 @@
     if (editorHost) editorHost.toggleAttribute('inert', !!active);
     if (fallbackEditor) fallbackEditor.toggleAttribute('inert', !!active);
     if (readingHost) readingHost.toggleAttribute('inert', !!active);
+    sectionEmbedHost.sync();
     if (active) { releaseAttachmentTab(); noteHtmlEmbeds?.suspend(); notePdfReader?.suspend(); pdfImport?.abort(); }
     else { syncAttachmentTab(); noteHtmlEmbeds?.sync(); notePdfReader?.sync(); }
   }
@@ -7657,10 +7698,10 @@
     }
   }
   document.addEventListener('visibilitychange', syncNotePageVisibility);
-  window.addEventListener('pagehide', () => { clearNoteTreeDrag(); aiPageHiding = true; noteDatabase?.setActive('', false); releaseAttachmentTab(); noteHtmlEmbeds?.suspend(); notePdfReader?.suspend(); pdfImport?.abort(); closeNoteModal(); guideSequence++; guideController?.suspend(); aiSequence++; aiController?.suspend(true); indexActivity(false, true); });
+  window.addEventListener('pagehide', () => { clearNoteTreeDrag(); aiPageHiding = true; noteDatabase?.setActive('', false); sectionEmbedHost.setPageActive(false); releaseAttachmentTab(); noteHtmlEmbeds?.suspend(); notePdfReader?.suspend(); pdfImport?.abort(); closeNoteModal(); guideSequence++; guideController?.suspend(); aiSequence++; aiController?.suspend(true); indexActivity(false, true); });
   window.addEventListener('canvasdesktop:visibility', syncNotePageVisibility);
   window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeWorkspacePopovers(); cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0; stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
-  window.addEventListener('pageshow', () => { aiPageHiding = false; state.linksRefreshSuspended = false; syncNotePageVisibility(); });
+  window.addEventListener('pageshow', () => { aiPageHiding = false; state.linksRefreshSuspended = false; sectionEmbedHost.setPageActive(true); syncNotePageVisibility(); });
   window.addEventListener('beforeunload', event => {
     cancelTabCloseMotion(); cancelTabScroll(); cancelLinksRefresh(); stopExternalSync(); flushWorkspaceState(true);
     if (notePdfReader?.dirty()) { event.preventDefault(); event.returnValue = ''; }

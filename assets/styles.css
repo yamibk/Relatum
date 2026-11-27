@@ -2269,7 +2269,7 @@ body.start-page[data-start-theme="dark"] .note-browser-missing { color: #e4a18d;
 .note-tag:hover { background: rgba(120, 147, 108, .24); text-decoration: none; }
 .note-frontmatter, .note-live-frontmatter { font-family: var(--note-font-mono); font-size: .9em; color: var(--text); opacity: .75; }
 .note-frontmatter { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: rgba(128, 128, 128, .06); border-radius: 5px; }
-.note-reading-content .md-local-image.is-failed .md-local-image-fallback { display: block; }
+:is(.note-reading-content, .note-section-content) .md-local-image.is-failed .md-local-image-fallback { display: block; }
 .note-browser-nav-row:focus-visible, .note-browser-result:focus-visible,
 .note-browser-back:focus-visible, .note-browser-more:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 body.start-page[data-start-theme="dark"] .note-tag { color: #c1d2ba; background: rgba(150, 178, 135, .18); }
@@ -2430,25 +2430,26 @@ body.start-page[data-start-theme="dark"] .note-browser-more:hover { background: 
 }
 .note-code-toolbar .note-code-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-code-toolbar .note-live-code-language { position: static; flex: 0 0 auto; max-width: none; }
+.note-section-content .md-local-image,
 .note-reading-content .md-local-image { position: relative; display: grid; justify-items: start; width: fit-content; max-width: 100%; margin: 1em 0; overflow: hidden; border-radius: 8px; }
-.note-reading-content .md-local-image img { --note-image-max-height: min(72vh, 900px); display: block; max-width: 100%; max-height: var(--note-image-max-height); border-radius: 8px; }
-.note-reading-content .md-local-image.has-svg-auto-size:not(.has-explicit-size) img {
+:is(.note-reading-content, .note-section-content) .md-local-image img { --note-image-max-height: min(72vh, 900px); display: block; max-width: 100%; max-height: var(--note-image-max-height); border-radius: 8px; }
+:is(.note-reading-content, .note-section-content) .md-local-image.has-svg-auto-size:not(.has-explicit-size) img {
   width: min(var(--note-svg-natural-width, 300px), calc(min(72vh, 900px) * var(--note-svg-ratio, 2)));
   height: auto;
   aspect-ratio: auto var(--note-svg-ratio, 2);
 }
-.note-reading-content .md-local-image.has-explicit-size img { width: 100%; max-height: none; height: auto; }
-.note-reading-content .md-local-image.has-explicit-box img { height: 100%; object-fit: contain; }
-:is(.note-live-image-frame, .note-reading-content .md-local-image) img[data-note-image-size-hint] {
+:is(.note-reading-content, .note-section-content) .md-local-image.has-explicit-size img { width: 100%; max-height: none; height: auto; }
+:is(.note-reading-content, .note-section-content) .md-local-image.has-explicit-box img { height: 100%; object-fit: contain; }
+:is(.note-live-image-frame, :is(.note-reading-content, .note-section-content) .md-local-image) img[data-note-image-size-hint] {
   aspect-ratio: auto var(--note-image-hint-ratio);
 }
-:is(.note-live-image-frame, .note-reading-content .md-local-image):not(.has-explicit-size, .has-svg-auto-size) img[data-note-image-size-hint] {
+:is(.note-live-image-frame, :is(.note-reading-content, .note-section-content) .md-local-image):not(.has-explicit-size, .has-svg-auto-size) img[data-note-image-size-hint] {
   width: min(var(--note-image-hint-width), calc(var(--note-image-max-height) * var(--note-image-hint-ratio)));
   height: auto;
 }
-.note-reading-content .md-local-image-fallback { color: var(--text-tertiary); font-size: 12px; }
-.note-reading-content .md-local-image img:not([src]),
-.note-reading-content .md-local-image img[src] + .md-local-image-fallback { display: none; }
+:is(.note-reading-content, .note-section-content) .md-local-image-fallback { color: var(--text-tertiary); font-size: 12px; }
+:is(.note-reading-content, .note-section-content) .md-local-image img:not([src]),
+:is(.note-reading-content, .note-section-content) .md-local-image:not(.is-failed) img[src] ~ .md-local-image-fallback { display: none; }
 .note-reading-view.is-failed .note-reading-content { opacity: .82; }
 .note-document-status {
   position: absolute;
@@ -2818,7 +2819,7 @@ body.start-page[data-start-theme="dark"] .note-reading-content pre.md-code {
   background: var(--note-code-bg);
 }
 body.start-page[data-start-theme="dark"] .note-reading-content pre.md-code code { color: var(--note-code-text); }
-body.start-page[data-start-theme="dark"] .note-reading-content .md-local-image-fallback { color: #8f948d; }
+body.start-page[data-start-theme="dark"] :is(.note-reading-content, .note-section-content) .md-local-image-fallback { color: #8f948d; }
 
 /* 主页背景为“沉浸”时，笔记工作区不再用整块实色纸面遮住环境背景。
    正文仍保持高不透明度以保证长文阅读，树、标签栏与工具栏用更轻的纸张层次；
