@@ -168,7 +168,7 @@ Sky 使用云白与雾蓝：浅色正文基色 `#f8fbff`，普通背景在 `.not
 
 左上角齿轮由 `assets/global-settings.js` 与专用 CSS 提供独立的全局设置，复用 `assets/settings-dialog.js` 的原生居中弹窗；外观、工作区、导航、日常、学习与树状、星图、生涯、使用统计、系统按顺序注册，启动未启用的控件与空分类不显示，隐藏工作区仍可修改其偏好。静态偏好控件先移入隐藏容器供两种外壳绑定，弹窗与排序列表首次打开才创建；共享资源不再属于笔记独占资源，不加载笔记编辑器或研究运行时。全局与笔记弹窗拥有独立身份、标题和恢复文案，全局动效只跟随系统低动态，笔记继续跟随笔记系统偏好。分类恢复只删除对应偏好，全部恢复先完成工作区交接，再恢复其他分类。两者保留深浅模式、语言、笔记设置、客户端窗口设置和内容。隐藏、原生最小化和 pagehide 立即关闭；全局设置自身引起工作区切换时仍保持打开。
 
-全局“外观”的“界面主题”位于深浅模式与主页背景之间，提供默认、Claude、Sky、Apple。`assets/start-appearance.js` 在首帧前读取独立的 `canvas:startAppearance:v1`，缺失或无效使用默认，保存失败时恢复控件原值，桌面沿用偏好快照。`assets/start-appearance.css` 为画布、日常、研究和生涯的共享顶栏和主页背景配色，顶栏用实色承托控件、下缘静态渐隐，工作区切换沿用滑块位移。简洁档为主题纯色，沉浸档在原默认构图以外的主题下使用配套静态渐变。笔记使用笔记主题与原有背景构图，沿用全局深浅模式和简洁／沉浸选择。下拉在全局弹窗内按需复用 `review-controls`，所有主页配置均可使用，加载失败时保留原生选择。外观及全部全局恢复将界面主题和主页背景恢复为默认、简洁。专项使用 `node tests/global-settings-browser.js appearance appearance-library` 与 `py -B -m unittest tests.test_feature_profile`。
+全局“外观”的“界面主题”位于深浅模式与主页背景之间，提供默认、Claude、Sky、Apple。`assets/start-appearance.js` 在首帧前读取独立的 `canvas:startAppearance:v1`，缺失或无效使用默认，保存失败时恢复控件原值，桌面沿用偏好快照。`assets/start-appearance.css` 为画布、日常、研究和生涯的共享顶栏和主页背景配色，工作区切换沿用滑块位移。简洁档为主题纯色。默认沉浸档在正文独立的堆叠上下文中绘制原有浅色渐变或本地极光图 `assets/sky-dark.png`，使背景位于纯色基底与页面内容之间。默认浅色画布的沉浸顶栏透明，共用全窗口的柔和渐变。深色沉浸顶栏使用高不透明度静态渐隐。Claude、Sky、Apple 使用配套静态渐变。笔记使用笔记主题与原有背景构图，沿用全局深浅模式和简洁／沉浸选择。下拉在全局弹窗内按需复用 `review-controls`，所有主页配置均可使用，加载失败时保留原生选择。外观及全部全局恢复将界面主题和主页背景恢复为默认、简洁。专项使用 `node tests/global-settings-browser.js appearance appearance-library` 与 `py -B -m unittest tests.test_feature_profile`，浏览器测试采样窗口上沿及正文的背景像素。
 
 从含主页的配置打开独立 `.canvas` 时，`assets/editor.html` 在首帧恢复全局外观，`assets/start-appearance.css` 让加载底板与返回遮罩共用主页的纯色基底 `--start-home-base`。编辑器就绪后由画布自身的背景配置绘制内容。
 

@@ -138,6 +138,10 @@ html[data-canvas-route-appearance] > body.editor-page::after {
   background-color: var(--start-home-base);
 }
 html[data-start-appearance] body.start-page { background-color: var(--start-home-base); }
+/* Keep the negative-z-index scenery above the body's solid navigation color. */
+html:is([data-start-appearance="default"], [data-start-workspace="notes"]):not([data-start-workspace="none"]) body.start-page[data-start-background="scenic"][data-start-state] {
+  isolation: isolate;
+}
 html[data-start-appearance]:not([data-start-appearance="default"], [data-start-workspace="notes"], [data-start-workspace="none"]) body.start-page[data-start-background="scenic"] {
   background-image: radial-gradient(90% 75% at 78% 24%, var(--start-home-glow), transparent 76%),
                     linear-gradient(155deg, var(--start-home-shade), var(--start-home-base) 68%);
@@ -160,6 +164,16 @@ html[data-start-appearance] body.start-page > .top-bar::before {
   z-index: -1;
   pointer-events: none;
   background: linear-gradient(to bottom, var(--start-header-base) calc(100% - 26px), transparent);
+}
+/* The light canvas header shares the full-window gradient behind it. */
+html[data-start-appearance="default"] body.start-page[data-start-workspace="canvas"][data-start-background="scenic"][data-start-theme="light"] > .top-bar::before {
+  content: none;
+}
+html[data-start-appearance="default"] body.start-page[data-start-workspace="canvas"][data-start-background="scenic"][data-start-theme="dark"] > .top-bar::before {
+  background: linear-gradient(to bottom,
+    color-mix(in srgb, var(--start-header-base) 98%, transparent),
+    color-mix(in srgb, var(--start-header-base) 92%, transparent) 42%,
+    transparent);
 }
 /* The Notes toolbar starts immediately below the header. */
 html[data-start-appearance] body.start-page[data-start-workspace="notes"] > .top-bar::before {

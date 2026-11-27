@@ -65,6 +65,34 @@ async function checkWorkspaceHandoffs(page) {
   }
 }
 
+async function sampleHomepageBackground(page, screenshotPath) {
+  const screenshot = await page.screenshot({ path: screenshotPath });
+  return page.evaluate(async data => {
+    const image = new Image();
+    image.src = 'data:image/png;base64,' + data;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const drawing = canvas.getContext('2d');
+    drawing.drawImage(image, 0, 0);
+    const pixelAt = (x, y) => {
+      const pixel = drawing.getImageData(Math.floor(x * image.width), Math.floor(y * image.height), 1, 1).data;
+      return Array.from(pixel.subarray(0, 3));
+    };
+    // Sample the margins away from the book spine, cards and header controls.
+    return {
+      body: [0.15, 0.85, 0.96].flatMap(x => [0.22, 0.61, 0.76, 0.9].map(y => pixelAt(x, y))),
+      header: [0.15, 0.85].map(x => pixelAt(x, 0.01)),
+    };
+  }, screenshot.toString('base64'));
+}
+
+function assertAurora(pixels, location) {
+  assert(pixels.some(([red, green, blue]) => green > red + 10 && green > blue + 5),
+    `${location} paints the green aurora: ${JSON.stringify(pixels)}`);
+}
+
 async function checkAppearance(page, context, library) {
   const dialog = page.locator('#global-settings-dialog');
   const select = dialog.locator('[data-role="global-interface-theme"]');
@@ -118,6 +146,53 @@ async function checkAppearance(page, context, library) {
         assert.equal(result.backdropFilter, 'none');
         assert.equal(result.ambient.includes('radial-gradient'), label !== '默认' && background === 'scenic');
         assert.equal(result.sky !== 'none', label === '默认' && mode === 1 && background === 'scenic');
+        if (label === '默认') {
+          await close();
+          await dialog.waitFor({ state: 'hidden' });
+          const depth = mode === 1 ? 'dark' : 'light';
+          const screenshotPath = background === 'scenic'
+            ? path.join(artifacts, `appearance-${library ? 'library' : 'canvas'}-scenic-${depth}.png`) : undefined;
+          if (mode === 1 && background === 'scenic') {
+            await page.evaluate(async () => {
+              const photo = new Image();
+              photo.src = '/sky-dark.png';
+              await photo.decode();
+            });
+          }
+          const { body: pixels, header } = await sampleHomepageBackground(page, screenshotPath);
+          if (background === 'simple') {
+            const base = mode === 1 ? [17, 18, 19] : [251, 251, 250];
+            const samples = [...header, ...pixels];
+            assert.deepEqual(samples, samples.map(() => base), `${depth} simple paints a solid background`);
+          } else if (mode === 1) {
+            assertAurora(pixels, 'dark scenic');
+            if (!library) {
+              const viewport = page.viewportSize();
+              await page.setViewportSize({ width: 560, height: 780 });
+              const inbox = page.locator('.page-dot[data-group-id="__inbox__"]');
+              await inbox.click();
+              await page.locator('.page-dot.active[data-group-id="__inbox__"]').waitFor();
+              await page.reload();
+              const canvas = page.locator('.recent-item-name').first();
+              await canvas.waitFor();
+              assertAurora((await sampleHomepageBackground(page)).body, 'narrow Ungrouped after reload');
+              await canvas.click();
+              await page.locator('body.editor-page.canvas-ready').waitFor();
+              await page.locator('.editor-back').click();
+              await page.locator('body.start-page[data-start-background="scenic"][data-start-theme="dark"]').waitFor();
+              await page.locator('.page-dot[data-group-id=""]').click();
+              await page.locator('.page-dot.active[data-group-id=""]').waitFor();
+              await page.setViewportSize(viewport);
+              assertAurora((await sampleHomepageBackground(page)).body, 'Recent after returning from the canvas editor');
+            }
+          } else {
+            assert(pixels.some(([red, green, blue]) => red > 220 && blue > Math.max(red, green) + 5),
+              `light scenic paints the pastel gradient: ${JSON.stringify(pixels)}`);
+            assert(header.every(([red, green, blue]) => red > 220 && blue > Math.max(red, green) + 5),
+              `light scenic paints the pastel gradient at the top edge: ${JSON.stringify(header)}`);
+          }
+          await open();
+        }
       }
       await toggle.click();
     }
