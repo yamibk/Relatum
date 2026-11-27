@@ -1683,7 +1683,7 @@
       { id: 'markdown-files', label: ['Markdown 文件', 'Markdown files'], icon: 'note-icon-file-text', panel: markdownFileSettings.panel,
         keywords: '外部 文件 简洁 独立 磁盘 双击 默认 打开 注册 关联 自动保存 最近 typora markdown portable default association register autosave recent', reset: () => markdownFileSettings.reset() },
       { id: 'sidebar', label: ['侧栏', 'Sidebar'], icon: 'note-icon-panel-right-frame', panel: sidebar, keywords: '页签 显示 隐藏 顺序 拖拽 tabs visibility reorder sidebar', reset: () => sidePreferences.reset() },
-      { id: 'guide', label: ['引导', 'Guide'], icon: 'note-icon-file-text', panel: guide, keywords: 'callout markdown mermaid 教程 语法 syntax tutorial', reset: resetGuide },
+      { id: 'guide', label: ['引导', 'Guide'], icon: 'note-icon-circle-help', panel: guide, keywords: 'callout markdown mermaid 教程 语法 syntax tutorial', reset: resetGuide },
       ...(aiEnabled() ? [
         { id: 'ai', label: ['AI设置', 'AI settings'], icon: 'note-icon-sparkles', panel: aiSettingsHost, keywords: 'deepseek api key model preset prompt token temperature stream timeout effort base url 思考 强度 模型 预设 提示词 温度 连接 接口 地址 流式 输出 超时', reset: resetAI },
         { id: 'ai-chat', label: ['AI对话', 'AI chat'], icon: 'note-icon-ai-chat', panel: aiChatHost, layout: 'fill', searchMode: 'category', keywords: 'AI 对话 聊天 消息 图片 chat conversation message image' },
